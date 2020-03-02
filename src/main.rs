@@ -1,5 +1,7 @@
 extern crate structopt;
 
+use std::path::PathBuf;
+
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug, Clone)]
@@ -8,6 +10,10 @@ pub struct Configuration {
     /// Host to load test in the following format: http://10.21.32.33
     #[structopt(short = "H", long)]
     host: String,
+
+    /// Rust module file to import, e.g. '../other.rs'.
+    #[structopt(short = "f", long, default_value="goosefile")]
+    goose_file: String,
 
     /// Number of concurrent Goose users.
     #[structopt(short, long, default_value="1")]
@@ -42,6 +48,17 @@ pub struct Configuration {
     stop_timeout: usize,
 }
 
+// Attempt to locate a goosefile, either explicitly or by searching parent dirs.
+fn find_goose_file() -> Option<PathBuf> {
+    // @TODO: emulate how Locust does this
+    //  - allow override in env
+    //  - optionally append ".rs" ie "goosefile.rs"
+    //  - search from current directory up
+    //  - return None if no goosefile is found
+    Some(PathBuf::from("goosefile"))
+}
+
 fn main() {
     let _configuration = Configuration::from_args();
+    let _goose_file = find_goose_file();
 }
