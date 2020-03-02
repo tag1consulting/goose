@@ -6,10 +6,12 @@ Have you ever been attacked by a goose?
 
 Goose begins as a minimal port of [Locust](https://locust.io/) to Rust.
 
+Define user behaviour with Rust code.
+
 The MVP is support for the following subset of commands:
 
 ```
- cargo run -- --help
+$ cargo run -- --help
     Finished dev [unoptimized + debuginfo] target(s) in 0.01s
      Running `target/debug/goose --help`
 client 0.1.0
@@ -35,5 +37,5 @@ OPTIONS:
 ```
 
 Once the above is complete, additional planned features include:
- - a web UI for controlling and monitoring Goose
  - gaggle support for distributed load testing
+ - a web UI for controlling and monitoring Goose
