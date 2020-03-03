@@ -1,5 +1,7 @@
 extern crate structopt;
 
+mod goosefile;
+
 use std::path::PathBuf;
 
 use structopt::StructOpt;
