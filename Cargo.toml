@@ -9,3 +9,5 @@ edition = "2018"
 [dependencies]
 structopt = "0.3"
 regex = "1"
+simplelog = "0.7"
+log = "0.4"

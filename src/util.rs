@@ -6,7 +6,10 @@ use regex::Regex;
 pub fn parse_timespan(time_str: &str) -> usize {
     let time = match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
-        Ok(t) => t,
+        Ok(t) => {
+            trace!("{} is integer: {} seconds", time_str, t);
+            t
+        }
         // Otherwise use a regex to extract hours, minutes and seconds from string.
         Err(_) => {
             let re = Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?").unwrap();
@@ -23,7 +26,9 @@ pub fn parse_timespan(time_str: &str) -> usize {
                 Some(_) => usize::from_str(&time_matches["seconds"]).unwrap(),
                 None => 0,
             };
-            hours * 60 * 60 + minutes * 60 + seconds
+            let total = hours * 60 * 60 + minutes * 60 + seconds;
+            trace!("{} hours {} minutes {} seconds: {} seconds", hours, minutes, seconds, total);
+            total
         }
     };
     time
