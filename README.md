@@ -42,5 +42,5 @@ OPTIONS:
 ```
 
 Once the above is complete, additional planned features include:
- - gaggle support for distributed load testing
+ - gaggle support for distributed load testing (leader/worker)
  - a web UI for controlling and monitoring Goose

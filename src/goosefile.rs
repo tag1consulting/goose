@@ -1,39 +1,42 @@
 /// @TODO:
-///  - allow for writing complex goosefiles similar to locustfiles
 ///  - compile the goosefile as a dynamic binary included at run-time
 ///  - provide tools for goose to compile goosefiles
 ///  - ultimately load-tests are shipped with two compiled binaries:
 ///      o the main goose binary (pre-compiled)
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
+// @TODO: this needs to be entirely provided by goose or goose_codegen
 trait TaskSet {
-    // @TODO: on_start needs to be optional
-    fn on_start(&self);
-    // @TODO: macro(?) to add arbitrary tasks
+    // @TODO: this needs to be useful
 }
+
+#[derive(TaskSet)]
 struct WebsiteTasks {}
 
-impl TaskSet for WebsiteTasks {
-    fn on_start(&self) {
-        //self.client.post("/login", {
-        //    "username": "test_user",
-        //    "password": ""
-        //})
+impl WebsiteTasks {
+    #[task]
+    fn on_start(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let params = [("username", "test_user"), ("password", "secure_example")];
+        let client = reqwest::Client::new();
+        let res = client.post("/login")
+            .form(&params)
+            .send()?;
+        Ok(())
     }
 
-    /*
-    @task
-    fn index(&self) {
-        //self.client.get("/")
+    #[task]
+    fn index(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let resp = reqwest::blocking::get("/");
+        println!("{:#?}", resp);
+        Ok(())
     }
-    */
 
-    /*
-    @task
+    #[task]
     fn about(&self) {
-        //self.client.get("/about/")
+        let resp = reqwest::blocking::get("/about/");
+        println!("{:#?}", resp);
+        Ok(())
     }
-    */
 }
 
 /*

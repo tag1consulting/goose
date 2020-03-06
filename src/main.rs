@@ -1,5 +1,9 @@
 #[macro_use]
 extern crate log;
+
+#[macro_use]
+extern crate goose_codegen;
+
 extern crate structopt;
 
 // @TODO: load goosefile as a dynamic library
