@@ -89,10 +89,10 @@ fn find_goosefile() -> Option<PathBuf> {
     Some(PathBuf::from("goosefile.rs"))
 }
 
-// Load goosefile dynamic library and extract geese
-fn load_goosefile(_goosefile: PathBuf) -> Option<Vec<String>> {
-    Some(vec!["@TODO".to_string()])
-}
+/// @TODO Load goosefile dynamic library and extract geese
+//fn load_goosefile(_goosefile: PathBuf) -> Option<Vec<String>> {
+//    Some(vec!["@TODO".to_string()])
+//}
 
 fn main() {
     let configuration = Configuration::from_args();
@@ -143,22 +143,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    let geese = match load_goosefile(goosefile) {
-        Some(g) => g,
-        None => {
-            error!("No geese found in the goosefile! Please create a test plan and try again.");
-            std::process::exit(1);
-        }
-    };
-
-    if configuration.list {
-        println!("Available Geese:");
-        for goose in geese {
-            println!(" - {}", goose);
-        }
-        std::process::exit(0);
-    }
-
     let run_time: usize;
     if configuration.run_time != "" {
         run_time = util::parse_timespan(&configuration.run_time);
@@ -170,6 +154,9 @@ fn main() {
 
     // Initialize empty vector to track all task sets
     let mut goose_tasksets = GooseTaskSets::new();
+
+    // @TODO: creation of GooseTaskSets should be completely accomplished
+    // in the goosefile.
 
     // Register a website task set and contained tasks
     let mut website_tasks = GooseTaskSet::new("WebsiteTasks");
@@ -185,4 +172,20 @@ fn main() {
     goose_tasksets.register_taskset(api_tasks);
 
     debug!("goose_tasksets: {:?}", goose_tasksets);
+
+    //let geese = match load_goosefile(goosefile) {
+    //    Some(g) => g,
+    //    None => {
+    //        error!("No geese found in the goosefile! Please create a test plan and try again.");
+    //        std::process::exit(1);
+    //    }
+    //};
+
+    if configuration.list {
+        println!("Available task sets:");
+        for task_set in goose_tasksets.task_sets {
+            println!(" - {}", task_set.name);
+        }
+        std::process::exit(0);
+    }
 }
