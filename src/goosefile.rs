@@ -6,13 +6,72 @@
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
 // @TODO: this needs to be entirely provided by goose or goose_codegen
-trait TaskSet {
-    // @TODO: this needs to be useful
+
+/// A global list of all Goose task sets
+#[derive(Debug)]
+pub struct GooseTaskSets {
+    pub task_sets: Vec<GooseTaskSet>,
+}
+impl GooseTaskSets {
+    pub fn new() -> Self {
+        let goose_tasksets = GooseTaskSets { 
+            task_sets: Vec::new(),
+        };
+        goose_tasksets
+    }
+
+    pub fn register_taskset(&mut self, taskset: GooseTaskSet) {
+        self.task_sets.push(taskset);
+    }
 }
 
-#[derive(TaskSet)]
-struct WebsiteTasks {}
+/// An individual task set
+#[derive(Debug)]
+pub struct GooseTaskSet {
+    pub name: String,
+    weight: u16,
+    pub tasks: Vec<GooseTask>,
+    //pub wait_time: (u16, 16),
+    //host: String,
+}
+impl GooseTaskSet {
+    pub fn new(name: &str) -> Self {
+        let task_set = GooseTaskSet { 
+            name: name.to_string(),
+            weight: 0,
+            tasks: Vec::new(),
+        };
+        task_set
+    }
 
+    pub fn register_task(&mut self, task: GooseTask) {
+        self.tasks.push(task);
+    }
+}
+
+/// An individual task within a task set
+#[derive(Debug)]
+pub struct GooseTask {
+    pub name: String,
+    pub weight: u16,
+    //pub code: @TODO, closure?,
+}
+impl GooseTask {
+    pub fn new(name: &str) -> Self {
+        let task = GooseTask {
+            name: name.to_string(),
+            weight: 0,
+        };
+        task
+    }
+
+    //pub fn set_weight(&mut self, weight: u16) -> Self {
+    //    self.weight = weight;
+    //    self
+    //}
+}
+
+/*
 impl WebsiteTasks {
     #[task]
     fn on_start(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -38,6 +97,7 @@ impl WebsiteTasks {
         Ok(())
     }
 }
+*/
 
 /*
 class WebsiteUser(HttpLocust):

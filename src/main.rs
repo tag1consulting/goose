@@ -1,8 +1,8 @@
 #[macro_use]
 extern crate log;
 
-#[macro_use]
-extern crate goose_codegen;
+//#[macro_use]
+//extern crate goose_codegen;
 
 extern crate structopt;
 
@@ -16,6 +16,12 @@ use std::path::PathBuf;
 
 use simplelog::*;
 use structopt::StructOpt;
+
+use goosefile::{GooseTaskSets, GooseTaskSet, GooseTask};
+
+pub trait TaskSet {
+    fn tasksets();
+}
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
@@ -161,4 +167,22 @@ fn main() {
         run_time = 0;
     }
     info!("run_time = {}", run_time);
+
+    // Initialize empty vector to track all task sets
+    let mut goose_tasksets = GooseTaskSets::new();
+
+    // Register a website task set and contained tasks
+    let mut website_tasks = GooseTaskSet::new("WebsiteTasks");
+    website_tasks.register_task(GooseTask::new("on_start"));
+    website_tasks.register_task(GooseTask::new("index"));
+    website_tasks.register_task(GooseTask::new("about"));
+    goose_tasksets.register_taskset(website_tasks);
+
+    // Register an API task set and contained tasks
+    let mut api_tasks = GooseTaskSet::new("APITasks");
+    api_tasks.register_task(GooseTask::new("on_start"));
+    api_tasks.register_task(GooseTask::new("listing"));
+    goose_tasksets.register_taskset(api_tasks);
+
+    debug!("goose_tasksets: {:?}", goose_tasksets);
 }
