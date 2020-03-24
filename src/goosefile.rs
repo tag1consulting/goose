@@ -20,6 +20,24 @@ impl GooseTaskSets {
         goose_tasksets
     }
 
+    pub fn initialize_goosefile(&mut self) {
+        // @TODO: metaprogramming to automate initialization
+
+        // Register a website task set and contained tasks
+        let mut website_tasks = GooseTaskSet::new("WebsiteTasks");
+        website_tasks.register_task(GooseTask::new("on_start"));
+        website_tasks.register_task(GooseTask::new("index"));
+        website_tasks.register_task(GooseTask::new("about"));
+        self.register_taskset(website_tasks);
+
+        // Register an API task set and contained tasks
+        let mut api_tasks = GooseTaskSet::new("APITasks");
+        api_tasks.register_task(GooseTask::new("on_start"));
+        api_tasks.register_task(GooseTask::new("listing"));
+        self.register_taskset(api_tasks);
+    }
+
+
     pub fn register_taskset(&mut self, taskset: GooseTaskSet) {
         self.task_sets.push(taskset);
     }

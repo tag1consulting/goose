@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use simplelog::*;
 use structopt::StructOpt;
 
-use goosefile::{GooseTaskSets, GooseTaskSet, GooseTask};
+use goosefile::{GooseTaskSets};
 
 pub trait TaskSet {
     fn tasksets();
@@ -82,17 +82,24 @@ pub struct Configuration {
 
 // Locate goosefile dynamic library
 fn find_goosefile() -> Option<PathBuf> {
+    let goosefile = PathBuf::from("goosefile.rs");
+    trace!("goosefile: {:?}", goosefile);
     // @TODO: emulate how Locust does this
     //  - allow override in env
     //  - search from current directory up
     //  - return None if no goosefile is found
-    Some(PathBuf::from("goosefile.rs"))
+    Some(goosefile)
 }
 
-/// @TODO Load goosefile dynamic library and extract geese
-//fn load_goosefile(_goosefile: PathBuf) -> Option<Vec<String>> {
-//    Some(vec!["@TODO".to_string()])
-//}
+fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
+    // @TODO: actually use _goosefile and load as dynamic library
+    trace!("@TODO goosefile is currently hardcoded: {:?} ", goosefile);
+
+    let mut goose_tasksets = GooseTaskSets::new();
+    // @TODO: handle goosefile errors
+    goose_tasksets.initialize_goosefile();
+    Ok(goose_tasksets)
+}
 
 fn main() {
     let configuration = Configuration::from_args();
@@ -152,34 +159,15 @@ fn main() {
     }
     info!("run_time = {}", run_time);
 
-    // Initialize empty vector to track all task sets
-    let mut goose_tasksets = GooseTaskSets::new();
-
-    // @TODO: creation of GooseTaskSets should be completely accomplished
-    // in the goosefile.
-
-    // Register a website task set and contained tasks
-    let mut website_tasks = GooseTaskSet::new("WebsiteTasks");
-    website_tasks.register_task(GooseTask::new("on_start"));
-    website_tasks.register_task(GooseTask::new("index"));
-    website_tasks.register_task(GooseTask::new("about"));
-    goose_tasksets.register_taskset(website_tasks);
-
-    // Register an API task set and contained tasks
-    let mut api_tasks = GooseTaskSet::new("APITasks");
-    api_tasks.register_task(GooseTask::new("on_start"));
-    api_tasks.register_task(GooseTask::new("listing"));
-    goose_tasksets.register_taskset(api_tasks);
-
+    // Load goosefile
+    let goose_tasksets = match load_goosefile(goosefile) {
+        Ok(g) => g,
+        Err(e) => {
+            error!("Error loading goosefile: {}", e);
+            std::process::exit(1);
+        }
+    };
     debug!("goose_tasksets: {:?}", goose_tasksets);
-
-    //let geese = match load_goosefile(goosefile) {
-    //    Some(g) => g,
-    //    None => {
-    //        error!("No geese found in the goosefile! Please create a test plan and try again.");
-    //        std::process::exit(1);
-    //    }
-    //};
 
     if configuration.list {
         println!("Available task sets:");
