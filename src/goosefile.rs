@@ -24,14 +24,14 @@ impl GooseTaskSets {
         // @TODO: metaprogramming to automate initialization
 
         // Register a website task set and contained tasks
-        let mut website_tasks = GooseTaskSet::new("WebsiteTasks");
+        let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
         website_tasks.register_task(GooseTask::new("on_start"));
-        website_tasks.register_task(GooseTask::new("index"));
-        website_tasks.register_task(GooseTask::new("about"));
+        website_tasks.register_task(GooseTask::new("index").set_weight(5));
+        website_tasks.register_task(GooseTask::new("about").set_weight(2));
         self.register_taskset(website_tasks);
 
         // Register an API task set and contained tasks
-        let mut api_tasks = GooseTaskSet::new("APITasks");
+        let mut api_tasks = GooseTaskSet::new("APITasks").set_weight(3);
         api_tasks.register_task(GooseTask::new("on_start"));
         api_tasks.register_task(GooseTask::new("listing"));
         self.register_taskset(api_tasks);
@@ -65,6 +65,11 @@ impl GooseTaskSet {
     pub fn register_task(&mut self, task: GooseTask) {
         self.tasks.push(task);
     }
+
+    pub fn set_weight(mut self, weight: u16) -> Self {
+        self.weight = weight;
+        self
+    }
 }
 
 /// An individual task within a task set
@@ -83,10 +88,10 @@ impl GooseTask {
         task
     }
 
-    //pub fn set_weight(&mut self, weight: u16) -> Self {
-    //    self.weight = weight;
-    //    self
-    //}
+    pub fn set_weight(mut self, weight: u16) -> Self {
+        self.weight = weight;
+        self
+    }
 }
 
 /*
