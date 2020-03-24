@@ -62,7 +62,7 @@ pub struct Configuration {
     #[structopt(short, long)]
     list: bool,
 
-    /// Number of seconds to wait for a simulated user to complete any executing task before existing. Default is to terminate immediately.
+    /// Number of seconds to wait for a simulated user to complete any executing task before exiting. Default is to terminate immediately.
     #[structopt(short, long, required=false, default_value="0")]
     stop_timeout: usize,
 
