@@ -14,6 +14,8 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
 
+use rand::thread_rng;
+use rand::seq::SliceRandom;
 use simplelog::*;
 use structopt::StructOpt;
 
@@ -97,9 +99,42 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
     Ok(goose_task_sets)
 }
 
-fn weight_tasks(task_set: GooseTaskSet) -> Vec<usize> {
+/// Returns a bucket of weighted Goose Task Sets, optionally shuffled
+fn weight_task_sets(task_sets: &GooseTaskSets, shuffle: bool) -> Vec<usize> {
+    trace!("weight_tasksets");
+    let mut u: usize = 0;
+    let mut v: usize;
+    for task_set in &task_sets.task_sets {
+        if u == 0 {
+            u = task_set.weight;
+        }
+        else {
+            v = task_set.weight;
+            trace!("calculating greatest common denominator of {} and {}", u, v);
+            u = util::gcd(u, v);
+            trace!("inner gcd: {}", u);
+        }
+    }
+    // u will always be the greatest common divisor
+    debug!("gcd: {}", u);
+
+    let mut bucket: Vec<usize> = Vec::new();
+    for (index, task_set) in task_sets.task_sets.iter().enumerate() {
+        // divide by greatest common divisor so bucket is as small as possible
+        let weight = task_set.weight / u;
+        trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task_set.name, task_set.weight, weight);
+        let mut task_sets = vec![index; weight];
+        bucket.append(&mut task_sets);
+    }
+    if shuffle {
+        bucket.shuffle(&mut thread_rng());
+    }
+    bucket
+}
+
+/// Returns a bucket of weighted Goose Tasks, optionally shuffled
+fn weight_tasks(task_set: &GooseTaskSet, shuffle: bool) -> Vec<usize> {
     trace!("weight_tasks for {}", task_set.name);
-    // @TODO: reduce by GCD
     let mut u: usize = 0;
     let mut v: usize;
     for task in &task_set.tasks {
@@ -113,14 +148,19 @@ fn weight_tasks(task_set: GooseTaskSet) -> Vec<usize> {
             trace!("inner gcd: {}", u);
         }
     }
+    // u will always be the greatest common divisor
     debug!("gcd: {}", u);
 
     let mut bucket: Vec<usize> = Vec::new();
     for (index, task) in task_set.tasks.iter().enumerate() {
+        // divide by greatest common divisor so bucket is as small as possible
         let weight = task.weight / u;
         trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
         let mut tasks = vec![index; weight];
         bucket.append(&mut tasks);
+    }
+    if shuffle {
+        bucket.shuffle(&mut thread_rng());
     }
     bucket
 }
@@ -184,14 +224,13 @@ fn main() {
     info!("run_time = {}", run_time);
 
     // Load goosefile
-    let goose_task_sets = match load_goosefile(goosefile) {
+    let mut goose_task_sets = match load_goosefile(goosefile) {
         Ok(g) => g,
         Err(e) => {
             error!("Error loading goosefile: {}", e);
             std::process::exit(1);
         }
     };
-    debug!("goose_task_sets: {:?}", goose_task_sets);
 
     if configuration.list {
         println!("Available task sets:");
@@ -201,9 +240,23 @@ fn main() {
         std::process::exit(0);
     }
 
-    let mut weighted_tasks;
-    for task_set in goose_task_sets.task_sets {
-        weighted_tasks = weight_tasks(task_set);
-        debug!("weighted tasks: {:?}", weighted_tasks);
+    goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
+
+    for task_set in &mut goose_task_sets.task_sets {
+        task_set.weighted_tasks = weight_tasks(&task_set, true);
+        debug!("weighted tasks: {:?}", task_set.weighted_tasks);
+    }
+    debug!("goose_task_sets: {:?}", goose_task_sets);
+
+    for task_set in goose_task_sets.weighted_task_sets {
+        // @TODO: user iterator instead of weighted_position field
+        if goose_task_sets.task_sets[task_set].tasks.len() <= goose_task_sets.task_sets[task_set].weighted_position {
+            // @TODO: re-shuffle?
+            // @TODO: confirm there's at least one task
+            goose_task_sets.task_sets[task_set].weighted_position = 0;
+        }
+        let weighted_position = goose_task_sets.task_sets[task_set].weighted_position;
+        info!("launching {} task from {}", goose_task_sets.task_sets[task_set].tasks[weighted_position].name, goose_task_sets.task_sets[task_set].name);
+        goose_task_sets.task_sets[task_set].weighted_position += 1;
     }
 }

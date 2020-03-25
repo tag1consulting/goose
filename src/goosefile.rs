@@ -11,11 +11,13 @@
 #[derive(Debug)]
 pub struct GooseTaskSets {
     pub task_sets: Vec<GooseTaskSet>,
+    pub weighted_task_sets: Vec<usize>,
 }
 impl GooseTaskSets {
     pub fn new() -> Self {
         let goose_tasksets = GooseTaskSets { 
             task_sets: Vec::new(),
+            weighted_task_sets: Vec::new(),
         };
         goose_tasksets
     }
@@ -27,9 +29,9 @@ impl GooseTaskSets {
         // Register a website task set and contained tasks
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
         //website_tasks.register_task(GooseTask::new("on_start"));
-        website_tasks.register_task(GooseTask::new("index").set_weight(25));
-        website_tasks.register_task(GooseTask::new("story").set_weight(100));
-        website_tasks.register_task(GooseTask::new("about").set_weight(5));
+        website_tasks.register_task(GooseTask::new("index").set_weight(6));
+        website_tasks.register_task(GooseTask::new("story").set_weight(9));
+        website_tasks.register_task(GooseTask::new("about").set_weight(3));
         self.register_taskset(website_tasks);
 
         // Register an API task set and contained tasks
@@ -53,6 +55,8 @@ pub struct GooseTaskSet {
     pub name: String,
     pub weight: usize,
     pub tasks: Vec<GooseTask>,
+    pub weighted_tasks: Vec<usize>,
+    pub weighted_position: usize,
     //pub wait_time: (u16, 16),
     //host: String,
 }
@@ -63,6 +67,8 @@ impl GooseTaskSet {
             name: name.to_string(),
             weight: 1,
             tasks: Vec::new(),
+            weighted_tasks: Vec::new(),
+            weighted_position: 0,
         };
         task_set
     }

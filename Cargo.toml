@@ -5,9 +5,10 @@ authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 
 [dependencies]
-goose_codegen = { path = "goose_codegen" }
-structopt = "0.3"
-regex = "1"
-simplelog = "0.7"
+#goose_codegen = { path = "goose_codegen" }
 log = "0.4"
+rand = "0.7"
+regex = "1"
 reqwest = "0.10"
+structopt = "0.3"
+simplelog = "0.7"

@@ -289,21 +289,12 @@ dependencies = [
 name = "goose"
 version = "0.1.0"
 dependencies = [
- "goose_codegen",
  "log",
+ "rand",
  "regex",
  "reqwest",
  "simplelog",
  "structopt",
-]
-
-[[package]]
-name = "goose_codegen"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
