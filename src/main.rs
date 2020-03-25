@@ -10,6 +10,7 @@ extern crate structopt;
 mod goosefile;
 mod util;
 
+use std::cmp::{min, max};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
@@ -17,11 +18,7 @@ use std::path::PathBuf;
 use simplelog::*;
 use structopt::StructOpt;
 
-use goosefile::{GooseTaskSets};
-
-pub trait TaskSet {
-    fn tasksets();
-}
+use goosefile::{GooseTaskSets, GooseTaskSet};
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
@@ -95,10 +92,52 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
     // @TODO: actually use _goosefile and load as dynamic library
     trace!("@TODO goosefile is currently hardcoded: {:?} ", goosefile);
 
-    let mut goose_tasksets = GooseTaskSets::new();
+    let mut goose_task_sets = GooseTaskSets::new();
     // @TODO: handle goosefile errors
-    goose_tasksets.initialize_goosefile();
-    Ok(goose_tasksets)
+    goose_task_sets.initialize_goosefile();
+    Ok(goose_task_sets)
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    let gcd = match ((a, b), (a & 1, b & 1)) {
+        ((x, y), _) if x == y               => y,
+        ((0, x), _) | ((x, 0), _)           => x,
+        ((x, y), (0, 1)) | ((y, x), (1, 0)) => gcd(x >> 1, y),
+        ((x, y), (0, 0))                    => gcd(x >> 1, y >> 1) << 1,
+        ((x, y), (1, 1))                    => { let (x, y) = (min(x, y), max(x, y)); 
+                                                 gcd((y - x) >> 1, x) 
+                                               }
+        _                                   => unreachable!(),
+    };
+    gcd
+}
+
+fn weight_tasks(task_set: GooseTaskSet) -> Vec<usize> {
+    trace!("weight_tasks for {}", task_set.name);
+    // @TODO: reduce by GCD
+    let mut a: usize = 0;
+    let mut b: usize;
+    for task in &task_set.tasks {
+        if a == 0 {
+            a = task.weight;
+        }
+        else {
+            b = task.weight;
+            trace!("calculating greatest common denominator of {} and {}", a, b);
+            a = gcd(a,b);
+            trace!("inner gcd: {}", a);
+        }
+    }
+    debug!("gcd: {}", a);
+
+    let mut bucket: Vec<usize> = Vec::new();
+    for (index, task) in task_set.tasks.iter().enumerate() {
+        let weight = task.weight / a;
+        trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
+        let mut tasks = vec![index; weight];
+        bucket.append(&mut tasks);
+    }
+    bucket
 }
 
 fn main() {
@@ -160,20 +199,26 @@ fn main() {
     info!("run_time = {}", run_time);
 
     // Load goosefile
-    let goose_tasksets = match load_goosefile(goosefile) {
+    let goose_task_sets = match load_goosefile(goosefile) {
         Ok(g) => g,
         Err(e) => {
             error!("Error loading goosefile: {}", e);
             std::process::exit(1);
         }
     };
-    debug!("goose_tasksets: {:?}", goose_tasksets);
+    debug!("goose_task_sets: {:?}", goose_task_sets);
 
     if configuration.list {
         println!("Available task sets:");
-        for task_set in goose_tasksets.task_sets {
+        for task_set in goose_task_sets.task_sets {
             println!(" - {} (weight: {})", task_set.name, task_set.weight);
         }
         std::process::exit(0);
+    }
+
+    let mut weighted_tasks;
+    for task_set in goose_task_sets.task_sets {
+        weighted_tasks = weight_tasks(task_set);
+        debug!("weighted tasks: {:?}", weighted_tasks);
     }
 }

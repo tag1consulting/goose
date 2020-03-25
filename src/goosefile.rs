@@ -26,14 +26,15 @@ impl GooseTaskSets {
 
         // Register a website task set and contained tasks
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
-        website_tasks.register_task(GooseTask::new("on_start"));
-        website_tasks.register_task(GooseTask::new("index").set_weight(5));
-        website_tasks.register_task(GooseTask::new("about").set_weight(2));
+        //website_tasks.register_task(GooseTask::new("on_start"));
+        website_tasks.register_task(GooseTask::new("index").set_weight(25));
+        website_tasks.register_task(GooseTask::new("story").set_weight(100));
+        website_tasks.register_task(GooseTask::new("about").set_weight(5));
         self.register_taskset(website_tasks);
 
         // Register an API task set and contained tasks
         let mut api_tasks = GooseTaskSet::new("APITasks").set_weight(3);
-        api_tasks.register_task(GooseTask::new("on_start"));
+        //api_tasks.register_task(GooseTask::new("on_start"));
         api_tasks.register_task(GooseTask::new("listing"));
         self.register_taskset(api_tasks);
     }
@@ -45,10 +46,10 @@ impl GooseTaskSets {
 }
 
 /// An individual task set
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GooseTaskSet {
     pub name: String,
-    pub weight: u16,
+    pub weight: usize,
     pub tasks: Vec<GooseTask>,
     //pub wait_time: (u16, 16),
     //host: String,
@@ -58,7 +59,7 @@ impl GooseTaskSet {
         trace!("new taskset: name: {}", &name);
         let task_set = GooseTaskSet { 
             name: name.to_string(),
-            weight: 0,
+            weight: 1,
             tasks: Vec::new(),
         };
         task_set
@@ -69,18 +70,24 @@ impl GooseTaskSet {
         self.tasks.push(task);
     }
 
-    pub fn set_weight(mut self, weight: u16) -> Self {
+    pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} set_weight: {}", self.name, weight);
-        self.weight = weight;
+        if weight < 1 {
+            info!("weight of {} not allowed, set to 1", weight);
+            self.weight = 1;
+        }
+        else {
+            self.weight = weight;
+        }
         self
     }
 }
 
 /// An individual task within a task set
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GooseTask {
     pub name: String,
-    pub weight: u16,
+    pub weight: usize,
     //pub code: @TODO, closure?,
 }
 impl GooseTask {
@@ -88,14 +95,20 @@ impl GooseTask {
         trace!("new task: name: {}", &name);
         let task = GooseTask {
             name: name.to_string(),
-            weight: 0,
+            weight: 1,
         };
         task
     }
 
-    pub fn set_weight(mut self, weight: u16) -> Self {
+    pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} set_weight: {}", self.name, weight);
-        self.weight = weight;
+        if weight < 1 {
+            info!("weight of {} not allowed, set to 1", weight);
+            self.weight = 1;
+        }
+        else {
+            self.weight = weight;
+        }
         self
     }
 }
