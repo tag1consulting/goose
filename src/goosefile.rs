@@ -21,6 +21,7 @@ impl GooseTaskSets {
     }
 
     pub fn initialize_goosefile(&mut self) {
+        trace!("initialize_goosefile");
         // @TODO: metaprogramming to automate initialization
 
         // Register a website task set and contained tasks
@@ -47,13 +48,14 @@ impl GooseTaskSets {
 #[derive(Debug)]
 pub struct GooseTaskSet {
     pub name: String,
-    weight: u16,
+    pub weight: u16,
     pub tasks: Vec<GooseTask>,
     //pub wait_time: (u16, 16),
     //host: String,
 }
 impl GooseTaskSet {
     pub fn new(name: &str) -> Self {
+        trace!("new taskset: name: {}", &name);
         let task_set = GooseTaskSet { 
             name: name.to_string(),
             weight: 0,
@@ -63,10 +65,12 @@ impl GooseTaskSet {
     }
 
     pub fn register_task(&mut self, task: GooseTask) {
+        trace!("{} register_task: {}", self.name, task.name);
         self.tasks.push(task);
     }
 
     pub fn set_weight(mut self, weight: u16) -> Self {
+        trace!("{} set_weight: {}", self.name, weight);
         self.weight = weight;
         self
     }
@@ -81,6 +85,7 @@ pub struct GooseTask {
 }
 impl GooseTask {
     pub fn new(name: &str) -> Self {
+        trace!("new task: name: {}", &name);
         let task = GooseTask {
             name: name.to_string(),
             weight: 0,
@@ -89,6 +94,7 @@ impl GooseTask {
     }
 
     pub fn set_weight(mut self, weight: u16) -> Self {
+        trace!("{} set_weight: {}", self.name, weight);
         self.weight = weight;
         self
     }

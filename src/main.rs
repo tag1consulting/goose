@@ -172,7 +172,7 @@ fn main() {
     if configuration.list {
         println!("Available task sets:");
         for task_set in goose_tasksets.task_sets {
-            println!(" - {}", task_set.name);
+            println!(" - {} (weight: {})", task_set.name, task_set.weight);
         }
         std::process::exit(0);
     }
