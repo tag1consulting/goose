@@ -1,3 +1,4 @@
+use std::cmp::{min, max};
 use std::str::FromStr;
 use regex::Regex;
 
@@ -32,4 +33,19 @@ pub fn parse_timespan(time_str: &str) -> usize {
         }
     };
     time
+}
+
+/// Calculate the greatest commond divisor using binary GCD (or Stein's) algorithm.
+/// More detail: https://en.wikipedia.org/wiki/Binary_GCD_algorithm
+pub fn gcd(u: usize, v: usize) -> usize {
+    let gcd = match ((u, v), (u & 1, v & 1)) {
+        ((x, y), _) if x == y               => x,
+        ((x, y), (0, 1)) | ((y, x), (1, 0)) => gcd(x >> 1, y),
+        ((x, y), (0, 0))                    => gcd(x >> 1, y >> 1) << 1,
+        ((x, y), (1, 1))                    => { let (x, y) = (min(x, y), max(x, y)); 
+                                                 gcd((y - x) >> 1, x) 
+                                               }
+        _                                   => unreachable!(),
+    };
+    gcd
 }

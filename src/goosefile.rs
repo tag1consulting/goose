@@ -35,7 +35,9 @@ impl GooseTaskSets {
         // Register an API task set and contained tasks
         let mut api_tasks = GooseTaskSet::new("APITasks").set_weight(3);
         //api_tasks.register_task(GooseTask::new("on_start"));
-        api_tasks.register_task(GooseTask::new("listing"));
+        api_tasks.register_task(GooseTask::new("listing1").set_weight(3));
+        api_tasks.register_task(GooseTask::new("listing2").set_weight(3));
+        api_tasks.register_task(GooseTask::new("listing3").set_weight(0));
         self.register_taskset(api_tasks);
     }
 
@@ -73,7 +75,7 @@ impl GooseTaskSet {
     pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} set_weight: {}", self.name, weight);
         if weight < 1 {
-            info!("weight of {} not allowed, set to 1", weight);
+            info!("{} weight of {} not allowed, set to 1", self.name, weight);
             self.weight = 1;
         }
         else {
@@ -103,7 +105,7 @@ impl GooseTask {
     pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} set_weight: {}", self.name, weight);
         if weight < 1 {
-            info!("weight of {} not allowed, set to 1", weight);
+            info!("{} weight of {} not allowed, set to 1", self.name, weight);
             self.weight = 1;
         }
         else {

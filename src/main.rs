@@ -10,7 +10,6 @@ extern crate structopt;
 mod goosefile;
 mod util;
 
-use std::cmp::{min, max};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
@@ -98,41 +97,27 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
     Ok(goose_task_sets)
 }
 
-fn gcd(a: usize, b: usize) -> usize {
-    let gcd = match ((a, b), (a & 1, b & 1)) {
-        ((x, y), _) if x == y               => y,
-        ((0, x), _) | ((x, 0), _)           => x,
-        ((x, y), (0, 1)) | ((y, x), (1, 0)) => gcd(x >> 1, y),
-        ((x, y), (0, 0))                    => gcd(x >> 1, y >> 1) << 1,
-        ((x, y), (1, 1))                    => { let (x, y) = (min(x, y), max(x, y)); 
-                                                 gcd((y - x) >> 1, x) 
-                                               }
-        _                                   => unreachable!(),
-    };
-    gcd
-}
-
 fn weight_tasks(task_set: GooseTaskSet) -> Vec<usize> {
     trace!("weight_tasks for {}", task_set.name);
     // @TODO: reduce by GCD
-    let mut a: usize = 0;
-    let mut b: usize;
+    let mut u: usize = 0;
+    let mut v: usize;
     for task in &task_set.tasks {
-        if a == 0 {
-            a = task.weight;
+        if u == 0 {
+            u = task.weight;
         }
         else {
-            b = task.weight;
-            trace!("calculating greatest common denominator of {} and {}", a, b);
-            a = gcd(a,b);
-            trace!("inner gcd: {}", a);
+            v = task.weight;
+            trace!("calculating greatest common denominator of {} and {}", u, v);
+            u = util::gcd(u, v);
+            trace!("inner gcd: {}", u);
         }
     }
-    debug!("gcd: {}", a);
+    debug!("gcd: {}", u);
 
     let mut bucket: Vec<usize> = Vec::new();
     for (index, task) in task_set.tasks.iter().enumerate() {
-        let weight = task.weight / a;
+        let weight = task.weight / u;
         trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
         let mut tasks = vec![index; weight];
         bucket.append(&mut tasks);
