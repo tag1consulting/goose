@@ -15,6 +15,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use num_format::{Locale, ToFormattedString};
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 use simplelog::*;
@@ -242,6 +243,9 @@ fn main() {
         println!("Available task sets:");
         for task_set in goose_task_sets.task_sets {
             println!(" - {} (weight: {})", task_set.name, task_set.weight);
+            for task in task_set.tasks {
+                println!("    o {} (weight: {})", task.name, task.weight);
+            }
         }
         std::process::exit(0);
     }
@@ -274,6 +278,7 @@ fn main() {
                 }
             }
         };
+        goose_task_sets.task_sets[*task_set].counter += 1;
         if goose_task_sets.task_sets[*task_set].tasks.len() <= goose_task_sets.task_sets[*task_set].weighted_position {
             // @TODO: confirm there's at least one task
             goose_task_sets.task_sets[*task_set].weighted_tasks = weight_tasks(&goose_task_sets.task_sets[*task_set], true);
@@ -283,11 +288,20 @@ fn main() {
         let weighted_position = goose_task_sets.task_sets[*task_set].weighted_position;
         let weighted_task = goose_task_sets.task_sets[*task_set].weighted_tasks[weighted_position];
         info!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
+        goose_task_sets.task_sets[*task_set].tasks[weighted_task].counter += 1;
         goose_task_sets.task_sets[*task_set].weighted_position += 1;
         if run_time > 0 {
             // @TODO is this too expensive to call each time through the loop?
             if started.elapsed().as_secs() >= run_time as u64 {
                 info!("exiting after {:?} seconds", run_time);
+                if configuration.print_stats {
+                    for task_set in &goose_task_sets.task_sets {
+                        println!("{}:", task_set.name);
+                        for task in &task_set.tasks {
+                          println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
+                        }
+                    }
+                }
                 std::process::exit(0);
             }
         }

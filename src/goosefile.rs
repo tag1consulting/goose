@@ -57,6 +57,7 @@ pub struct GooseTaskSet {
     pub tasks: Vec<GooseTask>,
     pub weighted_tasks: Vec<usize>,
     pub weighted_position: usize,
+    pub counter: usize,
     //pub wait_time: (u16, 16),
     //host: String,
 }
@@ -69,6 +70,7 @@ impl GooseTaskSet {
             tasks: Vec::new(),
             weighted_tasks: Vec::new(),
             weighted_position: 0,
+            counter: 0,
         };
         task_set
     }
@@ -96,6 +98,7 @@ impl GooseTaskSet {
 pub struct GooseTask {
     pub name: String,
     pub weight: usize,
+    pub counter: usize,
     //pub code: @TODO, closure?,
 }
 impl GooseTask {
@@ -104,6 +107,7 @@ impl GooseTask {
         let task = GooseTask {
             name: name.to_string(),
             weight: 1,
+            counter: 0,
         };
         task
     }
