@@ -13,6 +13,7 @@ mod util;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use rand::thread_rng;
 use rand::seq::SliceRandom;
@@ -256,6 +257,7 @@ fn main() {
     goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
     // @TODO: use Rayon to distribute across multiple cores
     let mut task_set_iter = goose_task_sets.weighted_task_sets.iter();
+    let started = Instant::now();
     loop {
         let task_set = match task_set_iter.next() {
             Some(t) => t,
@@ -282,5 +284,12 @@ fn main() {
         let weighted_task = goose_task_sets.task_sets[*task_set].weighted_tasks[weighted_position];
         info!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
         goose_task_sets.task_sets[*task_set].weighted_position += 1;
+        if run_time > 0 {
+            // @TODO is this too expensive to call each time through the loop?
+            if started.elapsed().as_secs() >= run_time as u64 {
+                info!("exiting after {:?} seconds", run_time);
+                std::process::exit(0);
+            }
+        }
     }
 }
