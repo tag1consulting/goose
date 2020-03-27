@@ -231,6 +231,11 @@ fn main() {
             std::process::exit(1);
         }
     };
+    
+    if goose_task_sets.task_sets.len() <= 0 {
+        error!("No goosefile tasksets defined in goosefile.");
+        std::process::exit(1);
+    }
 
     if configuration.list {
         println!("Available task sets:");
@@ -240,23 +245,42 @@ fn main() {
         std::process::exit(0);
     }
 
-    goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
 
     for task_set in &mut goose_task_sets.task_sets {
         task_set.weighted_tasks = weight_tasks(&task_set, true);
-        debug!("weighted tasks: {:?}", task_set.weighted_tasks);
+        debug!("weighted {} tasks: {:?}", task_set.name, task_set.weighted_tasks);
     }
     debug!("goose_task_sets: {:?}", goose_task_sets);
 
-    for task_set in goose_task_sets.weighted_task_sets {
-        // @TODO: user iterator instead of weighted_position field
-        if goose_task_sets.task_sets[task_set].tasks.len() <= goose_task_sets.task_sets[task_set].weighted_position {
-            // @TODO: re-shuffle?
+    // Weight and shuffle task sets
+    goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
+    // @TODO: use Rayon to distribute across multiple cores
+    let mut task_set_iter = goose_task_sets.weighted_task_sets.iter();
+    loop {
+        let task_set = match task_set_iter.next() {
+            Some(t) => t,
+            // We reached the end of the iterator, so reshuffle and start over.
+            None => {
+                // @TODO: avoid unnecessary re-weighting when re-shuffling?
+                goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
+                debug!("re-shuffled tasksets: {:?}", goose_task_sets.weighted_task_sets);
+                task_set_iter = goose_task_sets.weighted_task_sets.iter();
+                match task_set_iter.next() {
+                    Some(t) => t,
+                    // Goosefile has to have at least one TaskSet, so we can't get here.
+                    None => unreachable!(),
+                }
+            }
+        };
+        if goose_task_sets.task_sets[*task_set].tasks.len() <= goose_task_sets.task_sets[*task_set].weighted_position {
             // @TODO: confirm there's at least one task
-            goose_task_sets.task_sets[task_set].weighted_position = 0;
+            goose_task_sets.task_sets[*task_set].weighted_tasks = weight_tasks(&goose_task_sets.task_sets[*task_set], true);
+            debug!("re-shuffled {} tasks: {:?}", goose_task_sets.task_sets[*task_set].name, goose_task_sets.task_sets[*task_set].weighted_tasks);
+            goose_task_sets.task_sets[*task_set].weighted_position = 0;
         }
-        let weighted_position = goose_task_sets.task_sets[task_set].weighted_position;
-        info!("launching {} task from {}", goose_task_sets.task_sets[task_set].tasks[weighted_position].name, goose_task_sets.task_sets[task_set].name);
-        goose_task_sets.task_sets[task_set].weighted_position += 1;
+        let weighted_position = goose_task_sets.task_sets[*task_set].weighted_position;
+        let weighted_task = goose_task_sets.task_sets[*task_set].weighted_tasks[weighted_position];
+        info!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
+        goose_task_sets.task_sets[*task_set].weighted_position += 1;
     }
 }
