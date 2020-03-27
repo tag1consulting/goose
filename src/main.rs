@@ -259,7 +259,6 @@ fn main() {
 
     // Weight and shuffle task sets
     goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
-    // @TODO: use Rayon to distribute across multiple cores
     let mut task_set_iter = goose_task_sets.weighted_task_sets.iter();
     let started = Instant::now();
     loop {
@@ -279,17 +278,20 @@ fn main() {
             }
         };
         goose_task_sets.task_sets[*task_set].counter += 1;
-        if goose_task_sets.task_sets[*task_set].tasks.len() <= goose_task_sets.task_sets[*task_set].weighted_position {
-            // @TODO: confirm there's at least one task
-            goose_task_sets.task_sets[*task_set].weighted_tasks = weight_tasks(&goose_task_sets.task_sets[*task_set], true);
-            debug!("re-shuffled {} tasks: {:?}", goose_task_sets.task_sets[*task_set].name, goose_task_sets.task_sets[*task_set].weighted_tasks);
-            goose_task_sets.task_sets[*task_set].weighted_position = 0;
+        // We can only run a task if the task list is non-empty
+        if goose_task_sets.task_sets[*task_set].weighted_tasks.len() > 0 {
+            if goose_task_sets.task_sets[*task_set].tasks.len() <= goose_task_sets.task_sets[*task_set].weighted_position {
+                goose_task_sets.task_sets[*task_set].weighted_tasks = weight_tasks(&goose_task_sets.task_sets[*task_set], true);
+                debug!("re-shuffled {} tasks: {:?}", goose_task_sets.task_sets[*task_set].name, goose_task_sets.task_sets[*task_set].weighted_tasks);
+                goose_task_sets.task_sets[*task_set].weighted_position = 0;
+            }
+            let weighted_position = goose_task_sets.task_sets[*task_set].weighted_position;
+            let weighted_task = goose_task_sets.task_sets[*task_set].weighted_tasks[weighted_position];
+            goose_task_sets.task_sets[*task_set].tasks[weighted_task].counter += 1;
+            goose_task_sets.task_sets[*task_set].weighted_position += 1;
+            // @TODO: this can be sent to another core ...
+            info!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
         }
-        let weighted_position = goose_task_sets.task_sets[*task_set].weighted_position;
-        let weighted_task = goose_task_sets.task_sets[*task_set].weighted_tasks[weighted_position];
-        info!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
-        goose_task_sets.task_sets[*task_set].tasks[weighted_task].counter += 1;
-        goose_task_sets.task_sets[*task_set].weighted_position += 1;
         if run_time > 0 {
             // @TODO is this too expensive to call each time through the loop?
             if started.elapsed().as_secs() >= run_time as u64 {

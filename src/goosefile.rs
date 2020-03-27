@@ -41,6 +41,9 @@ impl GooseTaskSets {
         api_tasks.register_task(GooseTask::new("listing2").set_weight(3));
         api_tasks.register_task(GooseTask::new("listing3").set_weight(0));
         self.register_taskset(api_tasks);
+
+        let empty_tasks = GooseTaskSet::new("EmptyTasks").set_weight(1);
+        self.register_taskset(empty_tasks);
     }
 
 
