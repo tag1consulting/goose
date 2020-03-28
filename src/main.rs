@@ -14,6 +14,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
 use std::time::Instant;
+use std::{thread, time};
 
 use num_format::{Locale, ToFormattedString};
 use rand::thread_rng;
@@ -244,6 +245,13 @@ fn main() {
     }
     info!("run_time = {}", run_time);
 
+    // @TODO: default to 1-per-core, not just 1
+    if configuration.hatch_rate == 0 {
+        error!("The hatch_rate must be greater than 0, and generally should be no more than 100 * NUM_CORES.");
+        std::process::exit(1);
+    }
+    info!("hatch_rate = {}", configuration.hatch_rate);
+
     // Load goosefile
     let mut goose_task_sets = match load_goosefile(goosefile) {
         Ok(g) => g,
@@ -279,8 +287,25 @@ fn main() {
     // Weight and shuffle task sets
     goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
     let mut task_set_iter = goose_task_sets.weighted_task_sets.iter();
+    let sleep_float = 1.0 / configuration.hatch_rate as f32;
+    let sleep_duration = time::Duration::from_secs_f32(sleep_float);
     let started = Instant::now();
     loop {
+        if run_time > 0 {
+            // @TODO is this too expensive to call each time through the loop?
+            if started.elapsed().as_secs() >= run_time as u64 {
+                info!("exiting after {:?} seconds", run_time);
+                if configuration.print_stats {
+                    for task_set in &goose_task_sets.task_sets {
+                        println!("{}:", task_set.name);
+                        for task in &task_set.tasks {
+                          println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
+                        }
+                    }
+                }
+                std::process::exit(0);
+            }
+        }
         let task_set = match task_set_iter.next() {
             Some(t) => t,
             // We reached the end of the iterator, so reshuffle and start over.
@@ -309,22 +334,9 @@ fn main() {
             goose_task_sets.task_sets[*task_set].tasks[weighted_task].counter += 1;
             goose_task_sets.task_sets[*task_set].weighted_position += 1;
             // @TODO: this can be sent to another core ...
-            info!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
-        }
-        if run_time > 0 {
-            // @TODO is this too expensive to call each time through the loop?
-            if started.elapsed().as_secs() >= run_time as u64 {
-                info!("exiting after {:?} seconds", run_time);
-                if configuration.print_stats {
-                    for task_set in &goose_task_sets.task_sets {
-                        println!("{}:", task_set.name);
-                        for task in &task_set.tasks {
-                          println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
-                        }
-                    }
-                }
-                std::process::exit(0);
-            }
+            debug!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
+            debug!("sleeping {:?} milliseconds...", sleep_duration);
+            thread::sleep(sleep_duration);
         }
     }
 }
