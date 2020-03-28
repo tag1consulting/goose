@@ -104,30 +104,40 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
 /// Returns a bucket of weighted Goose Task Sets, optionally shuffled
 fn weight_task_sets(task_sets: &GooseTaskSets, shuffle: bool) -> Vec<usize> {
     trace!("weight_tasksets");
-    let mut u: usize = 0;
-    let mut v: usize;
-    for task_set in &task_sets.task_sets {
-        if u == 0 {
-            u = task_set.weight;
-        }
-        else {
-            v = task_set.weight;
-            trace!("calculating greatest common denominator of {} and {}", u, v);
-            u = util::gcd(u, v);
-            trace!("inner gcd: {}", u);
-        }
-    }
-    // u will always be the greatest common divisor
-    debug!("gcd: {}", u);
 
-    let mut bucket: Vec<usize> = Vec::new();
-    for (index, task_set) in task_sets.task_sets.iter().enumerate() {
-        // divide by greatest common divisor so bucket is as small as possible
-        let weight = task_set.weight / u;
-        trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task_set.name, task_set.weight, weight);
-        let mut task_sets = vec![index; weight];
-        bucket.append(&mut task_sets);
+    let mut bucket;
+    if task_sets.weighted_task_sets.len() > 0 {
+        bucket = task_sets.weighted_task_sets.clone();
+        trace!("re-using existing weighted_task_sets: {:?}", bucket);
     }
+    else {
+        let mut u: usize = 0;
+        let mut v: usize;
+        for task_set in &task_sets.task_sets {
+            if u == 0 {
+                u = task_set.weight;
+            }
+            else {
+                v = task_set.weight;
+                trace!("calculating greatest common denominator of {} and {}", u, v);
+                u = util::gcd(u, v);
+                trace!("inner gcd: {}", u);
+            }
+        }
+        // u will always be the greatest common divisor
+        debug!("gcd: {}", u);
+
+        bucket = Vec::new();
+        for (index, task_set) in task_sets.task_sets.iter().enumerate() {
+            // divide by greatest common divisor so bucket is as small as possible
+            let weight = task_set.weight / u;
+            trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task_set.name, task_set.weight, weight);
+            let mut task_sets = vec![index; weight];
+            bucket.append(&mut task_sets);
+        }
+        trace!("created weighted_task_sets: {:?}", bucket);
+    }
+
     if shuffle {
         bucket.shuffle(&mut thread_rng());
     }
@@ -137,29 +147,38 @@ fn weight_task_sets(task_sets: &GooseTaskSets, shuffle: bool) -> Vec<usize> {
 /// Returns a bucket of weighted Goose Tasks, optionally shuffled
 fn weight_tasks(task_set: &GooseTaskSet, shuffle: bool) -> Vec<usize> {
     trace!("weight_tasks for {}", task_set.name);
-    let mut u: usize = 0;
-    let mut v: usize;
-    for task in &task_set.tasks {
-        if u == 0 {
-            u = task.weight;
-        }
-        else {
-            v = task.weight;
-            trace!("calculating greatest common denominator of {} and {}", u, v);
-            u = util::gcd(u, v);
-            trace!("inner gcd: {}", u);
-        }
-    }
-    // u will always be the greatest common divisor
-    debug!("gcd: {}", u);
 
-    let mut bucket: Vec<usize> = Vec::new();
-    for (index, task) in task_set.tasks.iter().enumerate() {
-        // divide by greatest common divisor so bucket is as small as possible
-        let weight = task.weight / u;
-        trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
-        let mut tasks = vec![index; weight];
-        bucket.append(&mut tasks);
+    let mut bucket;
+    if task_set.weighted_tasks.len() > 0 {
+        bucket = task_set.weighted_tasks.clone();
+        trace!("re-using existing weighted_tasks: {:?}", bucket);
+    }
+    else {
+        let mut u: usize = 0;
+        let mut v: usize;
+        for task in &task_set.tasks {
+            if u == 0 {
+                u = task.weight;
+            }
+            else {
+                v = task.weight;
+                trace!("calculating greatest common denominator of {} and {}", u, v);
+                u = util::gcd(u, v);
+                trace!("inner gcd: {}", u);
+            }
+        }
+        // u will always be the greatest common divisor
+        debug!("gcd: {}", u);
+
+        bucket = Vec::new();
+        for (index, task) in task_set.tasks.iter().enumerate() {
+            // divide by greatest common divisor so bucket is as small as possible
+            let weight = task.weight / u;
+            trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
+            let mut tasks = vec![index; weight];
+            bucket.append(&mut tasks);
+        }
+        trace!("created weighted_tasks: {:?}", bucket);
     }
     if shuffle {
         bucket.shuffle(&mut thread_rng());
