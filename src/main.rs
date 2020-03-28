@@ -31,7 +31,7 @@ pub struct Configuration {
     #[structopt(short = "H", long, required=false, default_value="")]
     host: String,
 
-    /// Rust module file to import, e.g. '../other.rs'.
+    ///// Rust module file to import, e.g. '../other.rs'.
     //#[structopt(short = "f", long, default_value="goosefile")]
     //goosefile: String,
 
