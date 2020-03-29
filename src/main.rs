@@ -35,13 +35,13 @@ pub struct Configuration {
     //#[structopt(short = "f", long, default_value="goosefile")]
     //goosefile: String,
 
-    /// Number of concurrent Goose users.
-    #[structopt(short, long, default_value="1")]
-    clients: usize,
+    /// Number of concurrent Goose users (defaults to available CPUs + 1).
+    #[structopt(short, long)]
+    clients: Option<usize>,
 
-    /// The rate per second in which clients are spawned.
-    #[structopt(short = "r", long, default_value="1")]
-    hatch_rate: usize,
+    /// How many users to spawn per second (defaults to available CPUs + 1).
+    #[structopt(short = "r", long)]
+    hatch_rate: Option<usize>,
 
     /// Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.).
     #[structopt(short = "t", long, required=false, default_value="")]
@@ -245,12 +245,41 @@ fn main() {
     }
     info!("run_time = {}", run_time);
 
-    // @TODO: default to 1-per-core, not just 1
-    if configuration.hatch_rate == 0 {
-        error!("The hatch_rate must be greater than 0, and generally should be no more than 100 * NUM_CORES.");
-        std::process::exit(1);
-    }
-    info!("hatch_rate = {}", configuration.hatch_rate);
+    let number_of_cpus = num_cpus::get();
+    let concurrent_clients = match configuration.clients {
+        Some(c) => {
+            if c == 0 {
+                error!("At least 1 client is required.");
+                std::process::exit(1);
+            }
+            else {
+                c
+            }
+        }
+        None => {
+            let c = number_of_cpus + 1;
+            info!("concurrent clients defaulted to {} (NUM_CORES + 1)", c);
+            c
+        }
+    };
+    debug!("clients = {}", concurrent_clients);
+    let hatch_rate = match configuration.hatch_rate {
+        Some(h) => {
+            if h == 0 {
+                error!("The hatch_rate must be greater than 0, and generally should be no more than 100 * NUM_CORES.");
+                std::process::exit(1);
+            }
+            else {
+                h
+            }
+        }
+        None => {
+            let h = number_of_cpus + 1;
+            info!("hatch_rate defaulted to {} (NUM_CORES + 1)", h);
+            h
+        }
+    };
+    debug!("hatch_rate = {}", hatch_rate);
 
     // Load goosefile
     let mut goose_task_sets = match load_goosefile(goosefile) {
@@ -287,7 +316,7 @@ fn main() {
     // Weight and shuffle task sets
     goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
     let mut task_set_iter = goose_task_sets.weighted_task_sets.iter();
-    let sleep_float = 1.0 / configuration.hatch_rate as f32;
+    let sleep_float = 1.0 / hatch_rate as f32;
     let sleep_duration = time::Duration::from_secs_f32(sleep_float);
     let started = Instant::now();
     loop {
