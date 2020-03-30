@@ -24,6 +24,14 @@ use structopt::StructOpt;
 
 use goosefile::{GooseTaskSets, GooseTaskSet};
 
+#[derive(Debug, Default, Clone)]
+struct GooseState {
+    configuration: Option<Configuration>,
+    number_of_cpus: usize,
+    max_clients: usize,
+    active_clients: usize,
+}
+
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
 pub struct Configuration {
@@ -35,11 +43,11 @@ pub struct Configuration {
     //#[structopt(short = "f", long, default_value="goosefile")]
     //goosefile: String,
 
-    /// Number of concurrent Goose users (defaults to available CPUs + 1).
+    /// Number of concurrent Goose users (defaults to available CPUs).
     #[structopt(short, long)]
     clients: Option<usize>,
 
-    /// How many users to spawn per second (defaults to available CPUs + 1).
+    /// How many users to spawn per second (defaults to available CPUs).
     #[structopt(short = "r", long)]
     hatch_rate: Option<usize>,
 
@@ -188,7 +196,11 @@ fn weight_tasks(task_set: &GooseTaskSet, shuffle: bool) -> Vec<usize> {
 }
 
 fn main() {
-    let configuration = Configuration::from_args();
+    let mut goose_state = GooseState::default();
+    goose_state.configuration = Some(Configuration::from_args());
+
+    // Clone configuration, also leave in goose_state for use in threads.
+    let configuration = goose_state.configuration.clone().unwrap();
 
     // Allow optionally controlling debug output level
     let debug_level;
@@ -245,8 +257,8 @@ fn main() {
     }
     info!("run_time = {}", run_time);
 
-    let number_of_cpus = num_cpus::get();
-    let concurrent_clients = match configuration.clients {
+    goose_state.number_of_cpus = num_cpus::get();
+    goose_state.max_clients = match configuration.clients {
         Some(c) => {
             if c == 0 {
                 error!("At least 1 client is required.");
@@ -257,12 +269,12 @@ fn main() {
             }
         }
         None => {
-            let c = number_of_cpus + 1;
-            info!("concurrent clients defaulted to {} (NUM_CORES + 1)", c);
+            let c = goose_state.number_of_cpus;
+            info!("max concurrent clients defaulted to {} (number of CPUs)", c);
             c
         }
     };
-    debug!("clients = {}", concurrent_clients);
+    debug!("clients = {}", goose_state.max_clients);
     let hatch_rate = match configuration.hatch_rate {
         Some(h) => {
             if h == 0 {
@@ -274,8 +286,8 @@ fn main() {
             }
         }
         None => {
-            let h = number_of_cpus + 1;
-            info!("hatch_rate defaulted to {} (NUM_CORES + 1)", h);
+            let h = goose_state.number_of_cpus;
+            info!("hatch_rate defaulted to {} (number of CPUs)", h);
             h
         }
     };
@@ -319,7 +331,8 @@ fn main() {
     let sleep_float = 1.0 / hatch_rate as f32;
     let sleep_duration = time::Duration::from_secs_f32(sleep_float);
     let started = Instant::now();
-    loop {
+    while goose_state.active_clients < goose_state.max_clients {
+        // @TODO: move this into a function
         if run_time > 0 {
             // @TODO is this too expensive to call each time through the loop?
             if started.elapsed().as_secs() >= run_time as u64 {
@@ -339,7 +352,6 @@ fn main() {
             Some(t) => t,
             // We reached the end of the iterator, so reshuffle and start over.
             None => {
-                // @TODO: avoid unnecessary re-weighting when re-shuffling?
                 goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
                 debug!("re-shuffled tasksets: {:?}", goose_task_sets.weighted_task_sets);
                 task_set_iter = goose_task_sets.weighted_task_sets.iter();
@@ -353,19 +365,52 @@ fn main() {
         goose_task_sets.task_sets[*task_set].counter += 1;
         // We can only run a task if the task list is non-empty
         if goose_task_sets.task_sets[*task_set].weighted_tasks.len() > 0 {
-            if goose_task_sets.task_sets[*task_set].tasks.len() <= goose_task_sets.task_sets[*task_set].weighted_position {
-                goose_task_sets.task_sets[*task_set].weighted_tasks = weight_tasks(&goose_task_sets.task_sets[*task_set], true);
-                debug!("re-shuffled {} tasks: {:?}", goose_task_sets.task_sets[*task_set].name, goose_task_sets.task_sets[*task_set].weighted_tasks);
-                goose_task_sets.task_sets[*task_set].weighted_position = 0;
-            }
-            let weighted_position = goose_task_sets.task_sets[*task_set].weighted_position;
-            let weighted_task = goose_task_sets.task_sets[*task_set].weighted_tasks[weighted_position];
-            goose_task_sets.task_sets[*task_set].tasks[weighted_task].counter += 1;
-            goose_task_sets.task_sets[*task_set].weighted_position += 1;
-            // @TODO: this can be sent to another core ...
-            debug!("launching {} task from {}", goose_task_sets.task_sets[*task_set].tasks[weighted_task].name, goose_task_sets.task_sets[*task_set].name);
+            // @TODO: track counters from threads
+            //goose_task_sets.task_sets[*task_set].tasks[weighted_task].counter += 1;
+            let thread_task_set = goose_task_sets.task_sets[*task_set].clone();
+            // @TODO: gracefully join/exit children
+
+            // Launch a new client
+            let _child = thread::spawn(move || {
+                info!("launching {} client...", thread_task_set.name);
+                let mut thread_weighted_tasks = weight_tasks(&thread_task_set, true);
+                let mut thread_weighted_position = 0;
+                loop {
+                    if thread_task_set.tasks.len() <= thread_weighted_position {
+                        thread_weighted_tasks = weight_tasks(&thread_task_set, true);
+                        debug!("re-shuffled {} tasks: {:?}", thread_task_set.name, thread_weighted_tasks);
+                        thread_weighted_position = 0;
+                    }
+                    let thread_weighted_task = thread_weighted_tasks[thread_weighted_position];
+                    debug!("launching {} task from {}", thread_task_set.tasks[thread_weighted_task].name, thread_task_set.name);
+                    thread_weighted_position += 1;
+                    // @TODO: delay
+                }
+            });
+            goose_state.active_clients += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
             thread::sleep(sleep_duration);
         }
+    }
+    info!("launched {} clients...", goose_state.active_clients);
+
+    loop {
+        // @TODO: move this into a function
+        if run_time > 0 {
+            if started.elapsed().as_secs() >= run_time as u64 {
+                info!("exiting after {:?} seconds", run_time);
+                if configuration.print_stats {
+                    for task_set in &goose_task_sets.task_sets {
+                        println!("{}:", task_set.name);
+                        for task in &task_set.tasks {
+                          println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
+                        }
+                    }
+                }
+                std::process::exit(0);
+            }
+        }
+        let one_second = time::Duration::from_secs(1);
+        thread::sleep(one_second);
     }
 }
