@@ -32,9 +32,9 @@ impl GooseTaskSets {
         // Register a website task set and contained tasks
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
         //website_tasks.register_task(GooseTask::new("on_start"));
-        website_tasks.register_task(GooseTask::new("index").set_weight(6));
-        website_tasks.register_task(GooseTask::new("story").set_weight(9));
-        website_tasks.register_task(GooseTask::new("about").set_weight(3));
+        website_tasks.register_task(GooseTask::new("index").set_weight(6).set_function(website_task_index));
+        website_tasks.register_task(GooseTask::new("story").set_weight(9).set_function(website_task_story));
+        website_tasks.register_task(GooseTask::new("about").set_weight(3).set_function(website_task_about));
         self.register_taskset(website_tasks);
 
         // Register an API task set and contained tasks
@@ -105,7 +105,8 @@ pub struct GooseTask {
     pub name: String,
     pub weight: usize,
     pub counter: Arc<AtomicUsize>,
-    //pub code: @TODO, closure?,
+    // @TODO: pass in a struct containing Client and other state
+    pub function: Option<fn(reqwest::Client) -> reqwest::Client>,
 }
 impl GooseTask {
     pub fn new(name: &str) -> Self {
@@ -114,6 +115,7 @@ impl GooseTask {
             name: name.to_string(),
             weight: 1,
             counter: Arc::new(AtomicUsize::new(0)),
+            function: None,
         };
         task
     }
@@ -129,6 +131,30 @@ impl GooseTask {
         }
         self
     }
+
+    pub fn set_function(mut self, function: fn(reqwest::Client) -> reqwest::Client) -> Self {
+        trace!("{} set_function: {:?}", self.name, function);
+        self.function = Some(function);
+        self
+    }
+}
+
+fn website_task_index(client: reqwest::Client) -> reqwest::Client {
+    let resp = client.get("http://localhost/");
+    debug!("index: {:#?}", resp);
+    client
+}
+
+fn website_task_story(client: reqwest::Client) -> reqwest::Client {
+    let resp = client.get("http://localhost/story");
+    debug!("story: {:#?}", resp);
+    client
+}
+
+fn website_task_about(client: reqwest::Client) -> reqwest::Client {
+    let resp = client.get("http://localhost/about");
+    debug!("about: {:#?}", resp);
+    client
 }
 
 /*

@@ -373,11 +373,11 @@ fn main() {
         if goose_task_sets.task_sets[*task_set].weighted_tasks.len() > 0 {
             let thread_task_set = goose_task_sets.task_sets[*task_set].clone();
             // Launch a new client
-            // @TODO: gracefully join/exit children
             let client = thread::spawn(move || {
                 info!("launching {} client...", thread_task_set.name);
                 let mut thread_weighted_tasks = weight_tasks(&thread_task_set, true);
                 let mut thread_weighted_position = 0;
+                let mut thread_client = reqwest::Client::new();
                 loop {
                     if thread_task_set.tasks.len() <= thread_weighted_position {
                         thread_weighted_tasks = weight_tasks(&thread_task_set, true);
@@ -387,10 +387,15 @@ fn main() {
                     let thread_weighted_task = thread_weighted_tasks[thread_weighted_position];
                     thread_task_set.tasks[thread_weighted_task].counter.fetch_add(1, Ordering::Relaxed);
                     debug!("launching {} task from {}", thread_task_set.tasks[thread_weighted_task].name, thread_task_set.name);
+                    thread_client = match thread_task_set.tasks[thread_weighted_task].function {
+                        Some(f) => f(thread_client),
+                        None => thread_client,
+                    };
                     thread_weighted_position += 1;
                     // @TODO: configurable/optional delay
                 }
             });
+            // @TODO: gracefully join/exit children
             clients.push(client);
             goose_state.active_clients += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
