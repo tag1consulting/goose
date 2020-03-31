@@ -13,6 +13,7 @@ mod util;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 use std::{thread, time};
 
@@ -209,7 +210,7 @@ fn display_stats(goose_task_sets: &GooseTaskSets) {
     for task_set in &goose_task_sets.task_sets {
         println!("{}:", task_set.name);
         for task in &task_set.tasks {
-            println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
+            println!(" - {} ({} times)", task.name, task.counter.load(Ordering::Relaxed).to_formatted_string(&Locale::en));
         }
     }
 }
@@ -370,12 +371,9 @@ fn main() {
         goose_task_sets.task_sets[*task_set].counter += 1;
         // We can only run a task if the task list is non-empty
         if goose_task_sets.task_sets[*task_set].weighted_tasks.len() > 0 {
-            // @TODO: track counters from threads
-            //goose_task_sets.task_sets[*task_set].tasks[weighted_task].counter += 1;
             let thread_task_set = goose_task_sets.task_sets[*task_set].clone();
-            // @TODO: gracefully join/exit children
-
             // Launch a new client
+            // @TODO: gracefully join/exit children
             let client = thread::spawn(move || {
                 info!("launching {} client...", thread_task_set.name);
                 let mut thread_weighted_tasks = weight_tasks(&thread_task_set, true);
@@ -387,9 +385,10 @@ fn main() {
                         thread_weighted_position = 0;
                     }
                     let thread_weighted_task = thread_weighted_tasks[thread_weighted_position];
+                    thread_task_set.tasks[thread_weighted_task].counter.fetch_add(1, Ordering::Relaxed);
                     debug!("launching {} task from {}", thread_task_set.tasks[thread_weighted_task].name, thread_task_set.name);
                     thread_weighted_position += 1;
-                    // @TODO: delay
+                    // @TODO: configurable/optional delay
                 }
             });
             clients.push(client);

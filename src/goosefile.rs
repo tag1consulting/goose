@@ -5,6 +5,9 @@
 ///      o the main goose binary (pre-compiled)
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
+
 // @TODO: this needs to be entirely provided by goose or goose_codegen
 
 /// A global list of all Goose task sets
@@ -101,7 +104,7 @@ impl GooseTaskSet {
 pub struct GooseTask {
     pub name: String,
     pub weight: usize,
-    pub counter: usize,
+    pub counter: Arc<AtomicUsize>,
     //pub code: @TODO, closure?,
 }
 impl GooseTask {
@@ -110,7 +113,7 @@ impl GooseTask {
         let task = GooseTask {
             name: name.to_string(),
             weight: 1,
-            counter: 0,
+            counter: Arc::new(AtomicUsize::new(0)),
         };
         task
     }
