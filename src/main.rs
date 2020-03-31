@@ -195,6 +195,24 @@ fn weight_tasks(task_set: &GooseTaskSet, shuffle: bool) -> Vec<usize> {
     bucket
 }
 
+fn run_timer_ended(started: Instant, run_time: usize) -> bool {
+    if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
+        true
+    }
+    else {
+        false
+    }
+}
+
+fn display_stats(goose_task_sets: &GooseTaskSets) {
+    for task_set in &goose_task_sets.task_sets {
+        println!("{}:", task_set.name);
+        for task in &task_set.tasks {
+            println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
+        }
+    }
+}
+
 fn main() {
     let mut goose_state = GooseState::default();
     goose_state.configuration = Some(Configuration::from_args());
@@ -331,22 +349,14 @@ fn main() {
     let sleep_float = 1.0 / hatch_rate as f32;
     let sleep_duration = time::Duration::from_secs_f32(sleep_float);
     let started = Instant::now();
+    let mut clients = vec![];
     while goose_state.active_clients < goose_state.max_clients {
-        // @TODO: move this into a function
-        if run_time > 0 {
-            // @TODO is this too expensive to call each time through the loop?
-            if started.elapsed().as_secs() >= run_time as u64 {
-                info!("exiting after {:?} seconds", run_time);
-                if configuration.print_stats {
-                    for task_set in &goose_task_sets.task_sets {
-                        println!("{}:", task_set.name);
-                        for task in &task_set.tasks {
-                          println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
-                        }
-                    }
-                }
-                std::process::exit(0);
+        if run_timer_ended(started, run_time) {
+            info!("exiting after {:?} seconds", run_time);
+            if configuration.print_stats {
+                display_stats(&goose_task_sets);
             }
+            std::process::exit(0);
         }
         let task_set = match task_set_iter.next() {
             Some(t) => t,
@@ -371,7 +381,7 @@ fn main() {
             // @TODO: gracefully join/exit children
 
             // Launch a new client
-            let _child = thread::spawn(move || {
+            let client = thread::spawn(move || {
                 info!("launching {} client...", thread_task_set.name);
                 let mut thread_weighted_tasks = weight_tasks(&thread_task_set, true);
                 let mut thread_weighted_position = 0;
@@ -387,6 +397,7 @@ fn main() {
                     // @TODO: delay
                 }
             });
+            clients.push(client);
             goose_state.active_clients += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
             thread::sleep(sleep_duration);
@@ -395,20 +406,12 @@ fn main() {
     info!("launched {} clients...", goose_state.active_clients);
 
     loop {
-        // @TODO: move this into a function
-        if run_time > 0 {
-            if started.elapsed().as_secs() >= run_time as u64 {
-                info!("exiting after {:?} seconds", run_time);
-                if configuration.print_stats {
-                    for task_set in &goose_task_sets.task_sets {
-                        println!("{}:", task_set.name);
-                        for task in &task_set.tasks {
-                          println!(" - {} ({} times)", task.name, task.counter.to_formatted_string(&Locale::en));
-                        }
-                    }
-                }
-                std::process::exit(0);
+        if run_timer_ended(started, run_time) {
+            info!("exiting after {:?} seconds", run_time);
+            if configuration.print_stats {
+                display_stats(&goose_task_sets);
             }
+            std::process::exit(0);
         }
         let one_second = time::Duration::from_secs(1);
         thread::sleep(one_second);
