@@ -68,7 +68,7 @@ pub struct Configuration {
     #[structopt(long)]
     reset_stats: bool,
 
-    /// Shows list of all possible Goose classes and exits
+    /// Shows list of all possible Goose tasks and exits
     #[structopt(short, long)]
     list: bool,
 
@@ -328,7 +328,7 @@ fn main() {
     }
 
     if configuration.list {
-        println!("Available task sets:");
+        println!("Available tasks:");
         for task_set in goose_task_sets.task_sets {
             println!(" - {} (weight: {})", task_set.name, task_set.weight);
             for task in task_set.tasks {
