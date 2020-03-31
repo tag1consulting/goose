@@ -195,12 +195,13 @@ fn weight_tasks(task_set: &GooseTaskSet, shuffle: bool) -> Vec<usize> {
     bucket
 }
 
-fn run_timer_ended(started: Instant, run_time: usize) -> bool {
+fn run_timer(started: Instant, run_time: usize, configuration: &Configuration, goose_task_sets: &GooseTaskSets) {
     if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
-        true
-    }
-    else {
-        false
+        info!("exiting after {:?} seconds", run_time);
+        if configuration.print_stats {
+            display_stats(goose_task_sets);
+        }
+        std::process::exit(0);
     }
 }
 
@@ -237,7 +238,7 @@ fn main() {
         _ => log_level = LevelFilter::Trace,
     }
 
-    let log_file = PathBuf::from(configuration.log_file);
+    let log_file = PathBuf::from(&configuration.log_file);
 
     CombinedLogger::init(vec![
         TermLogger::new(
@@ -351,13 +352,7 @@ fn main() {
     let started = Instant::now();
     let mut clients = vec![];
     while goose_state.active_clients < goose_state.max_clients {
-        if run_timer_ended(started, run_time) {
-            info!("exiting after {:?} seconds", run_time);
-            if configuration.print_stats {
-                display_stats(&goose_task_sets);
-            }
-            std::process::exit(0);
-        }
+        run_timer(started, run_time, &configuration, &goose_task_sets);
         let task_set = match task_set_iter.next() {
             Some(t) => t,
             // We reached the end of the iterator, so reshuffle and start over.
@@ -406,13 +401,7 @@ fn main() {
     info!("launched {} clients...", goose_state.active_clients);
 
     loop {
-        if run_timer_ended(started, run_time) {
-            info!("exiting after {:?} seconds", run_time);
-            if configuration.print_stats {
-                display_stats(&goose_task_sets);
-            }
-            std::process::exit(0);
-        }
+        run_timer(started, run_time, &configuration, &goose_task_sets);
         let one_second = time::Duration::from_secs(1);
         thread::sleep(one_second);
     }
