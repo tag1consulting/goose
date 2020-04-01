@@ -106,7 +106,7 @@ pub struct GooseTask {
     pub weight: usize,
     pub counter: Arc<AtomicUsize>,
     // @TODO: pass in a struct containing Client and other state
-    pub function: Option<fn(reqwest::Client) -> reqwest::Client>,
+    pub function: Option<fn(reqwest::blocking::Client) -> reqwest::blocking::Client>,
 }
 impl GooseTask {
     pub fn new(name: &str) -> Self {
@@ -132,28 +132,59 @@ impl GooseTask {
         self
     }
 
-    pub fn set_function(mut self, function: fn(reqwest::Client) -> reqwest::Client) -> Self {
+    pub fn set_function(mut self, function: fn(reqwest::blocking::Client) -> reqwest::blocking::Client) -> Self {
         trace!("{} set_function: {:?}", self.name, function);
         self.function = Some(function);
         self
     }
 }
 
-fn website_task_index(client: reqwest::Client) -> reqwest::Client {
-    let resp = client.get("http://localhost/");
-    debug!("index: {:#?}", resp);
+fn website_task_index(client: reqwest::blocking::Client) -> reqwest::blocking::Client {
+    match client.get("http://localhost/").send() {
+        Ok(r) => {
+            let content_length = match r.content_length() {
+                Some(l) => l,
+                None => 0,
+            };
+            debug!("index: content_length: {}", content_length);
+        }
+        Err(e) => {
+            debug!("index: error: {}", e);
+        }
+    };
     client
 }
 
-fn website_task_story(client: reqwest::Client) -> reqwest::Client {
-    let resp = client.get("http://localhost/story");
-    debug!("story: {:#?}", resp);
+fn website_task_story(client: reqwest::blocking::Client) -> reqwest::blocking::Client {
+    match client.get("http://localhost/story").send() {
+        Ok(r) => {
+            let content_length = match r.content_length() {
+                Some(l) => l,
+                None => 0,
+            };
+            debug!("story: content_length: {}", content_length);
+        }
+        Err(e) => {
+            debug!("story: error: {}", e);
+
+        }
+    };
     client
 }
 
-fn website_task_about(client: reqwest::Client) -> reqwest::Client {
-    let resp = client.get("http://localhost/about");
-    debug!("about: {:#?}", resp);
+fn website_task_about(client: reqwest::blocking::Client) -> reqwest::blocking::Client {
+    match client.get("http://localhost/about").send() {
+        Ok(r) => {
+            let content_length = match r.content_length() {
+                Some(l) => l,
+                None => 0,
+            };
+            debug!("about: content_length: {}", content_length);
+        }
+        Err(e) => {
+            debug!("about: error: {}", e);
+        }
+    };
     client
 }
 

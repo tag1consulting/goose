@@ -377,7 +377,7 @@ fn main() {
                 info!("launching {} client...", thread_task_set.name);
                 let mut thread_weighted_tasks = weight_tasks(&thread_task_set, true);
                 let mut thread_weighted_position = 0;
-                let mut thread_client = reqwest::Client::new();
+                let mut thread_client = reqwest::blocking::Client::new();
                 loop {
                     if thread_task_set.tasks.len() <= thread_weighted_position {
                         thread_weighted_tasks = weight_tasks(&thread_task_set, true);

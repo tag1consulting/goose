@@ -11,6 +11,6 @@ num_cpus = "1.0"
 num-format = "0.4"
 rand = "0.7"
 regex = "1"
-reqwest = "0.10"
+reqwest = { version = "0.10", features = ["blocking"] }
 structopt = "0.3"
 simplelog = "0.7"
