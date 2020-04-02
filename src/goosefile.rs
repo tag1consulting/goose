@@ -5,7 +5,7 @@
 ///      o the main goose binary (pre-compiled)
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
-use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTask};
+use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTask, GooseTaskState};
 
 impl GooseTaskSets {
     pub fn initialize_goosefile(&mut self) {
@@ -14,10 +14,9 @@ impl GooseTaskSets {
 
         // Register a website task set and contained tasks
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
-        //website_tasks.register_task(GooseTask::new("on_start"));
-        website_tasks.register_task(GooseTask::new("index").set_weight(6).set_function(website_task_index));
-        website_tasks.register_task(GooseTask::new("story").set_weight(9).set_function(website_task_story));
-        website_tasks.register_task(GooseTask::new("about").set_weight(3).set_function(website_task_about));
+        website_tasks.register_task(GooseTask::new("index").set_weight(6).set_function(GooseTaskState::website_task_index));
+        website_tasks.register_task(GooseTask::new("story").set_weight(9).set_function(GooseTaskState::website_task_story));
+        website_tasks.register_task(GooseTask::new("about").set_weight(3).set_function(GooseTaskState::website_task_about));
         self.register_taskset(website_tasks);
 
         // Register an API task set and contained tasks
@@ -35,82 +34,56 @@ impl GooseTaskSets {
 
 // @TODO: this needs to be entirely provided by goose or goose_codegen
 
-fn website_task_index(client: reqwest::blocking::Client) -> reqwest::blocking::Client {
-    match client.get("http://localhost/").send() {
-        Ok(r) => {
-            let content_length = match r.content_length() {
-                Some(l) => l,
-                None => 0,
-            };
-            debug!("index: content_length: {}", content_length);
-        }
-        Err(e) => {
-            debug!("index: error: {}", e);
-        }
-    };
-    client
-}
-
-fn website_task_story(client: reqwest::blocking::Client) -> reqwest::blocking::Client {
-    match client.get("http://localhost/story").send() {
-        Ok(r) => {
-            let content_length = match r.content_length() {
-                Some(l) => l,
-                None => 0,
-            };
-            debug!("story: content_length: {}", content_length);
-        }
-        Err(e) => {
-            debug!("story: error: {}", e);
-
-        }
-    };
-    client
-}
-
-fn website_task_about(client: reqwest::blocking::Client) -> reqwest::blocking::Client {
-    match client.get("http://localhost/about").send() {
-        Ok(r) => {
-            let content_length = match r.content_length() {
-                Some(l) => l,
-                None => 0,
-            };
-            debug!("about: content_length: {}", content_length);
-        }
-        Err(e) => {
-            debug!("about: error: {}", e);
-        }
-    };
-    client
-}
-
-/*
-impl WebsiteTasks {
-    #[task]
-    fn on_start(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let params = [("username", "test_user"), ("password", "secure_example")];
-        let client = reqwest::Client::new();
-        let res = client.post("/login")
-            .form(&params)
-            .send()?;
-        Ok(())
+impl GooseTaskState {
+    fn website_task_index(self) -> Self {
+        match self.client.get("http://localhost/").send() {
+            Ok(r) => {
+                let content_length = match r.content_length() {
+                    Some(l) => l,
+                    None => 0,
+                };
+                debug!("index: content_length: {}", content_length);
+            }
+            Err(e) => {
+                debug!("index: error: {}", e);
+            }
+        };
+        self
     }
 
-    #[task]
-    fn index(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let resp = reqwest::blocking::get("/");
-        println!("{:#?}", resp);
-        Ok(())
+    fn website_task_story(self) -> Self {
+        match self.client.get("http://localhost/story").send() {
+            Ok(r) => {
+                let content_length = match r.content_length() {
+                    Some(l) => l,
+                    None => 0,
+                };
+                debug!("story: content_length: {}", content_length);
+            }
+            Err(e) => {
+                debug!("story: error: {}", e);
+
+            }
+        };
+        self
     }
 
-    #[task]
-    fn about(&self) {
-        let resp = reqwest::blocking::get("/about/");
-        println!("{:#?}", resp);
-        Ok(())
+    fn website_task_about(self) -> Self {
+        match self.client.get("http://localhost/about").send() {
+            Ok(r) => {
+                let content_length = match r.content_length() {
+                    Some(l) => l,
+                    None => 0,
+                };
+                debug!("about: content_length: {}", content_length);
+            }
+            Err(e) => {
+                debug!("about: error: {}", e);
+            }
+        };
+        self
     }
 }
-*/
 
 /*
 class WebsiteUser(HttpLocust):

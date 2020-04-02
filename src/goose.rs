@@ -1,6 +1,8 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
+use reqwest::blocking::Client;
+
 /// A global list of all Goose task sets
 #[derive(Debug)]
 pub struct GooseTaskSets {
@@ -69,7 +71,8 @@ pub struct GooseTask {
     pub name: String,
     pub weight: usize,
     pub counter: Arc<AtomicUsize>,
-    pub function: Option<fn(reqwest::blocking::Client) -> reqwest::blocking::Client>,
+    pub function: Option<fn(GooseTaskState) -> GooseTaskState>,
+    pub state: GooseTaskState,
 }
 impl GooseTask {
     pub fn new(name: &str) -> Self {
@@ -79,6 +82,7 @@ impl GooseTask {
             weight: 1,
             counter: Arc::new(AtomicUsize::new(0)),
             function: None,
+            state: GooseTaskState::new(),
         };
         task
     }
@@ -95,9 +99,23 @@ impl GooseTask {
         self
     }
 
-    pub fn set_function(mut self, function: fn(reqwest::blocking::Client) -> reqwest::blocking::Client) -> Self {
+    pub fn set_function(mut self, function: fn(GooseTaskState) -> GooseTaskState) -> Self {
         trace!("{} set_function: {:?}", self.name, function);
         self.function = Some(function);
         self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GooseTaskState {
+    pub client: Client,
+}
+impl GooseTaskState {
+    pub fn new() -> Self {
+        trace!("new task state");
+        let state = GooseTaskState {
+            client: Client::new(),
+        };
+        state
     }
 }

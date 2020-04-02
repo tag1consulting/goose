@@ -372,13 +372,12 @@ fn main() {
         goose_task_sets.task_sets[*task_set].counter += 1;
         // We can only run a task if the task list is non-empty
         if goose_task_sets.task_sets[*task_set].weighted_tasks.len() > 0 {
-            let thread_task_set = goose_task_sets.task_sets[*task_set].clone();
+            let mut thread_task_set = goose_task_sets.task_sets[*task_set].clone();
             // Launch a new client
             let client = thread::spawn(move || {
                 info!("launching {} client...", thread_task_set.name);
                 let mut thread_weighted_tasks = weight_tasks(&thread_task_set, true);
                 let mut thread_weighted_position = 0;
-                let mut thread_client = reqwest::blocking::Client::new();
                 loop {
                     if thread_task_set.tasks.len() <= thread_weighted_position {
                         thread_weighted_tasks = weight_tasks(&thread_task_set, true);
@@ -387,11 +386,12 @@ fn main() {
                     }
                     let thread_weighted_task = thread_weighted_tasks[thread_weighted_position];
                     thread_task_set.tasks[thread_weighted_task].counter.fetch_add(1, Ordering::Relaxed);
-                    debug!("launching {} task from {}", thread_task_set.tasks[thread_weighted_task].name, thread_task_set.name);
-                    thread_client = match thread_task_set.tasks[thread_weighted_task].function {
-                        Some(f) => f(thread_client),
-                        None => thread_client,
-                    };
+                    let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
+                    let thread_task_set_name = &thread_task_set.name;
+                    debug!("launching {} task from {}", thread_task_name, thread_task_set_name);
+                    let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set_name, thread_task_name));
+                    // @TODO: remove this clone()
+                    thread_task_set.tasks[thread_weighted_task].state = function(thread_task_set.tasks[thread_weighted_task].state.clone());
                     thread_weighted_position += 1;
                     // @TODO: configurable/optional delay
                 }
