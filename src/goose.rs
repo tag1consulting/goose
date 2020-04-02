@@ -7,6 +7,19 @@ pub struct GooseTaskSets {
     pub task_sets: Vec<GooseTaskSet>,
     pub weighted_task_sets: Vec<usize>,
 }
+impl GooseTaskSets {
+    pub fn new() -> Self {
+        let goose_tasksets = GooseTaskSets { 
+            task_sets: Vec::new(),
+            weighted_task_sets: Vec::new(),
+        };
+        goose_tasksets
+    }
+
+    pub fn register_taskset(&mut self, taskset: GooseTaskSet) {
+        self.task_sets.push(taskset);
+    }
+}
 
 /// An individual task set
 #[derive(Debug, Clone)]

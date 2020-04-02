@@ -7,17 +7,7 @@
 
 use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTask};
 
-// @TODO: this needs to be entirely provided by goose or goose_codegen
-
 impl GooseTaskSets {
-    pub fn new() -> Self {
-        let goose_tasksets = GooseTaskSets { 
-            task_sets: Vec::new(),
-            weighted_task_sets: Vec::new(),
-        };
-        goose_tasksets
-    }
-
     pub fn initialize_goosefile(&mut self) {
         trace!("initialize_goosefile");
         // @TODO: metaprogramming to automate initialization
@@ -41,12 +31,9 @@ impl GooseTaskSets {
         let empty_tasks = GooseTaskSet::new("EmptyTasks").set_weight(1);
         self.register_taskset(empty_tasks);
     }
-
-
-    pub fn register_taskset(&mut self, taskset: GooseTaskSet) {
-        self.task_sets.push(taskset);
-    }
 }
+
+// @TODO: this needs to be entirely provided by goose or goose_codegen
 
 fn website_task_index(client: reqwest::blocking::Client) -> reqwest::blocking::Client {
     match client.get("http://localhost/").send() {
