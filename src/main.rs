@@ -391,7 +391,7 @@ fn main() {
                     debug!("launching {} task from {}", thread_task_name, thread_task_set_name);
                     let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set_name, thread_task_name));
                     // @TODO: remove this clone()
-                    thread_task_set.tasks[thread_weighted_task].state = function(thread_task_set.tasks[thread_weighted_task].state.clone());
+                    thread_task_set.state = function(thread_task_set.state.clone());
                     thread_weighted_position += 1;
                     // @TODO: configurable/optional delay
                 }

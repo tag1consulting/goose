@@ -32,6 +32,7 @@ pub struct GooseTaskSet {
     pub weighted_tasks: Vec<usize>,
     pub weighted_position: usize,
     pub counter: usize,
+    pub state: GooseTaskSetState,
 }
 impl GooseTaskSet {
     pub fn new(name: &str) -> Self {
@@ -43,6 +44,7 @@ impl GooseTaskSet {
             weighted_tasks: Vec::new(),
             weighted_position: 0,
             counter: 0,
+            state: GooseTaskSetState::new(),
         };
         task_set
     }
@@ -65,14 +67,27 @@ impl GooseTaskSet {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct GooseTaskSetState {
+    pub client: Client,
+}
+impl GooseTaskSetState {
+    pub fn new() -> Self {
+        trace!("new task state");
+        let state = GooseTaskSetState {
+            client: Client::new(),
+        };
+        state
+    }
+}
+
 /// An individual task within a task set
 #[derive(Debug, Clone)]
 pub struct GooseTask {
     pub name: String,
     pub weight: usize,
     pub counter: Arc<AtomicUsize>,
-    pub function: Option<fn(GooseTaskState) -> GooseTaskState>,
-    pub state: GooseTaskState,
+    pub function: Option<fn(GooseTaskSetState) -> GooseTaskSetState>,
 }
 impl GooseTask {
     pub fn new(name: &str) -> Self {
@@ -82,7 +97,6 @@ impl GooseTask {
             weight: 1,
             counter: Arc::new(AtomicUsize::new(0)),
             function: None,
-            state: GooseTaskState::new(),
         };
         task
     }
@@ -99,23 +113,9 @@ impl GooseTask {
         self
     }
 
-    pub fn set_function(mut self, function: fn(GooseTaskState) -> GooseTaskState) -> Self {
+    pub fn set_function(mut self, function: fn(GooseTaskSetState) -> GooseTaskSetState) -> Self {
         trace!("{} set_function: {:?}", self.name, function);
         self.function = Some(function);
         self
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct GooseTaskState {
-    pub client: Client,
-}
-impl GooseTaskState {
-    pub fn new() -> Self {
-        trace!("new task state");
-        let state = GooseTaskState {
-            client: Client::new(),
-        };
-        state
     }
 }

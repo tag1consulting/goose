@@ -5,7 +5,7 @@
 ///      o the main goose binary (pre-compiled)
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
-use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTask, GooseTaskState};
+use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseTask};
 
 impl GooseTaskSets {
     pub fn initialize_goosefile(&mut self) {
@@ -14,9 +14,9 @@ impl GooseTaskSets {
 
         // Register a website task set and contained tasks
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
-        website_tasks.register_task(GooseTask::new("index").set_weight(6).set_function(GooseTaskState::website_task_index));
-        website_tasks.register_task(GooseTask::new("story").set_weight(9).set_function(GooseTaskState::website_task_story));
-        website_tasks.register_task(GooseTask::new("about").set_weight(3).set_function(GooseTaskState::website_task_about));
+        website_tasks.register_task(GooseTask::new("index").set_weight(6).set_function(GooseTaskSetState::website_task_index));
+        website_tasks.register_task(GooseTask::new("story").set_weight(9).set_function(GooseTaskSetState::website_task_story));
+        website_tasks.register_task(GooseTask::new("about").set_weight(3).set_function(GooseTaskSetState::website_task_about));
         self.register_taskset(website_tasks);
 
         // Register an API task set and contained tasks
@@ -34,7 +34,7 @@ impl GooseTaskSets {
 
 // @TODO: this needs to be entirely provided by goose or goose_codegen
 
-impl GooseTaskState {
+impl GooseTaskSetState {
     fn website_task_index(self) -> Self {
         match self.client.get("http://localhost/").send() {
             Ok(r) => {
