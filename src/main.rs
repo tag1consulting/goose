@@ -7,6 +7,7 @@ extern crate log;
 extern crate structopt;
 
 // @TODO: load goosefile as a dynamic library
+mod goose;
 mod goosefile;
 mod util;
 
@@ -23,7 +24,7 @@ use rand::seq::SliceRandom;
 use simplelog::*;
 use structopt::StructOpt;
 
-use goosefile::{GooseTaskSets, GooseTaskSet};
+use goose::{GooseTaskSets, GooseTaskSet};
 
 #[derive(Debug, Default, Clone)]
 struct GooseState {
