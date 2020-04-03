@@ -6,6 +6,7 @@
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
 use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseTask};
+use std::sync::atomic::Ordering;
 
 impl GooseTaskSets {
     pub fn initialize_goosefile(&mut self) {
@@ -38,11 +39,17 @@ impl GooseTaskSetState {
     fn website_task_index(self) -> Self {
         match self.client.get("http://localhost/").send() {
             Ok(r) => {
-                let content_length = match r.content_length() {
-                    Some(l) => l,
-                    None => 0,
-                };
-                debug!("index: content_length: {}", content_length);
+                let status_code = r.status();
+                debug!("index: status_code {}", status_code);
+                if status_code.is_success() {
+                    self.success_count.fetch_add(1, Ordering::Relaxed);
+                }
+                // @TODO: properly track redirects and other code ranges
+                else {
+                    // @TODO: handle this correctly
+                    eprintln!("index: non-success status_code: {:?}", status_code);
+                    self.fail_count.fetch_add(1, Ordering::Relaxed);
+                }
             }
             Err(e) => {
                 debug!("index: error: {}", e);
@@ -54,11 +61,17 @@ impl GooseTaskSetState {
     fn website_task_story(self) -> Self {
         match self.client.get("http://localhost/story").send() {
             Ok(r) => {
-                let content_length = match r.content_length() {
-                    Some(l) => l,
-                    None => 0,
-                };
-                debug!("story: content_length: {}", content_length);
+                let status_code = r.status();
+                debug!("index: status_code {}", status_code);
+                if status_code.is_success() {
+                    self.success_count.fetch_add(1, Ordering::Relaxed);
+                }
+                // @TODO: properly track redirects and other code ranges
+                else {
+                    // @TODO: handle this correctly
+                    eprintln!("index: non-success status_code: {:?}", status_code);
+                    self.fail_count.fetch_add(1, Ordering::Relaxed);
+                }
             }
             Err(e) => {
                 debug!("story: error: {}", e);
@@ -71,11 +84,17 @@ impl GooseTaskSetState {
     fn website_task_about(self) -> Self {
         match self.client.get("http://localhost/about").send() {
             Ok(r) => {
-                let content_length = match r.content_length() {
-                    Some(l) => l,
-                    None => 0,
-                };
-                debug!("about: content_length: {}", content_length);
+                let status_code = r.status();
+                debug!("index: status_code {}", status_code);
+                if status_code.is_success() {
+                    self.success_count.fetch_add(1, Ordering::Relaxed);
+                }
+                // @TODO: properly track redirects and other code ranges
+                else {
+                    // @TODO: handle this correctly
+                    eprintln!("index: non-success status_code: {:?}", status_code);
+                    self.fail_count.fetch_add(1, Ordering::Relaxed);
+                }
             }
             Err(e) => {
                 debug!("about: error: {}", e);

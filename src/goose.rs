@@ -70,12 +70,16 @@ impl GooseTaskSet {
 #[derive(Debug, Clone)]
 pub struct GooseTaskSetState {
     pub client: Client,
+    pub success_count: Arc<AtomicUsize>,
+    pub fail_count: Arc<AtomicUsize>,
 }
 impl GooseTaskSetState {
     pub fn new() -> Self {
         trace!("new task state");
         let state = GooseTaskSetState {
             client: Client::new(),
+            success_count: Arc::new(AtomicUsize::new(0)),
+            fail_count: Arc::new(AtomicUsize::new(0)),
         };
         state
     }
