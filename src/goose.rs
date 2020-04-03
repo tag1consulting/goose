@@ -1,7 +1,8 @@
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
+use reqwest::Error;
 
 /// A global list of all Goose task sets
 #[derive(Debug)]
@@ -122,4 +123,29 @@ impl GooseTask {
         self.function = Some(function);
         self
     }
+}
+
+pub fn url_get(task_state: &GooseTaskSetState, url: &str) -> Result<Response, Error> {
+    let response = task_state.client.get(url).send();
+    match &response {
+        Ok(r) => {
+            let status_code = r.status();
+            debug!("{}: status_code {}", url, status_code);
+            if status_code.is_success() {
+                task_state.success_count.fetch_add(1, Ordering::Relaxed);
+            }
+            // @TODO: properly track redirects and other code ranges
+            else {
+                // @TODO: handle this correctly
+                eprintln!("{}: non-success status_code: {:?}", url, status_code);
+                task_state.fail_count.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        Err(e) => {
+            // @TODO: what can we learn from a reqwest error?
+            debug!("{}: error: {}", url, e);
+            task_state.fail_count.fetch_add(1, Ordering::Relaxed);
+        }
+    };
+    response
 }

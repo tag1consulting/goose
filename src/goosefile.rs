@@ -5,8 +5,7 @@
 ///      o the main goose binary (pre-compiled)
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
-use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseTask};
-use std::sync::atomic::Ordering;
+use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseTask, url_get};
 
 impl GooseTaskSets {
     pub fn initialize_goosefile(&mut self) {
@@ -37,71 +36,17 @@ impl GooseTaskSets {
 
 impl GooseTaskSetState {
     fn website_task_index(self) -> Self {
-        let url = "http://localhost/";
-        match self.client.get(url).send() {
-            Ok(r) => {
-                let status_code = r.status();
-                debug!("{}: status_code {}", url, status_code);
-                if status_code.is_success() {
-                    self.success_count.fetch_add(1, Ordering::Relaxed);
-                }
-                // @TODO: properly track redirects and other code ranges
-                else {
-                    // @TODO: handle this correctly
-                    eprintln!("{}: non-success status_code: {:?}", url, status_code);
-                    self.fail_count.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            Err(e) => {
-                debug!("{}: error: {}", url, e);
-            }
-        };
+        let _response = url_get(&self, "http://localhost/");
         self
     }
 
     fn website_task_story(self) -> Self {
-        let url = "http://localhost/story";
-        match self.client.get(url).send() {
-            Ok(r) => {
-                let status_code = r.status();
-                debug!("{}: status_code {}", url, status_code);
-                if status_code.is_success() {
-                    self.success_count.fetch_add(1, Ordering::Relaxed);
-                }
-                // @TODO: properly track redirects and other code ranges
-                else {
-                    // @TODO: handle this correctly
-                    eprintln!("{}: non-success status_code: {:?}", url, status_code);
-                    self.fail_count.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            Err(e) => {
-                debug!("{}: error: {}", url, e);
-            }
-        };
+        let _response = url_get(&self, "http://localhost/story");
         self
     }
 
     fn website_task_about(self) -> Self {
-        let url = "http://localhost/about";
-        match self.client.get(url).send() {
-            Ok(r) => {
-                let status_code = r.status();
-                debug!("{}: status_code {}", url, status_code);
-                if status_code.is_success() {
-                    self.success_count.fetch_add(1, Ordering::Relaxed);
-                }
-                // @TODO: properly track redirects and other code ranges
-                else {
-                    // @TODO: handle this correctly
-                    eprintln!("{}: non-success status_code: {:?}", url, status_code);
-                    self.fail_count.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            Err(e) => {
-                debug!("{}: error: {}", url, e);
-            }
-        };
+        let _response = url_get(&self, "http://localhost/about");
         self
     }
 }
