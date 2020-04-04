@@ -1,5 +1,6 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::time::Instant;
 
 use reqwest::blocking::{Client, Response};
 use reqwest::Error;
@@ -71,16 +72,18 @@ impl GooseTaskSet {
 #[derive(Debug, Clone)]
 pub struct GooseTaskSetState {
     pub client: Client,
-    pub success_count: Arc<AtomicUsize>,
-    pub fail_count: Arc<AtomicUsize>,
+    pub success_count: usize,
+    pub fail_count: usize,
+    pub response_times: Vec<f32>,
 }
 impl GooseTaskSetState {
     pub fn new() -> Self {
         trace!("new task state");
         let state = GooseTaskSetState {
             client: Client::new(),
-            success_count: Arc::new(AtomicUsize::new(0)),
-            fail_count: Arc::new(AtomicUsize::new(0)),
+            success_count: 0,
+            fail_count: 0,
+            response_times: Vec::new(),
         };
         state
     }
@@ -125,26 +128,30 @@ impl GooseTask {
     }
 }
 
-pub fn url_get(task_state: &GooseTaskSetState, url: &str) -> Result<Response, Error> {
+pub fn url_get(task_state: &mut GooseTaskSetState, url: &str) -> Result<Response, Error> {
+    let started = Instant::now();
     let response = task_state.client.get(url).send();
+    let elapsed = started.elapsed() * 100;
+    trace!("GET {} elapsed: {:?}", url, elapsed);
+    task_state.response_times.push(elapsed.as_secs_f32());
     match &response {
         Ok(r) => {
             let status_code = r.status();
             debug!("{}: status_code {}", url, status_code);
             if status_code.is_success() {
-                task_state.success_count.fetch_add(1, Ordering::Relaxed);
+                task_state.success_count += 1;
             }
             // @TODO: properly track redirects and other code ranges
             else {
                 // @TODO: handle this correctly
                 eprintln!("{}: non-success status_code: {:?}", url, status_code);
-                task_state.fail_count.fetch_add(1, Ordering::Relaxed);
+                task_state.fail_count += 1;
             }
         }
         Err(e) => {
             // @TODO: what can we learn from a reqwest error?
             debug!("{}: error: {}", url, e);
-            task_state.fail_count.fetch_add(1, Ordering::Relaxed);
+            task_state.fail_count += 1;
         }
     };
     response

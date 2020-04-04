@@ -35,18 +35,18 @@ impl GooseTaskSets {
 // @TODO: this needs to be entirely provided by goose or goose_codegen
 
 impl GooseTaskSetState {
-    fn website_task_index(self) -> Self {
-        let _response = url_get(&self, "http://localhost/");
+    fn website_task_index(mut self) -> Self {
+        let _response = url_get(&mut self, "http://localhost/");
         self
     }
 
-    fn website_task_story(self) -> Self {
-        let _response = url_get(&self, "http://localhost/story");
+    fn website_task_story(mut self) -> Self {
+        let _response = url_get(&mut self, "http://localhost/story");
         self
     }
 
-    fn website_task_about(self) -> Self {
-        let _response = url_get(&self, "http://localhost/about");
+    fn website_task_about(mut self) -> Self {
+        let _response = url_get(&mut self, "http://localhost/about");
         self
     }
 }
