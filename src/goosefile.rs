@@ -5,12 +5,12 @@
 ///      o the main goose binary (pre-compiled)
 ///      o the goosefile dynamic binary (compiled with a goose helper)
 
-use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseTask, url_get};
+use crate::goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseTask};
 
 impl GooseTaskSets {
+    // @TODO: auto-write this function with metaprogramming helpers
     pub fn initialize_goosefile(&mut self) {
         trace!("initialize_goosefile");
-        // @TODO: metaprogramming to automate initialization
 
         // Register a website task set and contained tasks
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
@@ -32,21 +32,19 @@ impl GooseTaskSets {
     }
 }
 
-// @TODO: this needs to be entirely provided by goose or goose_codegen
-
 impl GooseTaskSetState {
     fn website_task_index(mut self) -> Self {
-        let _response = url_get(&mut self, "http://localhost/");
+        let _response = self.get("http://localhost/");
         self
     }
 
     fn website_task_story(mut self) -> Self {
-        let _response = url_get(&mut self, "http://localhost/story");
+        let _response = self.get("http://localhost/story");
         self
     }
 
     fn website_task_about(mut self) -> Self {
-        let _response = url_get(&mut self, "http://localhost/about");
+        let _response = self.get("http://localhost/about");
         self
     }
 }

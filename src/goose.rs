@@ -87,6 +87,35 @@ impl GooseTaskSetState {
         };
         state
     }
+
+    pub fn get(&mut self, url: &str) -> Result<Response, Error> {
+        let started = Instant::now();
+        let response = self.client.get(url).send();
+        let elapsed = started.elapsed() * 100;
+        trace!("GET {} elapsed: {:?}", url, elapsed);
+        self.response_times.push(elapsed.as_secs_f32());
+        match &response {
+            Ok(r) => {
+                let status_code = r.status();
+                debug!("{}: status_code {}", url, status_code);
+                if status_code.is_success() {
+                    self.success_count += 1;
+                }
+                // @TODO: properly track redirects and other code ranges
+                else {
+                    // @TODO: handle this correctly
+                    eprintln!("{}: non-success status_code: {:?}", url, status_code);
+                    self.fail_count += 1;
+                }
+            }
+            Err(e) => {
+                // @TODO: what can we learn from a reqwest error?
+                debug!("{}: error: {}", url, e);
+                self.fail_count += 1;
+            }
+        };
+        response
+    }
 }
 
 /// An individual task within a task set
@@ -126,33 +155,4 @@ impl GooseTask {
         self.function = Some(function);
         self
     }
-}
-
-pub fn url_get(task_state: &mut GooseTaskSetState, url: &str) -> Result<Response, Error> {
-    let started = Instant::now();
-    let response = task_state.client.get(url).send();
-    let elapsed = started.elapsed() * 100;
-    trace!("GET {} elapsed: {:?}", url, elapsed);
-    task_state.response_times.push(elapsed.as_secs_f32());
-    match &response {
-        Ok(r) => {
-            let status_code = r.status();
-            debug!("{}: status_code {}", url, status_code);
-            if status_code.is_success() {
-                task_state.success_count += 1;
-            }
-            // @TODO: properly track redirects and other code ranges
-            else {
-                // @TODO: handle this correctly
-                eprintln!("{}: non-success status_code: {:?}", url, status_code);
-                task_state.fail_count += 1;
-            }
-        }
-        Err(e) => {
-            // @TODO: what can we learn from a reqwest error?
-            debug!("{}: error: {}", url, e);
-            task_state.fail_count += 1;
-        }
-    };
-    response
 }
