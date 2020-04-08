@@ -11,6 +11,7 @@ mod goose;
 mod goosefile;
 mod util;
 
+use std::f32;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
@@ -34,6 +35,22 @@ struct GooseState {
     max_clients: usize,
     active_clients: usize,
 }
+
+trait FloatIterExt {
+    fn float_min(&mut self) -> f32;
+    fn float_max(&mut self) -> f32;
+}
+
+impl<T> FloatIterExt for T where T: Iterator<Item=f32> {
+    fn float_max(&mut self) -> f32 {
+        self.fold(f32::NAN, f32::max)
+    }
+    
+    fn float_min(&mut self) -> f32 {
+        self.fold(f32::NAN, f32::min)
+    }
+}
+
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
@@ -233,7 +250,16 @@ fn display_stats(goose_task_sets: &GooseTaskSets) {
     for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
         println!("{}:", task_set.name);
         for (task_id, task) in task_set.tasks.iter().enumerate() {
-            println!(" - {} ({} successes, {} fails)", task.name, success_count[task_set_id][task_id].to_formatted_string(&Locale::en), fail_count[task_set_id][task_id].to_formatted_string(&Locale::en));
+            response_times[task_set_id][task_id].sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!(" - {} ({} success, {} fail, {:.2}ms min, {:.2}ms max, {:.2}ms avg, {:.3}ms median)",
+                task.name,
+                success_count[task_set_id][task_id].to_formatted_string(&Locale::en),
+                fail_count[task_set_id][task_id].to_formatted_string(&Locale::en),
+                &response_times[task_set_id][task_id].iter().cloned().float_min(),
+                &response_times[task_set_id][task_id].iter().cloned().float_max(),
+                util::mean(&response_times[task_set_id][task_id]),
+                util::median(&response_times[task_set_id][task_id]),
+            );
         }
     }
     // @TODO response_time analysis
