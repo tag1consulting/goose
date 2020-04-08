@@ -80,6 +80,9 @@ pub enum GooseClientMode {
 pub enum GooseClientCommand {
     //START,
     //STOP,
+    // Tell client thread to push statistics to parent
+    SYNC,
+    // Tell client thread to exit
     EXIT,
 }
 
@@ -99,16 +102,16 @@ pub struct GooseTaskSetState {
     pub weighted_position: usize,
 }
 impl GooseTaskSetState {
-    pub fn new(index: usize) -> Self {
+    pub fn new(task_count: usize, index: usize, ) -> Self {
         trace!("new task state");
         let state = GooseTaskSetState {
             task_sets_index: index,
             client: Client::new(),
             weighted_states_index: usize::max_value(),
             mode: GooseClientMode::INIT,
-            response_times: Vec::new(),
-            success_count: Vec::new(),
-            fail_count: Vec::new(),
+            response_times: vec![vec![]; task_count],
+            success_count: vec![0; task_count],
+            fail_count: vec![0; task_count],
             weighted_tasks: Vec::new(),
             weighted_position: 0,
         };

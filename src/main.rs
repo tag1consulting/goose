@@ -151,7 +151,8 @@ fn weight_task_set_states(task_sets: &GooseTaskSets, clients: usize) -> Vec<Goos
     let mut client_count = 0;
     loop {
         for task_sets_index in &weighted_task_sets {
-            weighted_states.push(GooseTaskSetState::new(*task_sets_index));
+            let task_count = task_sets.task_sets[*task_sets_index].tasks.len();
+            weighted_states.push(GooseTaskSetState::new(task_count, *task_sets_index));
             client_count += 1;
             if client_count >= clients {
                 trace!("created {} weighted_states", client_count);
@@ -395,13 +396,8 @@ fn main() {
                 info!("launching {} client {}...", thread_task_set.name, thread_number);
                 thread_state.set_mode(GooseClientMode::RUNNING);
                 thread_sender.send(thread_state.clone()).unwrap();
-                loop {
-                    let message = thread_receiver.try_recv();
-                    if message.is_ok() {
-                        match message.unwrap() {
-                            GooseClientCommand::EXIT => thread_state.set_mode(GooseClientMode::EXITING),
-                        }
-                    }
+                let mut thread_continue = true;
+                while thread_continue {
                     if thread_task_set.tasks.len() <= thread_state.weighted_position {
                         // Reshuffle the weighted tasks
                         thread_state.weighted_tasks.shuffle(&mut thread_rng());
@@ -417,8 +413,24 @@ fn main() {
                     function(&mut thread_state);
                     thread_state.weighted_position += 1;
 
-                    // @TODO: only send when reporting statistics, not every loop
-                    thread_sender.send(thread_state.clone()).unwrap();
+                    let message = thread_receiver.try_recv();
+                    if message.is_ok() {
+                        match message.unwrap() {
+                            GooseClientCommand::SYNC => {
+                                thread_sender.send(thread_state.clone()).unwrap();
+                                // Reset per-thread counters, as totals have been sent to the parent
+                                thread_state.response_times = vec![vec![]; task_count];
+                                thread_state.success_count = vec![0; task_count];
+                                thread_state.fail_count = vec![0; task_count];
+                            },
+                            GooseClientCommand::EXIT => {
+                                thread_state.set_mode(GooseClientMode::EXITING);
+                                // No need to reset per-thread counters, we're exiting and memory will be freed
+                                thread_sender.send(thread_state.clone()).unwrap();
+                                thread_continue = false
+                            }
+                        }
+                    }
 
                     // @TODO: configurable/optional delay
                 }
@@ -432,17 +444,30 @@ fn main() {
     }
     info!("launched {} clients...", goose_state.active_clients);
 
-    // @TODO: send messages to clients
-    //for (index, client) in clients.iter().enumerate() {
-    //}
-
     let mut sleep;
     loop {
         let message = parent_receiver.try_recv();
         if message.is_ok() {
             let unwrapped_message = message.unwrap();
             let weighted_states_index = unwrapped_message.weighted_states_index;
-            goose_task_sets.weighted_states[weighted_states_index] = unwrapped_message;
+            // Only try and merge if the state is initialized
+            if goose_task_sets.weighted_states[weighted_states_index].response_times.len() > 0 {
+                for (client_id, response_times) in unwrapped_message.response_times.iter().enumerate() {
+                    goose_task_sets.weighted_states[weighted_states_index].response_times[client_id].extend_from_slice(&response_times);
+                }
+                for (client_id, success_count) in unwrapped_message.success_count.iter().enumerate() {
+                    goose_task_sets.weighted_states[weighted_states_index].success_count[client_id] += success_count;
+                }
+                for (client_id, fail_count) in unwrapped_message.fail_count.iter().enumerate() {
+                    goose_task_sets.weighted_states[weighted_states_index].fail_count[client_id] += fail_count;
+                }
+                goose_task_sets.weighted_states[weighted_states_index].weighted_position = unwrapped_message.weighted_position;
+                goose_task_sets.weighted_states[weighted_states_index].mode = unwrapped_message.mode.clone();
+                if goose_task_sets.weighted_states[weighted_states_index].weighted_tasks.len() == 0 {
+                    goose_task_sets.weighted_states[weighted_states_index].weighted_states_index = unwrapped_message.weighted_states_index;
+                    goose_task_sets.weighted_states[weighted_states_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
+                }
+            }
             sleep = false;
         }
         else {
@@ -452,6 +477,11 @@ fn main() {
         if sleep {
             let one_second = time::Duration::from_secs(1);
             thread::sleep(one_second);
+        }
+        // @TODO: only sync when we need to report statistics
+        for (index, send_to_client) in client_channels.iter().enumerate() {
+            send_to_client.send(GooseClientCommand::SYNC).unwrap();
+            debug!("telling client {} to sync stats", index);
         }
     }
 }
