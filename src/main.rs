@@ -15,7 +15,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::sync::mpsc;
 use std::{thread, time};
 
 use num_format::{Locale, ToFormattedString};
@@ -24,12 +24,13 @@ use rand::seq::SliceRandom;
 use simplelog::*;
 use structopt::StructOpt;
 
-use goose::{GooseTaskSets, GooseTaskSet};
+use goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseClientMode, GooseClientCommand};
 
 #[derive(Debug, Default, Clone)]
 struct GooseState {
     configuration: Option<Configuration>,
     number_of_cpus: usize,
+    run_time: usize,
     max_clients: usize,
     active_clients: usize,
 }
@@ -91,7 +92,7 @@ pub struct Configuration {
     log_file: String,
 }
 
-// Locate goosefile dynamic library
+/// Locate goosefile dynamic library
 fn find_goosefile() -> Option<PathBuf> {
     let goosefile = PathBuf::from("goosefile.rs");
     trace!("goosefile: {:?}", goosefile);
@@ -102,6 +103,7 @@ fn find_goosefile() -> Option<PathBuf> {
     Some(goosefile)
 }
 
+/// Load goosefile dynamic library (@TODO)
 fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
     // @TODO: actually use _goosefile and load as dynamic library
     trace!("@TODO goosefile is currently hardcoded: {:?} ", goosefile);
@@ -112,107 +114,108 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
     Ok(goose_task_sets)
 }
 
-/// Returns a bucket of weighted Goose Task Sets, optionally shuffled
-fn weight_task_sets(task_sets: &GooseTaskSets, shuffle: bool) -> Vec<usize> {
-    trace!("weight_tasksets");
+/// Allocate a vector of weighted GooseTaskSetStates
+fn weight_task_set_states(task_sets: &GooseTaskSets, clients: usize) -> Vec<GooseTaskSetState> {
+    trace!("weight_task_set_states");
 
-    let mut bucket;
-    if task_sets.weighted_task_sets.len() > 0 {
-        bucket = task_sets.weighted_task_sets.clone();
-        trace!("re-using existing weighted_task_sets: {:?}", bucket);
+    let mut u: usize = 0;
+    let mut v: usize;
+    for task_set in &task_sets.task_sets {
+        if u == 0 {
+            u = task_set.weight;
+        }
+        else {
+            v = task_set.weight;
+            trace!("calculating greatest common denominator of {} and {}", u, v);
+            u = util::gcd(u, v);
+            trace!("inner gcd: {}", u);
+        }
     }
-    else {
-        let mut u: usize = 0;
-        let mut v: usize;
-        for task_set in &task_sets.task_sets {
-            if u == 0 {
-                u = task_set.weight;
-            }
-            else {
-                v = task_set.weight;
-                trace!("calculating greatest common denominator of {} and {}", u, v);
-                u = util::gcd(u, v);
-                trace!("inner gcd: {}", u);
+    // 'u' will always be the greatest common divisor
+    debug!("gcd: {}", u);
+
+    // Build a weighted lists of task sets (identified by index)
+    let mut weighted_task_sets = Vec::new();
+    for (index, task_set) in task_sets.task_sets.iter().enumerate() {
+        // divide by greatest common divisor so vector is as short as possible
+        let weight = task_set.weight / u;
+        trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task_set.name, task_set.weight, weight);
+        let mut weighted_sets = vec![index; weight];
+        weighted_task_sets.append(&mut weighted_sets);
+    }
+    // Shuffle the weighted list of task sets
+    weighted_task_sets.shuffle(&mut thread_rng());
+
+    // Allocate a state for each client that will be spawned.
+    let mut weighted_states = Vec::new();
+    let mut client_count = 0;
+    loop {
+        for task_sets_index in &weighted_task_sets {
+            weighted_states.push(GooseTaskSetState::new(*task_sets_index));
+            client_count += 1;
+            if client_count >= clients {
+                trace!("created {} weighted_states", client_count);
+                return weighted_states;
             }
         }
-        // u will always be the greatest common divisor
-        debug!("gcd: {}", u);
-
-        bucket = Vec::new();
-        for (index, task_set) in task_sets.task_sets.iter().enumerate() {
-            // divide by greatest common divisor so bucket is as small as possible
-            let weight = task_set.weight / u;
-            trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task_set.name, task_set.weight, weight);
-            let mut task_sets = vec![index; weight];
-            bucket.append(&mut task_sets);
-        }
-        trace!("created weighted_task_sets: {:?}", bucket);
     }
-
-    if shuffle {
-        bucket.shuffle(&mut thread_rng());
-    }
-    bucket
 }
 
 /// Returns a bucket of weighted Goose Tasks, optionally shuffled
-fn weight_tasks(task_set: &GooseTaskSet, shuffle: bool) -> Vec<usize> {
+fn weight_tasks(task_set: &GooseTaskSet) -> Vec<usize> {
     trace!("weight_tasks for {}", task_set.name);
 
-    let mut bucket;
-    if task_set.weighted_tasks.len() > 0 {
-        bucket = task_set.weighted_tasks.clone();
-        trace!("re-using existing weighted_tasks: {:?}", bucket);
-    }
-    else {
-        let mut u: usize = 0;
-        let mut v: usize;
-        for task in &task_set.tasks {
-            if u == 0 {
-                u = task.weight;
-            }
-            else {
-                v = task.weight;
-                trace!("calculating greatest common denominator of {} and {}", u, v);
-                u = util::gcd(u, v);
-                trace!("inner gcd: {}", u);
-            }
+    let mut u: usize = 0;
+    let mut v: usize;
+    for task in &task_set.tasks {
+        if u == 0 {
+            u = task.weight;
         }
-        // u will always be the greatest common divisor
-        debug!("gcd: {}", u);
+        else {
+            v = task.weight;
+            trace!("calculating greatest common denominator of {} and {}", u, v);
+            u = util::gcd(u, v);
+            trace!("inner gcd: {}", u);
+        }
+    }
+    // 'u' will always be the greatest common divisor
+    debug!("gcd: {}", u);
 
-        bucket = Vec::new();
-        for (index, task) in task_set.tasks.iter().enumerate() {
-            // divide by greatest common divisor so bucket is as small as possible
-            let weight = task.weight / u;
-            trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
-            let mut tasks = vec![index; weight];
-            bucket.append(&mut tasks);
-        }
-        trace!("created weighted_tasks: {:?}", bucket);
+    let mut weighted_tasks = Vec::new();
+    for (index, task) in task_set.tasks.iter().enumerate() {
+        // divide by greatest common divisor so bucket is as small as possible
+        let weight = task.weight / u;
+        trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
+        let mut tasks = vec![index; weight];
+        weighted_tasks.append(&mut tasks);
     }
-    if shuffle {
-        bucket.shuffle(&mut thread_rng());
-    }
-    bucket
+    trace!("created weighted_tasks: {:?}", weighted_tasks);
+    weighted_tasks
 }
 
-fn run_timer(started: Instant, run_time: usize, configuration: &Configuration, goose_task_sets: &GooseTaskSets) {
-    if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
-        info!("exiting after {:?} seconds", run_time);
+/// If run_time was specified, detect when it's time to shut down
+fn check_timer(started: time::Instant, goose_state: &GooseState, configuration: &Configuration, goose_task_sets: &GooseTaskSets) {
+    if goose_state.run_time > 0 && started.elapsed().as_secs() >= goose_state.run_time as u64 {
+        info!("exiting after {:?} seconds", goose_state.run_time);
         if configuration.print_stats {
             display_stats(goose_task_sets);
         }
+        // @TODO: send EXIT signal to clients and exit gracefully
         std::process::exit(0);
     }
 }
 
+/// Display running and ending statistics
 fn display_stats(goose_task_sets: &GooseTaskSets) {
     for task_set in &goose_task_sets.task_sets {
         println!("{}:", task_set.name);
+        eprintln!("tasks: {:?}", task_set.tasks.len());
         for task in &task_set.tasks {
             println!(" - {} ({} times)", task.name, task.counter.load(Ordering::Relaxed).to_formatted_string(&Locale::en));
         }
+    }
+    for state in &goose_task_sets.weighted_states {
+        eprintln!("state: {:?}", state);
     }
 }
 
@@ -269,14 +272,13 @@ fn main() {
         std::process::exit(1);
     }
 
-    let run_time: usize;
     if configuration.run_time != "" {
-        run_time = util::parse_timespan(&configuration.run_time);
+        goose_state.run_time = util::parse_timespan(&configuration.run_time);
     }
     else {
-        run_time = 0;
+        goose_state.run_time = 0;
     }
-    info!("run_time = {}", run_time);
+    info!("run_time = {}", goose_state.run_time);
 
     goose_state.number_of_cpus = num_cpus::get();
     goose_state.max_clients = match configuration.clients {
@@ -291,7 +293,7 @@ fn main() {
         }
         None => {
             let c = goose_state.number_of_cpus;
-            info!("max concurrent clients defaulted to {} (number of CPUs)", c);
+            info!("concurrent clients defaulted to {} (number of CPUs)", c);
             c
         }
     };
@@ -341,58 +343,83 @@ fn main() {
 
 
     for task_set in &mut goose_task_sets.task_sets {
-        task_set.weighted_tasks = weight_tasks(&task_set, true);
+        task_set.weighted_tasks = weight_tasks(&task_set);
         debug!("weighted {} tasks: {:?}", task_set.name, task_set.weighted_tasks);
     }
-    debug!("goose_task_sets: {:?}", goose_task_sets);
 
-    // Weight and shuffle task sets
-    goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
-    let mut task_set_iter = goose_task_sets.weighted_task_sets.iter();
+    // Allocate a state for each of the clients we are about to start
+    goose_task_sets.weighted_states = weight_task_set_states(&goose_task_sets, goose_state.max_clients);
+    // Start with a simple 0..n-1 range (ie 0, 1, 2, 3, ... n-1)
+    goose_task_sets.weighted_states_order = (0..goose_task_sets.weighted_states.len() - 1).collect::<Vec<_>>();
+
+    // Spawn clients, each with their own weighted task_set
+    let started = time::Instant::now();
     let sleep_float = 1.0 / hatch_rate as f32;
     let sleep_duration = time::Duration::from_secs_f32(sleep_float);
-    let started = Instant::now();
     let mut clients = vec![];
-    while goose_state.active_clients < goose_state.max_clients {
-        run_timer(started, run_time, &configuration, &goose_task_sets);
-        let task_set = match task_set_iter.next() {
-            Some(t) => t,
-            // We reached the end of the iterator, so reshuffle and start over.
-            None => {
-                goose_task_sets.weighted_task_sets = weight_task_sets(&goose_task_sets, true);
-                debug!("re-shuffled tasksets: {:?}", goose_task_sets.weighted_task_sets);
-                task_set_iter = goose_task_sets.weighted_task_sets.iter();
-                match task_set_iter.next() {
-                    Some(t) => t,
-                    // Goosefile has to have at least one TaskSet, so we can't get here.
-                    None => unreachable!(),
-                }
-            }
-        };
-        goose_task_sets.task_sets[*task_set].counter += 1;
+    let mut client_channels = vec![];
+    // Single channel allowing all Goose child threads to sync state back to parent
+    let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseTaskSetState>, mpsc::Receiver<GooseTaskSetState>) = mpsc::channel();
+    // @TODO: consider replacing this with a Arc<RwLock<>>
+    for mut thread_state in goose_task_sets.weighted_states.clone() {
+        check_timer(started, &goose_state, &configuration, &goose_task_sets);
+        thread_state.weighted_tasks = goose_task_sets.task_sets[thread_state.task_sets_index].weighted_tasks.clone();
+        thread_state.weighted_tasks.shuffle(&mut thread_rng());
+        thread_state.weighted_states_index = goose_state.active_clients;
+
+        // Per-thread channel allowing parent to control Goose child threads
+        let (parent_sender, thread_receiver): (mpsc::Sender<GooseClientCommand>, mpsc::Receiver<GooseClientCommand>) = mpsc::channel();
+        client_channels.push(parent_sender);
         // We can only run a task if the task list is non-empty
-        if goose_task_sets.task_sets[*task_set].weighted_tasks.len() > 0 {
-            let mut thread_task_set = goose_task_sets.task_sets[*task_set].clone();
+        if thread_state.weighted_tasks.len() > 0 {
+            // Copy the client-to-parent sender channel, used by all threads.
+            let thread_sender = all_threads_sender.clone();
+
+            // Hatching a new Goose client.
+            thread_state.set_mode(GooseClientMode::HATCHING);
+            thread_sender.send(thread_state.clone()).unwrap();
+
+            // Copy the appropriate task_set into the thread.
+            let thread_task_set = goose_task_sets.task_sets[thread_state.task_sets_index].clone();
+
+            // Initialize per-task counters
+            let task_count = thread_task_set.tasks.len();
+            thread_state.response_times = vec![vec![]; task_count];
+            thread_state.success_count = vec![0; task_count];
+            thread_state.fail_count = vec![0; task_count];
+            // active_clients starts at 0, for numbering threads we start at 1 (@TODO: why?)
+            let thread_number = goose_state.active_clients + 1;
+
             // Launch a new client
             let client = thread::spawn(move || {
-                info!("launching {} client...", thread_task_set.name);
-                let mut thread_weighted_tasks = weight_tasks(&thread_task_set, true);
-                let mut thread_weighted_position = 0;
+                info!("launching {} client {}...", thread_task_set.name, thread_number);
+                thread_state.set_mode(GooseClientMode::RUNNING);
+                thread_sender.send(thread_state.clone()).unwrap();
                 loop {
-                    if thread_task_set.tasks.len() <= thread_weighted_position {
-                        thread_weighted_tasks = weight_tasks(&thread_task_set, true);
-                        debug!("re-shuffled {} tasks: {:?}", thread_task_set.name, thread_weighted_tasks);
-                        thread_weighted_position = 0;
+                    let message = thread_receiver.try_recv();
+                    if message.is_ok() {
+                        match message.unwrap() {
+                            GooseClientCommand::EXIT => thread_state.set_mode(GooseClientMode::EXITING),
+                        }
                     }
-                    let thread_weighted_task = thread_weighted_tasks[thread_weighted_position];
+                    if thread_task_set.tasks.len() <= thread_state.weighted_position {
+                        // Reshuffle the weighted tasks
+                        thread_state.weighted_tasks.shuffle(&mut thread_rng());
+                        debug!("re-shuffled {} tasks: {:?}", &thread_task_set.name, thread_state.weighted_tasks);
+                        thread_state.weighted_position = 0;
+                    }
+                    let thread_weighted_task = thread_state.weighted_tasks[thread_state.weighted_position];
                     thread_task_set.tasks[thread_weighted_task].counter.fetch_add(1, Ordering::Relaxed);
+
                     let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
-                    let thread_task_set_name = &thread_task_set.name;
-                    debug!("launching {} task from {}", thread_task_name, thread_task_set_name);
-                    let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set_name, thread_task_name));
-                    // @TODO: remove this clone()
-                    thread_task_set.state = function(thread_task_set.state.clone());
-                    thread_weighted_position += 1;
+                    debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
+                    let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
+                    function(&mut thread_state);
+                    thread_state.weighted_position += 1;
+
+                    // @TODO: only send when reporting statistics, not every loop
+                    thread_sender.send(thread_state.clone()).unwrap();
+
                     // @TODO: configurable/optional delay
                 }
             });
@@ -405,9 +432,26 @@ fn main() {
     }
     info!("launched {} clients...", goose_state.active_clients);
 
+    // @TODO: send messages to clients
+    //for (index, client) in clients.iter().enumerate() {
+    //}
+
+    let mut sleep;
     loop {
-        run_timer(started, run_time, &configuration, &goose_task_sets);
-        let one_second = time::Duration::from_secs(1);
-        thread::sleep(one_second);
+        let message = parent_receiver.try_recv();
+        if message.is_ok() {
+            let unwrapped_message = message.unwrap();
+            let weighted_states_index = unwrapped_message.weighted_states_index;
+            goose_task_sets.weighted_states[weighted_states_index] = unwrapped_message;
+            sleep = false;
+        }
+        else {
+            sleep = true;
+        }
+        check_timer(started, &goose_state, &configuration, &goose_task_sets);
+        if sleep {
+            let one_second = time::Duration::from_secs(1);
+            thread::sleep(one_second);
+        }
     }
 }

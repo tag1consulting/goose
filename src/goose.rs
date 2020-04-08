@@ -6,16 +6,18 @@ use reqwest::blocking::{Client, Response};
 use reqwest::Error;
 
 /// A global list of all Goose task sets
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct GooseTaskSets {
     pub task_sets: Vec<GooseTaskSet>,
-    pub weighted_task_sets: Vec<usize>,
+    pub weighted_states: Vec<GooseTaskSetState>,
+    pub weighted_states_order: Vec<usize>,
 }
 impl GooseTaskSets {
     pub fn new() -> Self {
         let goose_tasksets = GooseTaskSets { 
             task_sets: Vec::new(),
-            weighted_task_sets: Vec::new(),
+            weighted_states: Vec::new(),
+            weighted_states_order: Vec::new(),
         };
         goose_tasksets
     }
@@ -26,27 +28,24 @@ impl GooseTaskSets {
 }
 
 /// An individual task set
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GooseTaskSet {
     pub name: String,
+    // This is the GooseTaskSets.task_sets index
+    pub task_sets_index: usize,
     pub weight: usize,
     pub tasks: Vec<GooseTask>,
     pub weighted_tasks: Vec<usize>,
-    pub weighted_position: usize,
-    pub counter: usize,
-    pub state: GooseTaskSetState,
 }
 impl GooseTaskSet {
     pub fn new(name: &str) -> Self {
         trace!("new taskset: name: {}", &name);
         let task_set = GooseTaskSet { 
             name: name.to_string(),
+            task_sets_index: usize::max_value(),
             weight: 1,
             tasks: Vec::new(),
             weighted_tasks: Vec::new(),
-            weighted_position: 0,
-            counter: 0,
-            state: GooseTaskSetState::new(),
         };
         task_set
     }
@@ -70,22 +69,54 @@ impl GooseTaskSet {
 }
 
 #[derive(Debug, Clone)]
+pub enum GooseClientMode {
+    INIT,
+    HATCHING,
+    RUNNING,
+    EXITING,
+}
+
+#[derive(Debug, Clone)]
+pub enum GooseClientCommand {
+    //START,
+    //STOP,
+    EXIT,
+}
+
+#[derive(Debug, Clone)]
 pub struct GooseTaskSetState {
+    // This is the GooseTaskSets.task_sets index
+    pub task_sets_index: usize,
+    // This is the reqwest.blocking.client
     pub client: Client,
-    pub success_count: usize,
-    pub fail_count: usize,
-    pub response_times: Vec<f32>,
+    pub weighted_states_index: usize,
+    pub mode: GooseClientMode,
+    // Per-task statistics, using task index
+    pub response_times: Vec<Vec<f32>>,
+    pub success_count: Vec<usize>,
+    pub fail_count: Vec<usize>,
+    pub weighted_tasks: Vec<usize>,
+    pub weighted_position: usize,
 }
 impl GooseTaskSetState {
-    pub fn new() -> Self {
+    pub fn new(index: usize) -> Self {
         trace!("new task state");
         let state = GooseTaskSetState {
+            task_sets_index: index,
             client: Client::new(),
-            success_count: 0,
-            fail_count: 0,
+            weighted_states_index: usize::max_value(),
+            mode: GooseClientMode::INIT,
             response_times: Vec::new(),
+            success_count: Vec::new(),
+            fail_count: Vec::new(),
+            weighted_tasks: Vec::new(),
+            weighted_position: 0,
         };
         state
+    }
+
+    pub fn set_mode(&mut self, mode: GooseClientMode) {
+        self.mode = mode;
     }
 
     pub fn get(&mut self, url: &str) -> Result<Response, Error> {
@@ -93,25 +124,29 @@ impl GooseTaskSetState {
         let response = self.client.get(url).send();
         let elapsed = started.elapsed() * 100;
         trace!("GET {} elapsed: {:?}", url, elapsed);
-        self.response_times.push(elapsed.as_secs_f32());
+
+        // data is collected per-task, vectors are indexed by the task_id
+        let task_id = self.weighted_tasks[self.weighted_position];
+
+        self.response_times[task_id].push(elapsed.as_secs_f32());
         match &response {
             Ok(r) => {
                 let status_code = r.status();
                 debug!("{}: status_code {}", url, status_code);
                 if status_code.is_success() {
-                    self.success_count += 1;
+                    self.success_count[task_id] += 1;
                 }
                 // @TODO: properly track redirects and other code ranges
                 else {
                     // @TODO: handle this correctly
                     eprintln!("{}: non-success status_code: {:?}", url, status_code);
-                    self.fail_count += 1;
+                    self.fail_count[task_id] += 1;
                 }
             }
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
                 debug!("{}: error: {}", url, e);
-                self.fail_count += 1;
+                self.fail_count[task_id] += 1;
             }
         };
         response
@@ -119,17 +154,20 @@ impl GooseTaskSetState {
 }
 
 /// An individual task within a task set
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GooseTask {
+    // This is the GooseTaskSet.tasks index
+    pub tasks_index: usize,
     pub name: String,
     pub weight: usize,
     pub counter: Arc<AtomicUsize>,
-    pub function: Option<fn(GooseTaskSetState) -> GooseTaskSetState>,
+    pub function: Option<fn(&mut GooseTaskSetState)>,
 }
 impl GooseTask {
     pub fn new(name: &str) -> Self {
         trace!("new task: name: {}", &name);
         let task = GooseTask {
+            tasks_index: usize::max_value(),
             name: name.to_string(),
             weight: 1,
             counter: Arc::new(AtomicUsize::new(0)),
@@ -150,8 +188,7 @@ impl GooseTask {
         self
     }
 
-    pub fn set_function(mut self, function: fn(GooseTaskSetState) -> GooseTaskSetState) -> Self {
-        trace!("{} set_function: {:?}", self.name, function);
+    pub fn set_function(mut self, function: fn(&mut GooseTaskSetState)) -> Self {
         self.function = Some(function);
         self
     }

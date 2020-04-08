@@ -19,6 +19,7 @@ impl GooseTaskSets {
         website_tasks.register_task(GooseTask::new("about").set_weight(3).set_function(GooseTaskSetState::website_task_about));
         self.register_taskset(website_tasks);
 
+        /*
         // Register an API task set and contained tasks
         let mut api_tasks = GooseTaskSet::new("APITasks").set_weight(3);
         //api_tasks.register_task(GooseTask::new("on_start"));
@@ -29,23 +30,21 @@ impl GooseTaskSets {
 
         let empty_tasks = GooseTaskSet::new("EmptyTasks").set_weight(1);
         self.register_taskset(empty_tasks);
+        */
     }
 }
 
 impl GooseTaskSetState {
-    fn website_task_index(mut self) -> Self {
-        let _response = self.get("http://localhost/");
-        self
+    fn website_task_index(&mut self) {
+        let _response = self.get("http://apache.fosciana/");
     }
 
-    fn website_task_story(mut self) -> Self {
-        let _response = self.get("http://localhost/story");
-        self
+    fn website_task_story(&mut self) {
+        let _response = self.get("http://apache.fosciana/story.html");
     }
 
-    fn website_task_about(mut self) -> Self {
-        let _response = self.get("http://localhost/about");
-        self
+    fn website_task_about(&mut self) {
+        let _response = self.get("http://apache.fosciana/about.html");
     }
 }
 
