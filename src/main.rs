@@ -195,29 +195,48 @@ fn weight_tasks(task_set: &GooseTaskSet) -> Vec<usize> {
 }
 
 /// If run_time was specified, detect when it's time to shut down
-fn check_timer(started: time::Instant, goose_state: &GooseState, configuration: &Configuration, goose_task_sets: &GooseTaskSets) {
+fn timer_expired(started: time::Instant, goose_state: &GooseState) -> bool {
     if goose_state.run_time > 0 && started.elapsed().as_secs() >= goose_state.run_time as u64 {
-        info!("exiting after {:?} seconds", goose_state.run_time);
-        if configuration.print_stats {
-            display_stats(goose_task_sets);
-        }
-        // @TODO: send EXIT signal to clients and exit gracefully
-        std::process::exit(0);
+        true
+    }
+    else {
+        false
     }
 }
 
 /// Display running and ending statistics
 fn display_stats(goose_task_sets: &GooseTaskSets) {
-    for task_set in &goose_task_sets.task_sets {
-        println!("{}:", task_set.name);
-        eprintln!("tasks: {:?}", task_set.tasks.len());
-        for task in &task_set.tasks {
-            println!(" - {} ({} times)", task.name, task.counter.load(Ordering::Relaxed).to_formatted_string(&Locale::en));
+    // Prepare a vector of vectors, the outer vector task sets, the inner vector being tasks
+    let task_set_count = &goose_task_sets.task_sets.len();
+    let mut success_count = vec![vec![]; *task_set_count];
+    let mut fail_count = vec![vec![]; *task_set_count];
+    let mut response_times = vec![vec![]; *task_set_count];
+    for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
+        let task_count = task_set.tasks.len();
+        success_count[task_set_id] = vec![0; task_count];
+        fail_count[task_set_id] = vec![0; task_count];
+        response_times[task_set_id] = vec![vec![]; task_count];
+    }
+    // Merge stats from all clients.
+    for state in &goose_task_sets.weighted_states {
+        let task_sets_index = state.task_sets_index;
+        for (client_id, count) in state.success_count.iter().enumerate() {
+            success_count[task_sets_index][client_id] += count;
+        }
+        for (client_id, count) in state.fail_count.iter().enumerate() {
+            fail_count[task_sets_index][client_id] += count;
+        }
+        for (client_id, times) in state.response_times.iter().enumerate() {
+            response_times[task_sets_index][client_id].append(&mut times.clone())
         }
     }
-    for state in &goose_task_sets.weighted_states {
-        eprintln!("state: {:?}", state);
+    for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
+        println!("{}:", task_set.name);
+        for (task_id, task) in task_set.tasks.iter().enumerate() {
+            println!(" - {} ({} successes, {} fails)", task.name, success_count[task_set_id][task_id].to_formatted_string(&Locale::en), fail_count[task_set_id][task_id].to_formatted_string(&Locale::en));
+        }
     }
+    // @TODO response_time analysis
 }
 
 fn main() {
@@ -363,7 +382,10 @@ fn main() {
     let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseTaskSetState>, mpsc::Receiver<GooseTaskSetState>) = mpsc::channel();
     // @TODO: consider replacing this with a Arc<RwLock<>>
     for mut thread_state in goose_task_sets.weighted_states.clone() {
-        check_timer(started, &goose_state, &configuration, &goose_task_sets);
+        if timer_expired(started, &goose_state) {
+            // Stop launching threads if the run_timer has expired
+            break;
+        }
         thread_state.weighted_tasks = goose_task_sets.task_sets[thread_state.task_sets_index].weighted_tasks.clone();
         thread_state.weighted_tasks.shuffle(&mut thread_rng());
         thread_state.weighted_states_index = goose_state.active_clients;
@@ -435,7 +457,6 @@ fn main() {
                     // @TODO: configurable/optional delay
                 }
             });
-            // @TODO: gracefully join/exit children
             clients.push(client);
             goose_state.active_clients += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
@@ -444,45 +465,52 @@ fn main() {
     }
     info!("launched {} clients...", goose_state.active_clients);
 
-    let mut sleep;
     loop {
-        let message = parent_receiver.try_recv();
-        if message.is_ok() {
+        let mut message = parent_receiver.try_recv();
+        while message.is_ok() {
             let unwrapped_message = message.unwrap();
             let weighted_states_index = unwrapped_message.weighted_states_index;
-            // Only try and merge if the state is initialized
-            if goose_task_sets.weighted_states[weighted_states_index].response_times.len() > 0 {
-                for (client_id, response_times) in unwrapped_message.response_times.iter().enumerate() {
-                    goose_task_sets.weighted_states[weighted_states_index].response_times[client_id].extend_from_slice(&response_times);
-                }
-                for (client_id, success_count) in unwrapped_message.success_count.iter().enumerate() {
-                    goose_task_sets.weighted_states[weighted_states_index].success_count[client_id] += success_count;
-                }
-                for (client_id, fail_count) in unwrapped_message.fail_count.iter().enumerate() {
-                    goose_task_sets.weighted_states[weighted_states_index].fail_count[client_id] += fail_count;
-                }
-                goose_task_sets.weighted_states[weighted_states_index].weighted_position = unwrapped_message.weighted_position;
-                goose_task_sets.weighted_states[weighted_states_index].mode = unwrapped_message.mode.clone();
-                if goose_task_sets.weighted_states[weighted_states_index].weighted_tasks.len() == 0 {
-                    goose_task_sets.weighted_states[weighted_states_index].weighted_states_index = unwrapped_message.weighted_states_index;
-                    goose_task_sets.weighted_states[weighted_states_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
-                }
+            for (client_id, response_times) in unwrapped_message.response_times.iter().enumerate() {
+                goose_task_sets.weighted_states[weighted_states_index].response_times[client_id].extend_from_slice(&response_times);
             }
-            sleep = false;
+            for (client_id, success_count) in unwrapped_message.success_count.iter().enumerate() {
+                goose_task_sets.weighted_states[weighted_states_index].success_count[client_id] += success_count;
+            }
+            for (client_id, fail_count) in unwrapped_message.fail_count.iter().enumerate() {
+                goose_task_sets.weighted_states[weighted_states_index].fail_count[client_id] += fail_count;
+            }
+            goose_task_sets.weighted_states[weighted_states_index].weighted_position = unwrapped_message.weighted_position;
+            goose_task_sets.weighted_states[weighted_states_index].mode = unwrapped_message.mode.clone();
+            if goose_task_sets.weighted_states[weighted_states_index].weighted_tasks.len() == 0 {
+                goose_task_sets.weighted_states[weighted_states_index].weighted_states_index = unwrapped_message.weighted_states_index;
+                goose_task_sets.weighted_states[weighted_states_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
+            }
+            message = parent_receiver.try_recv();
         }
-        else {
-            sleep = true;
-        }
-        check_timer(started, &goose_state, &configuration, &goose_task_sets);
-        if sleep {
-            let one_second = time::Duration::from_secs(1);
-            thread::sleep(one_second);
-
-            // @TODO: only sync when we need to report statistics
+        if timer_expired(started, &goose_state) {
+            info!("exiting after {} seconds...", configuration.run_time);
             for (index, send_to_client) in client_channels.iter().enumerate() {
-                send_to_client.send(GooseClientCommand::SYNC).unwrap();
+                send_to_client.send(GooseClientCommand::EXIT).unwrap();
                 debug!("telling client {} to sync stats", index);
             }
+            debug!("waiting for clients to exit");
+            for client in clients {
+                let _ = client.join();
+            }
+            debug!("all clients exited");
+            break;
         }
+
+        let one_second = time::Duration::from_secs(1);
+        thread::sleep(one_second);
+        // @TODO: only sync when we need to report statistics
+        for (index, send_to_client) in client_channels.iter().enumerate() {
+            send_to_client.send(GooseClientCommand::SYNC).unwrap();
+            debug!("telling client {} to sync stats", index);
+        }
+    }
+
+    if configuration.print_stats {
+        display_stats(&goose_task_sets);
     }
 }
