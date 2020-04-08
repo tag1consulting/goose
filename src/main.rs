@@ -477,11 +477,12 @@ fn main() {
         if sleep {
             let one_second = time::Duration::from_secs(1);
             thread::sleep(one_second);
-        }
-        // @TODO: only sync when we need to report statistics
-        for (index, send_to_client) in client_channels.iter().enumerate() {
-            send_to_client.send(GooseClientCommand::SYNC).unwrap();
-            debug!("telling client {} to sync stats", index);
+
+            // @TODO: only sync when we need to report statistics
+            for (index, send_to_client) in client_channels.iter().enumerate() {
+                send_to_client.send(GooseClientCommand::SYNC).unwrap();
+                debug!("telling client {} to sync stats", index);
+            }
         }
     }
 }
