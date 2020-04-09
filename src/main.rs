@@ -247,26 +247,14 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
             response_times[task_sets_index][client_id].append(&mut times.clone())
         }
     }
-    // @TODO: adapt to actual terminal window size
-    println!("-------------------------------------------------------------------------------");
     for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
+        // @TODO: adapt to actual terminal window size:
+        //  - as window increases, expand columns to take advantage of additional space
+        //  - when the window increases enough, include all information in a single table
+        println!("-------------------------------------------------------------------------------");
         println!("{}:", task_set.name);
-        //println!("-------------------------------------------------------------------------------");
-        println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg", "Min", "Max", "Mean");
         println!("-------------------------------------------------------------------------------");
-        for (task_id, task) in task_set.tasks.iter().enumerate() {
-            // Sort response times so we can calculate a mean.
-            response_times[task_set_id][task_id].sort_by(|a, b| a.partial_cmp(b).unwrap());
-            println!(" GET {:<19} | {:<10.1} | {:<10.1} | {:<10.1} | {:<10.1}",
-                task.name,
-                util::mean(&response_times[task_set_id][task_id]),
-                &response_times[task_set_id][task_id].iter().cloned().float_min(),
-                &response_times[task_set_id][task_id].iter().cloned().float_max(),
-                util::median(&response_times[task_set_id][task_id]),
-            );
-        }
-        println!("-------------------------------------------------------------------------------");
-        println!(" {:<23} | {:<14} | {:<14} | {:<5} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
+        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<6}", "Name", "# reqs", "# fails", "req/s", "fail/s");
         println!("-------------------------------------------------------------------------------");
         for (task_id, task) in task_set.tasks.iter().enumerate() {
             let success = success_count[task_set_id][task_id];
@@ -279,13 +267,27 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
             else {
                 fail_percent = 0.0;
             }
-            println!(" GET {:<19} | {:<14} | {} ({:.1}%)       | {:<5.1} | {:<5.1}",
+            println!(" GET {:<19} | {:<14} | {} ({:.1}%)       | {:<5} | {:<5}",
                 task.name,
                 total.to_formatted_string(&Locale::en),
                 fail.to_formatted_string(&Locale::en),
                 fail_percent,
-                total / elapsed,
-                fail / elapsed,
+                (total / elapsed).to_formatted_string(&Locale::en),
+                (fail / elapsed).to_formatted_string(&Locale::en),
+            );
+        }
+        println!("-------------------------------------------------------------------------------");
+        println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
+        println!("-------------------------------------------------------------------------------");
+        for (task_id, task) in task_set.tasks.iter().enumerate() {
+            // Sort response times so we can calculate a mean.
+            response_times[task_set_id][task_id].sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!(" GET {:<19} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                task.name,
+                util::mean(&response_times[task_set_id][task_id]),
+                &response_times[task_set_id][task_id].iter().cloned().float_min(),
+                &response_times[task_set_id][task_id].iter().cloned().float_max(),
+                util::median(&response_times[task_set_id][task_id]),
             );
         }
     }
