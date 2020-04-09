@@ -291,7 +291,6 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
             );
         }
     }
-    // @TODO response_time analysis
 }
 
 fn main() {
@@ -509,7 +508,7 @@ fn main() {
                         }
                     }
 
-                    // @TODO: configurable/optional delay
+                    // @TODO: configurable/optional delay (wait_time attribute)
                 }
             });
             clients.push(client);
