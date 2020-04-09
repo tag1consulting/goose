@@ -247,18 +247,35 @@ fn display_stats(goose_task_sets: &GooseTaskSets) {
             response_times[task_sets_index][client_id].append(&mut times.clone())
         }
     }
+    // @TODO: adapt to actual terminal window size
+    println!("-------------------------------------------------------------------------------");
     for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
         println!("{}:", task_set.name);
+        //println!("-------------------------------------------------------------------------------");
+        println!(" {:<23} | {:<8} | {:<8} | {:<8} | {:<8} | {:<8}", "Name", "# reqs", "# fails", "Avg", "Min", "Max");
+        println!("-------------------------------------------------------------------------------");
         for (task_id, task) in task_set.tasks.iter().enumerate() {
+            // Sort response times so we can calculate a mean.
             response_times[task_set_id][task_id].sort_by(|a, b| a.partial_cmp(b).unwrap());
-            println!(" - {} ({} success, {} fail, {:.2}ms min, {:.2}ms max, {:.2}ms avg, {:.3}ms median)",
+            let success = success_count[task_set_id][task_id];
+            let fail = fail_count[task_set_id][task_id];
+            let total = success + fail;
+            let fail_percent: f32;
+            if fail > 0 {
+                fail_percent = fail as f32 / total as f32 * 100.0;
+            }
+            else {
+                fail_percent = 0.0;
+            }
+            println!(" GET {:<19} | {:<8} | {} ({:.1}%) | {:<8.1} | {:<8.1} | {:<8.2}",
                 task.name,
-                success_count[task_set_id][task_id].to_formatted_string(&Locale::en),
-                fail_count[task_set_id][task_id].to_formatted_string(&Locale::en),
+                total.to_formatted_string(&Locale::en),
+                fail.to_formatted_string(&Locale::en),
+                fail_percent,
+                util::mean(&response_times[task_set_id][task_id]),
                 &response_times[task_set_id][task_id].iter().cloned().float_min(),
                 &response_times[task_set_id][task_id].iter().cloned().float_max(),
-                util::mean(&response_times[task_set_id][task_id]),
-                util::median(&response_times[task_set_id][task_id]),
+                //util::median(&response_times[task_set_id][task_id]),
             );
         }
     }
