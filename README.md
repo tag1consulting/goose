@@ -83,6 +83,4 @@ WebsiteTasks:
 
 ## Roadmap
 
-Once the above is complete, additional planned features include:
- - gaggle support for distributed load testing (leader/worker)
- - a web UI for controlling and monitoring Goose
+The Goose project roadmap is documented in [TODO.md](https://github.com/jeremyandrews/goose/blob/master/TODO.md).
