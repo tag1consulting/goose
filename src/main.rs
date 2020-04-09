@@ -254,7 +254,7 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
         println!("-------------------------------------------------------------------------------");
         println!("{}:", task_set.name);
         println!("-------------------------------------------------------------------------------");
-        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<6}", "Name", "# reqs", "# fails", "req/s", "fail/s");
+        println!(" {:<23} | {:<14} | {:<14} | {:<5} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
         println!("-------------------------------------------------------------------------------");
         for (task_id, task) in task_set.tasks.iter().enumerate() {
             let success = success_count[task_set_id][task_id];
