@@ -42,7 +42,7 @@ OPTIONS:
 
 ## Examples
 
-The following is an example of running Goose, simulating 8 concurrent clients all loading pages as quickly as possible. In this example, Goose is running in an 8-core VM, and loading static pages from Varnish in front of Apache in another 8-core VM. (Compared against Locust running in the same configuration, Goose is currently able to generate nearly 8-10 times as much load.)
+The following is an example of running Goose, simulating 8 concurrent clients all loading pages as quickly as possible. In this example, Goose is running in an 8-core VM, and loading static pages from Varnish in front of Apache in another 8-core VM. (Compared against Locust running in the same configuration, Goose is currently able to generate roughly 8 to 10 times as much load. It can also be configured to make considerably better use of available resources.)
 
 ```
 $ cargo run --release -- -t1800 -v --print-stats 

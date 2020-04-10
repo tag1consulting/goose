@@ -15,8 +15,8 @@ use std::f32;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
 
 use num_format::{Locale, ToFormattedString};
@@ -496,7 +496,7 @@ fn main() {
     goose_task_sets.weighted_states_order = (0..goose_task_sets.weighted_states.len() - 1).collect::<Vec<_>>();
 
     // Spawn clients, each with their own weighted task_set
-    let started = time::Instant::now();
+    let mut started = time::Instant::now();
     let sleep_float = 1.0 / hatch_rate as f32;
     let sleep_duration = time::Duration::from_secs_f32(sleep_float);
     let mut clients = vec![];
@@ -586,13 +586,26 @@ fn main() {
             thread::sleep(sleep_duration);
         }
     }
+    // Restart the timer now that all threads are launched.
+    started = time::Instant::now();
     info!("launched {} clients...", goose_state.active_clients);
 
     for (index, send_to_client) in client_channels.iter().enumerate() {
         send_to_client.send(GooseClientCommand::SYNC).unwrap();
         debug!("telling client {} to sync stats", index);
     }
+
+    // Catch ctrl-c to allow clean shutdown to display statistics.
+    let canceled = Arc::new(AtomicBool::new(false));
+    let caught_ctrlc = canceled.clone();
+    ctrlc::set_handler(move || {
+        println!("caught ctrl-c, exiting...");
+        caught_ctrlc.store(true, Ordering::SeqCst);
+    }).expect("Failed to set Ctrl-C signal handler.");
+
     let mut statistics_counter = time::Instant::now();
+    // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
+    let mut run_time = goose_state.run_time;
     loop {
         let mut message = parent_receiver.try_recv();
         while message.is_ok() {
@@ -615,8 +628,9 @@ fn main() {
             }
             message = parent_receiver.try_recv();
         }
-        if timer_expired(started, goose_state.run_time) {
-            info!("exiting after {} seconds...", configuration.run_time);
+        if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
+            run_time = started.elapsed().as_secs() as usize;
+            info!("exiting after {} seconds...", run_time);
             for (index, send_to_client) in client_channels.iter().enumerate() {
                 send_to_client.send(GooseClientCommand::EXIT).unwrap();
                 debug!("telling client {} to sync stats", index);
@@ -642,6 +656,6 @@ fn main() {
     }
 
     if configuration.print_stats {
-        display_stats(&goose_task_sets, goose_state.run_time);
+        display_stats(&goose_task_sets, run_time);
     }
 }

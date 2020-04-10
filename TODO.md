@@ -33,7 +33,7 @@ Goose is a Rust load testing tool, based on Locust.
   - [ ] only sync client threads to parent when needing to display statistics  
   - [ ] don't collect response time and other statistics if not displaying them  
   - [ ] detect terminal width and adjust what is displayed (when wide enough collapse into a single table)  
-  - [ ] catch ctrl-c and exit gracefully, displaying statistics if enabled  
+  - [x] catch ctrl-c and exit gracefully, displaying statistics if enabled  
 - [ ] GET request method helper  
   - [ ] properly identify method in stats  
 
