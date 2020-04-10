@@ -221,6 +221,16 @@ fn timer_expired(started: time::Instant, goose_state: &GooseState) -> bool {
     }
 }
 
+/// Get the response time that a certain number of percent of the requests finished within.
+fn calculate_response_time_percentile(mut response_times: Vec<f32>, percent: f32) -> f32 {
+    let total_requests = response_times.len();
+    let percentile_request = (total_requests as f32 * percent) as usize;
+    debug!("percentile: {}, request {} of total {}", percent, percentile_request, total_requests);
+    // Sort response times
+    response_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    return response_times[percentile_request];
+}
+
 /// Display running and ending statistics
 fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
     // Prepare a vector of vectors, the outer vector task sets, the inner vector being tasks
@@ -320,7 +330,36 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
             &aggregate_response_times.iter().cloned().float_max(),
             util::median(&aggregate_response_times),
         );
+
+        println!("-------------------------------------------------------------------------------");
+        println!("Percentage of the requests completed within times (in ms):");
+        println!("-------------------------------------------------------------------------------");
+        println!(" {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}", "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%");
+        println!(" ----------------------------------------------------------------------------- ");
+        for (task_id, task) in task_set.tasks.iter().enumerate() {
+            // Sort response times so we can calculate a mean.
+            println!(" GET {:<19} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+                task.name,
+                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.5),
+                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.75),
+                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.98),
+                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.99),
+                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.999),
+                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.9999),
+            );
+        }
+        println!(" ------------------------+------------+------------+------------+------------- ");
+        println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+            "Aggregated",
+            calculate_response_time_percentile(aggregate_response_times.clone(), 0.5),
+            calculate_response_time_percentile(aggregate_response_times.clone(), 0.75),
+            calculate_response_time_percentile(aggregate_response_times.clone(), 0.98),
+            calculate_response_time_percentile(aggregate_response_times.clone(), 0.99),
+            calculate_response_time_percentile(aggregate_response_times.clone(), 0.999),
+            calculate_response_time_percentile(aggregate_response_times.clone(), 0.9999),
+        );
     }
+
 }
 
 fn main() {
