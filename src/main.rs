@@ -264,7 +264,7 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
         println!("-------------------------------------------------------------------------------");
         println!("{}:", task_set.name);
         println!("------------------------------------------------------------------------------ ");
-        println!(" {:<23} | {:<14} | {:<14} | {:<5} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
+        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
         println!(" ----------------------------------------------------------------------------- ");
         let mut aggregate_fail_count = 0;
         let mut aggregate_total_count = 0;
@@ -281,7 +281,7 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
             else {
                 fail_percent = 0.0;
             }
-            println!(" GET {:<19} | {:<14} | {} ({:.1}%)       | {:<5} | {:<5}",
+            println!(" GET {:<19} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
                 task.name,
                 total_count.to_formatted_string(&Locale::en),
                 fail_count.to_formatted_string(&Locale::en),
@@ -298,7 +298,7 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
             aggregate_fail_percent = 0.0;
         }
         println!(" ------------------------+----------------+----------------+-------+---------- ");
-        println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<5} | {:<5}",
+        println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
             "Aggregated",
             aggregate_total_count.to_formatted_string(&Locale::en),
             aggregate_fail_count.to_formatted_string(&Locale::en),
@@ -332,8 +332,8 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
         );
 
         println!("-------------------------------------------------------------------------------");
-        println!("Percentage of the requests completed within times (in ms):");
-        println!("-------------------------------------------------------------------------------");
+        println!(" Slowest page load within specified percentile of requests (in ms):");
+        println!(" ------------------------------------------------------------------------------");
         println!(" {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}", "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%");
         println!(" ----------------------------------------------------------------------------- ");
         for (task_id, task) in task_set.tasks.iter().enumerate() {
