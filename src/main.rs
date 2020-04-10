@@ -212,8 +212,8 @@ fn weight_tasks(task_set: &GooseTaskSet) -> Vec<usize> {
 }
 
 /// If run_time was specified, detect when it's time to shut down
-fn timer_expired(started: time::Instant, goose_state: &GooseState) -> bool {
-    if goose_state.run_time > 0 && started.elapsed().as_secs() >= goose_state.run_time as u64 {
+fn timer_expired(started: time::Instant, run_time: usize) -> bool {
+    if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
         true
     }
     else {
@@ -505,7 +505,7 @@ fn main() {
     let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseTaskSetState>, mpsc::Receiver<GooseTaskSetState>) = mpsc::channel();
     // @TODO: consider replacing this with a Arc<RwLock<>>
     for mut thread_state in goose_task_sets.weighted_states.clone() {
-        if timer_expired(started, &goose_state) {
+        if timer_expired(started, goose_state.run_time) {
             // Stop launching threads if the run_timer has expired
             break;
         }
@@ -588,6 +588,11 @@ fn main() {
     }
     info!("launched {} clients...", goose_state.active_clients);
 
+    for (index, send_to_client) in client_channels.iter().enumerate() {
+        send_to_client.send(GooseClientCommand::SYNC).unwrap();
+        debug!("telling client {} to sync stats", index);
+    }
+    let mut statistics_counter = time::Instant::now();
     loop {
         let mut message = parent_receiver.try_recv();
         while message.is_ok() {
@@ -610,7 +615,7 @@ fn main() {
             }
             message = parent_receiver.try_recv();
         }
-        if timer_expired(started, &goose_state) {
+        if timer_expired(started, goose_state.run_time) {
             info!("exiting after {} seconds...", configuration.run_time);
             for (index, send_to_client) in client_channels.iter().enumerate() {
                 send_to_client.send(GooseClientCommand::EXIT).unwrap();
@@ -626,10 +631,13 @@ fn main() {
 
         let one_second = time::Duration::from_secs(1);
         thread::sleep(one_second);
-        // @TODO: only sync when we need to report statistics
-        for (index, send_to_client) in client_channels.iter().enumerate() {
-            send_to_client.send(GooseClientCommand::SYNC).unwrap();
-            debug!("telling client {} to sync stats", index);
+        // @TODO: adjust this to run each time we display statistics
+        if timer_expired(statistics_counter, 60) {
+            for (index, send_to_client) in client_channels.iter().enumerate() {
+                send_to_client.send(GooseClientCommand::SYNC).unwrap();
+                debug!("telling client {} to sync stats", index);
+            }
+            statistics_counter = time::Instant::now();
         }
     }
 

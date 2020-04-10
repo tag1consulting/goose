@@ -28,7 +28,7 @@ Goose is a Rust load testing tool, based on Locust.
   - [x] response time calculations: min, max, average, mean  
   - [x] show total and per-second success and fail counts  
   - [x] include aggregated totals for all tasks/requests  
-  - [ ] break down percentage of requests within listed times for all tasks/requests  
+  - [x] break down percentage of requests within listed times for all tasks/requests  
   - [ ] optionally provide running statistics  
   - [ ] only sync client threads to parent when needing to display statistics  
   - [ ] don't collect response time and other statistics if not displaying them  
