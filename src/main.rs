@@ -225,23 +225,23 @@ fn timer_expired(started: time::Instant, goose_state: &GooseState) -> bool {
 fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
     // Prepare a vector of vectors, the outer vector task sets, the inner vector being tasks
     let task_set_count = &goose_task_sets.task_sets.len();
-    let mut success_count = vec![vec![]; *task_set_count];
-    let mut fail_count = vec![vec![]; *task_set_count];
+    let mut success_counts = vec![vec![]; *task_set_count];
+    let mut fail_counts = vec![vec![]; *task_set_count];
     let mut response_times = vec![vec![]; *task_set_count];
     for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
         let task_count = task_set.tasks.len();
-        success_count[task_set_id] = vec![0; task_count];
-        fail_count[task_set_id] = vec![0; task_count];
+        success_counts[task_set_id] = vec![0; task_count];
+        fail_counts[task_set_id] = vec![0; task_count];
         response_times[task_set_id] = vec![vec![]; task_count];
     }
     // Merge stats from all clients.
     for state in &goose_task_sets.weighted_states {
         let task_sets_index = state.task_sets_index;
         for (client_id, count) in state.success_count.iter().enumerate() {
-            success_count[task_sets_index][client_id] += count;
+            success_counts[task_sets_index][client_id] += count;
         }
         for (client_id, count) in state.fail_count.iter().enumerate() {
-            fail_count[task_sets_index][client_id] += count;
+            fail_counts[task_sets_index][client_id] += count;
         }
         for (client_id, times) in state.response_times.iter().enumerate() {
             response_times[task_sets_index][client_id].append(&mut times.clone())
@@ -253,35 +253,57 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
         //  - when the window increases enough, include all information in a single table
         println!("-------------------------------------------------------------------------------");
         println!("{}:", task_set.name);
-        println!("-------------------------------------------------------------------------------");
+        println!("------------------------------------------------------------------------------ ");
         println!(" {:<23} | {:<14} | {:<14} | {:<5} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
-        println!("-------------------------------------------------------------------------------");
+        println!(" ----------------------------------------------------------------------------- ");
+        let mut aggregate_fail_count = 0;
+        let mut aggregate_total_count = 0;
         for (task_id, task) in task_set.tasks.iter().enumerate() {
-            let success = success_count[task_set_id][task_id];
-            let fail = fail_count[task_set_id][task_id];
-            let total = success + fail;
+            let success_count = success_counts[task_set_id][task_id];
+            let fail_count = fail_counts[task_set_id][task_id];
+            aggregate_fail_count += fail_count;
+            let total_count = success_count + fail_count;
+            aggregate_total_count += total_count;
             let fail_percent: f32;
-            if fail > 0 {
-                fail_percent = fail as f32 / total as f32 * 100.0;
+            if fail_count > 0 {
+                fail_percent = fail_count as f32 / total_count as f32 * 100.0;
             }
             else {
                 fail_percent = 0.0;
             }
             println!(" GET {:<19} | {:<14} | {} ({:.1}%)       | {:<5} | {:<5}",
                 task.name,
-                total.to_formatted_string(&Locale::en),
-                fail.to_formatted_string(&Locale::en),
+                total_count.to_formatted_string(&Locale::en),
+                fail_count.to_formatted_string(&Locale::en),
                 fail_percent,
-                (total / elapsed).to_formatted_string(&Locale::en),
-                (fail / elapsed).to_formatted_string(&Locale::en),
+                (total_count / elapsed).to_formatted_string(&Locale::en),
+                (fail_count / elapsed).to_formatted_string(&Locale::en),
             );
         }
+        let aggregate_fail_percent: f32;
+        if aggregate_fail_count > 0 {
+            aggregate_fail_percent = aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0;
+        }
+        else {
+            aggregate_fail_percent = 0.0;
+        }
+        println!(" ------------------------+----------------+----------------+-------+---------- ");
+        println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<5} | {:<5}",
+            "Aggregated",
+            aggregate_total_count.to_formatted_string(&Locale::en),
+            aggregate_fail_count.to_formatted_string(&Locale::en),
+            aggregate_fail_percent,
+            (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
+            (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+        );
         println!("-------------------------------------------------------------------------------");
         println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
-        println!("-------------------------------------------------------------------------------");
+        println!(" ----------------------------------------------------------------------------- ");
+        let mut aggregate_response_times: Vec<f32> = Vec::new();
         for (task_id, task) in task_set.tasks.iter().enumerate() {
             // Sort response times so we can calculate a mean.
             response_times[task_set_id][task_id].sort_by(|a, b| a.partial_cmp(b).unwrap());
+            aggregate_response_times.append(&mut response_times[task_set_id][task_id].clone());
             println!(" GET {:<19} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
                 task.name,
                 util::mean(&response_times[task_set_id][task_id]),
@@ -290,6 +312,14 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
                 util::median(&response_times[task_set_id][task_id]),
             );
         }
+        println!(" ------------------------+------------+------------+------------+------------- ");
+        println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+            "Aggregated",
+            util::mean(&aggregate_response_times),
+            &aggregate_response_times.iter().cloned().float_min(),
+            &aggregate_response_times.iter().cloned().float_max(),
+            util::median(&aggregate_response_times),
+        );
     }
 }
 
