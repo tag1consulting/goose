@@ -9,7 +9,7 @@ use reqwest::Error;
 #[derive(Clone)]
 pub struct GooseTaskSets {
     pub task_sets: Vec<GooseTaskSet>,
-    pub weighted_states: Vec<GooseTaskSetState>,
+    pub weighted_states: Vec<GooseClient>,
     pub weighted_states_order: Vec<usize>,
 }
 impl GooseTaskSets {
@@ -87,7 +87,7 @@ pub enum GooseClientCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct GooseTaskSetState {
+pub struct GooseClient {
     // This is the GooseTaskSets.task_sets index
     pub task_sets_index: usize,
     // This is the reqwest.blocking.client
@@ -101,10 +101,10 @@ pub struct GooseTaskSetState {
     pub weighted_tasks: Vec<usize>,
     pub weighted_position: usize,
 }
-impl GooseTaskSetState {
+impl GooseClient {
     pub fn new(task_count: usize, index: usize, ) -> Self {
         trace!("new task state");
-        let state = GooseTaskSetState {
+        let state = GooseClient {
             task_sets_index: index,
             client: Client::new(),
             weighted_states_index: usize::max_value(),
@@ -164,7 +164,7 @@ pub struct GooseTask {
     pub name: String,
     pub weight: usize,
     pub counter: Arc<AtomicUsize>,
-    pub function: Option<fn(&mut GooseTaskSetState)>,
+    pub function: Option<fn(&mut GooseClient)>,
 }
 impl GooseTask {
     pub fn new(name: &str) -> Self {
@@ -191,7 +191,7 @@ impl GooseTask {
         self
     }
 
-    pub fn set_function(mut self, function: fn(&mut GooseTaskSetState)) -> Self {
+    pub fn set_function(mut self, function: fn(&mut GooseClient)) -> Self {
         self.function = Some(function);
         self
     }

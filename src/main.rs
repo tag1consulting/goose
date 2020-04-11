@@ -25,7 +25,7 @@ use rand::seq::SliceRandom;
 use simplelog::*;
 use structopt::StructOpt;
 
-use goose::{GooseTaskSets, GooseTaskSet, GooseTaskSetState, GooseClientMode, GooseClientCommand};
+use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
 
 #[derive(Debug, Default, Clone)]
 struct GooseState {
@@ -131,8 +131,8 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
     Ok(goose_task_sets)
 }
 
-/// Allocate a vector of weighted GooseTaskSetStates
-fn weight_task_set_states(task_sets: &GooseTaskSets, clients: usize) -> Vec<GooseTaskSetState> {
+/// Allocate a vector of weighted GooseClient
+fn weight_task_set_states(task_sets: &GooseTaskSets, clients: usize) -> Vec<GooseClient> {
     trace!("weight_task_set_states");
 
     let mut u: usize = 0;
@@ -169,7 +169,7 @@ fn weight_task_set_states(task_sets: &GooseTaskSets, clients: usize) -> Vec<Goos
     loop {
         for task_sets_index in &weighted_task_sets {
             let task_count = task_sets.task_sets[*task_sets_index].tasks.len();
-            weighted_states.push(GooseTaskSetState::new(task_count, *task_sets_index));
+            weighted_states.push(GooseClient::new(task_count, *task_sets_index));
             client_count += 1;
             if client_count >= clients {
                 trace!("created {} weighted_states", client_count);
@@ -502,7 +502,7 @@ fn main() {
     let mut clients = vec![];
     let mut client_channels = vec![];
     // Single channel allowing all Goose child threads to sync state back to parent
-    let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseTaskSetState>, mpsc::Receiver<GooseTaskSetState>) = mpsc::channel();
+    let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseClient>, mpsc::Receiver<GooseClient>) = mpsc::channel();
     // @TODO: consider replacing this with a Arc<RwLock<>>
     for mut thread_state in goose_task_sets.weighted_states.clone() {
         if timer_expired(started, goose_state.run_time) {
