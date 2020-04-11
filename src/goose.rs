@@ -9,15 +9,15 @@ use reqwest::Error;
 #[derive(Clone)]
 pub struct GooseTaskSets {
     pub task_sets: Vec<GooseTaskSet>,
-    pub weighted_states: Vec<GooseClient>,
-    pub weighted_states_order: Vec<usize>,
+    pub weighted_clients: Vec<GooseClient>,
+    pub weighted_clients_order: Vec<usize>,
 }
 impl GooseTaskSets {
     pub fn new() -> Self {
         let goose_tasksets = GooseTaskSets { 
             task_sets: Vec::new(),
-            weighted_states: Vec::new(),
-            weighted_states_order: Vec::new(),
+            weighted_clients: Vec::new(),
+            weighted_clients_order: Vec::new(),
         };
         goose_tasksets
     }
@@ -92,7 +92,7 @@ pub struct GooseClient {
     pub task_sets_index: usize,
     // This is the reqwest.blocking.client
     pub client: Client,
-    pub weighted_states_index: usize,
+    pub weighted_clients_index: usize,
     pub mode: GooseClientMode,
     // Per-task statistics, using task index
     pub response_times: Vec<Vec<f32>>,
@@ -107,7 +107,7 @@ impl GooseClient {
         let state = GooseClient {
             task_sets_index: index,
             client: Client::new(),
-            weighted_states_index: usize::max_value(),
+            weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
             response_times: vec![vec![]; task_count],
             success_count: vec![0; task_count],

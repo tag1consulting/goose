@@ -132,8 +132,8 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
 }
 
 /// Allocate a vector of weighted GooseClient
-fn weight_task_set_states(task_sets: &GooseTaskSets, clients: usize) -> Vec<GooseClient> {
-    trace!("weight_task_set_states");
+fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize) -> Vec<GooseClient> {
+    trace!("weight_task_set_clients");
 
     let mut u: usize = 0;
     let mut v: usize;
@@ -164,16 +164,16 @@ fn weight_task_set_states(task_sets: &GooseTaskSets, clients: usize) -> Vec<Goos
     weighted_task_sets.shuffle(&mut thread_rng());
 
     // Allocate a state for each client that will be spawned.
-    let mut weighted_states = Vec::new();
+    let mut weighted_clients = Vec::new();
     let mut client_count = 0;
     loop {
         for task_sets_index in &weighted_task_sets {
             let task_count = task_sets.task_sets[*task_sets_index].tasks.len();
-            weighted_states.push(GooseClient::new(task_count, *task_sets_index));
+            weighted_clients.push(GooseClient::new(task_count, *task_sets_index));
             client_count += 1;
             if client_count >= clients {
-                trace!("created {} weighted_states", client_count);
-                return weighted_states;
+                trace!("created {} weighted_clients", client_count);
+                return weighted_clients;
             }
         }
     }
@@ -245,15 +245,15 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
         response_times[task_set_id] = vec![vec![]; task_count];
     }
     // Merge stats from all clients.
-    for state in &goose_task_sets.weighted_states {
-        let task_sets_index = state.task_sets_index;
-        for (client_id, count) in state.success_count.iter().enumerate() {
+    for weighted_client in &goose_task_sets.weighted_clients {
+        let task_sets_index = weighted_client.task_sets_index;
+        for (client_id, count) in weighted_client.success_count.iter().enumerate() {
             success_counts[task_sets_index][client_id] += count;
         }
-        for (client_id, count) in state.fail_count.iter().enumerate() {
+        for (client_id, count) in weighted_client.fail_count.iter().enumerate() {
             fail_counts[task_sets_index][client_id] += count;
         }
-        for (client_id, times) in state.response_times.iter().enumerate() {
+        for (client_id, times) in weighted_client.response_times.iter().enumerate() {
             response_times[task_sets_index][client_id].append(&mut times.clone())
         }
     }
@@ -491,9 +491,9 @@ fn main() {
     }
 
     // Allocate a state for each of the clients we are about to start
-    goose_task_sets.weighted_states = weight_task_set_states(&goose_task_sets, goose_state.max_clients);
+    goose_task_sets.weighted_clients = weight_task_set_clients(&goose_task_sets, goose_state.max_clients);
     // Start with a simple 0..n-1 range (ie 0, 1, 2, 3, ... n-1)
-    goose_task_sets.weighted_states_order = (0..goose_task_sets.weighted_states.len() - 1).collect::<Vec<_>>();
+    goose_task_sets.weighted_clients_order = (0..goose_task_sets.weighted_clients.len() - 1).collect::<Vec<_>>();
 
     // Spawn clients, each with their own weighted task_set
     let mut started = time::Instant::now();
@@ -504,74 +504,74 @@ fn main() {
     // Single channel allowing all Goose child threads to sync state back to parent
     let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseClient>, mpsc::Receiver<GooseClient>) = mpsc::channel();
     // @TODO: consider replacing this with a Arc<RwLock<>>
-    for mut thread_state in goose_task_sets.weighted_states.clone() {
+    for mut thread_client in goose_task_sets.weighted_clients.clone() {
         if timer_expired(started, goose_state.run_time) {
             // Stop launching threads if the run_timer has expired
             break;
         }
-        thread_state.weighted_tasks = goose_task_sets.task_sets[thread_state.task_sets_index].weighted_tasks.clone();
-        thread_state.weighted_tasks.shuffle(&mut thread_rng());
-        thread_state.weighted_states_index = goose_state.active_clients;
+        thread_client.weighted_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
+        thread_client.weighted_tasks.shuffle(&mut thread_rng());
+        thread_client.weighted_clients_index = goose_state.active_clients;
 
         // Per-thread channel allowing parent to control Goose child threads
         let (parent_sender, thread_receiver): (mpsc::Sender<GooseClientCommand>, mpsc::Receiver<GooseClientCommand>) = mpsc::channel();
         client_channels.push(parent_sender);
         // We can only run a task if the task list is non-empty
-        if thread_state.weighted_tasks.len() > 0 {
+        if thread_client.weighted_tasks.len() > 0 {
             // Copy the client-to-parent sender channel, used by all threads.
             let thread_sender = all_threads_sender.clone();
 
             // Hatching a new Goose client.
-            thread_state.set_mode(GooseClientMode::HATCHING);
-            thread_sender.send(thread_state.clone()).unwrap();
+            thread_client.set_mode(GooseClientMode::HATCHING);
+            thread_sender.send(thread_client.clone()).unwrap();
 
             // Copy the appropriate task_set into the thread.
-            let thread_task_set = goose_task_sets.task_sets[thread_state.task_sets_index].clone();
+            let thread_task_set = goose_task_sets.task_sets[thread_client.task_sets_index].clone();
 
             // Initialize per-task counters
             let task_count = thread_task_set.tasks.len();
-            thread_state.response_times = vec![vec![]; task_count];
-            thread_state.success_count = vec![0; task_count];
-            thread_state.fail_count = vec![0; task_count];
+            thread_client.response_times = vec![vec![]; task_count];
+            thread_client.success_count = vec![0; task_count];
+            thread_client.fail_count = vec![0; task_count];
             // active_clients starts at 0, for numbering threads we start at 1 (@TODO: why?)
             let thread_number = goose_state.active_clients + 1;
 
             // Launch a new client
             let client = thread::spawn(move || {
                 info!("launching {} client {}...", thread_task_set.name, thread_number);
-                thread_state.set_mode(GooseClientMode::RUNNING);
-                thread_sender.send(thread_state.clone()).unwrap();
+                thread_client.set_mode(GooseClientMode::RUNNING);
+                thread_sender.send(thread_client.clone()).unwrap();
                 let mut thread_continue = true;
                 while thread_continue {
-                    if thread_task_set.tasks.len() <= thread_state.weighted_position {
+                    if thread_task_set.tasks.len() <= thread_client.weighted_position {
                         // Reshuffle the weighted tasks
-                        thread_state.weighted_tasks.shuffle(&mut thread_rng());
-                        debug!("re-shuffled {} tasks: {:?}", &thread_task_set.name, thread_state.weighted_tasks);
-                        thread_state.weighted_position = 0;
+                        thread_client.weighted_tasks.shuffle(&mut thread_rng());
+                        debug!("re-shuffled {} tasks: {:?}", &thread_task_set.name, thread_client.weighted_tasks);
+                        thread_client.weighted_position = 0;
                     }
-                    let thread_weighted_task = thread_state.weighted_tasks[thread_state.weighted_position];
+                    let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_position];
                     thread_task_set.tasks[thread_weighted_task].counter.fetch_add(1, Ordering::Relaxed);
 
                     let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
                     debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
                     let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
-                    function(&mut thread_state);
-                    thread_state.weighted_position += 1;
+                    function(&mut thread_client);
+                    thread_client.weighted_position += 1;
 
                     let message = thread_receiver.try_recv();
                     if message.is_ok() {
                         match message.unwrap() {
                             GooseClientCommand::SYNC => {
-                                thread_sender.send(thread_state.clone()).unwrap();
+                                thread_sender.send(thread_client.clone()).unwrap();
                                 // Reset per-thread counters, as totals have been sent to the parent
-                                thread_state.response_times = vec![vec![]; task_count];
-                                thread_state.success_count = vec![0; task_count];
-                                thread_state.fail_count = vec![0; task_count];
+                                thread_client.response_times = vec![vec![]; task_count];
+                                thread_client.success_count = vec![0; task_count];
+                                thread_client.fail_count = vec![0; task_count];
                             },
                             GooseClientCommand::EXIT => {
-                                thread_state.set_mode(GooseClientMode::EXITING);
+                                thread_client.set_mode(GooseClientMode::EXITING);
                                 // No need to reset per-thread counters, we're exiting and memory will be freed
-                                thread_sender.send(thread_state.clone()).unwrap();
+                                thread_sender.send(thread_client.clone()).unwrap();
                                 thread_continue = false
                             }
                         }
@@ -610,21 +610,21 @@ fn main() {
         let mut message = parent_receiver.try_recv();
         while message.is_ok() {
             let unwrapped_message = message.unwrap();
-            let weighted_states_index = unwrapped_message.weighted_states_index;
+            let weighted_clients_index = unwrapped_message.weighted_clients_index;
             for (client_id, response_times) in unwrapped_message.response_times.iter().enumerate() {
-                goose_task_sets.weighted_states[weighted_states_index].response_times[client_id].extend_from_slice(&response_times);
+                goose_task_sets.weighted_clients[weighted_clients_index].response_times[client_id].extend_from_slice(&response_times);
             }
             for (client_id, success_count) in unwrapped_message.success_count.iter().enumerate() {
-                goose_task_sets.weighted_states[weighted_states_index].success_count[client_id] += success_count;
+                goose_task_sets.weighted_clients[weighted_clients_index].success_count[client_id] += success_count;
             }
             for (client_id, fail_count) in unwrapped_message.fail_count.iter().enumerate() {
-                goose_task_sets.weighted_states[weighted_states_index].fail_count[client_id] += fail_count;
+                goose_task_sets.weighted_clients[weighted_clients_index].fail_count[client_id] += fail_count;
             }
-            goose_task_sets.weighted_states[weighted_states_index].weighted_position = unwrapped_message.weighted_position;
-            goose_task_sets.weighted_states[weighted_states_index].mode = unwrapped_message.mode.clone();
-            if goose_task_sets.weighted_states[weighted_states_index].weighted_tasks.len() == 0 {
-                goose_task_sets.weighted_states[weighted_states_index].weighted_states_index = unwrapped_message.weighted_states_index;
-                goose_task_sets.weighted_states[weighted_states_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
+            goose_task_sets.weighted_clients[weighted_clients_index].weighted_position = unwrapped_message.weighted_position;
+            goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode.clone();
+            if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
+                goose_task_sets.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
+                goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
             }
             message = parent_receiver.try_recv();
         }
