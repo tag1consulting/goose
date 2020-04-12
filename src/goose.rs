@@ -141,31 +141,26 @@ pub struct GooseClient {
     pub task_sets_index: usize,
     // This is the reqwest.blocking.client (@TODO: test with async)
     pub client: Client,
+    pub host: String,
     pub weighted_clients_index: usize,
     pub mode: GooseClientMode,
     pub weighted_tasks: Vec<usize>,
     pub weighted_position: usize,
     pub requests: HashMap<String, GooseRequest>,
-    // Per-task statistics, using task index (@TODO: remove, the)
-    pub response_times: Vec<Vec<f32>>,
-    pub success_count: Vec<usize>,
-    pub fail_count: Vec<usize>,
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(task_count: usize, index: usize, ) -> Self {
+    pub fn new(index: usize, host: &str) -> Self {
         trace!("new client");
         GooseClient {
             task_sets_index: index,
             client: Client::new(),
+            host: host.to_string(),
             weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
             weighted_tasks: Vec::new(),
             weighted_position: 0,
             requests: HashMap::new(),
-            response_times: vec![vec![]; task_count],
-            success_count: vec![0; task_count],
-            fail_count: vec![0; task_count],
         }
     }
 
@@ -177,7 +172,6 @@ impl GooseClient {
         let key = format!("{:?} {}", method, url);
         trace!("get key: {}", &key);
         match self.requests.get(&key) {
-            // @TODO: is there a way to do this without clone()?
             Some(r) => r.clone(),
             None => GooseRequest::new(url, method),
         }
@@ -191,16 +185,13 @@ impl GooseClient {
 
     pub fn get(&mut self, url: &str) -> Result<Response, Error> {
         let started = Instant::now();
-        let response = self.client.get(url).send();
+        let response = self.client.get(&format!("{}{}", self.host, url)).send();
         let elapsed = started.elapsed() * 100;
         trace!("GET {} elapsed: {:?}", url, elapsed);
 
         let mut goose_request = self.get_request(url, GooseRequestMethod::GET);
         goose_request.set_response_time(elapsed.as_secs_f32());
 
-        // data is collected per-task, vectors are indexed by the task_id
-        let task_id = self.weighted_tasks[self.weighted_position];
-        self.response_times[task_id].push(elapsed.as_secs_f32());
         match &response {
             Ok(r) => {
                 let status_code = r.status();
@@ -210,21 +201,18 @@ impl GooseClient {
                 // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                 if status_code.is_success() {
                     goose_request.success_count += 1;
-                    self.success_count[task_id] += 1;
                 }
                 // @TODO: properly track redirects and other code ranges
                 else {
                     // @TODO: handle this correctly
                     debug!("{}: non-success status_code: {:?}", url, status_code);
                     goose_request.fail_count += 1;
-                    self.fail_count[task_id] += 1;
                 }
             }
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
                 debug!("{}: error: {}", url, e);
                 goose_request.fail_count += 1;
-                self.fail_count[task_id] += 1;
             }
         };
         self.set_request(url, GooseRequestMethod::GET, goose_request);

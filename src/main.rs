@@ -11,6 +11,7 @@ mod goose;
 mod goosefile;
 mod util;
 
+use std::collections::HashMap;
 use std::f32;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -25,7 +26,7 @@ use rand::seq::SliceRandom;
 use simplelog::*;
 use structopt::StructOpt;
 
-use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
+use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
 #[derive(Debug, Default, Clone)]
 struct GooseState {
@@ -56,7 +57,8 @@ impl<T> FloatIterExt for T where T: Iterator<Item=f32> {
 #[structopt(name = "client")]
 pub struct Configuration {
     /// Host to load test in the following format: http://10.21.32.33
-    #[structopt(short = "H", long, required=false, default_value="")]
+    //#[structopt(short = "H", long, required=false, default_value="")]
+    #[structopt(short = "H", long, required=true)]
     host: String,
 
     ///// Rust module file to import, e.g. '../other.rs'.
@@ -132,7 +134,7 @@ fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
 }
 
 /// Allocate a vector of weighted GooseClient
-fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize) -> Vec<GooseClient> {
+fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &GooseState) -> Vec<GooseClient> {
     trace!("weight_task_set_clients");
 
     let mut u: usize = 0;
@@ -166,10 +168,10 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize) -> Vec<Goo
     // Allocate a state for each client that will be spawned.
     let mut weighted_clients = Vec::new();
     let mut client_count = 0;
+    let host = state.configuration.clone().unwrap().host;
     loop {
         for task_sets_index in &weighted_task_sets {
-            let task_count = task_sets.task_sets[*task_sets_index].tasks.len();
-            weighted_clients.push(GooseClient::new(task_count, *task_sets_index));
+            weighted_clients.push(GooseClient::new(*task_sets_index, &host));
             client_count += 1;
             if client_count >= clients {
                 trace!("created {} weighted_clients", client_count);
@@ -233,133 +235,130 @@ fn calculate_response_time_percentile(mut response_times: Vec<f32>, percent: f32
 
 /// Display running and ending statistics
 fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
-    // Prepare a vector of vectors, the outer vector task sets, the inner vector being tasks
-    let task_set_count = &goose_task_sets.task_sets.len();
-    let mut success_counts = vec![vec![]; *task_set_count];
-    let mut fail_counts = vec![vec![]; *task_set_count];
-    let mut response_times = vec![vec![]; *task_set_count];
-    for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
-        let task_count = task_set.tasks.len();
-        success_counts[task_set_id] = vec![0; task_count];
-        fail_counts[task_set_id] = vec![0; task_count];
-        response_times[task_set_id] = vec![vec![]; task_count];
-    }
     // Merge stats from all clients.
+    let mut merged_requests: HashMap<String, GooseRequest> = HashMap::new();
     for weighted_client in &goose_task_sets.weighted_clients {
-        let task_sets_index = weighted_client.task_sets_index;
-        for (client_id, count) in weighted_client.success_count.iter().enumerate() {
-            success_counts[task_sets_index][client_id] += count;
-        }
-        for (client_id, count) in weighted_client.fail_count.iter().enumerate() {
-            fail_counts[task_sets_index][client_id] += count;
-        }
-        for (client_id, times) in weighted_client.response_times.iter().enumerate() {
-            response_times[task_sets_index][client_id].append(&mut times.clone())
-        }
-    }
-    for (task_set_id, task_set) in goose_task_sets.task_sets.iter().enumerate() {
-        // @TODO: adapt to actual terminal window size:
-        //  - as window increases, expand columns to take advantage of additional space
-        //  - when the window increases enough, include all information in a single table
-        println!("-------------------------------------------------------------------------------");
-        println!("{}:", task_set.name);
-        println!("------------------------------------------------------------------------------ ");
-        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
-        println!(" ----------------------------------------------------------------------------- ");
-        let mut aggregate_fail_count = 0;
-        let mut aggregate_total_count = 0;
-        for (task_id, task) in task_set.tasks.iter().enumerate() {
-            let success_count = success_counts[task_set_id][task_id];
-            let fail_count = fail_counts[task_set_id][task_id];
-            aggregate_fail_count += fail_count;
-            let total_count = success_count + fail_count;
-            aggregate_total_count += total_count;
-            let fail_percent: f32;
-            if fail_count > 0 {
-                fail_percent = fail_count as f32 / total_count as f32 * 100.0;
+        for (request_key, request) in weighted_client.requests.clone() {
+            let mut merged_request;
+            if let Some(existing_request) = merged_requests.get(&request_key) {
+                merged_request = existing_request.clone();
+                merged_request.success_count += request.success_count;
+                merged_request.fail_count += request.fail_count;
+                merged_request.response_times.append(&mut request.response_times.clone());
+                for (status_code, count) in request.status_code_counts.clone() {
+                    let new_count;
+                    if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
+                        new_count = *existing_status_code_count + count;
+                    }
+                    else {
+                        new_count = count;
+                    }
+                    merged_request.status_code_counts.insert(status_code, new_count);
+                }
+                merged_requests.insert(request_key, merged_request);
             }
             else {
-                fail_percent = 0.0;
+                merged_requests.insert(request_key, request);
             }
-            println!(" GET {:<19} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
-                task.name,
-                total_count.to_formatted_string(&Locale::en),
-                fail_count.to_formatted_string(&Locale::en),
-                fail_percent,
-                (total_count / elapsed).to_formatted_string(&Locale::en),
-                (fail_count / elapsed).to_formatted_string(&Locale::en),
-            );
         }
-        let aggregate_fail_percent: f32;
-        if aggregate_fail_count > 0 {
-            aggregate_fail_percent = aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0;
-        }
-        else {
-            aggregate_fail_percent = 0.0;
-        }
-        println!(" ------------------------+----------------+----------------+-------+---------- ");
-        println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
-            "Aggregated",
-            aggregate_total_count.to_formatted_string(&Locale::en),
-            aggregate_fail_count.to_formatted_string(&Locale::en),
-            aggregate_fail_percent,
-            (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
-            (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
-        );
-        println!("-------------------------------------------------------------------------------");
-        println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
-        println!(" ----------------------------------------------------------------------------- ");
-        let mut aggregate_response_times: Vec<f32> = Vec::new();
-        for (task_id, task) in task_set.tasks.iter().enumerate() {
-            // Sort response times so we can calculate a mean.
-            response_times[task_set_id][task_id].sort_by(|a, b| a.partial_cmp(b).unwrap());
-            aggregate_response_times.append(&mut response_times[task_set_id][task_id].clone());
-            println!(" GET {:<19} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
-                task.name,
-                util::mean(&response_times[task_set_id][task_id]),
-                &response_times[task_set_id][task_id].iter().cloned().float_min(),
-                &response_times[task_set_id][task_id].iter().cloned().float_max(),
-                util::median(&response_times[task_set_id][task_id]),
-            );
-        }
-        println!(" ------------------------+------------+------------+------------+------------- ");
-        println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
-            "Aggregated",
-            util::mean(&aggregate_response_times),
-            &aggregate_response_times.iter().cloned().float_min(),
-            &aggregate_response_times.iter().cloned().float_max(),
-            util::median(&aggregate_response_times),
-        );
-
-        println!("-------------------------------------------------------------------------------");
-        println!(" Slowest page load within specified percentile of requests (in ms):");
-        println!(" ------------------------------------------------------------------------------");
-        println!(" {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}", "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%");
-        println!(" ----------------------------------------------------------------------------- ");
-        for (task_id, task) in task_set.tasks.iter().enumerate() {
-            // Sort response times so we can calculate a mean.
-            println!(" GET {:<19} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
-                task.name,
-                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.5),
-                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.75),
-                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.98),
-                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.99),
-                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.999),
-                calculate_response_time_percentile(response_times[task_set_id][task_id].clone(), 0.9999),
-            );
-        }
-        println!(" ------------------------+------------+------------+------------+------------- ");
-        println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
-            "Aggregated",
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.5),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.75),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.98),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.99),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.999),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.9999),
-        );
     }
 
+    // Display stats from merged HashMap
+    println!("------------------------------------------------------------------------------ ");
+    println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
+    println!(" ----------------------------------------------------------------------------- ");
+    let mut aggregate_fail_count = 0;
+    let mut aggregate_total_count = 0;
+    for (request_key, request) in &merged_requests {
+        let total_count = request.success_count + request.fail_count;
+        let fail_percent: f32;
+        if request.fail_count > 0 {
+            fail_percent = request.fail_count as f32 / total_count as f32 * 100.0;
+        }
+        else {
+            fail_percent = 0.0;
+        }
+        println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
+            &request_key,
+            total_count.to_formatted_string(&Locale::en),
+            request.fail_count.to_formatted_string(&Locale::en),
+            fail_percent,
+            (total_count / elapsed).to_formatted_string(&Locale::en),
+            (request.fail_count / elapsed).to_formatted_string(&Locale::en),
+        );
+        aggregate_total_count += total_count;
+        aggregate_fail_count += request.fail_count;
+    }
+    let aggregate_fail_percent: f32;
+    if aggregate_fail_count > 0 {
+        aggregate_fail_percent = aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0;
+    }
+    else {
+        aggregate_fail_percent = 0.0;
+    }
+    println!(" ------------------------+----------------+----------------+-------+---------- ");
+    println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
+        "Aggregated",
+        aggregate_total_count.to_formatted_string(&Locale::en),
+        aggregate_fail_count.to_formatted_string(&Locale::en),
+        aggregate_fail_percent,
+        (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
+        (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+    );
+
+    println!("-------------------------------------------------------------------------------");
+    println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
+    println!(" ----------------------------------------------------------------------------- ");
+    let mut aggregate_response_times: Vec<f32> = Vec::new();
+    for (request_key, mut request) in merged_requests.clone() {
+        // Sort response times so we can calculate a mean.
+        request.response_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        aggregate_response_times.append(&mut request.response_times.clone());
+        println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+            &request_key,
+            util::mean(&request.response_times),
+            &request.response_times.iter().cloned().float_min(),
+            &request.response_times.iter().cloned().float_max(),
+            util::median(&request.response_times),
+        );
+    }
+    println!(" ------------------------+------------+------------+------------+------------- ");
+    println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+        "Aggregated",
+        util::mean(&aggregate_response_times),
+        &aggregate_response_times.iter().cloned().float_min(),
+        &aggregate_response_times.iter().cloned().float_max(),
+        util::median(&aggregate_response_times),
+    );
+
+    println!("-------------------------------------------------------------------------------");
+    println!(" Slowest page load within specified percentile of requests (in ms):");
+    println!(" ------------------------------------------------------------------------------");
+    println!(" {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}",
+        "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%");
+    println!(" ----------------------------------------------------------------------------- ");
+    for (request_key, request) in merged_requests {
+        // Sort response times so we can calculate a mean.
+        println!(" GET {:<19} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+            &request_key,
+            calculate_response_time_percentile(request.response_times.clone(), 0.5),
+            calculate_response_time_percentile(request.response_times.clone(), 0.75),
+            calculate_response_time_percentile(request.response_times.clone(), 0.98),
+            calculate_response_time_percentile(request.response_times.clone(), 0.99),
+            calculate_response_time_percentile(request.response_times.clone(), 0.999),
+            calculate_response_time_percentile(request.response_times.clone(), 0.9999),
+        );
+    }
+    println!(" ------------------------+------------+------------+------------+------------- ");
+    println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+        "Aggregated",
+        calculate_response_time_percentile(aggregate_response_times.clone(), 0.5),
+        calculate_response_time_percentile(aggregate_response_times.clone(), 0.75),
+        calculate_response_time_percentile(aggregate_response_times.clone(), 0.98),
+        calculate_response_time_percentile(aggregate_response_times.clone(), 0.99),
+        calculate_response_time_percentile(aggregate_response_times.clone(), 0.999),
+        calculate_response_time_percentile(aggregate_response_times.clone(), 0.9999),
+    );
 }
 
 fn main() {
@@ -491,7 +490,7 @@ fn main() {
     }
 
     // Allocate a state for each of the clients we are about to start
-    goose_task_sets.weighted_clients = weight_task_set_clients(&goose_task_sets, goose_state.max_clients);
+    goose_task_sets.weighted_clients = weight_task_set_clients(&goose_task_sets, goose_state.max_clients, &goose_state);
     // Start with a simple 0..n-1 range (ie 0, 1, 2, 3, ... n-1)
     goose_task_sets.weighted_clients_order = (0..goose_task_sets.weighted_clients.len() - 1).collect::<Vec<_>>();
 
@@ -528,11 +527,6 @@ fn main() {
             // Copy the appropriate task_set into the thread.
             let thread_task_set = goose_task_sets.task_sets[thread_client.task_sets_index].clone();
 
-            // Initialize per-task counters
-            let task_count = thread_task_set.tasks.len();
-            thread_client.response_times = vec![vec![]; task_count];
-            thread_client.success_count = vec![0; task_count];
-            thread_client.fail_count = vec![0; task_count];
             // active_clients starts at 0, for numbering threads we start at 1 (@TODO: why?)
             let thread_number = goose_state.active_clients + 1;
 
@@ -563,14 +557,12 @@ fn main() {
                             GooseClientCommand::SYNC => {
                                 thread_sender.send(thread_client.clone()).unwrap();
                                 // Reset per-thread counters, as totals have been sent to the parent
-                                thread_client.response_times = vec![vec![]; task_count];
-                                thread_client.success_count = vec![0; task_count];
-                                thread_client.fail_count = vec![0; task_count];
+                                thread_client.requests = HashMap::new();
                             },
                             GooseClientCommand::EXIT => {
                                 thread_client.set_mode(GooseClientMode::EXITING);
-                                // No need to reset per-thread counters, we're exiting and memory will be freed
                                 thread_sender.send(thread_client.clone()).unwrap();
+                                // No need to reset per-thread counters, we're exiting and memory will be freed
                                 thread_continue = false
                             }
                         }
@@ -606,24 +598,43 @@ fn main() {
     // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
     let mut run_time = goose_state.run_time;
     loop {
+        // Load messages from client threads until the receiver queue is empty.
         let mut message = parent_receiver.try_recv();
         while message.is_ok() {
+            // Messages contain per-client statistics: merge them into the global statistics.
             let unwrapped_message = message.unwrap();
             let weighted_clients_index = unwrapped_message.weighted_clients_index;
-            for (client_id, response_times) in unwrapped_message.response_times.iter().enumerate() {
-                goose_task_sets.weighted_clients[weighted_clients_index].response_times[client_id].extend_from_slice(&response_times);
-            }
-            for (client_id, success_count) in unwrapped_message.success_count.iter().enumerate() {
-                goose_task_sets.weighted_clients[weighted_clients_index].success_count[client_id] += success_count;
-            }
-            for (client_id, fail_count) in unwrapped_message.fail_count.iter().enumerate() {
-                goose_task_sets.weighted_clients[weighted_clients_index].fail_count[client_id] += fail_count;
-            }
             goose_task_sets.weighted_clients[weighted_clients_index].weighted_position = unwrapped_message.weighted_position;
             goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode.clone();
             if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
                 goose_task_sets.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
                 goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
+            }
+            for (request_key, mut request) in unwrapped_message.requests {
+                trace!("request_key: {}", request_key);
+                let mut merged_request;
+                if let Some(merge_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                    // Merge into global statistics.
+                    merged_request = merge_request.clone();
+                    merged_request.response_times.extend_from_slice(&request.response_times);
+                    merged_request.success_count += &request.success_count;
+                    merged_request.fail_count += &request.fail_count;
+                    for (status_code, count) in request.status_code_counts.clone() {
+                        let new_count;
+                        if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
+                            new_count = *existing_status_code_count + count;
+                        }
+                        else {
+                            new_count = count;
+                        }
+                        request.status_code_counts.insert(status_code, new_count);
+                    }
+                }
+                else {
+                    // First time seeing this request, simply insert it.
+                    merged_request = request.clone();
+                }
+                goose_task_sets.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
             }
             message = parent_receiver.try_recv();
         }

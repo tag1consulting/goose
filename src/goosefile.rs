@@ -22,15 +22,15 @@ impl GooseTaskSets {
 
 impl GooseClient {
     fn website_task_index(&mut self) {
-        let _response = self.get("http://apache.fosciana/");
+        let _response = self.get("/");
     }
 
     fn website_task_story(&mut self) {
-        let _response = self.get("http://apache.fosciana/story.html");
+        let _response = self.get("/story.html");
     }
 
     fn website_task_about(&mut self) {
-        let _response = self.get("http://apache.fosciana/about.html");
+        let _response = self.get("/about.html");
     }
 }
 

@@ -7,9 +7,6 @@ Goose is a Rust load testing tool, based on Locust.
 - [ ] POST request method helper  
 - [ ] HEAD request method helper  
 - [ ] wait_time attribute, configurable pause after each Task runs  
-- [ ] host configuration  
-  - [ ] -H --host cli option  
-  - [ ] host attribute  
 - [ ] TaskSequence  
   - [ ] add special-case 'on-start' that is always first in TaskSet  
   - [ ] allow weighting of tasks to always run in a given order  
@@ -32,10 +29,13 @@ Goose is a Rust load testing tool, based on Locust.
   - [ ] detect terminal width and adjust what is displayed (when wide enough collapse into a single table)  
   - [x] catch ctrl-c and exit gracefully, displaying statistics if enabled  
 - [ ] GET request method helper  
-  - [ ] properly identify method in stats  
+  - [x] properly identify method in stats  
 - [ ] optionally track fine-grained per-request response codes (ie, GET /index.html: 5 200, 2 500)  
-- [ ] move counters into a per-request HashMap instead of a per-Task Vector (currently limited to including only one request per task for accurate statistics)  
+- [x] move counters into a per-request HashMap instead of a per-Task Vector (currently limited to including only one request per task for accurate statistics)  
   - [x] remove per-Task atomic counters (rely instead on per-request statistics)  
+- [ ] host configuration  
+  - [x] -H --host cli option  
+  - [ ] host attribute  
 
 ### Future (post-MVP)
 
