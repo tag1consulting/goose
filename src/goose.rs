@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use std::time::Instant;
 
 use http::StatusCode;
@@ -241,7 +239,6 @@ pub struct GooseTask {
     pub tasks_index: usize,
     pub name: String,
     pub weight: usize,
-    pub counter: Arc<AtomicUsize>,
     pub function: Option<fn(&mut GooseClient)>,
 }
 impl GooseTask {
@@ -251,7 +248,6 @@ impl GooseTask {
             tasks_index: usize::max_value(),
             name: name.to_string(),
             weight: 1,
-            counter: Arc::new(AtomicUsize::new(0)),
             function: None,
         };
         task

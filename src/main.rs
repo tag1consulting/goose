@@ -550,7 +550,6 @@ fn main() {
                         thread_client.weighted_position = 0;
                     }
                     let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_position];
-                    thread_task_set.tasks[thread_weighted_task].counter.fetch_add(1, Ordering::Relaxed);
 
                     let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
                     debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
