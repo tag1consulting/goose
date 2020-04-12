@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
+use http::StatusCode;
 use reqwest::blocking::{Client, Response};
 use reqwest::Error;
 
@@ -77,9 +79,13 @@ pub enum GooseClientMode {
 }
 
 #[derive(Debug, Clone)]
+pub enum GooseRequestMethod {
+    GET,
+    //POST,
+}
+
+#[derive(Debug, Clone)]
 pub enum GooseClientCommand {
-    //START,
-    //STOP,
     // Tell client thread to push statistics to parent
     SYNC,
     // Tell client thread to exit
@@ -87,39 +93,102 @@ pub enum GooseClientCommand {
 }
 
 #[derive(Debug, Clone)]
+pub struct GooseRequest {
+    pub url: String,
+    pub method: GooseRequestMethod,
+    pub response_times: Vec<f32>,
+    pub status_code_counts: HashMap<u16, usize>,
+    pub success_count: usize,
+    pub fail_count: usize,
+}
+impl GooseRequest {
+    pub fn new(url: &str, method: GooseRequestMethod, ) -> Self {
+        trace!("new request");
+        GooseRequest {
+            url: url.to_string(),
+            method: method,
+            response_times: Vec::new(),
+            status_code_counts: HashMap::new(),
+            success_count: 0,
+            fail_count: 0,
+        }
+    }
+
+    pub fn set_response_time(&mut self, response_time: f32) {
+        self.response_times.push(response_time);
+    }
+
+    pub fn set_status_code(&mut self, status_code: StatusCode) {
+        let status_code_u16 = status_code.as_u16();
+        let counter = match self.status_code_counts.get(&status_code_u16) {
+            // We've seen this status code before, increment counter.
+            Some(c) => {
+                debug!("got {} counter: {}", status_code, c);
+                *c + 1
+            }
+            // First time we've seen this status code, initialize counter.
+            None => {
+                debug!("no match for counter: {}", status_code_u16);
+                1
+            }
+        };
+        self.status_code_counts.insert(status_code_u16, counter);
+        debug!("incremented {} counter: {}", status_code_u16, counter);
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct GooseClient {
     // This is the GooseTaskSets.task_sets index
     pub task_sets_index: usize,
-    // This is the reqwest.blocking.client
+    // This is the reqwest.blocking.client (@TODO: test with async)
     pub client: Client,
     pub weighted_clients_index: usize,
     pub mode: GooseClientMode,
-    // Per-task statistics, using task index
+    pub weighted_tasks: Vec<usize>,
+    pub weighted_position: usize,
+    pub requests: HashMap<String, GooseRequest>,
+    // Per-task statistics, using task index (@TODO: remove, the)
     pub response_times: Vec<Vec<f32>>,
     pub success_count: Vec<usize>,
     pub fail_count: Vec<usize>,
-    pub weighted_tasks: Vec<usize>,
-    pub weighted_position: usize,
 }
 impl GooseClient {
+    /// Create a new client state.
     pub fn new(task_count: usize, index: usize, ) -> Self {
-        trace!("new task state");
-        let state = GooseClient {
+        trace!("new client");
+        GooseClient {
             task_sets_index: index,
             client: Client::new(),
             weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
+            weighted_tasks: Vec::new(),
+            weighted_position: 0,
+            requests: HashMap::new(),
             response_times: vec![vec![]; task_count],
             success_count: vec![0; task_count],
             fail_count: vec![0; task_count],
-            weighted_tasks: Vec::new(),
-            weighted_position: 0,
-        };
-        state
+        }
     }
 
     pub fn set_mode(&mut self, mode: GooseClientMode) {
         self.mode = mode;
+    }
+
+    pub fn get_request(&mut self, url: &str, method: GooseRequestMethod) -> GooseRequest {
+        let key = format!("{:?} {}", method, url);
+        trace!("get key: {}", &key);
+        match self.requests.get(&key) {
+            // @TODO: is there a way to do this without clone()?
+            Some(r) => r.clone(),
+            None => GooseRequest::new(url, method),
+        }
+    }
+
+    pub fn set_request(&mut self, url: &str, method: GooseRequestMethod, request: GooseRequest) {
+        let key = format!("{:?} {}", method, url);
+        trace!("set key: {}", &key);
+        self.requests.insert(key, request);
     }
 
     pub fn get(&mut self, url: &str) -> Result<Response, Error> {
@@ -128,30 +197,39 @@ impl GooseClient {
         let elapsed = started.elapsed() * 100;
         trace!("GET {} elapsed: {:?}", url, elapsed);
 
+        let mut goose_request = self.get_request(url, GooseRequestMethod::GET);
+        goose_request.set_response_time(elapsed.as_secs_f32());
+
         // data is collected per-task, vectors are indexed by the task_id
         let task_id = self.weighted_tasks[self.weighted_position];
-
         self.response_times[task_id].push(elapsed.as_secs_f32());
         match &response {
             Ok(r) => {
                 let status_code = r.status();
+                goose_request.set_status_code(status_code);
+
                 debug!("{}: status_code {}", url, status_code);
+                // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                 if status_code.is_success() {
+                    goose_request.success_count += 1;
                     self.success_count[task_id] += 1;
                 }
                 // @TODO: properly track redirects and other code ranges
                 else {
                     // @TODO: handle this correctly
-                    eprintln!("{}: non-success status_code: {:?}", url, status_code);
+                    debug!("{}: non-success status_code: {:?}", url, status_code);
+                    goose_request.fail_count += 1;
                     self.fail_count[task_id] += 1;
                 }
             }
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
                 debug!("{}: error: {}", url, e);
+                goose_request.fail_count += 1;
                 self.fail_count[task_id] += 1;
             }
         };
+        self.set_request(url, GooseRequestMethod::GET, goose_request);
         response
     }
 }

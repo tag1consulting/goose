@@ -318,6 +318,7 @@ name = "goose"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "http",
  "log",
  "num-format",
  "num_cpus",
