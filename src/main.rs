@@ -238,7 +238,7 @@ fn calculate_response_time_percentile(mut response_times: Vec<f32>, percent: f32
 }
 
 /// Display running and ending statistics
-fn display_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapsed: usize) {
+fn print_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapsed: usize) {
     // Merge stats from all clients.
     let mut merged_requests: HashMap<String, GooseRequest> = HashMap::new();
     for weighted_client in &goose_task_sets.weighted_clients {
@@ -344,9 +344,9 @@ fn display_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapse
     println!(" {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}",
         "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%");
     println!(" ----------------------------------------------------------------------------- ");
-    for (request_key, request) in merged_requests {
+    for (request_key, request) in &merged_requests {
         // Sort response times so we can calculate a mean.
-        println!(" GET {:<19} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+        println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
             &request_key,
             calculate_response_time_percentile(request.response_times.clone(), 0.5),
             calculate_response_time_percentile(request.response_times.clone(), 0.75),
@@ -366,6 +366,26 @@ fn display_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapse
         calculate_response_time_percentile(aggregate_response_times.clone(), 0.999),
         calculate_response_time_percentile(aggregate_response_times.clone(), 0.9999),
     );
+    if config.status_codes {
+        println!("-------------------------------------------------------------------------------");
+        println!(" {:<23} | {:<25} ", "Name", "Status codes");
+        println!(" ----------------------------------------------------------------------------- ");
+        for (request_key, request) in &merged_requests {
+            let mut codes: String = "".to_string();
+            for (status_code, count) in &request.status_code_counts {
+                if codes.len() > 0 {
+                    codes = format!("{}, {} [{}]", codes.clone(), count.to_formatted_string(&Locale::en), status_code);
+                }
+                else {
+                    codes = format!("{} [{}]", count.to_formatted_string(&Locale::en), status_code);
+                }
+            }
+            println!(" {:<23} | {:<25}",
+                &request_key,
+                codes,
+            );
+        }
+    }
 }
 
 fn main() {
@@ -687,6 +707,6 @@ fn main() {
     }
 
     if configuration.print_stats {
-        display_stats(&configuration, &goose_task_sets, run_time);
+        print_stats(&configuration, &goose_task_sets, run_time);
     }
 }
