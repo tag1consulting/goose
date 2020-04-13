@@ -190,11 +190,10 @@ impl GooseClient {
         let elapsed = started.elapsed() * 100;
         trace!("GET {} elapsed: {:?}", url, elapsed);
 
-        let mut goose_request = self.get_request(url, GooseRequestMethod::GET);
-
         // Only record statistics if we're going to print them.
         // @TODO: should we do _some_ status code handling still?
         if self.config.print_stats {
+            let mut goose_request = self.get_request(url, GooseRequestMethod::GET);
             goose_request.set_response_time(elapsed.as_secs_f32());
             match &response {
                 Ok(r) => {
