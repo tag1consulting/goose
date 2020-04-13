@@ -611,48 +611,50 @@ fn main() {
     // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
     let mut run_time = goose_state.run_time;
     loop {
-        // Load messages from client threads until the receiver queue is empty.
-        let mut message = parent_receiver.try_recv();
-        while message.is_ok() {
-            // Messages contain per-client statistics: merge them into the global statistics.
-            let unwrapped_message = message.unwrap();
-            let weighted_clients_index = unwrapped_message.weighted_clients_index;
-            goose_task_sets.weighted_clients[weighted_clients_index].weighted_position = unwrapped_message.weighted_position;
-            goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode.clone();
-            if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
-                goose_task_sets.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
-                goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
-            }
-            for (request_key, mut request) in unwrapped_message.requests {
-                trace!("request_key: {}", request_key);
-                let mut merged_request;
-                if let Some(merge_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
-                    // Merge into global statistics.
-                    merged_request = merge_request.clone();
-                    merged_request.response_times.extend_from_slice(&request.response_times);
-                    merged_request.success_count += &request.success_count;
-                    merged_request.fail_count += &request.fail_count;
-                    // Only merge status_code_counts if we're displaying the results
-                    if configuration.status_codes {
-                        for (status_code, count) in request.status_code_counts.clone() {
-                            let new_count;
-                            if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
-                                new_count = *existing_status_code_count + count;
+        if configuration.print_stats {
+            // Load messages from client threads until the receiver queue is empty.
+            let mut message = parent_receiver.try_recv();
+            while message.is_ok() {
+                // Messages contain per-client statistics: merge them into the global statistics.
+                let unwrapped_message = message.unwrap();
+                let weighted_clients_index = unwrapped_message.weighted_clients_index;
+                goose_task_sets.weighted_clients[weighted_clients_index].weighted_position = unwrapped_message.weighted_position;
+                goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode.clone();
+                if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
+                    goose_task_sets.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
+                    goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
+                }
+                for (request_key, mut request) in unwrapped_message.requests {
+                    trace!("request_key: {}", request_key);
+                    let mut merged_request;
+                    if let Some(merge_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                        // Merge into global statistics.
+                        merged_request = merge_request.clone();
+                        merged_request.response_times.extend_from_slice(&request.response_times);
+                        merged_request.success_count += &request.success_count;
+                        merged_request.fail_count += &request.fail_count;
+                        // Only merge status_code_counts if we're displaying the results
+                        if configuration.status_codes {
+                            for (status_code, count) in request.status_code_counts.clone() {
+                                let new_count;
+                                if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
+                                    new_count = *existing_status_code_count + count;
+                                }
+                                else {
+                                    new_count = count;
+                                }
+                                request.status_code_counts.insert(status_code, new_count);
                             }
-                            else {
-                                new_count = count;
-                            }
-                            request.status_code_counts.insert(status_code, new_count);
                         }
                     }
+                    else {
+                        // First time seeing this request, simply insert it.
+                        merged_request = request.clone();
+                    }
+                    goose_task_sets.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
                 }
-                else {
-                    // First time seeing this request, simply insert it.
-                    merged_request = request.clone();
-                }
-                goose_task_sets.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                message = parent_receiver.try_recv();
             }
-            message = parent_receiver.try_recv();
         }
         if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
             run_time = started.elapsed().as_secs() as usize;
@@ -661,6 +663,7 @@ fn main() {
                 send_to_client.send(GooseClientCommand::EXIT).unwrap();
                 debug!("telling client {} to sync stats", index);
             }
+            // @TODO: we should be collecting the last batch of statistics here, if we're printing them
             debug!("waiting for clients to exit");
             for client in clients {
                 let _ = client.join();

@@ -191,35 +191,39 @@ impl GooseClient {
         trace!("GET {} elapsed: {:?}", url, elapsed);
 
         let mut goose_request = self.get_request(url, GooseRequestMethod::GET);
-        goose_request.set_response_time(elapsed.as_secs_f32());
 
-        match &response {
-            Ok(r) => {
-                let status_code = r.status();
-                // Only increment status_code_counts if we're displaying the results
-                if self.config.status_codes {
-                    goose_request.set_status_code(status_code);
-                }
+        // Only record statistics if we're going to print them.
+        // @TODO: should we do _some_ status code handling still?
+        if self.config.print_stats {
+            goose_request.set_response_time(elapsed.as_secs_f32());
+            match &response {
+                Ok(r) => {
+                    let status_code = r.status();
+                    // Only increment status_code_counts if we're displaying the results
+                    if self.config.status_codes {
+                        goose_request.set_status_code(status_code);
+                    }
 
-                debug!("{}: status_code {}", url, status_code);
-                // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
-                if status_code.is_success() {
-                    goose_request.success_count += 1;
+                    debug!("{}: status_code {}", url, status_code);
+                    // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
+                    if status_code.is_success() {
+                        goose_request.success_count += 1;
+                    }
+                    // @TODO: properly track redirects and other code ranges
+                    else {
+                        // @TODO: handle this correctly
+                        debug!("{}: non-success status_code: {:?}", url, status_code);
+                        goose_request.fail_count += 1;
+                    }
                 }
-                // @TODO: properly track redirects and other code ranges
-                else {
-                    // @TODO: handle this correctly
-                    debug!("{}: non-success status_code: {:?}", url, status_code);
+                Err(e) => {
+                    // @TODO: what can we learn from a reqwest error?
+                    debug!("{}: error: {}", url, e);
                     goose_request.fail_count += 1;
                 }
-            }
-            Err(e) => {
-                // @TODO: what can we learn from a reqwest error?
-                debug!("{}: error: {}", url, e);
-                goose_request.fail_count += 1;
-            }
-        };
-        self.set_request(url, GooseRequestMethod::GET, goose_request);
+            };
+            self.set_request(url, GooseRequestMethod::GET, goose_request);
+        }
         response
     }
 }
