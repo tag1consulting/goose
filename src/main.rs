@@ -236,7 +236,7 @@ fn calculate_response_time_percentile(mut response_times: Vec<f32>, percent: f32
 /// Display running and ending statistics
 fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
     // Merge stats from all clients.
-    let mut merged_requests: HashMap<String, GooseRequest, ahash::RandomState> = HashMap::default();
+    let mut merged_requests: HashMap<String, GooseRequest> = HashMap::new();
     for weighted_client in &goose_task_sets.weighted_clients {
         for (request_key, request) in weighted_client.requests.clone() {
             let mut merged_request;

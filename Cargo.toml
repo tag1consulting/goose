@@ -6,7 +6,6 @@ edition = "2018"
 
 [dependencies]
 #goose_codegen = { path = "goose_codegen" }
-ahash = "0.3"
 ctrlc = "3.1"
 http = "0.2"
 log = "0.4"

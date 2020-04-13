@@ -95,7 +95,7 @@ pub struct GooseRequest {
     pub url: String,
     pub method: GooseRequestMethod,
     pub response_times: Vec<f32>,
-    pub status_code_counts: HashMap::<u16, usize, ahash::RandomState>,
+    pub status_code_counts: HashMap<u16, usize>,
     pub success_count: usize,
     pub fail_count: usize,
 }
@@ -106,7 +106,7 @@ impl GooseRequest {
             url: url.to_string(),
             method: method,
             response_times: Vec::new(),
-            status_code_counts: HashMap::default(),
+            status_code_counts: HashMap::new(),
             success_count: 0,
             fail_count: 0,
         }
