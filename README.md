@@ -45,55 +45,53 @@ OPTIONS:
 The following is an example of running Goose, simulating 8 concurrent clients all loading pages as quickly as possible. In this example, Goose is running in an 8-core VM, and loading static pages from Varnish in front of Apache in another 8-core VM. (Compared against Locust running in the same configuration, Goose is currently able to generate roughly 8 to 10 times as much load. It can also be configured to make considerably better use of available resources.)
 
 ```
-$ cargo run --release -- -t1800 -v --print-stats 
+$ cargo run --release -- --host http://apache.fosciana --print-stats -v -t1800
    Compiling goose v0.1.0 (~/goose)
-    Finished release [optimized] target(s) in 2.94s
-     Running `target/release/goose -t1800 -v --print-stats`
-12:11:18 [ INFO] Output verbosity level: INFO
-12:11:18 [ INFO] Logfile verbosity level: INFO
-12:11:18 [ INFO] Writing to log file: goose.log
-12:11:18 [ INFO] run_time = 1800
-12:11:18 [ INFO] concurrent clients defaulted to 8 (number of CPUs)
-12:11:18 [ INFO] hatch_rate defaulted to 8 (number of CPUs)
-12:11:18 [ INFO] launching WebsiteTasks client 1...
-12:11:18 [ INFO] launching WebsiteTasks client 2...
-12:11:18 [ INFO] launching WebsiteTasks client 3...
-12:11:18 [ INFO] launching WebsiteTasks client 4...
-12:11:19 [ INFO] launching WebsiteTasks client 5...
-12:11:19 [ INFO] launching WebsiteTasks client 6...
-12:11:19 [ INFO] launching WebsiteTasks client 7...
-12:11:19 [ INFO] launching WebsiteTasks client 8...
-12:11:19 [ INFO] launched 8 clients...
-12:41:18 [ INFO] exiting after 1800 seconds...
--------------------------------------------------------------------------------
-WebsiteTasks:
+    Finished release [optimized] target(s) in 3.16s
+     Running `target/release/goose --host 'http://apache.fosciana' --print-stats -v -t1800`
+15:26:55 [ INFO] Output verbosity level: INFO
+15:26:55 [ INFO] Logfile verbosity level: INFO
+15:26:55 [ INFO] Writing to log file: goose.log
+15:26:55 [ INFO] run_time = 1800
+15:26:55 [ INFO] concurrent clients defaulted to 8 (number of CPUs)
+15:26:55 [ INFO] hatch_rate defaulted to 8 (number of CPUs)
+15:26:55 [ INFO] launching WebsiteTasks client 1...
+15:26:55 [ INFO] launching WebsiteTasks client 2...
+15:26:56 [ INFO] launching WebsiteTasks client 3...
+15:26:56 [ INFO] launching WebsiteTasks client 4...
+15:26:56 [ INFO] launching WebsiteTasks client 5...
+15:26:56 [ INFO] launching WebsiteTasks client 6...
+15:26:56 [ INFO] launching WebsiteTasks client 7...
+15:26:56 [ INFO] launching WebsiteTasks client 8...
+15:26:56 [ INFO] launched 8 clients...
+15:56:57 [ INFO] exiting after 1800 seconds...
 ------------------------------------------------------------------------------ 
  Name                    | # reqs         | # fails        | req/s  | fail/s
  ----------------------------------------------------------------------------- 
- GET /index.html         | 8,757,164      | 0 (0.0%)       | 4,865  | 0    
- GET /story.html         | 13,136,007     | 0 (0.0%)       | 7,297  | 0    
- GET /about.html         | 4,375,590      | 0 (0.0%)       | 2,430  | 0    
+ GET /story.html         | 11,948,418     | 0 (0.0%)       | 6,638  | 0    
+ GET /                   | 7,963,796      | 0 (0.0%)       | 4,424  | 0    
+ GET /about.html         | 3,982,280      | 0 (0.0%)       | 2,212  | 0    
  ------------------------+----------------+----------------+-------+---------- 
- Aggregated              | 26,268,761     | 0 (0.0%)       | 14,593 | 0    
+ Aggregated              | 23,894,494     | 0 (0.0%)       | 13,274 | 0    
 -------------------------------------------------------------------------------
  Name                    | Avg (ms)   | Min        | Max        | Mean      
  ----------------------------------------------------------------------------- 
- GET /index.html         | 0.06       | 0.01       | 595.81     | 0.04      
- GET /story.html         | 0.05       | 0.01       | 595.86     | 0.04      
- GET /about.html         | 0.05       | 0.01       | 595.68     | 0.04      
+ GET /story.html         | 0.05       | 0.01       | 596.99     | 0.05      
+ GET /                   | 0.06       | 0.01       | 596.86     | 0.05      
+ GET /about.html         | 0.05       | 0.01       | 597.01     | 0.05      
  ------------------------+------------+------------+------------+------------- 
- Aggregated              | 0.05       | 0.01       | 595.86     | 0.03      
+ Aggregated              | 0.05       | 0.01       | 597.01     | 0.58      
 -------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
  Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
  ----------------------------------------------------------------------------- 
- GET /index.html         | 0.04   | 0.07   | 0.16   | 0.18   | 0.30   |   0.52
- GET /story.html         | 0.04   | 0.06   | 0.14   | 0.16   | 0.25   |   0.52
- GET /about.html         | 0.04   | 0.06   | 0.14   | 0.16   | 0.25   |   0.52
+ GET /story.html         | 0.05   | 0.07   | 0.15   | 0.17   | 0.26   |   0.58
+ GET /                   | 0.05   | 0.07   | 0.16   | 0.19   | 0.31   |   0.56
+ GET /about.html         | 0.05   | 0.07   | 0.15   | 0.17   | 0.27   |   0.58
  ------------------------+------------+------------+------------+------------- 
- Aggregated              | 0.04   | 0.07   | 0.14   | 0.17   | 0.27   |   0.52
-
+ Aggregated              | 0.05   | 0.07   | 0.15   | 0.18   | 0.28   |   0.57
+-------------------------------------------------------------------------------
 ```
 
 ## Roadmap
