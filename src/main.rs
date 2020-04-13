@@ -674,13 +674,15 @@ fn main() {
 
         let one_second = time::Duration::from_secs(1);
         thread::sleep(one_second);
-        // @TODO: adjust this to run each time we display statistics
-        if timer_expired(statistics_counter, 60) {
-            for (index, send_to_client) in client_channels.iter().enumerate() {
-                send_to_client.send(GooseClientCommand::SYNC).unwrap();
-                debug!("telling client {} to sync stats", index);
+        if configuration.print_stats {
+            // @TODO: adjust this to run each time we display statistics
+            if timer_expired(statistics_counter, 60) {
+                for (index, send_to_client) in client_channels.iter().enumerate() {
+                    send_to_client.send(GooseClientCommand::SYNC).unwrap();
+                    debug!("telling client {} to sync stats", index);
+                }
+                statistics_counter = time::Instant::now();
             }
-            statistics_counter = time::Instant::now();
         }
     }
 
