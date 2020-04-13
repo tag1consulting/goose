@@ -13,7 +13,7 @@ impl GooseTaskSets {
 
         // Register a website task set and contained tasks
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks").set_weight(10);
-        website_tasks.register_task(GooseTask::new("/index.html").set_weight(6).set_function(GooseClient::website_task_index));
+        website_tasks.register_task(GooseTask::new("/").set_weight(6).set_function(GooseClient::website_task_index));
         website_tasks.register_task(GooseTask::new("/story.html").set_weight(9).set_function(GooseClient::website_task_story));
         website_tasks.register_task(GooseTask::new("/about.html").set_weight(3).set_function(GooseClient::website_task_about));
         self.register_taskset(website_tasks);

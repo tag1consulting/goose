@@ -4,6 +4,7 @@ use std::time::Instant;
 use http::StatusCode;
 use reqwest::blocking::{Client, Response};
 use reqwest::Error;
+use crate::Configuration;
 
 /// A global list of all Goose task sets
 #[derive(Clone)]
@@ -141,7 +142,7 @@ pub struct GooseClient {
     pub task_sets_index: usize,
     // This is the reqwest.blocking.client (@TODO: test with async)
     pub client: Client,
-    pub host: String,
+    pub config: Configuration,
     pub weighted_clients_index: usize,
     pub mode: GooseClientMode,
     pub weighted_tasks: Vec<usize>,
@@ -150,12 +151,12 @@ pub struct GooseClient {
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(index: usize, host: &str) -> Self {
+    pub fn new(index: usize, configuration: &Configuration) -> Self {
         trace!("new client");
         GooseClient {
             task_sets_index: index,
             client: Client::new(),
-            host: host.to_string(),
+            config: configuration.clone(),
             weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
             weighted_tasks: Vec::new(),
@@ -185,7 +186,7 @@ impl GooseClient {
 
     pub fn get(&mut self, url: &str) -> Result<Response, Error> {
         let started = Instant::now();
-        let response = self.client.get(&format!("{}{}", self.host, url)).send();
+        let response = self.client.get(&format!("{}{}", self.config.host, url)).send();
         let elapsed = started.elapsed() * 100;
         trace!("GET {} elapsed: {:?}", url, elapsed);
 
@@ -195,7 +196,10 @@ impl GooseClient {
         match &response {
             Ok(r) => {
                 let status_code = r.status();
-                goose_request.set_status_code(status_code);
+                // Only increment status_code_counts if we're displaying the results
+                if self.config.status_codes {
+                    goose_request.set_status_code(status_code);
+                }
 
                 debug!("{}: status_code {}", url, status_code);
                 // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html

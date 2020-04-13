@@ -81,6 +81,10 @@ pub struct Configuration {
     #[structopt(long)]
     print_stats: bool,
 
+    /// Includes status code counts in console stats
+    #[structopt(long)]
+    status_codes: bool,
+
     /// Only prints summary stats
     #[structopt(long)]
     only_summary: bool,
@@ -168,10 +172,10 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
     // Allocate a state for each client that will be spawned.
     let mut weighted_clients = Vec::new();
     let mut client_count = 0;
-    let host = state.configuration.clone().unwrap().host;
+    let config = state.configuration.clone().unwrap();
     loop {
         for task_sets_index in &weighted_task_sets {
-            weighted_clients.push(GooseClient::new(*task_sets_index, &host));
+            weighted_clients.push(GooseClient::new(*task_sets_index, &config));
             client_count += 1;
             if client_count >= clients {
                 trace!("created {} weighted_clients", client_count);
@@ -234,7 +238,7 @@ fn calculate_response_time_percentile(mut response_times: Vec<f32>, percent: f32
 }
 
 /// Display running and ending statistics
-fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
+fn display_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapsed: usize) {
     // Merge stats from all clients.
     let mut merged_requests: HashMap<String, GooseRequest> = HashMap::new();
     for weighted_client in &goose_task_sets.weighted_clients {
@@ -245,15 +249,18 @@ fn display_stats(goose_task_sets: &GooseTaskSets, elapsed: usize) {
                 merged_request.success_count += request.success_count;
                 merged_request.fail_count += request.fail_count;
                 merged_request.response_times.append(&mut request.response_times.clone());
-                for (status_code, count) in request.status_code_counts.clone() {
-                    let new_count;
-                    if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
-                        new_count = *existing_status_code_count + count;
+                // Only merge status_code_counts if we're displaying the results
+                if config.status_codes {
+                    for (status_code, count) in request.status_code_counts.clone() {
+                        let new_count;
+                        if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
+                            new_count = *existing_status_code_count + count;
+                        }
+                        else {
+                            new_count = count;
+                        }
+                        merged_request.status_code_counts.insert(status_code, new_count);
                     }
-                    else {
-                        new_count = count;
-                    }
-                    merged_request.status_code_counts.insert(status_code, new_count);
                 }
                 merged_requests.insert(request_key, merged_request);
             }
@@ -411,6 +418,12 @@ fn main() {
 
     if goosefile.file_name() == Some(OsStr::new("goose.rs")) {
         error!("The goosfile must not be named `goose.rs`. Please rename the file and try again.");
+        std::process::exit(1);
+    }
+
+    // Don't allow overhead of collecting status codes unless we're printing stats.
+    if configuration.status_codes && !configuration.print_stats {
+        error!("You must enable --print-stats to enable --status-codes.");
         std::process::exit(1);
     }
 
@@ -619,15 +632,18 @@ fn main() {
                     merged_request.response_times.extend_from_slice(&request.response_times);
                     merged_request.success_count += &request.success_count;
                     merged_request.fail_count += &request.fail_count;
-                    for (status_code, count) in request.status_code_counts.clone() {
-                        let new_count;
-                        if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
-                            new_count = *existing_status_code_count + count;
+                    // Only merge status_code_counts if we're displaying the results
+                    if configuration.status_codes {
+                        for (status_code, count) in request.status_code_counts.clone() {
+                            let new_count;
+                            if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
+                                new_count = *existing_status_code_count + count;
+                            }
+                            else {
+                                new_count = count;
+                            }
+                            request.status_code_counts.insert(status_code, new_count);
                         }
-                        else {
-                            new_count = count;
-                        }
-                        request.status_code_counts.insert(status_code, new_count);
                     }
                 }
                 else {
@@ -666,6 +682,6 @@ fn main() {
     }
 
     if configuration.print_stats {
-        display_stats(&goose_task_sets, run_time);
+        display_stats(&configuration, &goose_task_sets, run_time);
     }
 }
