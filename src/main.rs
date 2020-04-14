@@ -26,7 +26,7 @@ use rand::seq::SliceRandom;
 use simplelog::*;
 use structopt::StructOpt;
 
-use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
+use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
 #[derive(Debug, Default, Clone)]
 struct GooseState {
@@ -210,6 +210,35 @@ fn timer_expired(started: time::Instant, run_time: usize) -> bool {
     else {
         false
     }
+}
+
+/// Merge per-client-statistics from client thread into global parent statistics
+fn merge_from_client(
+    parent_request: &GooseRequest,
+    client_request: &GooseRequest,
+    config: &Configuration,
+) -> GooseRequest {
+    // Make a mutable copy where we can merge things
+    let mut merged_request = parent_request.clone();
+    merged_request.response_times.extend_from_slice(&client_request.response_times);
+    merged_request.success_count += &client_request.success_count;
+    merged_request.fail_count += &client_request.fail_count;
+    // Only accrue overhead of merging status_code_counts if we're going to display the results
+    if config.status_codes {
+        for (status_code, count) in &client_request.status_code_counts {
+            let new_count;
+            // Add client count into global count
+            if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
+                new_count = *existing_status_code_count + *count;
+            }
+            // No global count exists yet, so start with client count
+            else {
+                new_count = *count;
+            }
+            merged_request.status_code_counts.insert(*status_code, new_count);
+        }
+    }
+    merged_request
 }
 
 fn main() {
@@ -464,32 +493,17 @@ fn main() {
                 let weighted_clients_index = unwrapped_message.weighted_clients_index;
                 goose_task_sets.weighted_clients[weighted_clients_index].weighted_position = unwrapped_message.weighted_position;
                 goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode.clone();
+                // If our local copy of the task set doesn't have tasks, clone them from the remote thread
                 if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
                     goose_task_sets.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
                     goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
                 }
-                for (request_key, mut request) in unwrapped_message.requests {
+                // Syncronize client requests
+                for (request_key, request) in unwrapped_message.requests {
                     trace!("request_key: {}", request_key);
-                    let mut merged_request;
-                    if let Some(merge_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
-                        // Merge into global statistics.
-                        merged_request = merge_request.clone();
-                        merged_request.response_times.extend_from_slice(&request.response_times);
-                        merged_request.success_count += &request.success_count;
-                        merged_request.fail_count += &request.fail_count;
-                        // Only merge status_code_counts if we're displaying the results
-                        if configuration.status_codes {
-                            for (status_code, count) in request.status_code_counts.clone() {
-                                let new_count;
-                                if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
-                                    new_count = *existing_status_code_count + count;
-                                }
-                                else {
-                                    new_count = count;
-                                }
-                                request.status_code_counts.insert(status_code, new_count);
-                            }
-                        }
+                    let merged_request;
+                    if let Some(parent_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                        merged_request = merge_from_client(parent_request, &request, &configuration);
                     }
                     else {
                         // First time seeing this request, simply insert it.

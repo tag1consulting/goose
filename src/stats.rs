@@ -26,7 +26,7 @@ fn calculate_response_time_percentile(mut response_times: Vec<f32>, percent: f32
     let total_requests = response_times.len();
     let percentile_request = (total_requests as f32 * percent) as usize;
     debug!("percentile: {}, request {} of total {}", percent, percentile_request, total_requests);
-    // Sort response times
+    // Sort response times after which it's trivial to get the slowest request in a percentile
     response_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     return response_times[percentile_request];
 }
