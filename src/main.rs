@@ -487,6 +487,13 @@ fn main() {
     // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
     let mut run_time = goose_state.run_time;
     loop {
+        // When displaying running statistics, sync data from client threads first
+        if configuration.print_stats && timer_expired(statistics_counter, 5) {
+            for (index, send_to_client) in client_channels.iter().enumerate() {
+                send_to_client.send(GooseClientCommand::SYNC).unwrap();
+                debug!("telling client {} to sync stats", index);
+            }
+        }
         if configuration.print_stats {
             // Load messages from client threads until the receiver queue is empty.
             let mut message = parent_receiver.try_recv();
@@ -529,6 +536,12 @@ fn main() {
                 statistics_reset = true;
             }
         }
+
+        if configuration.print_stats && timer_expired(statistics_counter, 5) {
+            statistics_counter = time::Instant::now();
+            stats::print_running_stats(&configuration, &goose_task_sets, run_time);
+        }
+
         if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
             run_time = started.elapsed().as_secs() as usize;
             info!("exiting after {} seconds...", run_time);
@@ -572,19 +585,9 @@ fn main() {
 
         let one_second = time::Duration::from_secs(1);
         thread::sleep(one_second);
-        if configuration.print_stats {
-            // @TODO: adjust this to run each time we display statistics
-            if timer_expired(statistics_counter, 60) {
-                for (index, send_to_client) in client_channels.iter().enumerate() {
-                    send_to_client.send(GooseClientCommand::SYNC).unwrap();
-                    debug!("telling client {} to sync stats", index);
-                }
-                statistics_counter = time::Instant::now();
-            }
-        }
     }
 
     if configuration.print_stats {
-        stats::print_stats(&configuration, &goose_task_sets, run_time);
+        stats::print_final_stats(&configuration, &goose_task_sets, run_time);
     }
 }
