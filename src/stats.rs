@@ -164,6 +164,7 @@ pub fn print_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elap
         println!("-------------------------------------------------------------------------------");
         println!(" {:<23} | {:<25} ", "Name", "Status codes");
         println!(" ----------------------------------------------------------------------------- ");
+        let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
         for (request_key, request) in &merged_requests {
             let mut codes: String = "".to_string();
             for (status_code, count) in &request.status_code_counts {
@@ -173,11 +174,30 @@ pub fn print_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elap
                 else {
                     codes = format!("{} [{}]", count.to_formatted_string(&Locale::en), status_code);
                 }
+                let new_count;
+                if let Some(existing_status_code_count) = aggregated_status_code_counts.get(&status_code) {
+                    new_count = *existing_status_code_count + *count;
+                }
+                else {
+                    new_count = *count;
+                }
+                aggregated_status_code_counts.insert(*status_code, new_count);
             }
             println!(" {:<23} | {:<25}",
                 &request_key,
                 codes,
             );
         }
+        println!("-------------------------------------------------------------------------------");
+        let mut codes: String = "".to_string();
+        for (status_code, count) in &aggregated_status_code_counts {
+            if codes.len() > 0 {
+                codes = format!("{}, {} [{}]", codes.clone(), count.to_formatted_string(&Locale::en), status_code);
+            }
+            else {
+                codes = format!("{} [{}]", count.to_formatted_string(&Locale::en), status_code);
+            }
+        }
+        println!(" {:<23} | {:<25} ", "Aggregated", codes);
     }
 }
