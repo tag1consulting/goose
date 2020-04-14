@@ -6,7 +6,7 @@ extern crate log;
 
 extern crate structopt;
 
-// @TODO: load goosefile as a dynamic library
+mod client;
 mod goose;
 mod goosefile;
 mod stats;
@@ -287,6 +287,7 @@ fn main() {
     info!("Logfile verbosity level: {}", log_level);
     info!("Writing to log file: {}", log_file.display());
 
+    // @TODO: remove, Goose will be a library that goosefiles depend on.
     let goosefile = match find_goosefile() {
         Some(g) => g,
         None => {
@@ -312,6 +313,7 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Configure maximum run time if specified, otherwise run until canceled.
     if goose_state.configuration.run_time != "" {
         goose_state.run_time = util::parse_timespan(&goose_state.configuration.run_time);
     }
@@ -320,6 +322,7 @@ fn main() {
     }
     info!("run_time = {}", goose_state.run_time);
 
+    // Configure number of client threads to launch, default to the number of CPU cores available.
     goose_state.clients = match goose_state.configuration.clients {
         Some(c) => {
             if c == 0 {
@@ -337,6 +340,8 @@ fn main() {
         }
     };
     debug!("clients = {}", goose_state.clients);
+
+    // Configure number of client threads to launch per second, default to the number of CPU cores available.
     let hatch_rate = match goose_state.configuration.hatch_rate {
         Some(h) => {
             if h == 0 {
@@ -355,7 +360,7 @@ fn main() {
     };
     debug!("hatch_rate = {}", hatch_rate);
 
-    // Load goosefile
+    // Load task sets and tasks from goosefile.
     let mut goose_task_sets = match load_goosefile(goosefile) {
         Ok(g) => g,
         Err(e) => {
@@ -364,12 +369,14 @@ fn main() {
         }
     };
     
+    // At least one task set is required.
     if goose_task_sets.task_sets.len() <= 0 {
-        error!("No goosefile tasksets defined in goosefile.");
+        error!("No task sets defined in goosefile.");
         std::process::exit(1);
     }
 
     if goose_state.configuration.list {
+        // Display task sets and tasks, then exit.
         println!("Available tasks:");
         for task_set in goose_task_sets.task_sets {
             println!(" - {} (weight: {})", task_set.name, task_set.weight);
@@ -380,94 +387,64 @@ fn main() {
         std::process::exit(0);
     }
 
-
+    // Apply weights to tasks in each task set.
     for task_set in &mut goose_task_sets.task_sets {
         task_set.weighted_tasks = weight_tasks(&task_set);
         debug!("weighted {} tasks: {:?}", task_set.name, task_set.weighted_tasks);
     }
 
-    // Allocate a state for each of the clients we are about to start
+    // Allocate a state for each of the clients we are about to start.
     goose_task_sets.weighted_clients = weight_task_set_clients(&goose_task_sets, goose_state.clients, &goose_state);
-    // Start with a simple 0..n-1 range (ie 0, 1, 2, 3, ... n-1)
-    goose_task_sets.weighted_clients_order = (0..goose_task_sets.weighted_clients.len() - 1).collect::<Vec<_>>();
 
-    // Spawn clients, each with their own weighted task_set
+    // Our load test is officially starting.
     let mut started = time::Instant::now();
+    // Spawn clients at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
     let sleep_float = 1.0 / hatch_rate as f32;
     let sleep_duration = time::Duration::from_secs_f32(sleep_float);
+    // Collect client threads in a vector for when we want to stop them later.
     let mut clients = vec![];
+    // Collect client thread channels in a vector so we can talk to the client threads.
     let mut client_channels = vec![];
-    // Single channel allowing all Goose child threads to sync state back to parent
+    // Create a single channel allowing all Goose child threads to sync state back to parent
     let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseClient>, mpsc::Receiver<GooseClient>) = mpsc::channel();
-    // @TODO: consider replacing this with a Arc<RwLock<>>
+    // Spawn clients, each with their own weighted task_set.
     for mut thread_client in goose_task_sets.weighted_clients.clone() {
+        // Stop launching threads if the run_timer has expired.
         if timer_expired(started, goose_state.run_time) {
-            // Stop launching threads if the run_timer has expired
             break;
         }
+
+        // Copy weighted tasks into the client thread, and shuffle them to run in a random order.
         thread_client.weighted_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
         thread_client.weighted_tasks.shuffle(&mut thread_rng());
+        // Remember which task group this client is using.
         thread_client.weighted_clients_index = goose_state.active_clients;
 
-        // Per-thread channel allowing parent to control Goose child threads
+        // Create a per-thread channel allowing parent thread to control child threads.
         let (parent_sender, thread_receiver): (mpsc::Sender<GooseClientCommand>, mpsc::Receiver<GooseClientCommand>) = mpsc::channel();
         client_channels.push(parent_sender);
-        // We can only run a task if the task list is non-empty
+
+        // We can only launch tasks if the task list is non-empty
         if thread_client.weighted_tasks.len() > 0 {
             // Copy the client-to-parent sender channel, used by all threads.
             let thread_sender = all_threads_sender.clone();
 
             // Hatching a new Goose client.
             thread_client.set_mode(GooseClientMode::HATCHING);
+            // Notify parent that our run mode has changed to Hatching.
             thread_sender.send(thread_client.clone()).unwrap();
 
             // Copy the appropriate task_set into the thread.
             let thread_task_set = goose_task_sets.task_sets[thread_client.task_sets_index].clone();
 
-            // active_clients starts at 0, for numbering threads we start at 1 (@TODO: why?)
+            // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
             let thread_number = goose_state.active_clients + 1;
 
-            // Launch a new client
+            // Launch a new client.
             let client = thread::spawn(move || {
-                info!("launching {} client {}...", thread_task_set.name, thread_number);
-                thread_client.set_mode(GooseClientMode::RUNNING);
-                thread_sender.send(thread_client.clone()).unwrap();
-                let mut thread_continue = true;
-                while thread_continue {
-                    if thread_task_set.tasks.len() <= thread_client.weighted_position {
-                        // Reshuffle the weighted tasks
-                        thread_client.weighted_tasks.shuffle(&mut thread_rng());
-                        debug!("re-shuffled {} tasks: {:?}", &thread_task_set.name, thread_client.weighted_tasks);
-                        thread_client.weighted_position = 0;
-                    }
-                    let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_position];
-
-                    let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
-                    debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
-                    let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
-                    function(&mut thread_client);
-                    thread_client.weighted_position += 1;
-
-                    let message = thread_receiver.try_recv();
-                    if message.is_ok() {
-                        match message.unwrap() {
-                            GooseClientCommand::SYNC => {
-                                thread_sender.send(thread_client.clone()).unwrap();
-                                // Reset per-thread counters, as totals have been sent to the parent
-                                thread_client.requests = HashMap::new();
-                            },
-                            GooseClientCommand::EXIT => {
-                                thread_client.set_mode(GooseClientMode::EXITING);
-                                thread_sender.send(thread_client.clone()).unwrap();
-                                // No need to reset per-thread counters, we're exiting and memory will be freed
-                                thread_continue = false
-                            }
-                        }
-                    }
-
-                    // @TODO: configurable/optional delay (wait_time attribute)
-                }
+                 client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
             });
+
             clients.push(client);
             goose_state.active_clients += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
@@ -478,6 +455,7 @@ fn main() {
     started = time::Instant::now();
     info!("launched {} clients...", goose_state.active_clients);
 
+    // Initialize per-client state in parent by requesting all threads to sync.
     for (index, send_to_client) in client_channels.iter().enumerate() {
         send_to_client.send(GooseClientCommand::SYNC).unwrap();
         debug!("telling client {} to sync stats", index);
@@ -494,7 +472,7 @@ fn main() {
         caught_ctrlc.store(true, Ordering::SeqCst);
     }).expect("Failed to set Ctrl-C signal handler.");
 
-    // Determine when to display running statistics.
+    // Determine when to display running statistics (if enabled).
     let mut statistics_timer = time::Instant::now();
     let mut display_running_statistics = false;
 
