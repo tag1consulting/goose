@@ -28,15 +28,25 @@ use structopt::StructOpt;
 
 use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 struct GooseState {
-    configuration: Option<Configuration>,
+    configuration: Configuration,
     number_of_cpus: usize,
     run_time: usize,
-    max_clients: usize,
+    clients: usize,
     active_clients: usize,
 }
-
+impl GooseState {
+    fn new(configuration: Configuration) -> GooseState {
+        GooseState {
+            configuration: configuration,
+            number_of_cpus: num_cpus::get(),
+            run_time: 0,
+            clients: 0,
+            active_clients: 0,
+        }
+    }
+}
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
@@ -157,7 +167,7 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
     // Allocate a state for each client that will be spawned.
     let mut weighted_clients = Vec::new();
     let mut client_count = 0;
-    let config = state.configuration.clone().unwrap();
+    let config = state.configuration.clone();
     loop {
         for task_sets_index in &weighted_task_sets {
             weighted_clients.push(GooseClient::new(*task_sets_index, &config));
@@ -242,15 +252,11 @@ fn merge_from_client(
 }
 
 fn main() {
-    let mut goose_state = GooseState::default();
-    goose_state.configuration = Some(Configuration::from_args());
-
-    // Clone configuration, also leave in goose_state for use in threads.
-    let configuration = goose_state.configuration.clone().unwrap();
+    let mut goose_state = GooseState::new(Configuration::from_args());
 
     // Allow optionally controlling debug output level
     let debug_level;
-    match configuration.verbose {
+    match goose_state.configuration.verbose {
         0 => debug_level = LevelFilter::Warn,
         1 => debug_level = LevelFilter::Info,
         2 => debug_level = LevelFilter::Debug,
@@ -259,13 +265,13 @@ fn main() {
 
     // Allow optionally controlling log level
     let log_level;
-    match configuration.log_level {
+    match goose_state.configuration.log_level {
         0 => log_level = LevelFilter::Info,
         1 => log_level = LevelFilter::Debug,
         _ => log_level = LevelFilter::Trace,
     }
 
-    let log_file = PathBuf::from(&configuration.log_file);
+    let log_file = PathBuf::from(&goose_state.configuration.log_file);
 
     CombinedLogger::init(vec![
         TermLogger::new(
@@ -295,27 +301,26 @@ fn main() {
     }
 
     // Don't allow overhead of collecting status codes unless we're printing statistics.
-    if configuration.status_codes && !configuration.print_stats {
+    if goose_state.configuration.status_codes && !goose_state.configuration.print_stats {
         error!("You must enable --print-stats to enable --status-codes.");
         std::process::exit(1);
     }
 
     // Don't allow overhead of collecting statistics unless we're printing them.
-    if configuration.only_summary && !configuration.print_stats {
+    if goose_state.configuration.only_summary && !goose_state.configuration.print_stats {
         error!("You must enable --print-stats to enable --only-summary.");
         std::process::exit(1);
     }
 
-    if configuration.run_time != "" {
-        goose_state.run_time = util::parse_timespan(&configuration.run_time);
+    if goose_state.configuration.run_time != "" {
+        goose_state.run_time = util::parse_timespan(&goose_state.configuration.run_time);
     }
     else {
         goose_state.run_time = 0;
     }
     info!("run_time = {}", goose_state.run_time);
 
-    goose_state.number_of_cpus = num_cpus::get();
-    goose_state.max_clients = match configuration.clients {
+    goose_state.clients = match goose_state.configuration.clients {
         Some(c) => {
             if c == 0 {
                 error!("At least 1 client is required.");
@@ -331,8 +336,8 @@ fn main() {
             c
         }
     };
-    debug!("clients = {}", goose_state.max_clients);
-    let hatch_rate = match configuration.hatch_rate {
+    debug!("clients = {}", goose_state.clients);
+    let hatch_rate = match goose_state.configuration.hatch_rate {
         Some(h) => {
             if h == 0 {
                 error!("The hatch_rate must be greater than 0, and generally should be no more than 100 * NUM_CORES.");
@@ -364,7 +369,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    if configuration.list {
+    if goose_state.configuration.list {
         println!("Available tasks:");
         for task_set in goose_task_sets.task_sets {
             println!(" - {} (weight: {})", task_set.name, task_set.weight);
@@ -382,7 +387,7 @@ fn main() {
     }
 
     // Allocate a state for each of the clients we are about to start
-    goose_task_sets.weighted_clients = weight_task_set_clients(&goose_task_sets, goose_state.max_clients, &goose_state);
+    goose_task_sets.weighted_clients = weight_task_set_clients(&goose_task_sets, goose_state.clients, &goose_state);
     // Start with a simple 0..n-1 range (ie 0, 1, 2, 3, ... n-1)
     goose_task_sets.weighted_clients_order = (0..goose_task_sets.weighted_clients.len() - 1).collect::<Vec<_>>();
 
@@ -497,15 +502,15 @@ fn main() {
     let mut run_time = goose_state.run_time;
     loop {
         // When displaying running statistics, sync data from client threads first.
-        if configuration.print_stats {
+        if goose_state.configuration.print_stats {
             // Synchronize statistics from client threads into parent if showing running statistics.
-            if timer_expired(statistics_timer, 15) && !configuration.only_summary {
+            if timer_expired(statistics_timer, 15) && !goose_state.configuration.only_summary {
                 statistics_timer = time::Instant::now();
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     send_to_client.send(GooseClientCommand::SYNC).unwrap();
                     debug!("telling client {} to sync stats", index);
                 }
-                if !configuration.only_summary {
+                if !goose_state.configuration.only_summary {
                     display_running_statistics = true;
                 }
             }
@@ -528,7 +533,7 @@ fn main() {
                     trace!("request_key: {}", request_key);
                     let merged_request;
                     if let Some(parent_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
-                        merged_request = merge_from_client(parent_request, &request, &configuration);
+                        merged_request = merge_from_client(parent_request, &request, &goose_state.configuration);
                     }
                     else {
                         // First time seeing this request, simply insert it.
@@ -540,7 +545,7 @@ fn main() {
             }
 
             // Flush statistics collected prior to all client threads running
-            if configuration.reset_stats && !statistics_reset {
+            if goose_state.configuration.reset_stats && !statistics_reset {
                 info!("statistics reset...");
                 for (client_index, client) in goose_task_sets.weighted_clients.clone().iter().enumerate() {
                     let mut reset_client = client.clone();
@@ -566,7 +571,7 @@ fn main() {
             debug!("all clients exited");
 
             // If we're printing statistics, collect the final messages received from clients
-            if configuration.print_stats {
+            if goose_state.configuration.print_stats {
                 let mut message = parent_receiver.try_recv();
                 while message.is_ok() {
                     let unwrapped_message = message.unwrap();
@@ -577,7 +582,7 @@ fn main() {
                         trace!("request_key: {}", request_key);
                         let merged_request;
                         if let Some(parent_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
-                            merged_request = merge_from_client(parent_request, &request, &configuration);
+                            merged_request = merge_from_client(parent_request, &request, &goose_state.configuration);
                         }
                         else {
                             // First time seeing this request, simply insert it.
@@ -596,14 +601,14 @@ fn main() {
         // If enabled, display running statistics after sync
         if display_running_statistics {
             display_running_statistics = false;
-            stats::print_running_stats(&configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
+            stats::print_running_stats(&goose_state.configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
         }
 
         let one_second = time::Duration::from_secs(1);
         thread::sleep(one_second);
     }
 
-    if configuration.print_stats {
-        stats::print_final_stats(&configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
+    if goose_state.configuration.print_stats {
+        stats::print_final_stats(&goose_state.configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
     }
 }
