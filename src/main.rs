@@ -492,7 +492,7 @@ fn main() {
                 let unwrapped_message = message.unwrap();
                 let weighted_clients_index = unwrapped_message.weighted_clients_index;
                 goose_task_sets.weighted_clients[weighted_clients_index].weighted_position = unwrapped_message.weighted_position;
-                goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode.clone();
+                goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                 // If our local copy of the task set doesn't have tasks, clone them from the remote thread
                 if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
                     goose_task_sets.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
@@ -521,12 +521,37 @@ fn main() {
                 send_to_client.send(GooseClientCommand::EXIT).unwrap();
                 debug!("telling client {} to sync stats", index);
             }
-            // @TODO: we should be collecting the last batch of statistics here, if we're printing them
             debug!("waiting for clients to exit");
             for client in clients {
                 let _ = client.join();
             }
             debug!("all clients exited");
+
+            // If we're printing statistics, collect the final messages received from clients
+            if configuration.print_stats {
+                let mut message = parent_receiver.try_recv();
+                while message.is_ok() {
+                    let unwrapped_message = message.unwrap();
+                    let weighted_clients_index = unwrapped_message.weighted_clients_index;
+                    goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
+                    // Syncronize client requests
+                    for (request_key, request) in unwrapped_message.requests {
+                        trace!("request_key: {}", request_key);
+                        let merged_request;
+                        if let Some(parent_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                            merged_request = merge_from_client(parent_request, &request, &configuration);
+                        }
+                        else {
+                            // First time seeing this request, simply insert it.
+                            merged_request = request.clone();
+                        }
+                        goose_task_sets.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                    }
+                    message = parent_receiver.try_recv();
+                }
+            }
+
+            // All clients are done, exit out of loop for final cleanup.
             break;
         }
 
