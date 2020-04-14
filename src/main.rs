@@ -501,10 +501,12 @@ fn main() {
             // Synchronize statistics from client threads into parent if showing running statistics.
             if timer_expired(statistics_timer, 15) && !configuration.only_summary {
                 statistics_timer = time::Instant::now();
-                display_running_statistics = true;
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     send_to_client.send(GooseClientCommand::SYNC).unwrap();
                     debug!("telling client {} to sync stats", index);
+                }
+                if !configuration.only_summary {
+                    display_running_statistics = true;
                 }
             }
 
