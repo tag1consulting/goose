@@ -294,9 +294,15 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Don't allow overhead of collecting status codes unless we're printing stats.
+    // Don't allow overhead of collecting status codes unless we're printing statistics.
     if configuration.status_codes && !configuration.print_stats {
         error!("You must enable --print-stats to enable --status-codes.");
+        std::process::exit(1);
+    }
+
+    // Don't allow overhead of collecting statistics unless we're printing them.
+    if configuration.only_summary && !configuration.print_stats {
+        error!("You must enable --print-stats to enable --only-summary.");
         std::process::exit(1);
     }
 
@@ -483,18 +489,25 @@ fn main() {
         caught_ctrlc.store(true, Ordering::SeqCst);
     }).expect("Failed to set Ctrl-C signal handler.");
 
-    let mut statistics_counter = time::Instant::now();
+    // Determine when to display running statistics.
+    let mut statistics_timer = time::Instant::now();
+    let mut display_running_statistics = false;
+
     // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
     let mut run_time = goose_state.run_time;
     loop {
-        // When displaying running statistics, sync data from client threads first
-        if configuration.print_stats && timer_expired(statistics_counter, 5) {
-            for (index, send_to_client) in client_channels.iter().enumerate() {
-                send_to_client.send(GooseClientCommand::SYNC).unwrap();
-                debug!("telling client {} to sync stats", index);
-            }
-        }
+        // When displaying running statistics, sync data from client threads first.
         if configuration.print_stats {
+            // Synchronize statistics from client threads into parent if showing running statistics.
+            if timer_expired(statistics_timer, 15) && !configuration.only_summary {
+                statistics_timer = time::Instant::now();
+                display_running_statistics = true;
+                for (index, send_to_client) in client_channels.iter().enumerate() {
+                    send_to_client.send(GooseClientCommand::SYNC).unwrap();
+                    debug!("telling client {} to sync stats", index);
+                }
+            }
+
             // Load messages from client threads until the receiver queue is empty.
             let mut message = parent_receiver.try_recv();
             while message.is_ok() {
@@ -535,11 +548,6 @@ fn main() {
                 }
                 statistics_reset = true;
             }
-        }
-
-        if configuration.print_stats && timer_expired(statistics_counter, 5) {
-            statistics_counter = time::Instant::now();
-            stats::print_running_stats(&configuration, &goose_task_sets, run_time);
         }
 
         if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
@@ -583,11 +591,17 @@ fn main() {
             break;
         }
 
+        // If enabled, display running statistics after sync
+        if display_running_statistics {
+            display_running_statistics = false;
+            stats::print_running_stats(&configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
+        }
+
         let one_second = time::Duration::from_secs(1);
         thread::sleep(one_second);
     }
 
     if configuration.print_stats {
-        stats::print_final_stats(&configuration, &goose_task_sets, run_time);
+        stats::print_final_stats(&configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
     }
 }

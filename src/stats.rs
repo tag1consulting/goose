@@ -224,6 +224,7 @@ pub fn print_final_stats(config: &Configuration, goose_task_sets: &GooseTaskSets
 }
 
 pub fn print_running_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapsed: usize) {
+    info!("printing running statistics after {} seconds...", elapsed);
     // 1) merge statistics from all clients.
     let merged_requests = merge_stats(&goose_task_sets.weighted_clients, config);
     // 2) print request and fail statistics.
