@@ -472,6 +472,9 @@ fn main() {
         debug!("telling client {} to sync stats", index);
     }
 
+    // Track whether or not we've (optionally) reset the statistics after all clients started.
+    let mut statistics_reset: bool = false;
+
     // Catch ctrl-c to allow clean shutdown to display statistics.
     let canceled = Arc::new(AtomicBool::new(false));
     let caught_ctrlc = canceled.clone();
@@ -512,6 +515,18 @@ fn main() {
                     goose_task_sets.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
                 }
                 message = parent_receiver.try_recv();
+            }
+
+            // Flush statistics collected prior to all client threads running
+            if configuration.reset_stats && !statistics_reset {
+                info!("statistics reset...");
+                for (client_index, client) in goose_task_sets.weighted_clients.clone().iter().enumerate() {
+                    let mut reset_client = client.clone();
+                    // Start again with an empty requests hashmap.
+                    reset_client.requests = HashMap::new();
+                    goose_task_sets.weighted_clients[client_index] = reset_client;
+                }
+                statistics_reset = true;
             }
         }
         if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
