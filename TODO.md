@@ -4,42 +4,32 @@ Goose is a Rust load testing tool, based on Locust.
 
 ### Todo MVP
 
-- [ ] POST request method helper  
-- [ ] HEAD request method helper  
-- [ ] wait_time attribute, configurable pause after each Task runs  
 - [ ] TaskSequence  
   - [ ] add special-case 'on-start' that is always first in TaskSet  
   - [ ] allow weighting of tasks to always run in a given order  
   - [ ] add special-case 'on-exit' that is always last in TaskSet  
 - [ ] --stop-timeout to gracefully exit client threads  
+- [ ] turn Goose into a library, create a loadtest by creating an app with Cargo  
+  - [ ] compare the pros/cons of this w/ going the dynamic library approach  
+- [ ] HEAD request method helper  
 - [ ] automated testing of Goose logic
 
 ### In progress
 
-- [ ] provide useful statistics at end of load-test  
-  - [x] merge statistics from client threads into parent  
-  - [x] response time calculations: min, max, average, mean  
-  - [x] show total and per-second success and fail counts  
-  - [x] include aggregated totals for all tasks/requests  
-  - [x] break down percentage of requests within listed times for all tasks/requests  
-  - [x] optionally provide running statistics  
-  - [x] only sync client threads to parent when needing to display statistics  
-  - [x] don't collect response time and other statistics if not displaying them  
-  - [ ] detect terminal width and adjust what is displayed (when wide enough collapse into a single table)  
-  - [x] catch ctrl-c and exit gracefully, displaying statistics if enabled  
 - [ ] host configuration  
   - [x] -H --host cli option  
   - [ ] host attribute  
+- [ ] wait_time attribute, configurable pause after each Task runs  
+- [ ] POST request method helper  
 
 ### Future (post-MVP)
 
 - [ ] PUT request method helper  
 - [ ] PATCH request method helper  
 - [ ] DELETE request method helper  
-- [ ] turn Goose into a library, create a loadtest by creating an app with Cargo  
-  - [ ] compare the pros/cons of this w/ going the dynamic library approach  
 - [ ] async clients
 - [ ] metaprogramming, impleent goose_codegen macros to simplify goosefile creation  
+- [ ] detect terminal width and adjust statistics output (when wide enough collapse into a single table, etc)  
 - [ ] documentation  
 - [ ] website  
 - [ ] gaggle support (distributed Geese)  
@@ -62,3 +52,13 @@ Goose is a Rust load testing tool, based on Locust.
 - [x] GET request method helper  
   - [x] properly identify method in stats  
 - [x] optionally track fine-grained per-request response codes (ie, GET /index.html: 5 200, 2 500)  
+- [x] provide useful statistics at end of load-test  
+  - [x] merge statistics from client threads into parent  
+  - [x] response time calculations: min, max, average, mean  
+  - [x] show total and per-second success and fail counts  
+  - [x] include aggregated totals for all tasks/requests  
+  - [x] break down percentage of requests within listed times for all tasks/requests  
+  - [x] optionally provide running statistics  
+  - [x] only sync client threads to parent when needing to display statistics  
+  - [x] don't collect response time and other statistics if not displaying them  
+  - [x] catch ctrl-c and exit gracefully, displaying statistics if enabled  

@@ -481,8 +481,8 @@ fn main() {
     loop {
         // When displaying running statistics, sync data from client threads first.
         if goose_state.configuration.print_stats {
-            // Synchronize statistics from client threads into parent if showing running statistics.
-            if timer_expired(statistics_timer, 15) && !goose_state.configuration.only_summary {
+            // Synchronize statistics from client threads into parent.
+            if timer_expired(statistics_timer, 15) {
                 statistics_timer = time::Instant::now();
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     send_to_client.send(GooseClientCommand::SYNC).unwrap();
