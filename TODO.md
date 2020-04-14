@@ -27,9 +27,6 @@ Goose is a Rust load testing tool, based on Locust.
   - [x] don't collect response time and other statistics if not displaying them  
   - [ ] detect terminal width and adjust what is displayed (when wide enough collapse into a single table)  
   - [x] catch ctrl-c and exit gracefully, displaying statistics if enabled  
-- [ ] GET request method helper  
-  - [x] properly identify method in stats  
-- [ ] optionally track fine-grained per-request response codes (ie, GET /index.html: 5 200, 2 500)  
 - [ ] host configuration  
   - [x] -H --host cli option  
   - [ ] host attribute  
@@ -41,6 +38,7 @@ Goose is a Rust load testing tool, based on Locust.
 - [ ] DELETE request method helper  
 - [ ] turn Goose into a library, create a loadtest by creating an app with Cargo  
   - [ ] compare the pros/cons of this w/ going the dynamic library approach  
+- [ ] async clients
 - [ ] metaprogramming, impleent goose_codegen macros to simplify goosefile creation  
 - [ ] documentation  
 - [ ] website  
@@ -61,3 +59,6 @@ Goose is a Rust load testing tool, based on Locust.
 - [x] move counters into a per-request HashMap instead of a per-Task Vector (currently limited to including only one request per task for accurate statistics)  
   - [x] remove per-Task atomic counters (rely instead on per-request statistics)  
 - [x] --reset-stats to optionally reset stats after all threads have hatched  
+- [x] GET request method helper  
+  - [x] properly identify method in stats  
+- [x] optionally track fine-grained per-request response codes (ie, GET /index.html: 5 200, 2 500)  
