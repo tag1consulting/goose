@@ -9,6 +9,8 @@ use url::Url;
 
 use crate::Configuration;
 
+static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
 /// A global list of all Goose task sets
 #[derive(Clone)]
 pub struct GooseTaskSets {
@@ -177,10 +179,19 @@ impl GooseClient {
     /// Create a new client state.
     pub fn new(index: usize, host: Option<String>, min_wait: usize, max_wait: usize, configuration: &Configuration) -> Self {
         trace!("new client");
+        let builder = Client::builder()
+            .user_agent(APP_USER_AGENT);
+        let client = match builder.build() {
+            Ok(c) => c,
+            Err(e) => {
+                error!("failed to build client {}: {}", index, e);
+                std::process::exit(1);
+            }
+        };
         GooseClient {
             task_sets_index: index,
             task_set_host: host,
-            client: Client::new(),
+            client: client,
             config: configuration.clone(),
             min_wait: min_wait,
             max_wait: max_wait,
