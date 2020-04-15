@@ -2,8 +2,11 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use http::StatusCode;
-use reqwest::blocking::{Client, Response};
+use http::method::Method;
+use reqwest::blocking::{Client, Response, RequestBuilder};
 use reqwest::Error;
+use url::Url;
+
 use crate::Configuration;
 
 /// A global list of all Goose task sets
@@ -102,12 +105,6 @@ pub enum GooseClientMode {
 }
 
 #[derive(Debug, Clone)]
-pub enum GooseRequestMethod {
-    GET,
-    //POST,
-}
-
-#[derive(Debug, Clone)]
 pub enum GooseClientCommand {
     // Tell client thread to push statistics to parent
     SYNC,
@@ -118,14 +115,14 @@ pub enum GooseClientCommand {
 #[derive(Debug, Clone)]
 pub struct GooseRequest {
     pub url: String,
-    pub method: GooseRequestMethod,
+    pub method: Method,
     pub response_times: Vec<f32>,
     pub status_code_counts: HashMap<u16, usize>,
     pub success_count: usize,
     pub fail_count: usize,
 }
 impl GooseRequest {
-    pub fn new(url: &str, method: GooseRequestMethod, ) -> Self {
+    pub fn new(url: &str, method: Method) -> Self {
         trace!("new request");
         GooseRequest {
             url: url.to_string(),
@@ -199,19 +196,19 @@ impl GooseClient {
         self.mode = mode;
     }
 
-    pub fn get_request(&mut self, url: &str, method: GooseRequestMethod) -> GooseRequest {
+    fn get_request(&mut self, url: &str, method: &Method) -> GooseRequest {
         let key = format!("{:?} {}", method, url);
         trace!("get key: {}", &key);
         match self.requests.get(&key) {
             Some(r) => r.clone(),
-            None => GooseRequest::new(url, method),
+            None => GooseRequest::new(url, method.clone()),
         }
     }
 
-    pub fn set_request(&mut self, url: &str, method: GooseRequestMethod, request: GooseRequest) {
+    fn set_request(&mut self, url: &str, method: &Method, request: GooseRequest) {
         let key = format!("{:?} {}", method, url);
         trace!("set key: {}", &key);
-        self.requests.insert(key, request);
+        self.requests.insert(key, request.clone());
     }
 
     fn build_url(&mut self, path: &str) -> String {
@@ -223,17 +220,110 @@ impl GooseClient {
         }
     }
 
+    // Simple get() wrapper that calls goose_get() followed by goose_send().
     pub fn get(&mut self, path: &str) -> Result<Response, Error> {
-        let started = Instant::now();
-        let url = self.build_url(path);
-        let response = self.client.get(&url).send();
-        let elapsed = started.elapsed() * 100;
-        trace!("GET {} elapsed: {:?}", url, elapsed);
+        let request_builder = self.goose_get(path);
+        let response = self.goose_send(request_builder);
+        response
+    }
 
-        // Only record statistics if we're going to print them.
-        // @TODO: should we do _some_ status code handling still?
+    // Simple post() wrapper that calls goose_post() followed by goose_send().
+    // @TODO: helper should allow for a body
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn post(&mut self, path: &str) -> Result<Response, Error> {
+        let request_builder = self.goose_post(path);
+        let response = self.goose_send(request_builder);
+        response
+    }
+
+    // Simple head() wrapper that calls goose_head() followed by goose_send().
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn head(&mut self, path: &str) -> Result<Response, Error> {
+        let request_builder = self.goose_head(path);
+        let response = self.goose_send(request_builder);
+        response
+    }
+
+    // Simple delete() wrapper that calls goose_delete() followed by goose_send().
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn delete(&mut self, path: &str) -> Result<Response, Error> {
+        let request_builder = self.goose_delete(path);
+        let response = self.goose_send(request_builder);
+        response
+    }
+
+    // Calls Reqwest get() and returns a Reqwest RequestBuilder.
+    pub fn goose_get(&mut self, path: &str) -> RequestBuilder {
+        let url = self.build_url(path);
+        self.client.get(&url)
+    }
+
+    // Calls Reqwest post() and returns a Reqwest RequestBuilder.
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn goose_post(&mut self, path: &str) -> RequestBuilder {
+        let url = self.build_url(path);
+        self.client.post(&url)
+    }
+
+    // Calls Reqwest head() and returns a Reqwest RequestBuilder.
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn goose_head(&mut self, path: &str) -> RequestBuilder {
+        let url = self.build_url(path);
+        self.client.head(&url)
+    }
+
+    // Calls Reqwest put() and returns a Reqwest RequestBuilder.
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn goose_put(&mut self, path: &str) -> RequestBuilder {
+        let url = self.build_url(path);
+        self.client.put(&url)
+    }
+
+    // Calls Reqwest patch() and returns a Reqwest RequestBuilder.
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn goose_patch(&mut self, path: &str) -> RequestBuilder {
+        let url = self.build_url(path);
+        self.client.patch(&url)
+    }
+
+    // Calls Reqwest delete() and returns a Reqwest RequestBuilder.
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn goose_delete(&mut self, path: &str) -> RequestBuilder {
+        let url = self.build_url(path);
+        self.client.delete(&url)
+    }
+
+    // Executes a Reqwest RequestBuilder, optionally capturing statistics.
+    pub fn goose_send(&mut self, request_builder: RequestBuilder) -> Result<Response, Error> {
+        let started = Instant::now();
+        let request = request_builder.build()?;
+
+        // Allow introspection.
+        let method = request.method().clone();
+        let url = request.url().to_string();
+
+        // Make the actual request.
+        let response = self.client.execute(request);
+        let elapsed = started.elapsed() * 100;
+
         if self.config.print_stats {
-            let mut goose_request = self.get_request(path, GooseRequestMethod::GET);
+            // Introspect the request for logging and statistics
+            let path = match Url::parse(&url) {
+                Ok(u) => u.path().to_string(),
+                Err(e) => {
+                    warn!("failed to parse url: {}", e);
+                    "parse error".to_string()
+                }
+            };
+            let mut goose_request = self.get_request(&path, &method.clone());
             goose_request.set_response_time(elapsed.as_secs_f32());
             match &response {
                 Ok(r) => {
@@ -243,7 +333,7 @@ impl GooseClient {
                         goose_request.set_status_code(status_code);
                     }
 
-                    debug!("{}: status_code {}", url, status_code);
+                    debug!("{:?}: status_code {}", &path, status_code);
                     // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                     if status_code.is_success() {
                         goose_request.success_count += 1;
@@ -251,17 +341,17 @@ impl GooseClient {
                     // @TODO: properly track redirects and other code ranges
                     else {
                         // @TODO: handle this correctly
-                        debug!("{}: non-success status_code: {:?}", url, status_code);
+                        debug!("{:?}: non-success status_code: {:?}", &path, status_code);
                         goose_request.fail_count += 1;
                     }
                 }
                 Err(e) => {
                     // @TODO: what can we learn from a reqwest error?
-                    debug!("{}: error: {}", url, e);
+                    debug!("{:?}: error: {}", &path, e);
                     goose_request.fail_count += 1;
                 }
             };
-            self.set_request(path, GooseRequestMethod::GET, goose_request);
+            self.set_request(&path, &method, goose_request);
         }
         response
     }

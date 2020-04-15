@@ -15,7 +15,7 @@ impl GooseTaskSets {
         let mut website_tasks = GooseTaskSet::new("WebsiteTasks")
             .set_weight(10)
             .set_host("http://apache.fosciana")
-            .set_wait_time(2, 5);
+            .set_wait_time(0, 5);
         website_tasks.register_task(GooseTask::new("/").set_weight(6).set_function(GooseClient::website_task_index));
         website_tasks.register_task(GooseTask::new("/story.html").set_weight(9).set_function(GooseClient::website_task_story));
         website_tasks.register_task(GooseTask::new("/about.html").set_weight(3).set_function(GooseClient::website_task_about));
@@ -36,9 +36,3 @@ impl GooseClient {
         let _response = self.get("/about.html");
     }
 }
-
-/*
-class WebsiteUser(HttpLocust):
-    task_set = WebsiteTasks
-    wait_time = between(5, 15)
-*/

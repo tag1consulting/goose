@@ -11,18 +11,14 @@ Goose is a Rust load testing tool, based on Locust.
 - [ ] --stop-timeout to gracefully exit client threads  
 - [ ] turn Goose into a library, create a loadtest by creating an app with Cargo  
   - [ ] compare the pros/cons of this w/ going the dynamic library approach  
-- [ ] HEAD request method helper  
 - [ ] automated testing of Goose logic
 
 ### In progress
 
-- [ ] POST request method helper  
+- [x] POST request method helper  
 
 ### Future (post-MVP)
 
-- [ ] PUT request method helper  
-- [ ] PATCH request method helper  
-- [ ] DELETE request method helper  
 - [ ] async clients
 - [ ] metaprogramming, impleent goose_codegen macros to simplify goosefile creation  
 - [ ] detect terminal width and adjust statistics output (when wide enough collapse into a single table, etc)  
@@ -65,3 +61,7 @@ Goose is a Rust load testing tool, based on Locust.
   - [x] -H --host cli option  
   - [x] host attribute  
 - [x] wait_time attribute, configurable pause after each Task runs  
+- [x] HEAD request method helper  
+- [x] PUT request method helper  
+- [x] PATCH request method helper  
+- [x] DELETE request method helper  
