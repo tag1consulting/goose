@@ -171,7 +171,13 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
     loop {
         for task_sets_index in &weighted_task_sets {
             let task_set_host = task_sets.task_sets[*task_sets_index].host.clone();
-            weighted_clients.push(GooseClient::new(*task_sets_index, task_set_host, &config));
+            weighted_clients.push(GooseClient::new(
+                *task_sets_index,
+                task_set_host,
+                task_sets.task_sets[*task_sets_index].min_wait,
+                task_sets.task_sets[*task_sets_index].max_wait,
+                &config
+            ));
             client_count += 1;
             if client_count >= clients {
                 trace!("created {} weighted_clients", client_count);

@@ -3,6 +3,8 @@ use std::sync::mpsc;
 
 use rand::thread_rng;
 use rand::seq::SliceRandom;
+use rand::Rng;
+use std::{thread, time};
 
 use crate::goose::{GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
 
@@ -59,6 +61,11 @@ pub fn client_main(
             }
         }
 
-        // @TODO: configurable/optional delay (wait_time attribute)
+        if thread_client.min_wait > 0 {
+            let wait_time = rand::thread_rng().gen_range(thread_client.min_wait, thread_client.max_wait);
+            let sleep_duration = time::Duration::from_secs(wait_time as u64);
+            debug!("client {} from {} sleeping {:?} seconds...", thread_number, thread_task_set.name, sleep_duration);
+            thread::sleep(sleep_duration);
+        }
     }
 }

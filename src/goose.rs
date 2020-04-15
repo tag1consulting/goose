@@ -35,6 +35,8 @@ pub struct GooseTaskSet {
     // This is the GooseTaskSets.task_sets index
     pub task_sets_index: usize,
     pub weight: usize,
+    pub min_wait: usize,
+    pub max_wait: usize,
     pub tasks: Vec<GooseTask>,
     pub weighted_tasks: Vec<usize>,
     pub host: Option<String>,
@@ -46,6 +48,8 @@ impl GooseTaskSet {
             name: name.to_string(),
             task_sets_index: usize::max_value(),
             weight: 1,
+            min_wait: 0,
+            max_wait: 0,
             tasks: Vec::new(),
             weighted_tasks: Vec::new(),
             host: None,
@@ -61,8 +65,8 @@ impl GooseTaskSet {
     pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} set_weight: {}", self.name, weight);
         if weight < 1 {
-            info!("{} weight of {} not allowed, set to 1", self.name, weight);
-            self.weight = 1;
+            error!("{} weight of {} not allowed", self.name, weight);
+            std::process::exit(1);
         }
         else {
             self.weight = weight;
@@ -74,6 +78,17 @@ impl GooseTaskSet {
         trace!("{} set_host: {}", self.name, host);
         // Host validation happens in main() at startup.
         self.host = Some(host.to_string());
+        self
+    }
+
+    pub fn set_wait_time(mut self, min_wait: usize, max_wait: usize) -> Self {
+        trace!("{} set_wait time: min: {} max: {}", self.name, min_wait, max_wait);
+        if min_wait > max_wait {
+            error!("min_wait({}) can't be larger than max_weight({})", min_wait, max_wait);
+            std::process::exit(1);
+        }
+        self.min_wait = min_wait;
+        self.max_wait = max_wait;
         self
     }
 }
@@ -152,6 +167,8 @@ pub struct GooseClient {
     // This is the reqwest.blocking.client (@TODO: test with async)
     pub client: Client,
     pub task_set_host: Option<String>,
+    pub min_wait: usize,
+    pub max_wait: usize,
     pub config: Configuration,
     pub weighted_clients_index: usize,
     pub mode: GooseClientMode,
@@ -161,13 +178,15 @@ pub struct GooseClient {
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(index: usize, host: Option<String>, configuration: &Configuration) -> Self {
+    pub fn new(index: usize, host: Option<String>, min_wait: usize, max_wait: usize, configuration: &Configuration) -> Self {
         trace!("new client");
         GooseClient {
             task_sets_index: index,
             task_set_host: host,
             client: Client::new(),
             config: configuration.clone(),
+            min_wait: min_wait,
+            max_wait: max_wait,
             weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
             weighted_tasks: Vec::new(),
