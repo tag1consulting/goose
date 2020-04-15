@@ -37,6 +37,7 @@ pub struct GooseTaskSet {
     pub weight: usize,
     pub tasks: Vec<GooseTask>,
     pub weighted_tasks: Vec<usize>,
+    pub host: Option<String>,
 }
 impl GooseTaskSet {
     pub fn new(name: &str) -> Self {
@@ -47,6 +48,7 @@ impl GooseTaskSet {
             weight: 1,
             tasks: Vec::new(),
             weighted_tasks: Vec::new(),
+            host: None,
         };
         task_set
     }
@@ -65,6 +67,13 @@ impl GooseTaskSet {
         else {
             self.weight = weight;
         }
+        self
+    }
+
+    pub fn set_host(mut self, host: &str) -> Self {
+        trace!("{} set_host: {}", self.name, host);
+        // Host validation happens in main() at startup.
+        self.host = Some(host.to_string());
         self
     }
 }
@@ -142,6 +151,7 @@ pub struct GooseClient {
     pub task_sets_index: usize,
     // This is the reqwest.blocking.client (@TODO: test with async)
     pub client: Client,
+    pub task_set_host: Option<String>,
     pub config: Configuration,
     pub weighted_clients_index: usize,
     pub mode: GooseClientMode,
@@ -151,10 +161,11 @@ pub struct GooseClient {
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(index: usize, configuration: &Configuration) -> Self {
+    pub fn new(index: usize, host: Option<String>, configuration: &Configuration) -> Self {
         trace!("new client");
         GooseClient {
             task_sets_index: index,
+            task_set_host: host,
             client: Client::new(),
             config: configuration.clone(),
             weighted_clients_index: usize::max_value(),
@@ -184,16 +195,26 @@ impl GooseClient {
         self.requests.insert(key, request);
     }
 
-    pub fn get(&mut self, url: &str) -> Result<Response, Error> {
+    fn build_url(&mut self, path: &str) -> String {
+        if self.config.host.len() > 0 {
+            format!("{}{}", self.config.host, path)
+        } else {
+            // If no global URL is configured a task_set_host must be, so unwrap() is safe here.
+            format!("{}{}", self.task_set_host.clone().unwrap(), path)
+        }
+    }
+
+    pub fn get(&mut self, path: &str) -> Result<Response, Error> {
         let started = Instant::now();
-        let response = self.client.get(&format!("{}{}", self.config.host, url)).send();
+        let url = self.build_url(path);
+        let response = self.client.get(&url).send();
         let elapsed = started.elapsed() * 100;
         trace!("GET {} elapsed: {:?}", url, elapsed);
 
         // Only record statistics if we're going to print them.
         // @TODO: should we do _some_ status code handling still?
         if self.config.print_stats {
-            let mut goose_request = self.get_request(url, GooseRequestMethod::GET);
+            let mut goose_request = self.get_request(path, GooseRequestMethod::GET);
             goose_request.set_response_time(elapsed.as_secs_f32());
             match &response {
                 Ok(r) => {
@@ -221,7 +242,7 @@ impl GooseClient {
                     goose_request.fail_count += 1;
                 }
             };
-            self.set_request(url, GooseRequestMethod::GET, goose_request);
+            self.set_request(path, GooseRequestMethod::GET, goose_request);
         }
         response
     }

@@ -25,6 +25,7 @@ use rand::thread_rng;
 use rand::seq::SliceRandom;
 use simplelog::*;
 use structopt::StructOpt;
+use url::Url;
 
 use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
@@ -52,8 +53,7 @@ impl GooseState {
 #[structopt(name = "client")]
 pub struct Configuration {
     /// Host to load test in the following format: http://10.21.32.33
-    //#[structopt(short = "H", long, required=false, default_value="")]
-    #[structopt(short = "H", long, required=true)]
+    #[structopt(short = "H", long, required=false, default_value="")]
     host: String,
 
     ///// Rust module file to import, e.g. '../other.rs'.
@@ -170,7 +170,8 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
     let config = state.configuration.clone();
     loop {
         for task_sets_index in &weighted_task_sets {
-            weighted_clients.push(GooseClient::new(*task_sets_index, &config));
+            let task_set_host = task_sets.task_sets[*task_sets_index].host.clone();
+            weighted_clients.push(GooseClient::new(*task_sets_index, task_set_host, &config));
             client_count += 1;
             if client_count >= clients {
                 trace!("created {} weighted_clients", client_count);
@@ -210,6 +211,16 @@ fn weight_tasks(task_set: &GooseTaskSet) -> Vec<usize> {
     }
     trace!("created weighted_tasks: {:?}", weighted_tasks);
     weighted_tasks
+}
+
+fn is_valid_host(host: &str) -> bool {
+    match Url::parse(host) {
+        Ok(_) => true,
+        Err(e) => {
+            error!("invalid host '{}': {}", host, e);
+            std::process::exit(1);
+        }
+    }
 }
 
 /// If run_time was specified, detect when it's time to shut down
@@ -385,6 +396,29 @@ fn main() {
             }
         }
         std::process::exit(0);
+    }
+
+
+    // Confirm there's either a global host, or each task set has a host defined.
+    if goose_state.configuration.host.len() == 0 {
+        for task_set in &goose_task_sets.task_sets {
+            match &task_set.host {
+                Some(h) => {
+                    if is_valid_host(h) {
+                        info!("host for {} configuraed: {}", task_set.name, h);
+                    }
+                }
+                None => {
+                    error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    else {
+        if is_valid_host(&goose_state.configuration.host) {
+            info!("global host configured: {}", goose_state.configuration.host);
+        }
     }
 
     // Apply weights to tasks in each task set.

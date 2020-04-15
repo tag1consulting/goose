@@ -327,6 +327,7 @@ dependencies = [
  "reqwest",
  "simplelog",
  "structopt",
+ "url",
 ]
 
 [[package]]

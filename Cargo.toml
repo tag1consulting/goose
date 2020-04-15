@@ -16,3 +16,4 @@ regex = "1"
 reqwest = { version = "0.10", features = ["blocking"] }
 structopt = "0.3"
 simplelog = "0.7"
+url = "2.1"

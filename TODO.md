@@ -16,9 +16,6 @@ Goose is a Rust load testing tool, based on Locust.
 
 ### In progress
 
-- [ ] host configuration  
-  - [x] -H --host cli option  
-  - [ ] host attribute  
 - [ ] wait_time attribute, configurable pause after each Task runs  
 - [ ] POST request method helper  
 
@@ -62,3 +59,6 @@ Goose is a Rust load testing tool, based on Locust.
   - [x] only sync client threads to parent when needing to display statistics  
   - [x] don't collect response time and other statistics if not displaying them  
   - [x] catch ctrl-c and exit gracefully, displaying statistics if enabled  
+- [x] host configuration  
+  - [x] -H --host cli option  
+  - [x] host attribute  
