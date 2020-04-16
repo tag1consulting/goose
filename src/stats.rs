@@ -48,14 +48,25 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
         else {
             fail_percent = 0.0;
         }
-        println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
-            &request_key,
-            total_count.to_formatted_string(&Locale::en),
-            request.fail_count.to_formatted_string(&Locale::en),
-            fail_percent,
-            (total_count / elapsed).to_formatted_string(&Locale::en),
-            (request.fail_count / elapsed).to_formatted_string(&Locale::en),
-        );
+        // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
+        if fail_percent == 100.0 || fail_percent == 0.0 {
+            println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                &request_key,
+                total_count.to_formatted_string(&Locale::en),
+                format!("{} ({}%)", request.fail_count.to_formatted_string(&Locale::en), fail_percent as usize),
+                (total_count / elapsed).to_formatted_string(&Locale::en),
+                (request.fail_count / elapsed).to_formatted_string(&Locale::en),
+            );
+        }
+        else {
+            println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                &request_key,
+                total_count.to_formatted_string(&Locale::en),
+                format!("{} ({:.1}%)", request.fail_count.to_formatted_string(&Locale::en), fail_percent),
+                (total_count / elapsed).to_formatted_string(&Locale::en),
+                (request.fail_count / elapsed).to_formatted_string(&Locale::en),
+            );
+        }
         aggregate_total_count += total_count;
         aggregate_fail_count += request.fail_count;
     }
@@ -67,14 +78,25 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
         aggregate_fail_percent = 0.0;
     }
     println!(" ------------------------+----------------+----------------+-------+---------- ");
-    println!(" {:<23} | {:<14} | {} ({:.1}%)       | {:<6} | {:<5}",
-        "Aggregated",
-        aggregate_total_count.to_formatted_string(&Locale::en),
-        aggregate_fail_count.to_formatted_string(&Locale::en),
-        aggregate_fail_percent,
-        (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
-        (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
-    );
+    // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
+    if aggregate_fail_percent == 100.0 || aggregate_fail_percent == 0.0 {
+        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+            "Aggregated",
+            aggregate_total_count.to_formatted_string(&Locale::en),
+            format!("{} ({}%)", aggregate_fail_count.to_formatted_string(&Locale::en), aggregate_fail_percent as usize),
+            (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
+            (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+        );
+    }
+    else {
+        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+            "Aggregated",
+            aggregate_total_count.to_formatted_string(&Locale::en),
+            format!("{} ({:.1}%)", aggregate_fail_count.to_formatted_string(&Locale::en), aggregate_fail_percent),
+            (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
+            (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+        );
+    }
 }
 
 fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percentiles: bool) {
