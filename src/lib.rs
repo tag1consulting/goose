@@ -515,6 +515,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
             info!("global host configured: {}", goose_state.configuration.host);
         }
     }
+
     // Apply weights to tasks in each task set.
     for task_set in &mut goose_task_sets.task_sets {
         let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) = weight_tasks(&task_set);
@@ -602,8 +603,15 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
     let canceled = Arc::new(AtomicBool::new(false));
     let caught_ctrlc = canceled.clone();
     ctrlc::set_handler(move || {
-        println!("caught ctrl-c, stopping...");
-        caught_ctrlc.store(true, Ordering::SeqCst);
+        if caught_ctrlc.load(Ordering::SeqCst) {
+            // We caught a second ctrl-c, exit early
+            error!("caught another ctrl-c, exiting immediately...");
+            std::process::exit(1);
+        }
+        else {
+            warn!("caught ctrl-c, stopping...");
+            caught_ctrlc.store(true, Ordering::SeqCst);
+        }
     }).expect("Failed to set Ctrl-C signal handler.");
 
     // Determine when to display running statistics (if enabled).
@@ -680,7 +688,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
                 send_to_client.send(GooseClientCommand::EXIT).unwrap();
                 debug!("telling client {} to sync stats", index);
             }
-            debug!("waiting for clients to exit");
+            info!("waiting for clients to exit");
             for client in clients {
                 let _ = client.join();
             }
