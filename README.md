@@ -68,61 +68,63 @@ Here's the output of running the loadtest. The `-v` flag sends `INFO` and higher
 $ cargo run --release --example simple -- --host http://apache.fosciana -v -c1024 -r32 -t 10m --print-stats --status-codes --only-summary
     Finished release [optimized] target(s) in 0.05s
      Running `target/release/examples/simple --host 'http://apache.fosciana' -v -c1024 -r32 -t 10m --print-stats --status-codes --only-summary`
-15:05:36 [ INFO] Output verbosity level: INFO
-15:05:36 [ INFO] Logfile verbosity level: INFO
-15:05:36 [ INFO] Writing to log file: goose.log
-15:05:36 [ INFO] run_time = 600
-15:05:36 [ INFO] global host configured: http://apache.fosciana
-15:05:42 [ INFO] launching client 1 from WebsiteUser...
-15:05:42 [ INFO] launching client 2 from WebsiteUser...
-15:05:42 [ INFO] launching client 3 from WebsiteUser...
-15:05:42 [ INFO] launching client 4 from WebsiteUser...
-15:05:42 [ INFO] launching client 5 from WebsiteUser...
-15:05:42 [ INFO] launching client 6 from WebsiteUser...
-15:05:42 [ INFO] launching client 7 from WebsiteUser...
-15:05:42 [ INFO] launching client 8 from WebsiteUser...
+18:42:48 [ INFO] Output verbosity level: INFO
+18:42:48 [ INFO] Logfile verbosity level: INFO
+18:42:48 [ INFO] Writing to log file: goose.log
+18:42:48 [ INFO] run_time = 600
+18:42:48 [ INFO] global host configured: http://apache.fosciana
+18:42:53 [ INFO] launching client 1 from WebsiteUser...
+18:42:53 [ INFO] launching client 2 from WebsiteUser...
+18:42:53 [ INFO] launching client 3 from WebsiteUser...
+18:42:53 [ INFO] launching client 4 from WebsiteUser...
+18:42:53 [ INFO] launching client 5 from WebsiteUser...
+18:42:53 [ INFO] launching client 6 from WebsiteUser...
+18:42:53 [ INFO] launching client 7 from WebsiteUser...
+18:42:53 [ INFO] launching client 8 from WebsiteUser...
+
 ```
 ...
 ```
-15:06:14 [ INFO] launching client 1022 from WebsiteUser...
-15:06:14 [ INFO] launching client 1023 from WebsiteUser...
-15:06:14 [ INFO] launching client 1024 from WebsiteUser...
-15:06:14 [ INFO] launched 1024 clients...
-15:16:14 [ INFO] stopping after 600 seconds...
+18:43:25 [ INFO] launching client 1022 from WebsiteUser...
+18:43:25 [ INFO] launching client 1023 from WebsiteUser...
+18:43:25 [ INFO] launching client 1024 from WebsiteUser...
+18:43:25 [ INFO] launched 1024 clients...
+18:53:26 [ INFO] stopping after 600 seconds...
+18:53:26 [ INFO] waiting for clients to exit
 ------------------------------------------------------------------------------ 
  Name                    | # reqs         | # fails        | req/s  | fail/s
  ----------------------------------------------------------------------------- 
- GET /about/             | 22,793         | 288 (1.3%)     | 35     | 0    
- POST /login             | 22,776         | 320 (1.4%)     | 35     | 0    
- GET /                   | 22,788         | 244 (1.1%)     | 35     | 0    
+ GET /                   | 34,077         | 582 (1.7%)     | 53     | 0    
+ GET /about/             | 34,044         | 610 (1.8%)     | 53     | 0    
+ POST /login             | 1,024          | 0 (0%)         | 1      | 0    
  ------------------------+----------------+----------------+-------+---------- 
- Aggregated              | 68,357         | 852 (1.2%)     | 106    | 1    
+ Aggregated              | 69,145         | 1,192 (1.7%)   | 107    | 1    
 -------------------------------------------------------------------------------
  Name                    | Avg (ms)   | Min        | Max        | Mean      
  ----------------------------------------------------------------------------- 
- GET /about/             | 8.42       | 0.01       | 603.77     | 0.08      
- POST /login             | 9.36       | 0.01       | 607.22     | 0.19      
- GET /                   | 8.47       | 0.01       | 604.42     | 0.09      
+ GET /                   | 12.38      | 0.01       | 1001.10    | 0.09      
+ GET /about/             | 12.80      | 0.01       | 1001.10    | 0.08      
+ POST /login             | 0.21       | 0.15       | 1.82       | 0.20      
  ------------------------+------------+------------+------------+------------- 
- Aggregated              | 8.75       | 0.01       | 607.22     | 0.19      
+ Aggregated              | 12.41      | 0.01       | 1001.10    | 0.02      
 -------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
  Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
  ----------------------------------------------------------------------------- 
- GET /about/             | 0.08   | 0.10   | 0.36   | 500.29 | 554.02 | 601.97
- POST /login             | 0.19   | 0.22   | 1.28   | 500.48 | 572.90 | 600.21
- GET /                   | 0.09   | 0.11   | 0.34   | 500.32 | 568.10 | 600.48
+ GET /                   | 0.09   | 0.10   | 345.18 | 500.60 | 1000.93 | 1001.09
+ GET /about/             | 0.08   | 0.10   | 356.65 | 500.61 | 1000.94 | 1001.08
+ POST /login             | 0.20   | 0.22   | 0.27   | 0.34   | 1.36   |   1.82
  ------------------------+------------+------------+------------+------------- 
- Aggregated              | 0.10   | 0.18   | 0.61   | 500.38 | 566.55 | 601.97
+ Aggregated              | 0.08   | 0.10   | 349.40 | 500.60 | 1000.93 | 1001.09
 -------------------------------------------------------------------------------
  Name                    | Status codes              
  ----------------------------------------------------------------------------- 
- GET /about/             | 22,505 [200]             
- POST /login             | 16 [503], 22,456 [200]   
- GET /                   | 22,544 [200]             
+ GET /                   | 33,495 [200]             
+ GET /about/             | 33,434 [200]             
+ POST /login             | 1,024 [200]              
 -------------------------------------------------------------------------------
- Aggregated              | 67,505 [200], 16 [503]    
+ Aggregated              | 67,953 [200]              
 ```
 
 ## Roadmap
