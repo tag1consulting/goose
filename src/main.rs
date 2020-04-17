@@ -172,7 +172,7 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
         for task_sets_index in &weighted_task_sets {
             let task_set_host = task_sets.task_sets[*task_sets_index].host.clone();
             weighted_clients.push(GooseClient::new(
-                *task_sets_index,
+                task_sets.task_sets[*task_sets_index].task_sets_index,
                 task_set_host,
                 task_sets.task_sets[*task_sets_index].min_wait,
                 task_sets.task_sets[*task_sets_index].max_wait,
@@ -533,7 +533,7 @@ fn main() {
             match &task_set.host {
                 Some(h) => {
                     if is_valid_host(h) {
-                        info!("host for {} configuraed: {}", task_set.name, h);
+                        info!("host for {} configured: {}", task_set.name, h);
                     }
                 }
                 None => {
@@ -621,6 +621,14 @@ fn main() {
     started = time::Instant::now();
     info!("launched {} clients...", goose_state.active_clients);
 
+    // Ensure we have request statistics when we're displaying running statistics.
+    if goose_state.configuration.print_stats && !goose_state.configuration.only_summary {
+        for (index, send_to_client) in client_channels.iter().enumerate() {
+            send_to_client.send(GooseClientCommand::SYNC).unwrap();
+            debug!("telling client {} to sync stats", index);
+        }
+    }
+
     // Track whether or not we've (optionally) reset the statistics after all clients started.
     let mut statistics_reset: bool = false;
 
@@ -650,6 +658,9 @@ fn main() {
                 }
                 if !goose_state.configuration.only_summary {
                     display_running_statistics = true;
+                    // Give client threads time to send statstics.
+                    let pause = time::Duration::from_millis(100);
+                    thread::sleep(pause);
                 }
             }
 

@@ -28,7 +28,8 @@ impl GooseTaskSets {
         goose_tasksets
     }
 
-    pub fn register_taskset(&mut self, taskset: GooseTaskSet) {
+    pub fn register_taskset(&mut self, mut taskset: GooseTaskSet) {
+        taskset.task_sets_index = self.task_sets.len();
         self.task_sets.push(taskset);
     }
 }
