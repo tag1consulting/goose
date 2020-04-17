@@ -12,7 +12,7 @@ fn main() {
         // Optional, a random sleep value selected from low to high, randomly invoked after each task is run
         .set_wait_time(5, 15);
     
-    websiteuser_tasks.register_task(GooseTask::new().set_function(website_task_login));
+    websiteuser_tasks.register_task(GooseTask::new().set_on_start().set_function(website_task_login));
     websiteuser_tasks.register_task(GooseTask::new().set_function(website_task_index));
     websiteuser_tasks.register_task(GooseTask::new().set_function(website_task_about));
     goose_task_sets.register_taskset(websiteuser_tasks);
