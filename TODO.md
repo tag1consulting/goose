@@ -11,6 +11,7 @@ Goose is a Rust load testing tool, based on Locust.
 - [x] POST request method helper  
 - [x] turn Goose into a library, create a loadtest by creating an app with Cargo  
   - [ ] compare the pros/cons of this w/ going the dynamic library approach  
+  - [ ] upload to crates.io
 
 ### Future (post-MVP)
 

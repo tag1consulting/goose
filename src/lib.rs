@@ -57,7 +57,7 @@ impl GooseState {
     }
 }
 
-/// Configuration options required for launching a Goose loadtest.
+/// Configuration options available when launching a Goose loadtest.
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
 pub struct Configuration {
