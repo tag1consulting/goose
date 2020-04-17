@@ -3,6 +3,13 @@ name = "goose"
 version = "0.4.0"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
+description = "A lood testing tool based on Locust."
+homepage = "https://github.com/jeremyandrews/goose"
+documentation = "https://docs.rs/goose/"
+repository = "https://github.com/jeremyandrews/goose"
+readme = "README.md"
+keywords = ["loadtesting", "performance", "web", "framework", "tool"]
+license = "BSD-2-Clause"
 
 [dependencies]
 #goose_codegen = { path = "goose_codegen" }
