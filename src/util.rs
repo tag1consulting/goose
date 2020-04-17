@@ -66,3 +66,14 @@ pub fn median(list: &[f32]) -> f32 {
         f32::from(list[mid])
     }
 }
+
+/// Truncate strings when they're too long to display.
+pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
+    let mut string_to_truncate = str_to_truncate.to_string();
+    if string_to_truncate.len() as u64 > max_length {
+        let truncated_length = max_length - 2;
+        string_to_truncate.truncate(truncated_length as usize);
+        string_to_truncate = string_to_truncate + "..";
+    }
+    string_to_truncate
+}

@@ -582,6 +582,7 @@ fn main() {
         // Copy weighted tasks and weighted on start tasks into the client thread.
         thread_client.weighted_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
         thread_client.weighted_on_start_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_on_start_tasks.clone();
+        thread_client.weighted_on_stop_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_on_stop_tasks.clone();
         // Remember which task group this client is using.
         thread_client.weighted_clients_index = goose_state.active_clients;
 
@@ -619,12 +620,6 @@ fn main() {
     // Restart the timer now that all threads are launched.
     started = time::Instant::now();
     info!("launched {} clients...", goose_state.active_clients);
-
-    // Initialize per-client state in parent by requesting all threads to sync.
-    for (index, send_to_client) in client_channels.iter().enumerate() {
-        send_to_client.send(GooseClientCommand::SYNC).unwrap();
-        debug!("telling client {} to sync stats", index);
-    }
 
     // Track whether or not we've (optionally) reset the statistics after all clients started.
     let mut statistics_reset: bool = false;

@@ -51,7 +51,7 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
         // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
         if fail_percent == 100.0 || fail_percent == 0.0 {
             println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-                &request_key,
+                util::truncate_string(&request_key, 23),
                 total_count.to_formatted_string(&Locale::en),
                 format!("{} ({}%)", request.fail_count.to_formatted_string(&Locale::en), fail_percent as usize),
                 (total_count / elapsed).to_formatted_string(&Locale::en),
@@ -60,7 +60,7 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
         }
         else {
             println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-                &request_key,
+                util::truncate_string(&request_key, 23),
                 total_count.to_formatted_string(&Locale::en),
                 format!("{} ({:.1}%)", request.fail_count.to_formatted_string(&Locale::en), fail_percent),
                 (total_count / elapsed).to_formatted_string(&Locale::en),
@@ -109,7 +109,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         request.response_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         aggregate_response_times.append(&mut request.response_times.clone());
         println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
-            &request_key,
+            util::truncate_string(&request_key, 23),
             util::mean(&request.response_times),
             &request.response_times.iter().cloned().float_min(),
             &request.response_times.iter().cloned().float_max(),
@@ -135,7 +135,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         for (request_key, request) in requests {
             // Sort response times so we can calculate a mean.
             println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
-                &request_key,
+                util::truncate_string(&request_key, 23),
                 calculate_response_time_percentile(request.response_times.clone(), 0.5),
                 calculate_response_time_percentile(request.response_times.clone(), 0.75),
                 calculate_response_time_percentile(request.response_times.clone(), 0.98),
@@ -181,7 +181,7 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
             aggregated_status_code_counts.insert(*status_code, new_count);
         }
         println!(" {:<23} | {:<25}",
-            &request_key,
+            util::truncate_string(&request_key, 23),
             codes,
         );
     }

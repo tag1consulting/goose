@@ -31,6 +31,7 @@ pub fn client_main(
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
                 let function = thread_task_set.tasks[*task_index].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
                 debug!("launching on_start {} task from {}", thread_task_name, thread_task_set.name);
+                thread_client.request_name = thread_task_name.to_string();
                 // Invoke the task function.
                 function(&mut thread_client);
             }
@@ -59,7 +60,7 @@ pub fn client_main(
         let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
         debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
         // If task name is set, it will be used for storing request statistics instead of the raw url.
-        thread_client.request_name = thread_task_name.clone();
+        thread_client.request_name = thread_task_name.to_string();
         // Invoke the task function.
         function(&mut thread_client);
 
@@ -79,7 +80,6 @@ pub fn client_main(
                 // Sync our state to the parent and then exit.
                 GooseClientCommand::EXIT => {
                     thread_client.set_mode(GooseClientMode::EXITING);
-                    thread_sender.send(thread_client.clone()).unwrap();
                     // No need to reset per-thread counters, we're exiting and memory will be freed
                     thread_continue = false
                 }
@@ -105,10 +105,13 @@ pub fn client_main(
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
                 let function = thread_task_set.tasks[*task_index].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
                 debug!("launching on_stop {} task from {}", thread_task_name, thread_task_set.name);
+                thread_client.request_name = thread_task_name.to_string();
                 // Invoke the task function.
                 function(&mut thread_client);
             }
         }
     }
 
+    // Do our final sync before we exit.
+    thread_sender.send(thread_client.clone()).unwrap();
 }
