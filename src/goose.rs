@@ -253,18 +253,13 @@ impl GooseClient {
     }
 
     // Simple post() wrapper that calls goose_post() followed by goose_send().
-    // @TODO: helper should allow for a body
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
-    pub fn post(&mut self, path: &str) -> Result<Response, Error> {
-        let request_builder = self.goose_post(path);
+    pub fn post(&mut self, path: &str, body: String) -> Result<Response, Error> {
+        let request_builder = self.goose_post(path).body(body);
         let response = self.goose_send(request_builder);
         response
     }
 
     // Simple head() wrapper that calls goose_head() followed by goose_send().
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn head(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_head(path);
         let response = self.goose_send(request_builder);
@@ -272,8 +267,6 @@ impl GooseClient {
     }
 
     // Simple delete() wrapper that calls goose_delete() followed by goose_send().
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn delete(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_delete(path);
         let response = self.goose_send(request_builder);
@@ -287,40 +280,30 @@ impl GooseClient {
     }
 
     // Calls Reqwest post() and returns a Reqwest RequestBuilder.
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn goose_post(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.post(&url)
     }
 
     // Calls Reqwest head() and returns a Reqwest RequestBuilder.
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn goose_head(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.head(&url)
     }
 
     // Calls Reqwest put() and returns a Reqwest RequestBuilder.
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn goose_put(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.put(&url)
     }
 
     // Calls Reqwest patch() and returns a Reqwest RequestBuilder.
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn goose_patch(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.patch(&url)
     }
 
     // Calls Reqwest delete() and returns a Reqwest RequestBuilder.
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn goose_delete(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.delete(&url)
@@ -437,16 +420,12 @@ impl GooseTask {
         self
     }
 
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn set_on_stop(mut self) -> Self {
         trace!("{} [{}] set_on_stop task", self.name, self.tasks_index);
         self.on_stop = true;
         self
     }
 
-    // @TODO: remove this allow once we convert Goose to a library.
-    #[allow(dead_code)]
     pub fn set_name(mut self, name: &str) -> Self {
         trace!("[{}] set_name: {}", self.tasks_index, self.name);
         self.name = name.to_string();

@@ -4,22 +4,22 @@ Goose is a Rust load testing tool, based on Locust.
 
 ### Todo MVP
 
-- [ ] turn Goose into a library, create a loadtest by creating an app with Cargo  
-  - [ ] compare the pros/cons of this w/ going the dynamic library approach  
 - [ ] automated testing of Goose logic
 
 ### In progress
 
 - [x] POST request method helper  
+- [x] turn Goose into a library, create a loadtest by creating an app with Cargo  
+  - [ ] compare the pros/cons of this w/ going the dynamic library approach  
 
 ### Future (post-MVP)
 
 - [ ] async clients
 - [ ] metaprogramming, impleent goose_codegen macros to simplify goosefile creation  
 - [ ] detect terminal width and adjust statistics output (when wide enough collapse into a single table, etc)  
-- [ ] more complicated wait_time implementations
-  - [ ] constant pacing (https://github.com/locustio/locust/blob/795b5a14dd5b0991fec5a7f96f0d6491ce19e3d0/locust/wait_time.py#L30)
-  - [ ] custom wait_time implementations
+- [ ] more complicated wait_time implementations  
+  - [ ] constant pacing (https://github.com/locustio/locust/blob/795b5a14dd5b0991fec5a7f96f0d6491ce19e3d0/locust/wait_time.py#L30)  
+  - [ ] custom wait_time implementations  
 - [ ] --stop-timeout to gracefully exit client threads  
 - [ ] documentation  
 - [ ] website  

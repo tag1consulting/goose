@@ -1,3 +1,11 @@
+//! Have you ever been attacked by a goose?
+//! 
+//! Goose is a Rust load testing tool based on [Locust](https://locust.io/).
+//!  User behavior is defined with standard Rust code.
+//! 
+//! Goose load tests are built using Cargo to build a new application with a
+//! dependency on the Goose library.
+
 #[macro_use]
 extern crate log;
 
@@ -7,14 +15,12 @@ extern crate log;
 extern crate structopt;
 
 mod client;
-mod goose;
-mod goosefile;
+pub mod goose;
 mod stats;
 mod util;
 
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
-use std::ffi::OsStr;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
@@ -29,14 +35,16 @@ use url::Url;
 
 use goose::{GooseTaskSets, GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
+/// Global state for Goose loadtest.
 #[derive(Debug, Clone)]
-struct GooseState {
+pub struct GooseState {
     configuration: Configuration,
     number_of_cpus: usize,
     run_time: usize,
     clients: usize,
     active_clients: usize,
 }
+/// Goose global state is initialized by calling GooseState::new(configuration).
 impl GooseState {
     fn new(configuration: Configuration) -> GooseState {
         GooseState {
@@ -49,6 +57,7 @@ impl GooseState {
     }
 }
 
+/// Configuration options required for launching a Goose loadtest.
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
 pub struct Configuration {
@@ -108,28 +117,6 @@ pub struct Configuration {
 
     #[structopt(long, default_value="goose.log")]
     log_file: String,
-}
-
-/// Locate goosefile dynamic library
-fn find_goosefile() -> Option<PathBuf> {
-    let goosefile = PathBuf::from("goosefile.rs");
-    trace!("goosefile: {:?}", goosefile);
-    // @TODO: emulate how Locust does this
-    //  - allow override in env
-    //  - search from current directory up
-    //  - return None if no goosefile is found
-    Some(goosefile)
-}
-
-/// Load goosefile dynamic library (@TODO)
-fn load_goosefile(goosefile: PathBuf) -> Result<GooseTaskSets, &'static str> {
-    // @TODO: actually use _goosefile and load as dynamic library
-    trace!("@TODO goosefile is currently hardcoded: {:?} ", goosefile);
-
-    let mut goose_task_sets = GooseTaskSets::new();
-    // @TODO: handle goosefile errors
-    goose_task_sets.initialize_goosefile();
-    Ok(goose_task_sets)
 }
 
 /// Allocate a vector of weighted GooseClient
@@ -390,7 +377,7 @@ fn merge_from_client(
     merged_request
 }
 
-fn main() {
+pub fn goose_init() -> GooseState {
     let mut goose_state = GooseState::new(Configuration::from_args());
 
     // Allow optionally controlling debug output level
@@ -425,20 +412,6 @@ fn main() {
     info!("Output verbosity level: {}", debug_level);
     info!("Logfile verbosity level: {}", log_level);
     info!("Writing to log file: {}", log_file.display());
-
-    // @TODO: remove, Goose will be a library that goosefiles depend on.
-    let goosefile = match find_goosefile() {
-        Some(g) => g,
-        None => {
-            error!("Could not find any goosefile! Ensure file ends with '.rs' and see --help for availble options.");
-            std::process::exit(1);
-        }
-    };
-
-    if goosefile.file_name() == Some(OsStr::new("goose.rs")) {
-        error!("The goosfile must not be named `goose.rs`. Please rename the file and try again.");
-        std::process::exit(1);
-    }
 
     // Don't allow overhead of collecting status codes unless we're printing statistics.
     if goose_state.configuration.status_codes && !goose_state.configuration.print_stats {
@@ -480,34 +453,10 @@ fn main() {
     };
     debug!("clients = {}", goose_state.clients);
 
-    // Configure number of client threads to launch per second, default to the number of CPU cores available.
-    let hatch_rate = match goose_state.configuration.hatch_rate {
-        Some(h) => {
-            if h == 0 {
-                error!("The hatch_rate must be greater than 0, and generally should be no more than 100 * NUM_CORES.");
-                std::process::exit(1);
-            }
-            else {
-                h
-            }
-        }
-        None => {
-            let h = goose_state.number_of_cpus;
-            info!("hatch_rate defaulted to {} (number of CPUs)", h);
-            h
-        }
-    };
-    debug!("hatch_rate = {}", hatch_rate);
+    goose_state
+}
 
-    // Load task sets and tasks from goosefile.
-    let mut goose_task_sets = match load_goosefile(goosefile) {
-        Ok(g) => g,
-        Err(e) => {
-            error!("Error loading goosefile: {}", e);
-            std::process::exit(1);
-        }
-    };
-    
+pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskSets) {
     // At least one task set is required.
     if goose_task_sets.task_sets.len() <= 0 {
         error!("No task sets defined in goosefile.");
@@ -526,6 +475,24 @@ fn main() {
         std::process::exit(0);
     }
 
+    // Configure number of client threads to launch per second, default to the number of CPU cores available.
+    let hatch_rate = match goose_state.configuration.hatch_rate {
+        Some(h) => {
+            if h == 0 {
+                error!("The hatch_rate must be greater than 0, and generally should be no more than 100 * NUM_CORES.");
+                std::process::exit(1);
+            }
+            else {
+                h
+            }
+        }
+        None => {
+            let h = goose_state.number_of_cpus;
+            info!("hatch_rate defaulted to {} (number of CPUs)", h);
+            h
+        }
+    };
+    debug!("hatch_rate = {}", hatch_rate);
 
     // Confirm there's either a global host, or each task set has a host defined.
     if goose_state.configuration.host.len() == 0 {
@@ -548,7 +515,6 @@ fn main() {
             info!("global host configured: {}", goose_state.configuration.host);
         }
     }
-
     // Apply weights to tasks in each task set.
     for task_set in &mut goose_task_sets.task_sets {
         let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) = weight_tasks(&task_set);
