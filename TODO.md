@@ -4,11 +4,6 @@ Goose is a Rust load testing tool, based on Locust.
 
 ### Todo MVP
 
-- [ ] TaskSequence  
-  - [ ] add special-case 'on-start' that is always first in TaskSet  
-  - [ ] allow weighting of tasks to always run in a given order  
-  - [ ] add special-case 'on-exit' that is always last in TaskSet  
-- [ ] --stop-timeout to gracefully exit client threads  
 - [ ] turn Goose into a library, create a loadtest by creating an app with Cargo  
   - [ ] compare the pros/cons of this w/ going the dynamic library approach  
 - [ ] automated testing of Goose logic
@@ -25,6 +20,7 @@ Goose is a Rust load testing tool, based on Locust.
 - [ ] more complicated wait_time implementations
   - [ ] constant pacing (https://github.com/locustio/locust/blob/795b5a14dd5b0991fec5a7f96f0d6491ce19e3d0/locust/wait_time.py#L30)
   - [ ] custom wait_time implementations
+- [ ] --stop-timeout to gracefully exit client threads  
 - [ ] documentation  
 - [ ] website  
 - [ ] gaggle support (distributed Geese)  
@@ -65,3 +61,7 @@ Goose is a Rust load testing tool, based on Locust.
 - [x] PUT request method helper  
 - [x] PATCH request method helper  
 - [x] DELETE request method helper  
+- [x] TaskSequence  
+  - [x] add special-case 'on-start' that is always first in TaskSet  
+  - [x] allow weighting of tasks to always run in a given order  
+  - [x] add special-case 'on-stop' that is always last in TaskSet  

@@ -12,7 +12,7 @@ mod goosefile;
 mod stats;
 mod util;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::f32;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -27,7 +27,7 @@ use simplelog::*;
 use structopt::StructOpt;
 use url::Url;
 
-use goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
+use goose::{GooseTaskSets, GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
 #[derive(Debug, Clone)]
 struct GooseState {
@@ -92,9 +92,9 @@ pub struct Configuration {
     #[structopt(short, long)]
     list: bool,
 
-    /// Number of seconds to wait for a simulated user to complete any executing task before exiting. Default is to terminate immediately.
-    #[structopt(short, long, required=false, default_value="0")]
-    stop_timeout: usize,
+    //// Number of seconds to wait for a simulated user to complete any executing task before exiting. Default is to terminate immediately.
+    //#[structopt(short, long, required=false, default_value="0")]
+    //stop_timeout: usize,
 
     // The number of occurrences of the `v/verbose` flag
     /// Debug level (-v, -vv, -vvv, etc.)
@@ -187,13 +187,66 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
     }
 }
 
-/// Returns a bucket of weighted Goose Tasks, optionally shuffled
-fn weight_tasks(task_set: &GooseTaskSet) -> Vec<usize> {
+/// Returns a sequenced bucket of weighted usize pointers to Goose Tasks
+fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<Vec<usize>>) {
     trace!("weight_tasks for {}", task_set.name);
 
+    // A BTreeMap of Vectors allows us to group and sort tasks per sequence value.
+    let mut sequenced_tasks: BTreeMap <usize, Vec<GooseTask>> = BTreeMap::new();
+    let mut sequenced_on_start_tasks: BTreeMap <usize, Vec<GooseTask>> = BTreeMap::new();
+    let mut sequenced_on_stop_tasks: BTreeMap <usize, Vec<GooseTask>> = BTreeMap::new();
+    let mut unsequenced_tasks: Vec<GooseTask> = Vec::new();
+    let mut unsequenced_on_start_tasks: Vec<GooseTask> = Vec::new();
+    let mut unsequenced_on_stop_tasks: Vec<GooseTask> = Vec::new();
     let mut u: usize = 0;
     let mut v: usize;
+    // Handle ordering of tasks.
     for task in &task_set.tasks {
+        if task.sequence > 0 {
+            if task.on_start {
+                if let Some(sequence) = sequenced_on_start_tasks.get_mut(&task.sequence) {
+                    // This is another task with this order value.
+                    sequence.push(task.clone());
+                }
+                else {
+                    // This is the first task with this order value.
+                    sequenced_on_start_tasks.insert(task.sequence, vec![task.clone()]);
+                }
+            }
+            // Allow a task to be both on_start and on_stop.
+            if task.on_stop {
+                if let Some(sequence) = sequenced_on_stop_tasks.get_mut(&task.sequence) {
+                    // This is another task with this order value.
+                    sequence.push(task.clone());
+                }
+                else {
+                    // This is the first task with this order value.
+                    sequenced_on_stop_tasks.insert(task.sequence, vec![task.clone()]);
+                }
+            }
+            if !task.on_start && !task.on_stop {
+                if let Some(sequence) = sequenced_tasks.get_mut(&task.sequence) {
+                    // This is another task with this order value.
+                    sequence.push(task.clone());
+                }
+                else {
+                    // This is the first task with this order value.
+                    sequenced_tasks.insert(task.sequence, vec![task.clone()]);
+                }
+            }
+        }
+        else {
+            if task.on_start {
+                unsequenced_on_start_tasks.push(task.clone());
+            }
+            if task.on_stop {
+                unsequenced_on_stop_tasks.push(task.clone());
+            }
+            if !task.on_start && !task.on_stop {
+                unsequenced_tasks.push(task.clone());
+            }
+        }
+        // Look for lowest common divisor amongst all tasks of any weight.
         if u == 0 {
             u = task.weight;
         }
@@ -207,16 +260,85 @@ fn weight_tasks(task_set: &GooseTaskSet) -> Vec<usize> {
     // 'u' will always be the greatest common divisor
     debug!("gcd: {}", u);
 
-    let mut weighted_tasks = Vec::new();
-    for (index, task) in task_set.tasks.iter().enumerate() {
+    // Apply weight to sequenced tasks.
+    let mut weighted_tasks: Vec<Vec<usize>> = Vec::new();
+    for (_sequence, tasks) in sequenced_tasks.iter() {
+        let mut sequence_weighted_tasks = Vec::new();
+        for task in tasks {
+            // divide by greatest common divisor so bucket is as small as possible
+            let weight = task.weight / u;
+            trace!("{}: {} has weight of {} (reduced with gcd to {})", task.tasks_index, task.name, task.weight, weight);
+            let mut tasks = vec![task.tasks_index; weight];
+            sequence_weighted_tasks.append(&mut tasks);
+        }
+        weighted_tasks.push(sequence_weighted_tasks);
+    }
+    // Apply weight to unsequenced tasks.
+    trace!("created weighted_tasks: {:?}", weighted_tasks);
+    let mut weighted_unsequenced_tasks = Vec::new();
+    for task in unsequenced_tasks {
         // divide by greatest common divisor so bucket is as small as possible
         let weight = task.weight / u;
-        trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task.name, task.weight, weight);
-        let mut tasks = vec![index; weight];
-        weighted_tasks.append(&mut tasks);
+        trace!("{}: {} has weight of {} (reduced with gcd to {})", task.tasks_index, task.name, task.weight, weight);
+        let mut tasks = vec![task.tasks_index; weight];
+        weighted_unsequenced_tasks.append(&mut tasks);
     }
-    trace!("created weighted_tasks: {:?}", weighted_tasks);
-    weighted_tasks
+    // Unsequenced tasks come lost.
+    weighted_tasks.push(weighted_unsequenced_tasks);
+
+    // Apply weight to on_start sequenced tasks.
+    let mut weighted_on_start_tasks: Vec<Vec<usize>> = Vec::new();
+    for (_sequence, tasks) in sequenced_on_start_tasks.iter() {
+        let mut sequence_on_start_weighted_tasks = Vec::new();
+        for task in tasks {
+            // divide by greatest common divisor so bucket is as small as possible
+            let weight = task.weight / u;
+            trace!("{}: {} has weight of {} (reduced with gcd to {})", task.tasks_index, task.name, task.weight, weight);
+            let mut tasks = vec![task.tasks_index; weight];
+            sequence_on_start_weighted_tasks.append(&mut tasks);
+        }
+        weighted_on_start_tasks.push(sequence_on_start_weighted_tasks);
+    }
+    // Apply weight to unsequenced on_start tasks.
+    trace!("created weighted_on_start_tasks: {:?}", weighted_tasks);
+    let mut weighted_on_start_unsequenced_tasks = Vec::new();
+    for task in unsequenced_on_start_tasks {
+        // divide by greatest common divisor so bucket is as small as possible
+        let weight = task.weight / u;
+        trace!("{}: {} has weight of {} (reduced with gcd to {})", task.tasks_index, task.name, task.weight, weight);
+        let mut tasks = vec![task.tasks_index; weight];
+        weighted_on_start_unsequenced_tasks.append(&mut tasks);
+    }
+    // Unsequenced tasks come lost.
+    weighted_on_start_tasks.push(weighted_on_start_unsequenced_tasks);
+
+    // Apply weight to on_stop sequenced tasks.
+    let mut weighted_on_stop_tasks: Vec<Vec<usize>> = Vec::new();
+    for (_sequence, tasks) in sequenced_on_stop_tasks.iter() {
+        let mut sequence_on_stop_weighted_tasks = Vec::new();
+        for task in tasks {
+            // divide by greatest common divisor so bucket is as small as possible
+            let weight = task.weight / u;
+            trace!("{}: {} has weight of {} (reduced with gcd to {})", task.tasks_index, task.name, task.weight, weight);
+            let mut tasks = vec![task.tasks_index; weight];
+            sequence_on_stop_weighted_tasks.append(&mut tasks);
+        }
+        weighted_on_stop_tasks.push(sequence_on_stop_weighted_tasks);
+    }
+    // Apply weight to unsequenced on_stop tasks.
+    trace!("created weighted_on_stop_tasks: {:?}", weighted_tasks);
+    let mut weighted_on_stop_unsequenced_tasks = Vec::new();
+    for task in unsequenced_on_stop_tasks {
+        // divide by greatest common divisor so bucket is as small as possible
+        let weight = task.weight / u;
+        trace!("{}: {} has weight of {} (reduced with gcd to {})", task.tasks_index, task.name, task.weight, weight);
+        let mut tasks = vec![task.tasks_index; weight];
+        weighted_on_stop_unsequenced_tasks.append(&mut tasks);
+    }
+    // Unsequenced tasks come last.
+    weighted_on_stop_tasks.push(weighted_on_stop_unsequenced_tasks);
+
+    (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks)
 }
 
 fn is_valid_host(host: &str) -> bool {
@@ -429,8 +551,11 @@ fn main() {
 
     // Apply weights to tasks in each task set.
     for task_set in &mut goose_task_sets.task_sets {
-        task_set.weighted_tasks = weight_tasks(&task_set);
-        debug!("weighted {} tasks: {:?}", task_set.name, task_set.weighted_tasks);
+        let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) = weight_tasks(&task_set);
+        task_set.weighted_on_start_tasks = weighted_on_start_tasks;
+        task_set.weighted_tasks = weighted_tasks;
+        task_set.weighted_on_stop_tasks = weighted_on_stop_tasks;
+        debug!("weighted {} on_start: {:?} tasks: {:?} on_stop: {:?}", task_set.name, task_set.weighted_on_start_tasks, task_set.weighted_tasks, task_set.weighted_on_stop_tasks);
     }
 
     // Allocate a state for each of the clients we are about to start.
@@ -454,9 +579,9 @@ fn main() {
             break;
         }
 
-        // Copy weighted tasks into the client thread, and shuffle them to run in a random order.
+        // Copy weighted tasks and weighted on start tasks into the client thread.
         thread_client.weighted_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
-        thread_client.weighted_tasks.shuffle(&mut thread_rng());
+        thread_client.weighted_on_start_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_on_start_tasks.clone();
         // Remember which task group this client is using.
         thread_client.weighted_clients_index = goose_state.active_clients;
 
@@ -508,7 +633,7 @@ fn main() {
     let canceled = Arc::new(AtomicBool::new(false));
     let caught_ctrlc = canceled.clone();
     ctrlc::set_handler(move || {
-        println!("caught ctrl-c, exiting...");
+        println!("caught ctrl-c, stopping...");
         caught_ctrlc.store(true, Ordering::SeqCst);
     }).expect("Failed to set Ctrl-C signal handler.");
 
@@ -539,7 +664,8 @@ fn main() {
                 // Messages contain per-client statistics: merge them into the global statistics.
                 let unwrapped_message = message.unwrap();
                 let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                goose_task_sets.weighted_clients[weighted_clients_index].weighted_position = unwrapped_message.weighted_position;
+                goose_task_sets.weighted_clients[weighted_clients_index].weighted_bucket = unwrapped_message.weighted_bucket;
+                goose_task_sets.weighted_clients[weighted_clients_index].weighted_bucket_position = unwrapped_message.weighted_bucket_position;
                 goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                 // If our local copy of the task set doesn't have tasks, clone them from the remote thread
                 if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
@@ -577,7 +703,7 @@ fn main() {
 
         if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
             run_time = started.elapsed().as_secs() as usize;
-            info!("exiting after {} seconds...", run_time);
+            info!("stopping after {} seconds...", run_time);
             for (index, send_to_client) in client_channels.iter().enumerate() {
                 send_to_client.send(GooseClientCommand::EXIT).unwrap();
                 debug!("telling client {} to sync stats", index);

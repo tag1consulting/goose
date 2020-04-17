@@ -20,26 +20,51 @@ pub fn client_main(
     thread_client.set_mode(GooseClientMode::RUNNING);
     thread_sender.send(thread_client.clone()).unwrap();
 
+    // Client is starting, first invoke the weighted on_start tasks.
+    if thread_client.weighted_on_start_tasks.len() > 0 {
+        for mut sequence in thread_client.weighted_on_start_tasks.clone() {
+            if sequence.len() > 1 {
+                sequence.shuffle(&mut thread_rng());
+            }
+            for task_index in &sequence {
+                // Determine which task we're going to run next.
+                let thread_task_name = &thread_task_set.tasks[*task_index].name;
+                let function = thread_task_set.tasks[*task_index].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
+                debug!("launching on_start {} task from {}", thread_task_name, thread_task_set.name);
+                // Invoke the task function.
+                function(&mut thread_client);
+            }
+        }
+    }
+
     // Repeatedly loop through all available tasks in a random order.
     let mut thread_continue = true;
     while thread_continue {
-        // We've run through all tasks, re-shuffle and start over.
-        if thread_task_set.tasks.len() <= thread_client.weighted_position {
-            thread_client.weighted_tasks.shuffle(&mut thread_rng());
-            debug!("re-shuffled {} tasks: {:?}", &thread_task_set.name, thread_client.weighted_tasks);
-            thread_client.weighted_position = 0;
+        // Weighted_tasks is divided into buckets of tasks sorted by sequence, and then all non-sequenced tasks.
+        if thread_client.weighted_tasks[thread_client.weighted_bucket].len() <= thread_client.weighted_bucket_position {
+            // This bucket is exhausted, move on to position 0 of the next bucket.
+            thread_client.weighted_bucket_position = 0;
+            thread_client.weighted_bucket += 1;
+            if thread_client.weighted_tasks.len() <= thread_client.weighted_bucket {
+                thread_client.weighted_bucket = 0;
+            }
+            // Shuffle new bucket before we walk through the tasks.
+            thread_client.weighted_tasks[thread_client.weighted_bucket].shuffle(&mut thread_rng());
+            debug!("re-shuffled {} tasks: {:?}", &thread_task_set.name, thread_client.weighted_tasks[thread_client.weighted_bucket]);
         }
 
         // Determine which task we're going to run next.
-        let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_position];
+        let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_bucket][thread_client.weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
         let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
         debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
+        // If task name is set, it will be used for storing request statistics instead of the raw url.
+        thread_client.request_name = thread_task_name.clone();
         // Invoke the task function.
         function(&mut thread_client);
 
         // Move to the next task in thread_client.weighted_tasks.
-        thread_client.weighted_position += 1;
+        thread_client.weighted_bucket_position += 1;
 
         // Check if the parent thread has sent us any messages.
         let message = thread_receiver.try_recv();
@@ -68,4 +93,22 @@ pub fn client_main(
             thread::sleep(sleep_duration);
         }
     }
+
+    // Client is exiting, first invoke the weighted on_stop tasks.
+    if thread_client.weighted_on_stop_tasks.len() > 0 {
+        for mut sequence in thread_client.weighted_on_stop_tasks.clone() {
+            if sequence.len() > 1 {
+                sequence.shuffle(&mut thread_rng());
+            }
+            for task_index in &sequence {
+                // Determine which task we're going to run next.
+                let thread_task_name = &thread_task_set.tasks[*task_index].name;
+                let function = thread_task_set.tasks[*task_index].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
+                debug!("launching on_stop {} task from {}", thread_task_name, thread_task_set.name);
+                // Invoke the task function.
+                function(&mut thread_client);
+            }
+        }
+    }
+
 }

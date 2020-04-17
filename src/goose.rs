@@ -43,7 +43,9 @@ pub struct GooseTaskSet {
     pub min_wait: usize,
     pub max_wait: usize,
     pub tasks: Vec<GooseTask>,
-    pub weighted_tasks: Vec<usize>,
+    pub weighted_tasks: Vec<Vec<usize>>,
+    pub weighted_on_start_tasks: Vec<Vec<usize>>,
+    pub weighted_on_stop_tasks: Vec<Vec<usize>>,
     pub host: Option<String>,
 }
 impl GooseTaskSet {
@@ -57,13 +59,16 @@ impl GooseTaskSet {
             max_wait: 0,
             tasks: Vec::new(),
             weighted_tasks: Vec::new(),
+            weighted_on_start_tasks: Vec::new(),
+            weighted_on_stop_tasks: Vec::new(),
             host: None,
         };
         task_set
     }
 
-    pub fn register_task(&mut self, task: GooseTask) {
+    pub fn register_task(&mut self, mut task: GooseTask) {
         trace!("{} register_task: {}", self.name, task.name);
+        task.tasks_index = self.tasks.len();
         self.tasks.push(task);
     }
 
@@ -171,8 +176,12 @@ pub struct GooseClient {
     pub config: Configuration,
     pub weighted_clients_index: usize,
     pub mode: GooseClientMode,
-    pub weighted_tasks: Vec<usize>,
-    pub weighted_position: usize,
+    pub weighted_on_start_tasks: Vec<Vec<usize>>,
+    pub weighted_tasks: Vec<Vec<usize>>,
+    pub weighted_bucket: usize,
+    pub weighted_bucket_position: usize,
+    pub weighted_on_stop_tasks: Vec<Vec<usize>>,
+    pub request_name: String,
     pub requests: HashMap<String, GooseRequest>,
 }
 impl GooseClient {
@@ -197,8 +206,12 @@ impl GooseClient {
             max_wait: max_wait,
             weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
+            weighted_on_start_tasks: Vec::new(),
             weighted_tasks: Vec::new(),
-            weighted_position: 0,
+            weighted_bucket: 0,
+            weighted_bucket_position: 0,
+            weighted_on_stop_tasks: Vec::new(),
+            request_name: "".to_string(),
             requests: HashMap::new(),
         }
     }
@@ -334,7 +347,15 @@ impl GooseClient {
                     "parse error".to_string()
                 }
             };
-            let mut goose_request = self.get_request(&path, &method.clone());
+            // By default requests are recorded as "METHOD URL", allow override of "METHOD NAME"
+            let request_name;
+            if self.request_name != "" {
+                request_name = self.request_name.to_string();
+            }
+            else {
+                request_name = path.to_string();
+            }
+            let mut goose_request = self.get_request(&request_name, &method.clone());
             goose_request.set_response_time(elapsed.as_secs_f32());
             match &response {
                 Ok(r) => {
@@ -362,7 +383,7 @@ impl GooseClient {
                     goose_request.fail_count += 1;
                 }
             };
-            self.set_request(&path, &method, goose_request);
+            self.set_request(&request_name, &method, goose_request);
         }
         response
     }
@@ -375,29 +396,80 @@ pub struct GooseTask {
     pub tasks_index: usize,
     pub name: String,
     pub weight: usize,
+    pub sequence: usize,
+    pub on_start: bool,
+    pub on_stop: bool,
     pub function: Option<fn(&mut GooseClient)>,
 }
 impl GooseTask {
-    pub fn new(name: &str) -> Self {
-        trace!("new task: name: {}", &name);
+    pub fn new() -> Self {
+        trace!("new task");
         let task = GooseTask {
             tasks_index: usize::max_value(),
-            name: name.to_string(),
+            name: "".to_string(),
             weight: 1,
+            sequence: 0,
+            on_start: false,
+            on_stop: false,
             function: None,
         };
         task
     }
 
+    pub fn named(name: &str) -> Self {
+        trace!("new task: {}", name);
+        let task = GooseTask {
+            tasks_index: usize::max_value(),
+            name: name.to_string(),
+            weight: 1,
+            sequence: 0,
+            on_start: false,
+            on_stop: false,
+            function: None,
+        };
+        task
+    }
+
+    pub fn set_on_start(mut self) -> Self {
+        trace!("{} [{}] set_on_start task", self.name, self.tasks_index);
+        self.on_start = true;
+        self
+    }
+
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn set_on_stop(mut self) -> Self {
+        trace!("{} [{}] set_on_stop task", self.name, self.tasks_index);
+        self.on_stop = true;
+        self
+    }
+
+    // @TODO: remove this allow once we convert Goose to a library.
+    #[allow(dead_code)]
+    pub fn set_name(mut self, name: &str) -> Self {
+        trace!("[{}] set_name: {}", self.tasks_index, self.name);
+        self.name = name.to_string();
+        self
+    }
+
     pub fn set_weight(mut self, weight: usize) -> Self {
-        trace!("{} set_weight: {}", self.name, weight);
+        trace!("{} [{}] set_weight: {}", self.name, self.tasks_index, weight);
         if weight < 1 {
-            info!("{} weight of {} not allowed, set to 1", self.name, weight);
-            self.weight = 1;
+            error!("{} weight of {} not allowed", self.name, weight);
+            std::process::exit(1);
         }
         else {
             self.weight = weight;
         }
+        self
+    }
+
+    pub fn set_sequence(mut self, sequence: usize) -> Self {
+        trace!("{} [{}] set_sequence: {}", self.name, self.tasks_index, sequence);
+        if sequence < 1 {
+            info!("setting sequence to 0 for task {} is unnecessary, sequence disabled", self.name);
+        }
+        self.sequence = sequence;
         self
     }
 
