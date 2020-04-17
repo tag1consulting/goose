@@ -3,3 +3,4 @@
 **goose.log
 /settings.json.code-workspace
 **swp
+/Cargo.lock
