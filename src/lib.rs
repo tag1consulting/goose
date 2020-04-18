@@ -70,7 +70,7 @@
 //! collecting useful statistics which can be viewed with the `--print-stats` flag.
 //! 
 //! Once all our tasks are created, we edit the main function to initialize goose and register
-//! the tasks. In this very simple example we only have two tasks to register, but in a real
+//! the tasks. In this very simple example we only have two tasks to register, while in a real
 //! load test you can have any number of task sets with any number of individual tasks.
 //! 
 //! ```goose
@@ -126,7 +126,7 @@
 //! $ cargo run --release -- --host http://apache.fosciana --print-stats -t 30s -v
 //! ```
 //! 
-//! The first option we specified is `--host`, and in this case I'm telling Goose to run the load test
+//! The first option we specified is `--host`, and in this case tells Goose to run the load test
 //! against an 8-core VM on my local network. The `--print-stats` flag configures Goose to collect
 //! statistics as the load test runs, printing running statistics during the test and final summary
 //! statistics when finished. The `-t 30s` option tells Goose to end the load test after 30 seconds
@@ -135,8 +135,9 @@
 //! Finally, the `-v` flag tells goose to display INFO and higher level logs to stdout, giving more
 //! insight into what is happening. (Additional `-v` flags will result in considerably more debug
 //! output, and are not recommended for running actual load tests; they're only useful if you're
-//! trying to debugging Goose itself.)
+//! trying to debug Goose itself.)
 //! 
+//! Running the test results in the following output (broken up to explain it as it goes):
 //! 
 //! ```bash
 //!    Finished release [optimized] target(s) in 0.05s
@@ -159,7 +160,7 @@
 //! Goose will default to launching 1 client per available CPU core, and will launch them all in
 //! one second. You can change how many clients are launched with the `-c` option, and you can
 //! change how many clients are launched per second with the `-r` option. For example, `-c 30 -r 2`
-//! would launch 30 clients over 15 seconds.
+//! would launch 30 clients over 15 seconds, or two clients per second.
 //! 
 //! ```bash
 //! 05:56:30 [ INFO] global host configured: http://apache.fosciana
@@ -189,12 +190,12 @@
 //! ------------------------------------------------------------------------------
 //! ```
 //! 
-//! When printing statistics, by default will display running values approximately
+//! When printing statistics, by default Goose will display running values approximately
 //! every 15 seconds. Running statistics are broken into two tables. The first, above,
-//! shows how many requests have been made, how many of them failed (non-200 response),
+//! shows how many requests have been made, how many of them failed (non-2xx response),
 //! and the corresponding per-second rates.
 //! 
-//! Note that Goose respected the per-task weights we sent, and `foo` (with a weight of
+//! Note that Goose respected the per-task weights we set, and `foo` (with a weight of
 //! 10) is being loaded five times as often as `bar` (with a weight of 2). Also notice
 //! that because we didn't name the `foo` task by default we see the URL loaded in the
 //! statistics, whereas we did name the `bar` task so we see the name in the statistics.
@@ -208,8 +209,8 @@
 //!  Aggregated              | 0.66       | 0.31       | 13.51      | 0.56      
 //! ```
 //! 
-//! The second table in running statistics provides details on respone times. In our
-//! example (which is running over wifi from my development lapopt), on average each
+//! The second table in running statistics provides details on response times. In our
+//! example (which is running over wifi from my development laptop), on average each
 //! page is returning within `0.66` milliseconds. The quickest page response was for 
 //! `foo` within `0.31` milliseconds. The slowest page response was also for `foo` within
 //! `13.51` milliseconds.
@@ -220,8 +221,8 @@
 //! 05:37:10 [ INFO] waiting for clients to exit
 //! ```
 //! 
-//! Our example only runs for 30 seconds, so we only see running statistics once. Once
-//! the test is complete, we get more detail in the final summary. The first two tables
+//! Our example only runs for 30 seconds, so we only see running statistics once. When
+//! the test completes, we get more detail in the final summary. The first two tables
 //! are the same as what we saw earlier, however now they include all statistics for the
 //! entire load test:
 //! 
