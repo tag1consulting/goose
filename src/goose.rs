@@ -34,7 +34,7 @@
 //! A default host can be assigned to a task set, which will be used only if the `--host`
 //! CLI option is not set at run-time. For example, this can configure your load test to
 //! run against your local development environment by default, allowing the `--host` option
-//! to override host when you wawnt to load test production. You can assign different
+//! to override host when you want to load test production. You can also assign different
 //! hosts to different task sets if this is desirable:
 //! 
 //! ```rust
@@ -126,7 +126,7 @@
 //! 
 //! ### Task On Stop
 //! 
-//! Tasks can be flagged to only run when a client stop. This can be useful if you'd like your
+//! Tasks can be flagged to only run when a client stops. This can be useful if you'd like your
 //! load test to simluate a user logging out when it finishes. It is possible to assign sequences
 //! and weights to `on_stop` functions if you want to have multiple tasks run at stop time, and/or
 //! the tasks to run multiple times.
@@ -358,19 +358,19 @@ pub struct GooseClient {
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(index: usize, host: Option<String>, min_wait: usize, max_wait: usize, configuration: &Configuration) -> Self {
+    pub fn new(counter: usize, task_sets_index: usize, host: Option<String>, min_wait: usize, max_wait: usize, configuration: &Configuration) -> Self {
         trace!("new client");
         let builder = Client::builder()
             .user_agent(APP_USER_AGENT);
         let client = match builder.build() {
             Ok(c) => c,
             Err(e) => {
-                error!("failed to build client {}: {}", index, e);
+                error!("failed to build client {} for task {}: {}", counter, task_sets_index, e);
                 std::process::exit(1);
             }
         };
         GooseClient {
-            task_sets_index: index,
+            task_sets_index: task_sets_index,
             task_set_host: host,
             client: client,
             config: configuration.clone(),

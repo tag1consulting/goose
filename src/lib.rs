@@ -412,6 +412,7 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
     weighted_task_sets.shuffle(&mut thread_rng());
 
     // Allocate a state for each client that will be spawned.
+    info!("initializing client states...");
     let mut weighted_clients = Vec::new();
     let mut client_count = 0;
     let config = state.configuration.clone();
@@ -419,6 +420,7 @@ fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &Go
         for task_sets_index in &weighted_task_sets {
             let task_set_host = task_sets.task_sets[*task_sets_index].host.clone();
             weighted_clients.push(GooseClient::new(
+                client_count,
                 task_sets.task_sets[*task_sets_index].task_sets_index,
                 task_set_host,
                 task_sets.task_sets[*task_sets_index].min_wait,
