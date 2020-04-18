@@ -77,7 +77,7 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
     else {
         aggregate_fail_percent = 0.0;
     }
-    println!(" ------------------------+----------------+----------------+-------+---------- ");
+    println!(" ------------------------+----------------+----------------+--------+--------- ");
     // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
     if aggregate_fail_percent == 100.0 || aggregate_fail_percent == 0.0 {
         println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
@@ -144,7 +144,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
                 calculate_response_time_percentile(request.response_times.clone(), 0.9999),
             );
         }
-        println!(" ------------------------+------------+------------+------------+------------- ");
+        println!(" ------------------------+--------+--------+--------+--------+--------+------- ");
         println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
             "Aggregated",
             calculate_response_time_percentile(aggregate_response_times.clone(), 0.5),

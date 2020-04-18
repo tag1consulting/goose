@@ -1,3 +1,174 @@
+//! Helpers and objects for building Goose load tests.
+//! 
+//! Goose manages load tests with a series of objects:
+//! 
+//! - **GooseTaskSets** a global object that holds all task sets and client states.
+//! - **GooseTaskSet** each client is assigned a task set, which is a collection of tasks.
+//! - **GooseTask** tasks define one or more web requests and are assigned to task sets.
+//! - **GooseClient** a client state responsible for repeatedly running all tasks in the assigned task set.
+//! - **GooseRequest** optional statistics collected for each URL/method pair.
+//! 
+//! ## Creating Task Sets
+//! 
+//! Task sets are created by passing in a &str to the `new` function, for example:
+//! 
+//! ```rust
+//!     let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks");
+//! ```
+//! 
+//! ### Task Set Weight
+//! 
+//! A weight can be assigned to a task set, controlling how often it is assigned to client
+//! threads. The larger the value of weight, the more it will be assigned to clients. In the
+//! following example, `FooTasks` will be assigned to clients twice as often as `Bar` tasks.
+//! We could have just added a weight of `2` to `FooTasks` and left the default weight of `1`
+//! assigned to `BarTasks` for the same weighting:
+//! 
+//! ```rust
+//!     let mut foo_tasks = GooseTaskSet::new("FooTasks").set_weight(10);
+//!     let mut bar_tasks = GooseTaskSet::new("BarTasks").set_weight(5);
+//! ```
+//! 
+//! ### Task Set Host
+//! 
+//! A default host can be assigned to a task set, which will be used only if the `--host`
+//! CLI option is not set at run-time. For example, this can configure your load test to
+//! run against your local development environment by default, allowing the `--host` option
+//! to override host when you wawnt to load test production. You can assign different
+//! hosts to different task sets if this is desirable:
+//! 
+//! ```rust
+//!     foo_tasks.set_host("http://www.local");
+//!     bar_tasks.set_host("http://www2.local");
+//! ```
+//! 
+//! ### Task Set Wait Time
+//! 
+//! Wait time is specified as a low-high integer range. Each time a task completes in
+//! the task set, the client will pause for a random number of seconds inclusively between
+//! the low and high wait times. In the following example, Clients loading `foo` tasks will
+//! sleep 0 to 3 seconds after each task completes, and Clients loading `bar` tasks will
+//! sleep 5 to 10 seconds after each task completes.
+//! 
+//! ```rust
+//!     foo_tasks.set_wait_time(0, 3);
+//!     bar_tasks.set_host(5, 10);
+//! ```
+//! ## Creating Tasks
+//! 
+//! Tasks can be created with or without a name. The name is used when displaying
+//! statistics about the load test. For example:
+//! 
+//! ```rust
+//!     let mut a_task = GooseTask::new();
+//!     let mut b_task = GooseTask::named("b");
+//! ```
+//! 
+//! ### Task Name
+//! 
+//! A name can also be assigned (or changed) after a task is created, for example:
+//! 
+//! ```rust
+//!     a_task.set_name("a");
+//! ```
+//! 
+//! ### Task Weight
+//! 
+//! Individual tasks can be assigned a weight, controlling how often the task runs. The
+//! larger the value of weight, the more it will run. In the following example, `a_task`
+//! runs 3 times as often as `b_task`:
+//! 
+//! ```rust
+//!     a_task.set_weight(9);
+//!     b_task.set_weight(3);
+//! ```
+//! 
+//! ### Task Sequence
+//! 
+//! Tasks can also be configured to run in a sequence. For example, a task with a sequence
+//! value of `1` will always run before a task with a sequence value of `2`. Weight can
+//! be applied to sequenced tasks, so for example a task with a weight of `2` and a sequence
+//! of `1` will run two times before a task with a sequence of `2`. Task sets can contain
+//! tasks with sequence values and without sequence values, and in this case all tasks with
+//! a sequence value will run before tasks without a sequence value. In the folllowing example,
+//! `a_task` runs before `b_task`, which runs before `c_task`:
+//! 
+//! ```rust
+//!     a_task.set_sequence(1);
+//!     b_task.set_sequence(2);
+//!     let mut c_task = GooseTask::named("c");
+//! ```
+//! 
+//! ### Task Function
+//! 
+//! All tasks must be associated with a function. Goose will invoke this function each time
+//! the task is run.
+//! 
+//! ```rust
+//!     a_task.set_function(a_task_function);
+//!     b_task.set_function(b_task_function);
+//!     // Re-use the same task function.
+//!     c_task.set_function(b_task_function);
+//! ```
+//! 
+//! The same task function can be assigned to multiple tasks and/or multiple task sets, if desired.
+//! 
+//! ### Task On Start
+//! 
+//! Tasks can be flagged to only run when a client first starts. This can be useful if you'd
+//! like your load test to use a logged-in user. It is possible to assign sequences and weights
+//! to `on_start` functions if you want to have multiple tasks run at start time, and/or the
+//! tasks to run multiple times.
+//! 
+//! ```rust
+//!     a_task.set_on_start();
+//! ```
+//! 
+//! ### Task On Stop
+//! 
+//! Tasks can be flagged to only run when a client stop. This can be useful if you'd like your
+//! load test to simluate a user logging out when it finishes. It is possible to assign sequences
+//! and weights to `on_stop` functions if you want to have multiple tasks run at stop time, and/or
+//! the tasks to run multiple times.
+//! 
+//! ```rust
+//!     a_task.set_on_stop();
+//! ```
+//! 
+//! ## Controlling Clients
+//! 
+//! When Goose starts, it creates a configurable number of "clients", assigning a single Task Set
+//! to each. This client is then used to generate load. Behind the scenes, Goose is leveraging
+//! the Reqwest Blocking client to load web pages, and Goose can therefor do anything Reqwest can
+//! do.
+//! 
+//! The most common request types are GET and POST, but HEAD, PUT, PATCH, and DELETE are also
+//! fully supported.
+//! 
+//! ### GET
+//! 
+//! A HTTP GET request.
+//! 
+//! ```
+//!     client.get("/path/to/foo");
+//! ```
+//! 
+//! ### POST
+//! 
+//! A HTTP POST request.
+//! 
+//! ```
+//!     client.post("/path/to/bar");
+//! ```
+//! 
+//! ### HEAD
+//! 
+//! ### PUT
+//! 
+//! ### PATCH
+//! 
+//! ### DELETE
+
 use std::collections::HashMap;
 use std::time::Instant;
 

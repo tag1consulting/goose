@@ -1,10 +1,268 @@
+//! # Goose
+//! 
 //! Have you ever been attacked by a goose?
 //! 
-//! Goose is a Rust load testing tool based on [Locust](https://locust.io/).
-//!  User behavior is defined with standard Rust code.
+//! Goose is a load testing tool based on [Locust](https://locust.io/).
+//! User behavior is defined with standard Rust code.
 //! 
-//! Goose load tests are built using Cargo to build a new application with a
-//! dependency on the Goose library.
+//! Goose load tests are built by creating an application with Cargo,
+//! and declaring a dependency on the Goose library.
+//! 
+//! Goose uses the `reqwest::blocking` API to provide a convenient HTTP
+//! client. (Async support is on the roadmap, also provided through the
+//! `reqwest` library.)
+//! 
+//! ## Creating and running a Goose load test
+//! 
+//! ### Creating a simple Goose load test
+//! 
+//! First create a new empty cargo application, for example:
+//! 
+//! ```bash
+//! $ mkdir loadtest
+//! $ cd loadtest/
+//! $ cargo init
+//!      Created binary (application) package
+//! ```
+//! 
+//! Add Goose as a dependency in `Cargo.toml`:
+//! 
+//! ```toml
+//! [dependencies]
+//! goose = "0.4"
+//! ```
+//! 
+//! Add the following boilerplate use declarations at the top of your `src/main.rs`:
+//! 
+//! ```rust
+//! use goose::{goose_init, goose_launch};
+//! use goose::goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseTask};
+//! ```
+//! 
+//! Below your `main` funcation (which currently is the default `Hello, world!`), add
+//! one or more load test functions. The names of these functions are arbitrary, but it is
+//! recommended you use self-documenting names. Each load test function must accept a mutable
+//! GooseClient pointer. For example:
+//! 
+//! ```rust
+//! fn loadtest_foo(client: &mut GooseClient) {
+//!   let _response = client.get("/path/to/foo");
+//! }   
+//! ```
+//! 
+//! In the above example, we're using the GooseClient helper method `get` to load a path
+//! on the website we are load testing. This helper creates a Reqwest request builder, and
+//! uses it to build and execute a request for the above path. If you want access to the
+//! request builder object, you can instead use the `goose_get` helper, for example to
+//! set a timout on this specific request:
+//! 
+//! ```rust
+//! use std::time;
+//! 
+//! fn loadtest_bar(client: &mut GooseClient) {
+//!   let three_seconds = time::Duration::from_secs(3);
+//!   let request_builder = client.goose_get("/path/to/bar");
+//!   let _response = client.goose_send(request_builder.timeout(three_seconds));
+//! }   
+//! ```
+//! 
+//! We pass the `request_builder` object to `goose_send` which builds and executes it, also
+//! collecting useful statistics which can be viewed with the `--print-stats` flag.
+//! 
+//! Once all our tasks are created, we edit the main function to initialize goose and register
+//! the tasks. In this very simple example we only have two tasks to register, but in a real
+//! load test you can have any number of task sets with any number of individual tasks.
+//! 
+//! ```goose
+//! fn main() {
+//!   // Initialize Goose.
+//!   let goose_state = goose_init();
+//! 
+//!   // Initialize a single object to hold all our task sets.
+//!   let mut goose_task_sets = GooseTaskSets::new();
+//! 
+//!   // Create and configure our first task set.
+//!   let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks")
+//!     // Apply random sleep after each task runs.
+//!     .set_wait_time(0, 3);
+//! 
+//!   // Register the foo task, assigning it a weight of 10.
+//!   loadtest_tasks.register_task(GooseTask::new().set_weight(10).set_function(loadtest_foo));
+//!   // Register the bar task, assigning it a weight of 2 (so it runs 1/5 as
+//!   // often as bar). Apply a task name which shows up in statistics.
+//!   loadtest_tasks.register_task(GooseTask::named("bar").set_weight(2).set_function(loadtest_bar));
+//! 
+//!   // Register our task set.
+//!   goose_task_sets.register_taskset(loadtest_tasks);
+//! 
+//!   // With all task sets and tasks registered, launch the load test.
+//!   goose_launch(goose_state, goose_task_sets);
+//! }
+//! ```
+//! 
+//! Goose now spins up a configurable number of clients, each simulating a user on your
+//! website. Thanks to Reqwest, each user maintains its own client state, handling cookies
+//! and more so your "users" can log in, fill out forms, and more, as real users on your
+//! sites would do.
+//! 
+//! ### Running the Goose load test
+//! 
+//! Attempts to run our example will result in an error, as we have not yet defined the
+//! host against which this loadtest should be run. We intentionally do not hard code the
+//! host in the individual tasks, as this allows us to run the test against different
+//! environments, such as local and staging.
+//! 
+//! ```bash
+//! $ cargo run --release -- 
+//!    Compiling loadtest v0.1.0 (~/loadtest)
+//!     Finished release [optimized] target(s) in 1.52s
+//!      Running `target/release/loadtest`
+//! 05:33:06 [ERROR] Host must be defined globally or per-TaskSet. No host defined for LoadtestTasks.
+//! ```
+//! Pass in the `-h` flag to see all available run-time options. For now, we'll use a few
+//! options to customize our load test.
+//! 
+//! ```bash
+//! $ cargo run --release -- --host http://apache.fosciana --print-stats -t 30s -v
+//! ```
+//! 
+//! The first option we specified is `--host`, and in this case I'm telling Goose to run the load test
+//! against an 8-core VM on my local network. The `--print-stats` flag configures Goose to collect
+//! statistics as the load test runs, printing running statistics during the test and final summary
+//! statistics when finished. The `-t 30s` option tells Goose to end the load test after 30 seconds
+//! (for real load tests you'll certainly want to run it longer, you can use `m` to specify minutes
+//! and `h` to specify hours. For example, `-t 1h30m` would run the load test for 1 hour 30 minutes).
+//! Finally, the `-v` flag tells goose to display INFO and higher level logs to stdout, giving more
+//! insight into what is happening. (Additional `-v` flags will result in considerably more debug
+//! output, and are not recommended for running actual load tests; they're only useful if you're
+//! trying to debugging Goose itself.)
+//! 
+//! 
+//! ```bash
+//!    Finished release [optimized] target(s) in 0.05s
+//!     Running `target/release/loadtest --host 'http://apache.fosciana' --print-stats -t 30s -v`
+//! 05:56:30 [ INFO] Output verbosity level: INFO
+//! 05:56:30 [ INFO] Logfile verbosity level: INFO
+//! 05:56:30 [ INFO] Writing to log file: goose.log
+
+//! ```
+//! 
+//! By default Goose will write a log file with INFO and higher level logs into the same directory
+//! as you run the test from.
+//! 
+//! ```bash
+//! 05:56:30 [ INFO] run_time = 30
+//! 05:56:30 [ INFO] concurrent clients defaulted to 8 (number of CPUs)
+//! 05:56:30 [ INFO] hatch_rate defaulted to 8 (number of CPUs)
+//! ```
+//! 
+//! Goose will default to launching 1 client per available CPU core, and will launch them all in
+//! one second. You can change how many clients are launched with the `-c` option, and you can
+//! change how many clients are launched per second with the `-r` option. For example, `-c 30 -r 2`
+//! would launch 30 clients over 15 seconds.
+//! 
+//! ```bash
+//! 05:56:30 [ INFO] global host configured: http://apache.fosciana
+//! 05:56:30 [ INFO] launching client 1 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching client 2 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching client 3 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching client 4 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching client 5 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching client 6 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching client 7 from LoadtestTasks...
+//! 05:56:31 [ INFO] launching client 8 from LoadtestTasks...
+//! 05:56:31 [ INFO] launched 8 clients...
+//! ```
+//! 
+//! Each client is launched in its own thread with its own client state. Goose is able to make
+//! very efficient use of server resources.
+//! 
+//! ```bash
+//! 05:56:46 [ INFO] printing running statistics after 15 seconds...
+//! ------------------------------------------------------------------------------ 
+//!  Name                    | # reqs         | # fails        | req/s  | fail/s
+//!  ----------------------------------------------------------------------------- 
+//!  GET /path/to/foo        | 15,795         | 0 (0%)         | 1,053  | 0    
+//!  GET bar                 | 3,161          | 0 (0%)         | 210    | 0    
+//!  ------------------------+----------------+----------------+--------+--------- 
+//!  Aggregated              | 18,956         | 0 (0%)         | 1,263  | 0    
+//! ------------------------------------------------------------------------------
+//! ```
+//! 
+//! When printing statistics, by default will display running values approximately
+//! every 15 seconds. Running statistics are broken into two tables. The first, above,
+//! shows how many requests have been made, how many of them failed (non-200 response),
+//! and the corresponding per-second rates.
+//! 
+//! Note that Goose respected the per-task weights we sent, and `foo` (with a weight of
+//! 10) is being loaded five times as often as `bar` (with a weight of 2). Also notice
+//! that because we didn't name the `foo` task by default we see the URL loaded in the
+//! statistics, whereas we did name the `bar` task so we see the name in the statistics.
+//! 
+//! ```bash
+//!  Name                    | Avg (ms)   | Min        | Max        | Mean      
+//!  ----------------------------------------------------------------------------- 
+//!  GET /path/to/foo        | 0.67       | 0.31       | 13.51      | 0.53      
+//!  GET bar                 | 0.60       | 0.33       | 13.42      | 0.53      
+//!  ------------------------+------------+------------+------------+------------- 
+//!  Aggregated              | 0.66       | 0.31       | 13.51      | 0.56      
+//! ```
+//! 
+//! The second table in running statistics provides details on respone times. In our
+//! example (which is running over wifi from my development lapopt), on average each
+//! page is returning within `0.66` milliseconds. The quickest page response was for 
+//! `foo` within `0.31` milliseconds. The slowest page response was also for `foo` within
+//! `13.51` milliseconds.
+//! 
+//! 
+//! ```bash
+//! 05:37:10 [ INFO] stopping after 30 seconds...
+//! 05:37:10 [ INFO] waiting for clients to exit
+//! ```
+//! 
+//! Our example only runs for 30 seconds, so we only see running statistics once. Once
+//! the test is complete, we get more detail in the final summary. The first two tables
+//! are the same as what we saw earlier, however now they include all statistics for the
+//! entire load test:
+//! 
+//! ```bash
+//! ------------------------------------------------------------------------------ 
+//!  Name                    | # reqs         | # fails        | req/s  | fail/s
+//!  ----------------------------------------------------------------------------- 
+//!  GET bar                 | 6,050          | 0 (0%)         | 201    | 0    
+//!  GET /path/to/foo        | 30,257         | 0 (0%)         | 1,008  | 0    
+//!  ------------------------+----------------+----------------+--------+---------- 
+//!  Aggregated              | 36,307         | 0 (0%)         | 1,210  | 0    
+//! -------------------------------------------------------------------------------
+//!  Name                    | Avg (ms)   | Min        | Max        | Mean      
+//!  ----------------------------------------------------------------------------- 
+//!  GET bar                 | 0.66       | 0.32       | 108.87     | 0.53      
+//!  GET /path/to/foo        | 0.68       | 0.31       | 109.50     | 0.53      
+//!  ------------------------+------------+------------+------------+------------- 
+//!  Aggregated              | 0.67       | 0.31       | 109.50     | 0.50      
+//! -------------------------------------------------------------------------------
+//! ```
+//! 
+//! The ratio between `foo` and `bar` remained 5:2 as expected. As the test ran,
+//! however, we saw some slower page loads, with the slowest again `foo` this time
+//! at `109.50` milliseconds.
+//! 
+//! ```bash
+//! Slowest page load within specified percentile of requests (in ms):
+//! ------------------------------------------------------------------------------
+//! Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
+//! ----------------------------------------------------------------------------- 
+//! GET bar                 | 0.53   | 0.66   | 2.17   | 5.37   | 18.72  | 123.16
+//! GET /path/to/foo        | 0.53   | 0.66   | 2.65   | 10.60  | 18.00  | 107.32
+//! ------------------------+------------+------------+------------+------------- 
+//! Aggregated              | 0.53   | 0.66   | 2.37   | 6.45   | 18.32  | 108.18
+//! ```
+//! 
+//! A new table shows additional information, breaking down response-time by
+//! percentile. This shows that the slowest page loads only happened in the
+//! slowest .001% of page loads, so were very much an edge case. 99.9% of the time
+//! page loads happened in less than 20 milliseconds.
+
 
 #[macro_use]
 extern crate log;
@@ -14,8 +272,9 @@ extern crate log;
 
 extern crate structopt;
 
-mod client;
 pub mod goose;
+
+mod client;
 mod stats;
 mod util;
 
