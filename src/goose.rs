@@ -317,12 +317,15 @@ impl GooseRequest {
         self.response_times.push(response_time);
     }
 
-    pub fn set_status_code(&mut self, status_code: StatusCode) {
-        let status_code_u16 = status_code.as_u16();
+    pub fn set_status_code(&mut self, status_code: Option<StatusCode>) {
+        let status_code_u16 = match status_code {
+            Some(s) => s.as_u16(),
+            _ => 0,
+        };
         let counter = match self.status_code_counts.get(&status_code_u16) {
             // We've seen this status code before, increment counter.
             Some(c) => {
-                debug!("got {} counter: {}", status_code, c);
+                debug!("got {:?} counter: {}", status_code, c);
                 *c + 1
             }
             // First time we've seen this status code, initialize counter.
@@ -517,7 +520,7 @@ impl GooseClient {
                     let status_code = r.status();
                     // Only increment status_code_counts if we're displaying the results
                     if self.config.status_codes {
-                        goose_request.set_status_code(status_code);
+                        goose_request.set_status_code(Some(status_code));
                     }
 
                     debug!("{:?}: status_code {}", &path, status_code);
@@ -528,14 +531,17 @@ impl GooseClient {
                     // @TODO: properly track redirects and other code ranges
                     else {
                         // @TODO: handle this correctly
-                        debug!("{:?}: non-success status_code: {:?}", &path, status_code);
+                        warn!("{:?}: non-success status_code: {:?}", &path, status_code);
                         goose_request.fail_count += 1;
                     }
                 }
                 Err(e) => {
                     // @TODO: what can we learn from a reqwest error?
-                    debug!("{:?}: error: {}", &path, e);
+                    warn!("{:?}: {}", &path, e);
                     goose_request.fail_count += 1;
+                    if self.config.status_codes {
+                        goose_request.set_status_code(None);
+                    }
                 }
             };
             self.set_request(&request_name, &method, goose_request);
