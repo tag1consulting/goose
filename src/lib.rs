@@ -864,17 +864,22 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
     // Catch ctrl-c to allow clean shutdown to display statistics.
     let canceled = Arc::new(AtomicBool::new(false));
     let caught_ctrlc = canceled.clone();
-    ctrlc::set_handler(move || {
+    match ctrlc::set_handler(move || {
+        // We've caught a ctrl-c, determine if it's the first time or an additional time.
         if caught_ctrlc.load(Ordering::SeqCst) {
-            // We caught a second ctrl-c, exit early
-            error!("caught another ctrl-c, exiting immediately...");
+            warn!("caught another ctrl-c, exiting immediately...");
             std::process::exit(1);
         }
         else {
             warn!("caught ctrl-c, stopping...");
             caught_ctrlc.store(true, Ordering::SeqCst);
         }
-    }).expect("Failed to set Ctrl-C signal handler.");
+    }) {
+        Ok(_) => (),
+        Err(e) => {
+            warn!("failed to set ctrl-c handler: {}", e);
+        }
+    }
 
     // Determine when to display running statistics (if enabled).
     let mut statistics_timer = time::Instant::now();
