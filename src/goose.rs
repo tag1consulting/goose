@@ -2,15 +2,15 @@
 //! 
 //! Goose manages load tests with a series of objects:
 //! 
-//! - **GooseTest** a global object that holds all task sets and client states.
-//! - **GooseTaskSet** each client is assigned a task set, which is a collection of tasks.
-//! - **GooseTask** tasks define one or more web requests and are assigned to task sets.
-//! - **GooseClient** a client state responsible for repeatedly running all tasks in the assigned task set.
-//! - **GooseRequest** optional statistics collected for each URL/method pair.
+//! - [`GooseTest`](./struct.GooseTest.html) a global object that holds all task sets and client states.
+//! - [`GooseTaskSet`](./struct.GooseTaskSet.html) each client is assigned a task set, which is a collection of tasks.
+//! - [`GooseTask`](./struct.GooseTask.html) tasks define one or more web requests and are assigned to task sets.
+//! - [`GooseClient`](./struct.GooseClient.html) a client state responsible for repeatedly running all tasks in the assigned task set.
+//! - [`GooseRequest`](./struct.GooseRequest.html) optional statistics collected for each URL/method pair.
 //! 
 //! ## Creating Task Sets
 //! 
-//! Task sets are created by passing in a &str to the `new` function, for example:
+//! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a &str to the `new` function, for example:
 //! 
 //! ```rust
 //!     let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks");
@@ -56,8 +56,8 @@
 //! ```
 //! ## Creating Tasks
 //! 
-//! Tasks can be created with or without a name. The name is used when displaying
-//! statistics about the load test. For example:
+//! A [`GooseTask`](./struct.GooseTask.html) can be created with or without a name.
+//! The name is used when displaying statistics about the load test. For example:
 //! 
 //! ```rust
 //!     let mut a_task = GooseTask::new();
@@ -137,10 +137,10 @@
 //! 
 //! ## Controlling Clients
 //! 
-//! When Goose starts, it creates a configurable number of "clients", assigning a single Task Set
-//! to each. This client is then used to generate load. Behind the scenes, Goose is leveraging
-//! the Reqwest Blocking client to load web pages, and Goose can therefor do anything Reqwest can
-//! do.
+//! When Goose starts, it creates on or more [`GooseClient`](./struct.GooseClient.html),
+//! assigning a single [`GooseTaskSet`](./struct.GooseTaskSet.html) to each. This client is
+//! then used to generate load. Behind the scenes, Goose is leveraging the Reqwest Blocking
+//! client to load web pages, and Goose can therefor do anything Reqwest can do.
 //! 
 //! The most common request types are GET and POST, but HEAD, PUT, PATCH, and DELETE are also
 //! fully supported.
@@ -185,11 +185,21 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 /// A global list of all Goose task sets
 #[derive(Clone)]
 pub struct GooseTest {
+    /// An un-weighted vector containing one copy each GooseTaskSet that will run during this load test.
     pub task_sets: Vec<GooseTaskSet>,
+    /// A weighted vector containing a GooseClient object for each client that will run during this load test.
     pub weighted_clients: Vec<GooseClient>,
+    /// A weighted vector of integers used to randomize the order that the GooseClient threads are launched.
     pub weighted_clients_order: Vec<usize>,
 }
 impl GooseTest {
+    /// Sets up a Goose load test. This function should only be invoked one time. The returned state must
+    /// be stored in a mutable value.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut goose_test = GooseTest::new();
+    /// ```
     pub fn new() -> Self {
         let goose_tasksets = GooseTest { 
             task_sets: Vec::new(),
@@ -199,6 +209,17 @@ impl GooseTest {
         goose_tasksets
     }
 
+    /// A GooseTest contains one or more GooseTaskSet. Each must be registered with this method,
+    /// which will add a new GooseTaskSet to the task_sets vector.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut goose_test = GooseTest::new();
+    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
+    ///     example_tasks.register_task(GooseTask::new().set_function(example_task));
+    ///     goose_test.register_taskset(example_tasks);
+    /// 
+    /// ```
     pub fn register_taskset(&mut self, mut taskset: GooseTaskSet) {
         taskset.task_sets_index = self.task_sets.len();
         self.task_sets.push(taskset);
