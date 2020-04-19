@@ -295,7 +295,7 @@ use url::Url;
 
 use goose::{GooseTest, GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
-/// Global state for Goose loadtest.
+/// Internal global state for load test.
 #[derive(Debug, Clone)]
 pub struct GooseState {
     configuration: Configuration,
@@ -304,7 +304,7 @@ pub struct GooseState {
     clients: usize,
     active_clients: usize,
 }
-/// Goose global state is initialized by calling GooseState::new(configuration).
+/// Goose's internal global state is initialized by calling GooseState::new(configuration).
 impl GooseState {
     fn new(configuration: Configuration) -> GooseState {
         GooseState {
@@ -317,7 +317,7 @@ impl GooseState {
     }
 }
 
-/// Configuration options available when launching a Goose loadtest.
+/// CLI options available when launching a Goose loadtest, provided by StructOpt.
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
 pub struct Configuration {
@@ -380,12 +380,12 @@ pub struct Configuration {
 }
 
 /// Allocate a vector of weighted GooseClient
-fn weight_task_set_clients(task_sets: &GooseTest, clients: usize, state: &GooseState) -> Vec<GooseClient> {
+fn weight_task_set_clients(goose_test: &GooseTest, clients: usize, state: &GooseState) -> Vec<GooseClient> {
     trace!("weight_task_set_clients");
 
     let mut u: usize = 0;
     let mut v: usize;
-    for task_set in &task_sets.task_sets {
+    for task_set in &goose_test.task_sets {
         if u == 0 {
             u = task_set.weight;
         }
@@ -401,7 +401,7 @@ fn weight_task_set_clients(task_sets: &GooseTest, clients: usize, state: &GooseS
 
     // Build a weighted lists of task sets (identified by index)
     let mut weighted_task_sets = Vec::new();
-    for (index, task_set) in task_sets.task_sets.iter().enumerate() {
+    for (index, task_set) in goose_test.task_sets.iter().enumerate() {
         // divide by greatest common divisor so vector is as short as possible
         let weight = task_set.weight / u;
         trace!("{}: {} has weight of {} (reduced with gcd to {})", index, task_set.name, task_set.weight, weight);
@@ -418,13 +418,14 @@ fn weight_task_set_clients(task_sets: &GooseTest, clients: usize, state: &GooseS
     let config = state.configuration.clone();
     loop {
         for task_sets_index in &weighted_task_sets {
-            let task_set_host = task_sets.task_sets[*task_sets_index].host.clone();
+            let task_set_host = goose_test.task_sets[*task_sets_index].host.clone();
             weighted_clients.push(GooseClient::new(
                 client_count,
-                task_sets.task_sets[*task_sets_index].task_sets_index,
+                goose_test.task_sets[*task_sets_index].task_sets_index,
+                goose_test.host.clone(),
                 task_set_host,
-                task_sets.task_sets[*task_sets_index].min_wait,
-                task_sets.task_sets[*task_sets_index].max_wait,
+                goose_test.task_sets[*task_sets_index].min_wait,
+                goose_test.task_sets[*task_sets_index].max_wait,
                 &config
             ));
             client_count += 1;
@@ -766,8 +767,17 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_test: GooseTest) {
                     }
                 }
                 None => {
-                    error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
-                    std::process::exit(1);
+                    match &goose_test.host {
+                        Some(h) => {
+                            if is_valid_host(h) {
+                                info!("host for {} configured: {}", task_set.name, h);
+                            }
+                        }
+                        None => {
+                            error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
+                            std::process::exit(1);
+                        }
+                    }
                 }
             }
         }

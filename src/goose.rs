@@ -10,7 +10,7 @@
 //! 
 //! ## Creating Task Sets
 //! 
-//! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a &str to the `new` function, for example:
+//! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a `&str` to the `new` function, for example:
 //! 
 //! ```rust
 //!     let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks");
@@ -182,15 +182,17 @@ use crate::Configuration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// A global list of all Goose task sets
+/// A global list of all Goose task sets in the load test.
 #[derive(Clone)]
 pub struct GooseTest {
-    /// An un-weighted vector containing one copy each GooseTaskSet that will run during this load test.
+    /// A vector containing one copy of each GooseTaskSet that will run during this load test.
     pub task_sets: Vec<GooseTaskSet>,
     /// A weighted vector containing a GooseClient object for each client that will run during this load test.
     pub weighted_clients: Vec<GooseClient>,
     /// A weighted vector of integers used to randomize the order that the GooseClient threads are launched.
     pub weighted_clients_order: Vec<usize>,
+    /// An optional default host to run this load test against.
+    pub host: Option<String>,
 }
 impl GooseTest {
     /// Sets up a Goose load test. This function should only be invoked one time. The returned state must
@@ -205,6 +207,7 @@ impl GooseTest {
             task_sets: Vec::new(),
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
+            host: None,
         };
         goose_tasksets
     }
@@ -224,24 +227,58 @@ impl GooseTest {
         taskset.task_sets_index = self.task_sets.len();
         self.task_sets.push(taskset);
     }
+
+    /// Set a default host for the load test. If no `--host` flag is set when running the load test, this
+    /// host will be pre-pended on all requests. For example, this can configure your load test to run
+    /// against your local development environment by default, and the `--host` option could be used to
+    /// override host when running the load test against production.
+    /// 
+    /// A default host can also be configured per task set.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut goose_test = GooseTest::new().set_host("http://10.1.1.42");
+    /// ```
+    pub fn set_host(mut self, host: &str) -> Self {
+        trace!("set_host: {}", host);
+        // Host validation happens in main() at startup.
+        self.host = Some(host.to_string());
+        self
+    }
 }
 
 /// An individual task set
 #[derive(Clone)]
 pub struct GooseTaskSet {
+    /// The name of the task set.
     pub name: String,
-    // This is the GooseTest.task_sets index
+    /// An integer reflecting where this task set lives in the GooseTest.task_sets vector.
     pub task_sets_index: usize,
+    /// An integer value that controls the frequency that this task set will be assigned to a client.
     pub weight: usize,
+    /// An integer value indicating the minimum number of seconds a client will sleep after running a task.
     pub min_wait: usize,
+    /// An integer value indicating the maximum number of seconds a client will sleep after running a task.
     pub max_wait: usize,
+    /// A vector containing one copy of each GooseTask that will run by clients running this task set.
     pub tasks: Vec<GooseTask>,
+    /// A vector of vectors of integers, controlling the sequence and order GooseTasks are run.
     pub weighted_tasks: Vec<Vec<usize>>,
+    /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when a client starts.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
+    /// A vector of vectors of integers, controlling the sequence and order on_stop GooseTasks are run when a client stops.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
+    /// An optional default host to run this TaskSet against.
     pub host: Option<String>,
 }
 impl GooseTaskSet {
+    /// Creates a new GooseTaskSet. Once created, GooseTasks must be assigned to it, and finally it must be
+    /// registered with the GooseTest object. The returned object must be stored in a mutable value.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
+    /// ```
     pub fn new(name: &str) -> Self {
         trace!("new taskset: name: {}", &name);
         let task_set = GooseTaskSet { 
@@ -259,12 +296,32 @@ impl GooseTaskSet {
         task_set
     }
 
+    /// Registers a GooseTask with a GooseTaskSet, where it is stored in the GooseTaskSet.tasks vector. The
+    /// function associated with the task will be run during the load test.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
+    ///     example_tasks.register_task(GooseTask::new());
+    /// ```
+    /// 
+    /// Note: this example isn't particularly useful. It's required you also set a function on your task,
+    /// otherwise your loadtest will refuse to run. See `set_function`.
     pub fn register_task(&mut self, mut task: GooseTask) {
         trace!("{} register_task: {}", self.name, task.name);
         task.tasks_index = self.tasks.len();
         self.tasks.push(task);
     }
 
+    /// Sets a weight on a task set. The larger the value of weight, the more often the task set will 
+    /// be assigned to clients. For example, if you have task set foo with a weight of 3, and task set
+    /// bar with a weight of 1, and you spin up a load test with 8 clients, 6 of them will be running
+    /// the foo task set, and 2 will be running the bar task set.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks").set_weight(3);
+    /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} set_weight: {}", self.name, weight);
         if weight < 1 {
@@ -277,6 +334,15 @@ impl GooseTaskSet {
         self
     }
 
+    /// Set a default host for the task set. If no `--host` flag is set when running the load test, this
+    /// host will be pre-pended on all requests. For example, this can configure your load test to run
+    /// against your local development environment by default, and the `--host` option could be used to
+    /// override host when running the load test against production.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks").set_host("http://10.1.1.42");
+    /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("{} set_host: {}", self.name, host);
         // Host validation happens in main() at startup.
@@ -366,6 +432,7 @@ pub struct GooseClient {
     pub task_sets_index: usize,
     // This is the reqwest.blocking.client (@TODO: test with async)
     pub client: Client,
+    pub default_host: Option<String>,
     pub task_set_host: Option<String>,
     pub min_wait: usize,
     pub max_wait: usize,
@@ -382,7 +449,7 @@ pub struct GooseClient {
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(counter: usize, task_sets_index: usize, host: Option<String>, min_wait: usize, max_wait: usize, configuration: &Configuration) -> Self {
+    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &Configuration) -> Self {
         trace!("new client");
         let builder = Client::builder()
             .user_agent(APP_USER_AGENT);
@@ -395,7 +462,8 @@ impl GooseClient {
         };
         GooseClient {
             task_sets_index: task_sets_index,
-            task_set_host: host,
+            default_host: default_host,
+            task_set_host: task_set_host,
             client: client,
             config: configuration.clone(),
             min_wait: min_wait,
@@ -433,10 +501,14 @@ impl GooseClient {
 
     fn build_url(&mut self, path: &str) -> String {
         if self.config.host.len() > 0 {
-            format!("{}{}", self.config.host, path)
-        } else {
-            // If no global URL is configured a task_set_host must be, so unwrap() is safe here.
-            format!("{}{}", self.task_set_host.clone().unwrap(), path)
+            return format!("{}{}", self.config.host, path)
+        }
+        match &self.task_set_host {
+            Some(h) => format!("{}{}", h, path),
+            None => {
+                // Host validation was done at startup, if we're here unwrap() is safe.
+                format!("{}{}", self.default_host.clone().unwrap(), path)
+            }
         }
     }
 
@@ -630,6 +702,14 @@ impl GooseTask {
         self
     }
 
+    /// Sets a weight on an individual task. The larger the value of weight, the more often it will be run
+    /// in the TaskSet. For example, if one task has a weight of 3 and another task has a weight of 1, the
+    /// first task will run 3 times as often.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let a_task = GooseTask::new().set_weight(3);
+    /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} [{}] set_weight: {}", self.name, self.tasks_index, weight);
         if weight < 1 {
