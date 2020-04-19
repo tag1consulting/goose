@@ -36,7 +36,7 @@
 //! 
 //! ```rust
 //! use goose::{goose_init, goose_launch};
-//! use goose::goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseTask};
+//! use goose::goose::{GooseTest, GooseTaskSet, GooseClient, GooseTask};
 //! ```
 //! 
 //! Below your `main` funcation (which currently is the default `Hello, world!`), add
@@ -79,7 +79,7 @@
 //!   let goose_state = goose_init();
 //! 
 //!   // Initialize a single object to hold all our task sets.
-//!   let mut goose_task_sets = GooseTaskSets::new();
+//!   let mut goose_test = GooseTest::new();
 //! 
 //!   // Create and configure our first task set.
 //!   let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks")
@@ -93,10 +93,10 @@
 //!   loadtest_tasks.register_task(GooseTask::named("bar").set_weight(2).set_function(loadtest_bar));
 //! 
 //!   // Register our task set.
-//!   goose_task_sets.register_taskset(loadtest_tasks);
+//!   goose_test.register_taskset(loadtest_tasks);
 //! 
 //!   // With all task sets and tasks registered, launch the load test.
-//!   goose_launch(goose_state, goose_task_sets);
+//!   goose_launch(goose_state, goose_test);
 //! }
 //! ```
 //! 
@@ -293,7 +293,7 @@ use simplelog::*;
 use structopt::StructOpt;
 use url::Url;
 
-use goose::{GooseTaskSets, GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
+use goose::{GooseTest, GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
 /// Global state for Goose loadtest.
 #[derive(Debug, Clone)]
@@ -380,7 +380,7 @@ pub struct Configuration {
 }
 
 /// Allocate a vector of weighted GooseClient
-fn weight_task_set_clients(task_sets: &GooseTaskSets, clients: usize, state: &GooseState) -> Vec<GooseClient> {
+fn weight_task_set_clients(task_sets: &GooseTest, clients: usize, state: &GooseState) -> Vec<GooseClient> {
     trace!("weight_task_set_clients");
 
     let mut u: usize = 0;
@@ -718,9 +718,9 @@ pub fn goose_init() -> GooseState {
     goose_state
 }
 
-pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskSets) {
+pub fn goose_launch(mut goose_state: GooseState, mut goose_test: GooseTest) {
     // At least one task set is required.
-    if goose_task_sets.task_sets.len() <= 0 {
+    if goose_test.task_sets.len() <= 0 {
         error!("No task sets defined in goosefile.");
         std::process::exit(1);
     }
@@ -728,7 +728,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
     if goose_state.configuration.list {
         // Display task sets and tasks, then exit.
         println!("Available tasks:");
-        for task_set in goose_task_sets.task_sets {
+        for task_set in goose_test.task_sets {
             println!(" - {} (weight: {})", task_set.name, task_set.weight);
             for task in task_set.tasks {
                 println!("    o {} (weight: {})", task.name, task.weight);
@@ -758,7 +758,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
 
     // Confirm there's either a global host, or each task set has a host defined.
     if goose_state.configuration.host.len() == 0 {
-        for task_set in &goose_task_sets.task_sets {
+        for task_set in &goose_test.task_sets {
             match &task_set.host {
                 Some(h) => {
                     if is_valid_host(h) {
@@ -779,7 +779,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
     }
 
     // Apply weights to tasks in each task set.
-    for task_set in &mut goose_task_sets.task_sets {
+    for task_set in &mut goose_test.task_sets {
         let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) = weight_tasks(&task_set);
         task_set.weighted_on_start_tasks = weighted_on_start_tasks;
         task_set.weighted_tasks = weighted_tasks;
@@ -788,7 +788,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
     }
 
     // Allocate a state for each of the clients we are about to start.
-    goose_task_sets.weighted_clients = weight_task_set_clients(&goose_task_sets, goose_state.clients, &goose_state);
+    goose_test.weighted_clients = weight_task_set_clients(&goose_test, goose_state.clients, &goose_state);
 
     // Our load test is officially starting.
     let mut started = time::Instant::now();
@@ -802,16 +802,16 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
     // Create a single channel allowing all Goose child threads to sync state back to parent
     let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseClient>, mpsc::Receiver<GooseClient>) = mpsc::channel();
     // Spawn clients, each with their own weighted task_set.
-    for mut thread_client in goose_task_sets.weighted_clients.clone() {
+    for mut thread_client in goose_test.weighted_clients.clone() {
         // Stop launching threads if the run_timer has expired.
         if timer_expired(started, goose_state.run_time) {
             break;
         }
 
         // Copy weighted tasks and weighted on start tasks into the client thread.
-        thread_client.weighted_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
-        thread_client.weighted_on_start_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_on_start_tasks.clone();
-        thread_client.weighted_on_stop_tasks = goose_task_sets.task_sets[thread_client.task_sets_index].weighted_on_stop_tasks.clone();
+        thread_client.weighted_tasks = goose_test.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
+        thread_client.weighted_on_start_tasks = goose_test.task_sets[thread_client.task_sets_index].weighted_on_start_tasks.clone();
+        thread_client.weighted_on_stop_tasks = goose_test.task_sets[thread_client.task_sets_index].weighted_on_stop_tasks.clone();
         // Remember which task group this client is using.
         thread_client.weighted_clients_index = goose_state.active_clients;
 
@@ -830,7 +830,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
             thread_sender.send(thread_client.clone()).unwrap();
 
             // Copy the appropriate task_set into the thread.
-            let thread_task_set = goose_task_sets.task_sets[thread_client.task_sets_index].clone();
+            let thread_task_set = goose_test.task_sets[thread_client.task_sets_index].clone();
 
             // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
             let thread_number = goose_state.active_clients + 1;
@@ -911,26 +911,26 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
                 // Messages contain per-client statistics: merge them into the global statistics.
                 let unwrapped_message = message.unwrap();
                 let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                goose_task_sets.weighted_clients[weighted_clients_index].weighted_bucket = unwrapped_message.weighted_bucket;
-                goose_task_sets.weighted_clients[weighted_clients_index].weighted_bucket_position = unwrapped_message.weighted_bucket_position;
-                goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
+                goose_test.weighted_clients[weighted_clients_index].weighted_bucket = unwrapped_message.weighted_bucket;
+                goose_test.weighted_clients[weighted_clients_index].weighted_bucket_position = unwrapped_message.weighted_bucket_position;
+                goose_test.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                 // If our local copy of the task set doesn't have tasks, clone them from the remote thread
-                if goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
-                    goose_task_sets.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
-                    goose_task_sets.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
+                if goose_test.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
+                    goose_test.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
+                    goose_test.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
                 }
                 // Syncronize client requests
                 for (request_key, request) in unwrapped_message.requests {
                     trace!("request_key: {}", request_key);
                     let merged_request;
-                    if let Some(parent_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                    if let Some(parent_request) = goose_test.weighted_clients[weighted_clients_index].requests.get(&request_key) {
                         merged_request = merge_from_client(parent_request, &request, &goose_state.configuration);
                     }
                     else {
                         // First time seeing this request, simply insert it.
                         merged_request = request.clone();
                     }
-                    goose_task_sets.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                    goose_test.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
                 }
                 message = parent_receiver.try_recv();
             }
@@ -938,11 +938,11 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
             // Flush statistics collected prior to all client threads running
             if goose_state.configuration.reset_stats && !statistics_reset {
                 info!("statistics reset...");
-                for (client_index, client) in goose_task_sets.weighted_clients.clone().iter().enumerate() {
+                for (client_index, client) in goose_test.weighted_clients.clone().iter().enumerate() {
                     let mut reset_client = client.clone();
                     // Start again with an empty requests hashmap.
                     reset_client.requests = HashMap::new();
-                    goose_task_sets.weighted_clients[client_index] = reset_client;
+                    goose_test.weighted_clients[client_index] = reset_client;
                 }
                 statistics_reset = true;
             }
@@ -967,19 +967,19 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
                 while message.is_ok() {
                     let unwrapped_message = message.unwrap();
                     let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                    goose_task_sets.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
+                    goose_test.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                     // Syncronize client requests
                     for (request_key, request) in unwrapped_message.requests {
                         trace!("request_key: {}", request_key);
                         let merged_request;
-                        if let Some(parent_request) = goose_task_sets.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                        if let Some(parent_request) = goose_test.weighted_clients[weighted_clients_index].requests.get(&request_key) {
                             merged_request = merge_from_client(parent_request, &request, &goose_state.configuration);
                         }
                         else {
                             // First time seeing this request, simply insert it.
                             merged_request = request.clone();
                         }
-                        goose_task_sets.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                        goose_test.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
                     }
                     message = parent_receiver.try_recv();
                 }
@@ -992,7 +992,7 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
         // If enabled, display running statistics after sync
         if display_running_statistics {
             display_running_statistics = false;
-            stats::print_running_stats(&goose_state.configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
+            stats::print_running_stats(&goose_state.configuration, &goose_test, started.elapsed().as_secs() as usize);
         }
 
         let one_second = time::Duration::from_secs(1);
@@ -1000,6 +1000,6 @@ pub fn goose_launch(mut goose_state: GooseState, mut goose_task_sets: GooseTaskS
     }
 
     if goose_state.configuration.print_stats {
-        stats::print_final_stats(&goose_state.configuration, &goose_task_sets, started.elapsed().as_secs() as usize);
+        stats::print_final_stats(&goose_state.configuration, &goose_test, started.elapsed().as_secs() as usize);
     }
 }

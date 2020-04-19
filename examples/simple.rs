@@ -1,11 +1,11 @@
 //! Simple Goose load test example. Duplicates the simple example on Locust project page.
 
 use goose::{goose_init, goose_launch};
-use goose::goose::{GooseTaskSets, GooseTaskSet, GooseClient, GooseTask};
+use goose::goose::{GooseTest, GooseTaskSet, GooseClient, GooseTask};
 
 fn main() {
     let goose_state = goose_init();
-    let mut goose_task_sets = GooseTaskSets::new();
+    let mut goose_test = GooseTest::new();
 
     // Create and configure a task set.
     let mut websiteuser_tasks = GooseTaskSet::new("WebsiteUser")
@@ -15,9 +15,9 @@ fn main() {
     websiteuser_tasks.register_task(GooseTask::new().set_on_start().set_function(website_task_login));
     websiteuser_tasks.register_task(GooseTask::new().set_function(website_task_index));
     websiteuser_tasks.register_task(GooseTask::new().set_function(website_task_about));
-    goose_task_sets.register_taskset(websiteuser_tasks);
+    goose_test.register_taskset(websiteuser_tasks);
 
-    goose_launch(goose_state, goose_task_sets);
+    goose_launch(goose_state, goose_test);
 }
 
 fn website_task_login(client: &mut GooseClient) {

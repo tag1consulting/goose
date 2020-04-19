@@ -2,7 +2,7 @@
 //! 
 //! Goose manages load tests with a series of objects:
 //! 
-//! - **GooseTaskSets** a global object that holds all task sets and client states.
+//! - **GooseTest** a global object that holds all task sets and client states.
 //! - **GooseTaskSet** each client is assigned a task set, which is a collection of tasks.
 //! - **GooseTask** tasks define one or more web requests and are assigned to task sets.
 //! - **GooseClient** a client state responsible for repeatedly running all tasks in the assigned task set.
@@ -184,14 +184,14 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 /// A global list of all Goose task sets
 #[derive(Clone)]
-pub struct GooseTaskSets {
+pub struct GooseTest {
     pub task_sets: Vec<GooseTaskSet>,
     pub weighted_clients: Vec<GooseClient>,
     pub weighted_clients_order: Vec<usize>,
 }
-impl GooseTaskSets {
+impl GooseTest {
     pub fn new() -> Self {
-        let goose_tasksets = GooseTaskSets { 
+        let goose_tasksets = GooseTest { 
             task_sets: Vec::new(),
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
@@ -209,7 +209,7 @@ impl GooseTaskSets {
 #[derive(Clone)]
 pub struct GooseTaskSet {
     pub name: String,
-    // This is the GooseTaskSets.task_sets index
+    // This is the GooseTest.task_sets index
     pub task_sets_index: usize,
     pub weight: usize,
     pub min_wait: usize,
@@ -338,7 +338,7 @@ impl GooseRequest {
 
 #[derive(Debug, Clone)]
 pub struct GooseClient {
-    // This is the GooseTaskSets.task_sets index
+    // This is the GooseTest.task_sets index
     pub task_sets_index: usize,
     // This is the reqwest.blocking.client (@TODO: test with async)
     pub client: Client,

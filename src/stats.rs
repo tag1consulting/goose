@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::f32;
 
 use crate::Configuration;
-use crate::goose::{GooseTaskSets, GooseClient, GooseRequest};
+use crate::goose::{GooseTest, GooseClient, GooseRequest};
 use crate::util;
 
 trait FloatIterExt {
@@ -232,9 +232,9 @@ fn merge_stats(weighted_clients: &Vec<GooseClient>, config: &Configuration) -> H
 }
 
 /// Display running and ending statistics
-pub fn print_final_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapsed: usize) {
+pub fn print_final_stats(config: &Configuration, goose_test: &GooseTest, elapsed: usize) {
     // 1) merge statistics from all clients.
-    let merged_requests = merge_stats(&goose_task_sets.weighted_clients, config);
+    let merged_requests = merge_stats(&goose_test.weighted_clients, config);
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, with percentiles
@@ -245,10 +245,10 @@ pub fn print_final_stats(config: &Configuration, goose_task_sets: &GooseTaskSets
     }
 }
 
-pub fn print_running_stats(config: &Configuration, goose_task_sets: &GooseTaskSets, elapsed: usize) {
+pub fn print_running_stats(config: &Configuration, goose_test: &GooseTest, elapsed: usize) {
     info!("printing running statistics after {} seconds...", elapsed);
     // 1) merge statistics from all clients.
-    let merged_requests = merge_stats(&goose_task_sets.weighted_clients, config);
+    let merged_requests = merge_stats(&goose_test.weighted_clients, config);
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, without percentiles
