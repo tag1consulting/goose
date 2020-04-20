@@ -893,7 +893,7 @@ impl GooseTask {
     /// requests made by the task. 
     /// 
     /// Individual requests can also be named withing your load test. See the
-    /// documentation for `GooseClient`.[`set_request_name()`](./struct.GooseClient.htmll#method.set_request_name)
+    /// documentation for `GooseClient`.[`set_request_name()`](./struct.GooseClient.html#method.set_request_name)
     /// 
     /// # Example
     /// ```rust
