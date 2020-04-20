@@ -68,12 +68,9 @@ pub fn client_main(
         // Invoke the task function.
         function(&mut thread_client);
 
-        // Move to the next task in thread_client.weighted_tasks.
-        thread_client.weighted_bucket_position += 1;
-
         // Check if the parent thread has sent us any messages.
-        let message = thread_receiver.try_recv();
-        if message.is_ok() {
+        let mut message = thread_receiver.try_recv();
+        while message.is_ok() {
             match message.unwrap() {
                 // Sync our state to the parent.
                 GooseClientCommand::SYNC => {
@@ -85,9 +82,10 @@ pub fn client_main(
                 GooseClientCommand::EXIT => {
                     thread_client.set_mode(GooseClientMode::EXITING);
                     // No need to reset per-thread counters, we're exiting and memory will be freed
-                    thread_continue = false
+                    thread_continue = false;
                 }
             }
+            message = thread_receiver.try_recv();
         }
 
         if thread_continue && thread_client.min_wait > 0 {
@@ -96,6 +94,9 @@ pub fn client_main(
             debug!("client {} from {} sleeping {:?} seconds...", thread_number, thread_task_set.name, sleep_duration);
             thread::sleep(sleep_duration);
         }
+
+        // Move to the next task in thread_client.weighted_tasks.
+        thread_client.weighted_bucket_position += 1;
     }
 
     // Client is exiting, first invoke the weighted on_stop tasks.
