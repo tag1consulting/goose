@@ -2,7 +2,7 @@ use num_format::{Locale, ToFormattedString};
 use std::collections::HashMap;
 use std::f32;
 
-use crate::Configuration;
+use crate::GooseConfiguration;
 use crate::goose::{GooseTest, GooseClient, GooseRequest};
 use crate::util;
 
@@ -198,7 +198,7 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     println!(" {:<23} | {:<25} ", "Aggregated", codes);
 }
 
-fn merge_stats(weighted_clients: &Vec<GooseClient>, config: &Configuration) -> HashMap<String, GooseRequest> {
+fn merge_stats(weighted_clients: &Vec<GooseClient>, config: &GooseConfiguration) -> HashMap<String, GooseRequest> {
     let mut merged_requests: HashMap<String, GooseRequest> = HashMap::new();
     for weighted_client in weighted_clients {
         for (request_key, request) in weighted_client.requests.clone() {
@@ -232,7 +232,7 @@ fn merge_stats(weighted_clients: &Vec<GooseClient>, config: &Configuration) -> H
 }
 
 /// Display running and ending statistics
-pub fn print_final_stats(config: &Configuration, goose_test: &GooseTest, elapsed: usize) {
+pub fn print_final_stats(config: &GooseConfiguration, goose_test: &GooseTest, elapsed: usize) {
     // 1) merge statistics from all clients.
     let merged_requests = merge_stats(&goose_test.weighted_clients, config);
     // 2) print request and fail statistics.
@@ -245,7 +245,7 @@ pub fn print_final_stats(config: &Configuration, goose_test: &GooseTest, elapsed
     }
 }
 
-pub fn print_running_stats(config: &Configuration, goose_test: &GooseTest, elapsed: usize) {
+pub fn print_running_stats(config: &GooseConfiguration, goose_test: &GooseTest, elapsed: usize) {
     info!("printing running statistics after {} seconds...", elapsed);
     // 1) merge statistics from all clients.
     let merged_requests = merge_stats(&goose_test.weighted_clients, config);

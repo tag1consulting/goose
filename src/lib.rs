@@ -298,7 +298,7 @@ use goose::{GooseTest, GooseTaskSet, GooseTask, GooseClient, GooseClientMode, Go
 /// Internal global state for load test.
 #[derive(Debug, Clone)]
 pub struct GooseState {
-    configuration: Configuration,
+    configuration: GooseConfiguration,
     number_of_cpus: usize,
     run_time: usize,
     clients: usize,
@@ -306,7 +306,7 @@ pub struct GooseState {
 }
 /// Goose's internal global state is initialized by calling GooseState::new(configuration).
 impl GooseState {
-    fn new(configuration: Configuration) -> GooseState {
+    fn new(configuration: GooseConfiguration) -> GooseState {
         GooseState {
             configuration: configuration,
             number_of_cpus: num_cpus::get(),
@@ -320,7 +320,7 @@ impl GooseState {
 /// CLI options available when launching a Goose loadtest, provided by StructOpt.
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "client")]
-pub struct Configuration {
+pub struct GooseConfiguration {
     /// Host to load test in the following format: http://10.21.32.33
     #[structopt(short = "H", long, required=false, default_value="")]
     host: String,
@@ -615,7 +615,7 @@ fn timer_expired(started: time::Instant, run_time: usize) -> bool {
 fn merge_from_client(
     parent_request: &GooseRequest,
     client_request: &GooseRequest,
-    config: &Configuration,
+    config: &GooseConfiguration,
 ) -> GooseRequest {
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
@@ -641,7 +641,7 @@ fn merge_from_client(
 }
 
 pub fn goose_init() -> GooseState {
-    let mut goose_state = GooseState::new(Configuration::from_args());
+    let mut goose_state = GooseState::new(GooseConfiguration::from_args());
 
     // Allow optionally controlling debug output level
     let debug_level;

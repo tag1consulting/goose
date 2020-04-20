@@ -21,9 +21,9 @@ fn main() {
 }
 
 fn website_task_login(client: &mut GooseClient) {
-    let request = client.goose_post("/login");
     let params = [("username", "test_user"), ("password", "")];
-    let _response = client.goose_send(request.form(&params));
+    let request_builder = client.goose_post("/login");
+    let _response = client.goose_send(request_builder.form(&params));
 }
 
 fn website_task_index(client: &mut GooseClient) {

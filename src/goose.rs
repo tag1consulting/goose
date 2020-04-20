@@ -178,7 +178,7 @@ use reqwest::blocking::{Client, Response, RequestBuilder};
 use reqwest::Error;
 use url::Url;
 
-use crate::Configuration;
+use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -247,7 +247,7 @@ impl GooseTest {
     }
 }
 
-/// An individual task set
+/// An individual task set.
 #[derive(Clone)]
 pub struct GooseTaskSet {
     /// The name of the task set.
@@ -350,6 +350,14 @@ impl GooseTaskSet {
         self
     }
 
+    /// Configure a task_set to to pause after running each task. The length of the pause will be randomly
+    /// selected from `min_weight` to `max_wait` inclusively.  For example, if `min_wait` is `0` and
+    /// `max_weight` is `2`, the client will randomly sleep for 0, 1 or 2 seconds after each task completes.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks").set_wait_time(0, 1);
+    /// ```
     pub fn set_wait_time(mut self, min_wait: usize, max_wait: usize) -> Self {
         trace!("{} set_wait time: min: {} max: {}", self.name, min_wait, max_wait);
         if min_wait > max_wait {
@@ -362,36 +370,50 @@ impl GooseTaskSet {
     }
 }
 
+/// Tracks the current run-mode of a client.
 #[derive(Debug, Clone)]
 pub enum GooseClientMode {
+    /// Clients are briefly in the INIT mode when first allocated.
     INIT,
+    /// Clients are briefly in the HATCHING mode when setting things up.
     HATCHING,
+    /// Clients spend most of their time in the RUNNING mode, executing tasks.
     RUNNING,
+    /// Clients are briefly in the EXITING mode when stopping.
     EXITING,
 }
 
+/// Commands sent between the parent and client threads.
 #[derive(Debug, Clone)]
 pub enum GooseClientCommand {
-    // Tell client thread to push statistics to parent
+    /// Tell client thread to push statistics to parent
     SYNC,
-    // Tell client thread to exit
+    /// Tell client thread to exit
     EXIT,
 }
 
+/// Statistics collected about a path-method pair, (for example `/index`-`GET`).
 #[derive(Debug, Clone)]
 pub struct GooseRequest {
-    pub url: String,
+    /// The path for which statistics are being collected.
+    pub path: String,
+    /// The method for which statistics are being collected.
     pub method: Method,
+    /// A record of every response time for every request of this path-method pair.
     pub response_times: Vec<f32>,
+    /// Per-status-code counters, tracking how often each response code was returned for this request.
     pub status_code_counts: HashMap<u16, usize>,
+    /// Total number of times this path-method request resulted in a successful (2xx) status code.
     pub success_count: usize,
+    /// Total number of times this path-method request resulted in a non-successful (non-2xx) status code.
     pub fail_count: usize,
 }
 impl GooseRequest {
-    pub fn new(url: &str, method: Method) -> Self {
+    /// Create a new GooseRequest object.
+    fn new(path: &str, method: Method) -> Self {
         trace!("new request");
         GooseRequest {
-            url: url.to_string(),
+            path: path.to_string(),
             method: method,
             response_times: Vec::new(),
             status_code_counts: HashMap::new(),
@@ -400,11 +422,13 @@ impl GooseRequest {
         }
     }
 
-    pub fn set_response_time(&mut self, response_time: f32) {
+    /// Append response time to `response_times` vector.
+    fn set_response_time(&mut self, response_time: f32) {
         self.response_times.push(response_time);
     }
 
-    pub fn set_status_code(&mut self, status_code: Option<StatusCode>) {
+    /// Increment counter for status code, creating new counter if first time seeing status code.
+    fn set_status_code(&mut self, status_code: Option<StatusCode>) {
         let status_code_u16 = match status_code {
             Some(s) => s.as_u16(),
             _ => 0,
@@ -426,30 +450,45 @@ impl GooseRequest {
     }
 }
 
+/// An individual client state, repeatedly running all GooseTasks in a specific GooseTaskSet.
 #[derive(Debug, Clone)]
 pub struct GooseClient {
-    // This is the GooseTest.task_sets index
+    /// An index into the GooseTest.task_sets vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
-    // This is the reqwest.blocking.client (@TODO: test with async)
+    /// A [`reqwest.blocking.client`](reqwest/*/reqwest/blocking/struct.Client.html) instance (@TODO: async).
     pub client: Client,
+    /// The GooseTest.host.
     pub default_host: Option<String>,
+    /// The GooseTaskSet.host.
     pub task_set_host: Option<String>,
+    /// Minimum amount of time to sleep after running a task.
     pub min_wait: usize,
+    /// Maximum amount of time to sleep after running a task.
     pub max_wait: usize,
-    pub config: Configuration,
+    /// A local copy of the global GooseConfiguration.
+    pub config: GooseConfiguration,
+    /// An index into GooseTest.weighted_clients, indicating which weighted GooseTaskSet is running.
     pub weighted_clients_index: usize,
+    /// The current run mode of this client, see `enum GooseClientMode`.
     pub mode: GooseClientMode,
+    /// A weighted list of all tasks that run on_start.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
+    /// A weighted list of all tasks that this client runs once started.
     pub weighted_tasks: Vec<Vec<usize>>,
+    /// A pointer into which sequenced bucket the client is currently running tasks from.
     pub weighted_bucket: usize,
+    /// A pointer of which task within the current sequenced bucket is currently running.
     pub weighted_bucket_position: usize,
+    /// A weighted list of all tasks that run on_stop.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
+    /// Optional name of all requests made within the current task.
     pub request_name: String,
+    /// Optional statistics collected about all requests made by this client.
     pub requests: HashMap<String, GooseRequest>,
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &Configuration) -> Self {
+    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &GooseConfiguration) -> Self {
         trace!("new client");
         let builder = Client::builder()
             .user_agent(APP_USER_AGENT);
@@ -468,6 +507,7 @@ impl GooseClient {
             config: configuration.clone(),
             min_wait: min_wait,
             max_wait: max_wait,
+            // A value of max_value() indicates this client isn't fully initialized yet.
             weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
             weighted_on_start_tasks: Vec::new(),
@@ -480,21 +520,24 @@ impl GooseClient {
         }
     }
 
+    /// Sets the current run mode of this client.
     pub fn set_mode(&mut self, mode: GooseClientMode) {
         self.mode = mode;
     }
 
-    fn get_request(&mut self, url: &str, method: &Method) -> GooseRequest {
-        let key = format!("{:?} {}", method, url);
+    /// Checks if the current path-method pair has been requested before.
+    fn get_request(&mut self, path: &str, method: &Method) -> GooseRequest {
+        let key = format!("{:?} {}", method, path);
         trace!("get key: {}", &key);
         match self.requests.get(&key) {
             Some(r) => r.clone(),
-            None => GooseRequest::new(url, method.clone()),
+            None => GooseRequest::new(path, method.clone()),
         }
     }
 
-    fn set_request(&mut self, url: &str, method: &Method, request: GooseRequest) {
-        let key = format!("{:?} {}", method, url);
+    /// Stores request statistics about the current path-method pair.
+    fn set_request(&mut self, path: &str, method: &Method, request: GooseRequest) {
+        let key = format!("{:?} {}", method, path);
         trace!("set key: {}", &key);
         self.requests.insert(key, request.clone());
     }
@@ -541,71 +584,184 @@ impl GooseClient {
         }
     }
 
-    // Simple get() wrapper that calls goose_get() followed by goose_send().
+    /// A helper to make a `GET` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host.
+    /// 
+    /// (If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object, you can instead call `goose_get` which returns a RequestBuilder, then
+    /// call `goose_send` to invoke the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let _response = client.get("/path/to/foo");
+    /// ```
     pub fn get(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_get(path);
         let response = self.goose_send(request_builder);
         response
     }
 
-    // Simple post() wrapper that calls goose_post() followed by goose_send().
+    /// A helper to make a `POST` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host.
+    /// 
+    /// (If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object, you can instead call `goose_post` which returns a RequestBuilder, then
+    /// call `goose_send` to invoke the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let _response = client.post("/path/to/foo", "BODY BEING POSTED");
+    /// ```
     pub fn post(&mut self, path: &str, body: String) -> Result<Response, Error> {
         let request_builder = self.goose_post(path).body(body);
         let response = self.goose_send(request_builder);
         response
     }
 
-    // Simple head() wrapper that calls goose_head() followed by goose_send().
+    /// A helper to make a `HEAD` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host.
+    /// 
+    /// (If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object, you can instead call `goose_head` which returns a RequestBuilder, then
+    /// call `goose_send` to invoke the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let _response = client.head("/path/to/foo");
+    /// ```
     pub fn head(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_head(path);
         let response = self.goose_send(request_builder);
         response
     }
 
-    // Simple delete() wrapper that calls goose_delete() followed by goose_send().
+    /// A helper to make a `DELETE` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host.
+    /// 
+    /// (If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object, you can instead call `goose_delete` which returns a RequestBuilder,
+    /// then call `goose_send` to invoke the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let _response = client.delete("/path/to/foo");
+    /// ```
     pub fn delete(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_delete(path);
         let response = self.goose_send(request_builder);
         response
     }
 
-    // Calls Reqwest get() and returns a Reqwest RequestBuilder.
+    /// Prepends the correct host on the path, then prepares a
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object for making a `GET` request.
+    /// 
+    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let request_builder = client.goose_get("/path/to/foo");
+    ///     let response = self.goose_send(request_builder);
+    /// ```
     pub fn goose_get(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.get(&url)
     }
 
-    // Calls Reqwest post() and returns a Reqwest RequestBuilder.
+    /// Prepends the correct host on the path, then prepares a
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object for making a `POST` request.
+    /// 
+    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let request_builder = client.goose_post("/path/to/foo");
+    ///     let response = self.goose_send(request_builder);
+    /// ```
     pub fn goose_post(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.post(&url)
     }
 
-    // Calls Reqwest head() and returns a Reqwest RequestBuilder.
+    /// Prepends the correct host on the path, then prepares a
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object for making a `HEAD` request.
+    /// 
+    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let request_builder = client.goose_head("/path/to/foo");
+    ///     let response = self.goose_send(request_builder);
+    /// ```
     pub fn goose_head(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.head(&url)
     }
 
-    // Calls Reqwest put() and returns a Reqwest RequestBuilder.
+    /// Prepends the correct host on the path, then prepares a
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object for making a `PUT` request.
+    /// 
+    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let request_builder = client.goose_put("/login");
+    /// ```
     pub fn goose_put(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.put(&url)
     }
 
-    // Calls Reqwest patch() and returns a Reqwest RequestBuilder.
+    /// Prepends the correct host on the path, then prepares a
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object for making a `PATCH` request.
+    /// 
+    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let request_builder = client.goose_patch("/path/to/foo");
+    /// ```
     pub fn goose_patch(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.patch(&url)
     }
 
-    // Calls Reqwest delete() and returns a Reqwest RequestBuilder.
+    /// Prepends the correct host on the path, then prepares a
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object for making a `DELETE` request.
+    /// 
+    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let request_builder = client.goose_delete("/path/to/foo");
+    /// ```
     pub fn goose_delete(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         self.client.delete(&url)
     }
 
-    // Executes a Reqwest RequestBuilder, optionally capturing statistics.
+    /// Builds the provided
+    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// object and then executes the response. If statistics are being displayed, it
+    /// also captures request statistics.
+    /// 
+    /// It is possible to build and execute a `RequestBuilder` object without using this
+    /// helper function, but then no statistics will be captured.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let request_builder = client.goose_get("/path/to/foo");
+    ///     let response = self.goose_send(request_builder);
+    /// ```
     pub fn goose_send(&mut self, request_builder: RequestBuilder) -> Result<Response, Error> {
         let started = Instant::now();
         let request = request_builder.build()?;
@@ -672,7 +828,7 @@ impl GooseClient {
     }
 }
 
-/// An individual task within a task set
+/// An individual task within a `GooseTaskSet`.
 #[derive(Clone)]
 pub struct GooseTask {
     // This is the GooseTaskSet.tasks index
