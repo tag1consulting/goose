@@ -10,7 +10,7 @@
 //! 
 //! ## Creating Task Sets
 //! 
-//! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a `&str` to the `new` function, for example:
+//! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a `&str` name to the `new` function, for example:
 //! 
 //! ```rust
 //!     let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks");
@@ -103,8 +103,9 @@
 //! 
 //! Tasks can be flagged to only run when a client first starts. This can be useful if you'd
 //! like your load test to use a logged-in user. It is possible to assign sequences and weights
-//! to `on_start` functions if you want to have multiple tasks run at start time, and/or the
-//! tasks to run multiple times.
+//! to `on_start` functions if you want to have multiple tasks run in a specific order at start
+//! time, and/or the tasks to run multiple times. A task can be flagged to run both on start
+//! and on stop.
 //! 
 //! ```rust
 //!     a_task.set_on_start();
@@ -114,22 +115,25 @@
 //! 
 //! Tasks can be flagged to only run when a client stops. This can be useful if you'd like your
 //! load test to simluate a user logging out when it finishes. It is possible to assign sequences
-//! and weights to `on_stop` functions if you want to have multiple tasks run at stop time, and/or
-//! the tasks to run multiple times.
+//! and weights to `on_stop` functions if you want to have multiple tasks run in a specific order
+//! at stop time, and/or the tasks to run multiple times. A task can be flagged to run both on
+//! start and on stop.
 //! 
 //! ```rust
-//!     a_task.set_on_stop();
+//!     b_task.set_on_stop();
 //! ```
 //! 
 //! ## Controlling Clients
 //! 
-//! When Goose starts, it creates on or more [`GooseClient`](./struct.GooseClient.html),
+//! When Goose starts, it creates one or more [`GooseClient`](./struct.GooseClient.html)s,
 //! assigning a single [`GooseTaskSet`](./struct.GooseTaskSet.html) to each. This client is
-//! then used to generate load. Behind the scenes, Goose is leveraging the Reqwest Blocking
-//! client to load web pages, and Goose can therefor do anything Reqwest can do.
+//! then used to generate load. Behind the scenes, Goose is leveraging the
+//! [`reqwest::blocking::client`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Client.html)
+//! to load web pages, and Goose can therefor do anything Reqwest can do.
 //! 
-//! The most common request types are GET and POST, but HEAD, PUT, PATCH, and DELETE are also
-//! fully supported.
+//! The most common request types are [`GET`](./struct.GooseClient.html#method.get) and
+//! [`POST`](./struct.GooseClient.html#method.post), but [`HEAD`](./struct.GooseClient.html#method.head),
+//! PUT, PATCH and [`DELETE`](./struct.GooseClient.html#method.delete) are also supported.
 //! 
 //! ### GET
 //! 
@@ -146,8 +150,9 @@
 //! 
 //! ### POST
 //! 
-//! A helper to make a `POST` request of a string value to a path and collect relevant
-//! statistics. Automatically prepends the correct host.
+//! A helper to make a `POST` request of a string value to the path and collect relevant
+//! statistics. Automatically prepends the correct host. The returned response is a
+//! [`reqwest::blocking::Response`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Response.html)
 //! 
 //! ```rust
 //!     let _response = client.post("/path/to/foo", "string value to post");
@@ -436,7 +441,7 @@ impl GooseRequest {
 pub struct GooseClient {
     /// An index into the GooseTest.task_sets vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
-    /// A [`reqwest.blocking.client`](reqwest/*/reqwest/blocking/struct.Client.html) instance (@TODO: async).
+    /// A [`reqwest.blocking.client`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Client.html) instance (@TODO: async).
     pub client: Client,
     /// The GooseTest.host.
     pub default_host: Option<String>,
@@ -523,12 +528,12 @@ impl GooseClient {
         self.requests.insert(key, request.clone());
     }
 
-    /// A helper that pre-pends a hostname to a path. For example, if you pass in `/foo`
+    /// A helper that pre-pends a hostname to the path. For example, if you pass in `/foo`
     /// and `--host` is set to `http://127.0.0.1` it will return `http://127.0.0.1/foo`.
-    /// Respects per-GooseTaskSet host configuration, GooseTest host configuration, and
+    /// Respects per-`GooseTaskSet` `host` configuration, `GooseTest` `host` configuration, and
     /// `--host` CLI configuration option.
     /// 
-    /// If `path` is passed in with a hard-coded host, this will be used.
+    /// If `path` is passed in with a hard-coded host, this will be used instead.
     /// 
     /// Host is defined in the following order:
     ///  - If `path` includes the host, use this
@@ -569,7 +574,7 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     /// 
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_get` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     /// 
@@ -587,7 +592,7 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     /// 
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_post` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     /// 
@@ -605,7 +610,7 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     /// 
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_head` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     /// 
@@ -623,7 +628,7 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     /// 
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_delete` which returns a RequestBuilder,
     /// then call `goose_send` to invoke the request.)
     /// 
@@ -638,7 +643,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `GET` request.
     /// 
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -654,7 +659,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `POST` request.
     /// 
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -670,7 +675,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `HEAD` request.
     /// 
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -686,7 +691,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PUT` request.
     /// 
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -701,7 +706,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PATCH` request.
     /// 
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -716,7 +721,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `DELETE` request.
     /// 
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -731,7 +736,7 @@ impl GooseClient {
     }
 
     /// Builds the provided
-    /// [`reqwest::RequestBuilder`](reqwest/0.10.4/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object and then executes the response. If statistics are being displayed, it
     /// also captures request statistics.
     /// 
@@ -917,16 +922,28 @@ impl GooseTask {
 
     /// Defines the sequence value of an individual tasks. Tasks are run in order of their sequence value,
     /// so a task with a sequence value of 1 will run before a task with a sequence value of 2. Tasks with
-    /// no sequence value will run last, after all tasks with sequence values.
+    /// no sequence value (or a sequence value of 0) will run last, after all tasks with positive sequence
+    /// values.
     /// 
     /// All tasks with the same sequence value will run in a random order. Tasks can be assigned both
     /// squence values and weights.
     /// 
-    /// # Example
+    /// # Examples
+    /// In this first example, the variable names indicate the order the tasks will be run in:
     /// ```rust
     ///     let runs_first = GooseTask::new(first_task_function).set_sequence(3);
     ///     let runs_second = GooseTask::new(second_task_function).set_sequence(5835);
     ///     let runs_last = GooseTask::new(third_task_function);
+    /// ```
+    /// 
+    /// In the following example, the `runs_first` task runs two times, then one instance of `runs_second`
+    /// and two instances of `also_runs_second` are all three run. The client will do this over and over
+    /// the entire time it runs, with `runs_first` always running first, then the other tasks being
+    /// run in a random and weighted order:
+    /// ```rust
+    ///     let runs_first = GooseTask::new(first_task_function).set_sequence(1).set_weight(2);
+    ///     let runs_second = GooseTask::new(second_task_function_a).set_sequence(2);
+    ///     let also_runs_second = GooseTask::new(second_task_function_b).set_sequence(2).set_weight(2);
     /// ```
     pub fn set_sequence(mut self, sequence: usize) -> Self {
         trace!("{} [{}] set_sequence: {}", self.name, self.tasks_index, sequence);

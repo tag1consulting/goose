@@ -8,9 +8,9 @@
 //! Goose load tests are built by creating an application with Cargo,
 //! and declaring a dependency on the Goose library.
 //! 
-//! Goose uses the `reqwest::blocking` API to provide a convenient HTTP
-//! client. (Async support is on the roadmap, also provided through the
-//! `reqwest` library.)
+//! Goose uses the [`reqwest::blocking`](https://docs.rs/reqwest/*/reqwest/blocking/)
+//! API to provide a convenient HTTP client. (Async support is on the roadmap, also
+//! provided through the `reqwest` library.)
 //! 
 //! ## Creating and running a Goose load test
 //! 
