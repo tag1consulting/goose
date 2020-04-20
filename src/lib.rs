@@ -29,7 +29,7 @@
 //! 
 //! ```toml
 //! [dependencies]
-//! goose = "0.4"
+//! goose = "0.5"
 //! ```
 //! 
 //! Add the following boilerplate use declarations at the top of your `src/main.rs`:
@@ -640,6 +640,7 @@ fn merge_from_client(
     merged_request
 }
 
+/// Load configuration from command line and initialize a GooseState.
 pub fn goose_init() -> GooseState {
     let mut goose_state = GooseState::new(GooseConfiguration::from_args());
 
@@ -719,6 +720,7 @@ pub fn goose_init() -> GooseState {
     goose_state
 }
 
+/// Launch a GooseTest.
 pub fn goose_launch(mut goose_state: GooseState, mut goose_test: GooseTest) {
     // At least one task set is required.
     if goose_test.task_sets.len() <= 0 {
