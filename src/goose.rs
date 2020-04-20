@@ -499,15 +499,35 @@ impl GooseClient {
         self.requests.insert(key, request.clone());
     }
 
-    fn build_url(&mut self, path: &str) -> String {
+    /// A helper that pre-pends a hostname to a path. For example, if you pass in `/foo`
+    /// and `--host` is set to `http://127.0.0.1` it will return `http://127.0.0.1/foo`.
+    /// Respects per-GooseTaskSet host configuration, GooseTest host configuration, and
+    /// `--host` CLI configuration option.
+    /// 
+    /// Host is defined in the following order:
+    ///  - If `--host` is defined, use this
+    ///  - Otherwise, if `GooseTaskSet.host` is defined, use this
+    ///  - Otherwise, use `GooseTest.host`.
+    pub fn build_url(&mut self, path: &str) -> String {
+        let base_url;
+
+        // If the `--host` CLI option is set, use it to build the URL
         if self.config.host.len() > 0 {
-            return format!("{}{}", self.config.host, path)
+            base_url = Url::parse(&self.config.host).unwrap();
         }
-        match &self.task_set_host {
-            Some(h) => format!("{}{}", h, path),
-            None => {
-                // Host validation was done at startup, if we're here unwrap() is safe.
-                format!("{}{}", self.default_host.clone().unwrap(), path)
+        else {
+            base_url = match &self.task_set_host {
+                // Otherwise, if `GooseTaskSet.host` is defined, usee this
+                Some(host) => Url::parse(host).unwrap(),
+                // Otherwise, use `GooseTest.host`. `unwrap` okay as host validation was done at startup.
+                None => Url::parse(&self.default_host.clone().unwrap()).unwrap(),
+            };
+        }
+        match base_url.join(path) {
+            Ok(url) => url.to_string(),
+            Err(e) => {
+                error!("failed to build url from base {} and path {} for task {}: {}", &base_url, &path, self.task_sets_index, e);
+                std::process::exit(1);
             }
         }
     }
