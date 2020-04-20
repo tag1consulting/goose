@@ -253,7 +253,7 @@ pub struct GooseTaskSet {
     pub tasks: Vec<GooseTask>,
     /// A vector of vectors of integers, controlling the sequence and order GooseTasks are run.
     pub weighted_tasks: Vec<Vec<usize>>,
-    /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when a client starts.
+    /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when the client first starts.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
     /// A vector of vectors of integers, controlling the sequence and order on_stop GooseTasks are run when a client stops.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
@@ -457,7 +457,7 @@ pub struct GooseClient {
     pub weighted_clients_index: usize,
     /// The current run mode of this client, see `enum GooseClientMode`.
     pub mode: GooseClientMode,
-    /// A weighted list of all tasks that run on_start.
+    /// A weighted list of all tasks that run when the client first starts.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
     /// A weighted list of all tasks that this client runs once started.
     pub weighted_tasks: Vec<Vec<usize>>,
@@ -465,10 +465,12 @@ pub struct GooseClient {
     pub weighted_bucket: usize,
     /// A pointer of which task within the current sequenced bucket is currently running.
     pub weighted_bucket_position: usize,
-    /// A weighted list of all tasks that run on_stop.
+    /// A weighted list of all tasks that run when the client stops.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
     /// Optional name of all requests made within the current task.
-    pub request_name: String,
+    pub task_request_name: Option<String>,
+    /// Optional name of all requests made within the current task.
+    pub request_name: Option<String>,
     /// Optional statistics collected about all requests made by this client.
     pub requests: HashMap<String, GooseRequest>,
 }
@@ -501,9 +503,39 @@ impl GooseClient {
             weighted_bucket: 0,
             weighted_bucket_position: 0,
             weighted_on_stop_tasks: Vec::new(),
-            request_name: "".to_string(),
+            task_request_name: None,
+            request_name: None,
             requests: HashMap::new(),
         }
+    }
+
+    /// Sets a name for the next request made.
+    /// 
+    /// One example use case of this is to group together requests to different URLs in the
+    /// statistics that don't need to be split out, perhaps because they're all the same type
+    /// of page.
+    /// 
+    /// # Examples
+    /// 
+    /// In this example, the request will show up as "GET foo":
+    /// ```rust
+    ///     let _response = client.set_request_name("foo").get("/path/to/foo");
+    /// ```
+    /// 
+    /// In this example, the first request will show up in the statistics as "GET foo", and the
+    /// second request will show up as "GET /path/to/foo".
+    /// ```rust
+    ///     let _response = client.set_request_name("foo").get("/path/to/foo");
+    ///     let _response = client.get("/path/to/foo");
+    /// ```
+    pub fn set_request_name(&mut self, name: &str) -> &mut Self {
+        if name != "" {
+            self.request_name = Some(name.to_string());
+        }
+        else {
+            self.request_name = None;
+        }
+        self
     }
 
     /// Sets the current run mode of this client.
@@ -740,8 +772,9 @@ impl GooseClient {
     /// object and then executes the response. If statistics are being displayed, it
     /// also captures request statistics.
     /// 
-    /// It is possible to build and execute a `RequestBuilder` object without using this
-    /// helper function, but then no statistics will be captured.
+    /// It is possible to build and execute a `RequestBuilder` object directly with
+    /// Reqwest without using this helper function, but then Goose is unable to capture
+    /// statistics. 
     /// 
     /// # Example
     /// ```rust
@@ -769,14 +802,16 @@ impl GooseClient {
                     "parse error".to_string()
                 }
             };
-            // By default requests are recorded as "METHOD URL", allow override of "METHOD NAME"
-            let request_name;
-            if self.request_name != "" {
-                request_name = self.request_name.to_string();
-            }
-            else {
-                request_name = path.to_string();
-            }
+
+            // Requests are named per-request, per-task, or based on the path loaded.
+            let request_name = match &self.request_name {
+                Some(rn) => rn.to_string(),
+                None => match &self.task_request_name {
+                    Some(trn) => trn.to_string(),
+                    None => path.to_string(),
+                }
+            };
+
             let mut goose_request = self.get_request(&request_name, &method.clone());
             goose_request.set_response_time(elapsed.as_secs_f32());
             match &response {
@@ -810,6 +845,13 @@ impl GooseClient {
             };
             self.set_request(&request_name, &method, goose_request);
         }
+
+        // Consume self.request_name if it was set.
+        match self.request_name {
+            Some(_) => self.request_name = None,
+            None => (),
+        };
+
         response
     }
 }
@@ -848,7 +890,10 @@ impl GooseTask {
     }
 
     /// Set an optional name for the task, used when displaying statistics about
-    /// requests made by the task.
+    /// requests made by the task. 
+    /// 
+    /// Individual requests can also be named withing your load test. See the
+    /// documentation for `GooseClient`.[`set_request_name()`](./struct.GooseClient.htmll#method.set_request_name)
     /// 
     /// # Example
     /// ```rust
