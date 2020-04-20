@@ -29,7 +29,7 @@ pub fn client_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = thread_task_set.tasks[*task_index].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
+                let function = thread_task_set.tasks[*task_index].function;
                 debug!("launching on_start {} task from {}", thread_task_name, thread_task_set.name);
                 thread_client.request_name = thread_task_name.to_string();
                 // Invoke the task function.
@@ -57,7 +57,7 @@ pub fn client_main(
         // Determine which task we're going to run next.
         let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_bucket][thread_client.weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
-        let function = thread_task_set.tasks[thread_weighted_task].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
+        let function = thread_task_set.tasks[thread_weighted_task].function;
         debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
         // If task name is set, it will be used for storing request statistics instead of the raw url.
         thread_client.request_name = thread_task_name.to_string();
@@ -103,7 +103,7 @@ pub fn client_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = thread_task_set.tasks[*task_index].function.expect(&format!("{} {} missing load testing function", thread_task_set.name, thread_task_name));
+                let function = thread_task_set.tasks[*task_index].function;
                 debug!("launching on_stop {} task from {}", thread_task_name, thread_task_set.name);
                 thread_client.request_name = thread_task_name.to_string();
                 // Invoke the task function.

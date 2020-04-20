@@ -56,20 +56,20 @@
 //! ```
 //! ## Creating Tasks
 //! 
-//! A [`GooseTask`](./struct.GooseTask.html) can be created with or without a name.
-//! The name is used when displaying statistics about the load test. For example:
+//! A [`GooseTask`](./struct.GooseTask.html) must include a pointer to a function which
+//! will be executed each time the task is run.
 //! 
 //! ```rust
-//!     let mut a_task = GooseTask::new();
-//!     let mut b_task = GooseTask::named("b");
+//!     let mut a_task = GooseTask::new(task_function);
 //! ```
 //! 
 //! ### Task Name
 //! 
-//! A name can also be assigned (or changed) after a task is created, for example:
+//! A name can be assigned to a task, and will be displayed in statistics about all requests
+//! made by the task.
 //! 
 //! ```rust
-//!     a_task.set_name("a");
+//!     let mut a_task = GooseTask::new(task_function).set_name("a");
 //! ```
 //! 
 //! ### Task Weight
@@ -79,8 +79,8 @@
 //! runs 3 times as often as `b_task`:
 //! 
 //! ```rust
-//!     a_task.set_weight(9);
-//!     b_task.set_weight(3);
+//!     let mut a_task = GooseTask::new(a_task_function).set_weight(9);
+//!     let mut b_task = GooseTask::new(b_task_function).set_weight(3);
 //! ```
 //! 
 //! ### Task Sequence
@@ -94,24 +94,10 @@
 //! `a_task` runs before `b_task`, which runs before `c_task`:
 //! 
 //! ```rust
-//!     a_task.set_sequence(1);
-//!     b_task.set_sequence(2);
-//!     let mut c_task = GooseTask::named("c");
+//!     let mut a_task = GooseTask::new(a_task_function).set_sequence(1);
+//!     let mut b_task = GooseTask::new(b_task_function).set_sequence(2);
+//!     let mut c_task = GooseTask::new(c_task_function);
 //! ```
-//! 
-//! ### Task Function
-//! 
-//! All tasks must be associated with a function. Goose will invoke this function each time
-//! the task is run.
-//! 
-//! ```rust
-//!     a_task.set_function(a_task_function);
-//!     b_task.set_function(b_task_function);
-//!     // Re-use the same task function.
-//!     c_task.set_function(b_task_function);
-//! ```
-//! 
-//! The same task function can be assigned to multiple tasks and/or multiple task sets, if desired.
 //! 
 //! ### Task On Start
 //! 
@@ -147,27 +133,25 @@
 //! 
 //! ### GET
 //! 
-//! A HTTP GET request.
+//! A helper to make a `GET` request of a path and collect relevant statistics.
+//! Automatically prepends the correct host.
 //! 
+//! ```rust
+//!     let _response = client.get("/path/to/foo");
 //! ```
-//!     client.get("/path/to/foo");
-//! ```
+//! 
+//! The returned response is a [`reqwest::blocking::Response`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Response.html)
+//! struct. You can use it as you would any Reqwest Response.
+//! 
 //! 
 //! ### POST
 //! 
-//! A HTTP POST request.
+//! A helper to make a `POST` request of a string value to a path and collect relevant
+//! statistics. Automatically prepends the correct host.
 //! 
+//! ```rust
+//!     let _response = client.post("/path/to/foo", "string value to post");
 //! ```
-//!     client.post("/path/to/bar");
-//! ```
-//! 
-//! ### HEAD
-//! 
-//! ### PUT
-//! 
-//! ### PATCH
-//! 
-//! ### DELETE
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -219,7 +203,7 @@ impl GooseTest {
     /// ```rust
     ///     let mut goose_test = GooseTest::new();
     ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
-    ///     example_tasks.register_task(GooseTask::new().set_function(example_task));
+    ///     example_tasks.register_task(GooseTask::new(example_task));
     ///     goose_test.register_taskset(example_tasks);
     /// 
     /// ```
@@ -302,11 +286,8 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
-    ///     example_tasks.register_task(GooseTask::new());
+    ///     example_tasks.register_task(GooseTask::new(a_task_function));
     /// ```
-    /// 
-    /// Note: this example isn't particularly useful. It's required you also set a function on your task,
-    /// otherwise your loadtest will refuse to run. See `set_function`.
     pub fn register_task(&mut self, mut task: GooseTask) {
         trace!("{} register_task: {}", self.name, task.name);
         task.tasks_index = self.tasks.len();
@@ -831,17 +812,23 @@ impl GooseClient {
 /// An individual task within a `GooseTaskSet`.
 #[derive(Clone)]
 pub struct GooseTask {
-    // This is the GooseTaskSet.tasks index
+    /// An index into GooseTaskSet.task, indicating which task this is.
     pub tasks_index: usize,
+    /// An optional name for the task, used when displaying statistics about requests made.
     pub name: String,
+    /// An integer value that controls the frequency that this task will be run.
     pub weight: usize,
+    /// An integer value that controls when this task runs compared to other tasks in the same GooseTaskSet.
     pub sequence: usize,
+    /// A flag indicating that this task runs when the client starts.
     pub on_start: bool,
+    /// A flag indicating that this task runs when the client stops.
     pub on_stop: bool,
-    pub function: Option<fn(&mut GooseClient)>,
+    /// A required function that is executed each time this task runs.
+    pub function: fn(&mut GooseClient),
 }
 impl GooseTask {
-    pub fn new() -> Self {
+    pub fn new(function: fn(&mut GooseClient)) -> Self {
         trace!("new task");
         let task = GooseTask {
             tasks_index: usize::max_value(),
@@ -850,40 +837,61 @@ impl GooseTask {
             sequence: 0,
             on_start: false,
             on_stop: false,
-            function: None,
+            function: function,
         };
         task
     }
 
-    pub fn named(name: &str) -> Self {
-        trace!("new task: {}", name);
-        let task = GooseTask {
-            tasks_index: usize::max_value(),
-            name: name.to_string(),
-            weight: 1,
-            sequence: 0,
-            on_start: false,
-            on_stop: false,
-            function: None,
-        };
-        task
+    /// Set an optional name for the task, used when displaying statistics about
+    /// requests made by the task.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     GooseTask::new(my_task_function).set_name("foo");
+    /// ```
+    pub fn set_name(mut self, name: &str) -> Self {
+        trace!("[{}] set_name: {}", self.tasks_index, self.name);
+        self.name = name.to_string();
+        self
     }
 
+    /// Set an optional flag indicating that this task should be run when
+    /// a client first starts. This could be used to log the user in, and
+    /// so all subsequent tasks are done as a logged in user. A task with
+    /// this flag set will only run at start time (and optionally at stop
+    /// time as well, if that flag is also set).
+    /// 
+    /// On-start tasks can be sequenced and weighted. Sequences allow
+    /// multiple on-start tasks to run in a controlled order. Weights allow
+    /// on-start tasks to run multiple times when a client starts.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     GooseTask::new(my_on_start_function).set_on_start();
+    /// ```
     pub fn set_on_start(mut self) -> Self {
         trace!("{} [{}] set_on_start task", self.name, self.tasks_index);
         self.on_start = true;
         self
     }
 
+    /// Set an optional flag indicating that this task should be run when
+    /// a client stops. This could be used to log a user out when the client
+    /// finishes its load test. A task with this flag set will only run at
+    /// stop time (and optionally at start time as well, if that flag is
+    /// also set).
+    /// 
+    /// On-stop tasks can be sequenced and weighted. Sequences allow
+    /// multiple on-stop tasks to run in a controlled order. Weights allow
+    /// on-stop tasks to run multiple times when a client stops.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     GooseTask::new(my_on_stop_function).set_on_stop();
+    /// ```
     pub fn set_on_stop(mut self) -> Self {
         trace!("{} [{}] set_on_stop task", self.name, self.tasks_index);
         self.on_stop = true;
-        self
-    }
-
-    pub fn set_name(mut self, name: &str) -> Self {
-        trace!("[{}] set_name: {}", self.tasks_index, self.name);
-        self.name = name.to_string();
         self
     }
 
@@ -893,7 +901,7 @@ impl GooseTask {
     /// 
     /// # Example
     /// ```rust
-    ///     let a_task = GooseTask::new().set_weight(3);
+    ///     GooseTask::new(task_function).set_weight(3);
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} [{}] set_weight: {}", self.name, self.tasks_index, weight);
@@ -907,17 +915,25 @@ impl GooseTask {
         self
     }
 
+    /// Defines the sequence value of an individual tasks. Tasks are run in order of their sequence value,
+    /// so a task with a sequence value of 1 will run before a task with a sequence value of 2. Tasks with
+    /// no sequence value will run last, after all tasks with sequence values.
+    /// 
+    /// All tasks with the same sequence value will run in a random order. Tasks can be assigned both
+    /// squence values and weights.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let runs_first = GooseTask::new(first_task_function).set_sequence(3);
+    ///     let runs_second = GooseTask::new(second_task_function).set_sequence(5835);
+    ///     let runs_last = GooseTask::new(third_task_function);
+    /// ```
     pub fn set_sequence(mut self, sequence: usize) -> Self {
         trace!("{} [{}] set_sequence: {}", self.name, self.tasks_index, sequence);
         if sequence < 1 {
             info!("setting sequence to 0 for task {} is unnecessary, sequence disabled", self.name);
         }
         self.sequence = sequence;
-        self
-    }
-
-    pub fn set_function(mut self, function: fn(&mut GooseClient)) -> Self {
-        self.function = Some(function);
         self
     }
 }

@@ -87,10 +87,10 @@
 //!     .set_wait_time(0, 3);
 //! 
 //!   // Register the foo task, assigning it a weight of 10.
-//!   loadtest_tasks.register_task(GooseTask::new().set_weight(10).set_function(loadtest_foo));
+//!   loadtest_tasks.register_task(GooseTask::new(loadtest_foo).set_weight(10));
 //!   // Register the bar task, assigning it a weight of 2 (so it runs 1/5 as
 //!   // often as bar). Apply a task name which shows up in statistics.
-//!   loadtest_tasks.register_task(GooseTask::named("bar").set_weight(2).set_function(loadtest_bar));
+//!   loadtest_tasks.register_task(GooseTask::new(loadtest_bar).set_name("bar").set_weight(2));
 //! 
 //!   // Register our task set.
 //!   goose_test.register_taskset(loadtest_tasks);
