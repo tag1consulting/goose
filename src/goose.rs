@@ -504,13 +504,22 @@ impl GooseClient {
     /// Respects per-GooseTaskSet host configuration, GooseTest host configuration, and
     /// `--host` CLI configuration option.
     /// 
+    /// If `path` is passed in with a hard-coded host, this will be used.
+    /// 
     /// Host is defined in the following order:
-    ///  - If `--host` is defined, use this
+    ///  - If `path` includes the host, use this
+    ///  - Otherwise, if `--host` is defined, use this
     ///  - Otherwise, if `GooseTaskSet.host` is defined, use this
     ///  - Otherwise, use `GooseTest.host`.
     pub fn build_url(&mut self, path: &str) -> String {
-        let base_url;
+        // If URL includes a host, use it.
+        if let Ok(parsed_path) = Url::parse(path) {
+            if let Some(uri) = parsed_path.host() {
+                return uri.to_string()
+            }
+        }
 
+        let base_url;
         // If the `--host` CLI option is set, use it to build the URL
         if self.config.host.len() > 0 {
             base_url = Url::parse(&self.config.host).unwrap();
