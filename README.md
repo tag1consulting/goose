@@ -2,6 +2,10 @@
 
 Have you ever been attacked by a goose?
 
+[![crates.io](https://img.shields.io/crates/v/goose.svg)](https://crates.io/crates/goose)
+[![Documentation](https://docs.rs/goose/badge.svg)](https://docs.rs/goose)
+[![MIT licensed](https://img.shields.io/crates/l/goose.svg)](./LICENSE)
+
 ## Overview
 
 Goose is a Rust load testing tool based on [Locust](https://locust.io/).

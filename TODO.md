@@ -2,16 +2,9 @@
 
 Goose is a Rust load testing tool, based on Locust.
 
-### Todo MVP
-
-- [ ] automated testing of Goose logic
-
 ### In progress
 
-- [x] POST request method helper  
-- [x] turn Goose into a library, create a loadtest by creating an app with Cargo  
-  - [ ] compare the pros/cons of this w/ going the dynamic library approach  
-  - [ ] upload to crates.io
+- [ ] automated testing of Goose logic
 
 ### Future (post-MVP)
 
@@ -66,3 +59,7 @@ Goose is a Rust load testing tool, based on Locust.
   - [x] add special-case 'on-start' that is always first in TaskSet  
   - [x] allow weighting of tasks to always run in a given order  
   - [x] add special-case 'on-stop' that is always last in TaskSet  
+- [x] POST request method helper  
+- [x] turn Goose into a library, create a loadtest by creating an app with Cargo  
+  - [x] compare the pros/cons of this w/ going the dynamic library approach  
+  - [x] upload to crates.io
