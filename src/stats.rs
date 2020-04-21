@@ -2,8 +2,8 @@ use num_format::{Locale, ToFormattedString};
 use std::collections::HashMap;
 use std::f32;
 
-use crate::GooseConfiguration;
-use crate::goose::{GooseTest, GooseClient, GooseRequest};
+use crate::GooseState;
+use crate::goose::GooseRequest;
 use crate::util;
 
 trait FloatIterExt {
@@ -198,9 +198,9 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     println!(" {:<23} | {:<25} ", "Aggregated", codes);
 }
 
-fn merge_stats(weighted_clients: &Vec<GooseClient>, config: &GooseConfiguration) -> HashMap<String, GooseRequest> {
+fn merge_stats(goose_state: &GooseState) -> HashMap<String, GooseRequest> {
     let mut merged_requests: HashMap<String, GooseRequest> = HashMap::new();
-    for weighted_client in weighted_clients {
+    for weighted_client in &goose_state.weighted_clients {
         for (request_key, request) in weighted_client.requests.clone() {
             let mut merged_request;
             if let Some(existing_request) = merged_requests.get(&request_key) {
@@ -209,7 +209,7 @@ fn merge_stats(weighted_clients: &Vec<GooseClient>, config: &GooseConfiguration)
                 merged_request.fail_count += request.fail_count;
                 merged_request.response_times.append(&mut request.response_times.clone());
                 // Only merge status_code_counts if we're displaying the results
-                if config.status_codes {
+                if goose_state.configuration.status_codes {
                     for (status_code, count) in request.status_code_counts.clone() {
                         let new_count;
                         if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
@@ -232,23 +232,23 @@ fn merge_stats(weighted_clients: &Vec<GooseClient>, config: &GooseConfiguration)
 }
 
 /// Display running and ending statistics
-pub fn print_final_stats(config: &GooseConfiguration, goose_test: &GooseTest, elapsed: usize) {
+pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
     // 1) merge statistics from all clients.
-    let merged_requests = merge_stats(&goose_test.weighted_clients, config);
+    let merged_requests = merge_stats(&goose_state);
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, with percentiles
     print_response_times(&merged_requests, true);
     // 4) print status_codes
-    if config.status_codes {
+    if goose_state.configuration.status_codes {
         print_status_codes(&merged_requests);
     }
 }
 
-pub fn print_running_stats(config: &GooseConfiguration, goose_test: &GooseTest, elapsed: usize) {
+pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
     info!("printing running statistics after {} seconds...", elapsed);
     // 1) merge statistics from all clients.
-    let merged_requests = merge_stats(&goose_test.weighted_clients, config);
+    let merged_requests = merge_stats(&goose_state);
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, without percentiles

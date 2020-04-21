@@ -2,7 +2,6 @@
 //! 
 //! Goose manages load tests with a series of objects:
 //! 
-//! - [`GooseTest`](./struct.GooseTest.html) a global object that holds all task sets and client states.
 //! - [`GooseTaskSet`](./struct.GooseTaskSet.html) each client is assigned a task set, which is a collection of tasks.
 //! - [`GooseTask`](./struct.GooseTask.html) tasks define one or more web requests and are assigned to task sets.
 //! - [`GooseClient`](./struct.GooseClient.html) a client state responsible for repeatedly running all tasks in the assigned task set.
@@ -171,77 +170,12 @@ use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// A global list of all Goose task sets in the load test.
-#[derive(Clone)]
-pub struct GooseTest {
-    /// A vector containing one copy of each GooseTaskSet that will run during this load test.
-    pub task_sets: Vec<GooseTaskSet>,
-    /// A weighted vector containing a GooseClient object for each client that will run during this load test.
-    pub weighted_clients: Vec<GooseClient>,
-    /// A weighted vector of integers used to randomize the order that the GooseClient threads are launched.
-    pub weighted_clients_order: Vec<usize>,
-    /// An optional default host to run this load test against.
-    pub host: Option<String>,
-}
-impl GooseTest {
-    /// Sets up a Goose load test. This function should only be invoked one time. The returned state must
-    /// be stored in a mutable value.
-    /// 
-    /// # Example
-    /// ```rust
-    ///     let mut goose_test = GooseTest::new();
-    /// ```
-    pub fn new() -> Self {
-        let goose_tasksets = GooseTest { 
-            task_sets: Vec::new(),
-            weighted_clients: Vec::new(),
-            weighted_clients_order: Vec::new(),
-            host: None,
-        };
-        goose_tasksets
-    }
-
-    /// A GooseTest contains one or more GooseTaskSet. Each must be registered with this method,
-    /// which will add a new GooseTaskSet to the task_sets vector.
-    /// 
-    /// # Example
-    /// ```rust
-    ///     let mut goose_test = GooseTest::new();
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
-    ///     example_tasks.register_task(GooseTask::new(example_task));
-    ///     goose_test.register_taskset(example_tasks);
-    /// 
-    /// ```
-    pub fn register_taskset(&mut self, mut taskset: GooseTaskSet) {
-        taskset.task_sets_index = self.task_sets.len();
-        self.task_sets.push(taskset);
-    }
-
-    /// Set a default host for the load test. If no `--host` flag is set when running the load test, this
-    /// host will be pre-pended on all requests. For example, this can configure your load test to run
-    /// against your local development environment by default, and the `--host` option could be used to
-    /// override host when running the load test against production.
-    /// 
-    /// A default host can also be configured per task set.
-    /// 
-    /// # Example
-    /// ```rust
-    ///     let mut goose_test = GooseTest::new().set_host("http://10.1.1.42");
-    /// ```
-    pub fn set_host(mut self, host: &str) -> Self {
-        trace!("set_host: {}", host);
-        // Host validation happens in main() at startup.
-        self.host = Some(host.to_string());
-        self
-    }
-}
-
 /// An individual task set.
 #[derive(Clone)]
 pub struct GooseTaskSet {
     /// The name of the task set.
     pub name: String,
-    /// An integer reflecting where this task set lives in the GooseTest.task_sets vector.
+    /// An integer reflecting where this task set lives in the internal `GooseTest.task_sets` vector.
     pub task_sets_index: usize,
     /// An integer value that controls the frequency that this task set will be assigned to a client.
     pub weight: usize,
@@ -262,7 +196,7 @@ pub struct GooseTaskSet {
 }
 impl GooseTaskSet {
     /// Creates a new GooseTaskSet. Once created, GooseTasks must be assigned to it, and finally it must be
-    /// registered with the GooseTest object. The returned object must be stored in a mutable value.
+    /// registered with the GooseState object. The returned object must be stored in a mutable value.
     /// 
     /// # Example
     /// ```rust
@@ -439,11 +373,11 @@ impl GooseRequest {
 /// An individual client state, repeatedly running all GooseTasks in a specific GooseTaskSet.
 #[derive(Debug, Clone)]
 pub struct GooseClient {
-    /// An index into the GooseTest.task_sets vector, indicating which GooseTaskSet is running.
+    /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
     /// A [`reqwest.blocking.client`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Client.html) instance (@TODO: async).
     pub client: Client,
-    /// The GooseTest.host.
+    /// The global GooseState host.
     pub default_host: Option<String>,
     /// The GooseTaskSet.host.
     pub task_set_host: Option<String>,
@@ -453,7 +387,7 @@ pub struct GooseClient {
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
-    /// An index into GooseTest.weighted_clients, indicating which weighted GooseTaskSet is running.
+    /// An index into the internal `GooseTest.weighted_clients, indicating which weighted GooseTaskSet is running.
     pub weighted_clients_index: usize,
     /// The current run mode of this client, see `enum GooseClientMode`.
     pub mode: GooseClientMode,
@@ -562,8 +496,8 @@ impl GooseClient {
 
     /// A helper that pre-pends a hostname to the path. For example, if you pass in `/foo`
     /// and `--host` is set to `http://127.0.0.1` it will return `http://127.0.0.1/foo`.
-    /// Respects per-`GooseTaskSet` `host` configuration, `GooseTest` `host` configuration, and
-    /// `--host` CLI configuration option.
+    /// Respects per-`GooseTaskSet` `host` configuration, global `GooseState` `host`
+    /// configuration, and `--host` CLI configuration option.
     /// 
     /// If `path` is passed in with a hard-coded host, this will be used instead.
     /// 
@@ -571,7 +505,7 @@ impl GooseClient {
     ///  - If `path` includes the host, use this
     ///  - Otherwise, if `--host` is defined, use this
     ///  - Otherwise, if `GooseTaskSet.host` is defined, use this
-    ///  - Otherwise, use `GooseTest.host`.
+    ///  - Otherwise, use global `GooseState.host`.
     pub fn build_url(&mut self, path: &str) -> String {
         // If URL includes a host, use it.
         if let Ok(parsed_path) = Url::parse(path) {
@@ -589,7 +523,7 @@ impl GooseClient {
             base_url = match &self.task_set_host {
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
                 Some(host) => Url::parse(host).unwrap(),
-                // Otherwise, use `GooseTest.host`. `unwrap` okay as host validation was done at startup.
+                // Otherwise, use global `GooseState.host`. `unwrap` okay as host validation was done at startup.
                 None => Url::parse(&self.default_host.clone().unwrap()).unwrap(),
             };
         }
