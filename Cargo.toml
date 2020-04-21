@@ -9,7 +9,7 @@ documentation = "https://docs.rs/goose/"
 repository = "https://github.com/jeremyandrews/goose"
 readme = "README.md"
 keywords = ["loadtesting", "performance", "web", "framework", "tool"]
-license = "BSD-2-Clause"
+license = "Apache-2.0"
 
 [dependencies]
 #goose_codegen = { path = "goose_codegen" }
