@@ -421,6 +421,14 @@ pub struct GooseClient {
     pub task_request_name: Option<String>,
     /// Optional name of all requests made within the current task.
     pub request_name: Option<String>,
+    /// Store the previous url.
+    pub previous_path: Option<String>,
+    /// Store the previous url.
+    pub previous_method: Option<Method>,
+    /// Store the optional request_name allowing tasks to toggle success/failure.
+    pub previous_request_name: Option<String>,
+    /// Store if the previous request was a success (false for failure).
+    pub was_success: bool,
     /// Optional statistics collected about all requests made by this client.
     pub requests: HashMap<String, GooseRequest>,
 }
@@ -455,6 +463,10 @@ impl GooseClient {
             weighted_on_stop_tasks: Vec::new(),
             task_request_name: None,
             request_name: None,
+            previous_path: None,
+            previous_method: None,
+            previous_request_name: None,
+            was_success: false,
             requests: HashMap::new(),
         }
     }
@@ -735,24 +747,24 @@ impl GooseClient {
         let started = Instant::now();
         let request = request_builder.build()?;
 
-        // Allow introspection.
-        let method = request.method().clone();
-        let url = request.url().to_string();
+        // Allows introspection, and toggling success/failure.
+        self.previous_method = Some(request.method().clone());
+        self.previous_path = match Url::parse(&request.url().to_string()) {
+            Ok(u) => Some(u.path().to_string()),
+            Err(e) => {
+                error!("failed to parse url: {}", e);
+                None
+            }
+        };
+        self.previous_request_name = self.request_name.clone();
 
         // Make the actual request.
         let response = self.client.execute(request);
         let elapsed = started.elapsed() * 100;
 
         if self.config.print_stats {
-            // Introspect the request for logging and statistics
-            let path = match Url::parse(&url) {
-                Ok(u) => u.path().to_string(),
-                Err(e) => {
-                    warn!("failed to parse url: {}", e);
-                    "parse error".to_string()
-                }
-            };
-
+            let path = self.previous_path.clone().expect("failed to unwrap previous_path").to_string();
+            let method = self.previous_method.clone().expect("failed to unwrap previous_method");
             // Requests are named per-request, per-task, or based on the path loaded.
             let request_name = match &self.request_name {
                 Some(rn) => rn.to_string(),
@@ -762,7 +774,7 @@ impl GooseClient {
                 }
             };
 
-            let mut goose_request = self.get_request(&request_name, &method.clone());
+            let mut goose_request = self.get_request(&request_name, &method);
             goose_request.set_response_time(elapsed.as_secs_f32());
             match &response {
                 Ok(r) => {
@@ -776,18 +788,21 @@ impl GooseClient {
                     // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                     if status_code.is_success() {
                         goose_request.success_count += 1;
+                        self.was_success = true;
                     }
                     // @TODO: properly track redirects and other code ranges
                     else {
                         // @TODO: handle this correctly
-                        warn!("{:?}: non-success status_code: {:?}", &path, status_code);
+                        debug!("{:?}: non-success status_code: {:?}", &path, status_code);
                         goose_request.fail_count += 1;
+                        self.was_success = false;
                     }
                 }
                 Err(e) => {
                     // @TODO: what can we learn from a reqwest error?
                     warn!("{:?}: {}", &path, e);
                     goose_request.fail_count += 1;
+                    self.was_success = false;
                     if self.config.status_codes {
                         goose_request.set_status_code(None);
                     }
@@ -803,6 +818,92 @@ impl GooseClient {
         };
 
         response
+    }
+
+    /// Helper to determine which request_name was used in the previous request.
+    fn get_previous_request_name(&mut self) -> String {
+        match &self.previous_request_name {
+            Some(prn) => prn.to_string(),
+            None => match &self.task_request_name {
+                Some(trn) => trn.to_string(),
+                None => self.previous_path.clone().expect("failed to unwrap previous_path").to_string(),
+            }
+        }
+    }
+
+    /// Manually mark a request as a success.
+    /// 
+    /// By default, Goose will consider any response with a 2xx status code as a success. It may be
+    /// valid in your test for a non-2xx HTTP status code to be returned.
+    /// 
+    /// # Example
+    /// ```rust
+    ///     let response = client.get("/404");
+    ///     match &response {
+    ///         Ok(r) => {
+    ///             // We expect a 404 here.
+    ///             if r.status() == 404 {
+    ///                 client.set_success();
+    ///             }
+    ///         },
+    ///         Err(_) => (),
+    ///         }
+    ///     }
+    /// ````
+    pub fn set_success(&mut self) {
+        // If the last request was a success, we don't need to change anything.
+        if !self.was_success {
+            let request_name = self.get_previous_request_name();
+            let previous_method = self.previous_method.clone().expect("failed to unwrap previous_method");
+            let mut goose_request = self.get_request(&request_name.to_string(), &previous_method.clone());
+            goose_request.success_count += 1;
+            goose_request.fail_count -= 1;
+            self.set_request(&request_name, &previous_method, goose_request);
+        }
+    }
+
+    /// Manually mark a request as a failure.
+    /// 
+    /// By default, Goose will consider any response with a 2xx status code as a success. You may require
+    /// more advanced logic, in which a 2xx status code is actually a failure.
+    /// 
+    /// # Example
+    /// ```rust
+    /// fn loadtest_index(client: &mut GooseClient) {
+    ///     let response = client.set_request_name("index").get("/");
+    ///     // Extract the response Result.
+    ///     match response {
+    ///         Ok(r) => {
+    ///             // We only need to check pages that returned a success status code.
+    ///             if r.status().is_success() {
+    ///                 match r.text() {
+    ///                     Ok(text) => {
+    ///                         // If the expected string doesn't exist, this page load
+    ///                         // was a failure.
+    ///                         if !text.contains("this string must exist") {
+    ///                             client.set_failure();
+    ///                         }
+    ///                     }
+    ///                     // Empty page, this is a failure.
+    ///                     Err(_) => client.set_failure(),
+    ///                 }
+    ///             }
+    ///         },
+    ///         // Invalid response, this is already a failure.
+    ///         Err(_) => (),
+    ///     }
+    /// }
+    /// ````
+    pub fn set_failure(&mut self) {
+        // If the last request was a failure, we don't need to change anything.
+        if self.was_success {
+            let request_name = self.get_previous_request_name();
+            let previous_method = self.previous_method.clone().expect("failed to unwrap previous_method");
+            let mut goose_request = self.get_request(&request_name.to_string(), &previous_method.clone());
+            goose_request.success_count -= 1;
+            goose_request.fail_count += 1;
+            self.set_request(&request_name, &previous_method, goose_request);
+        }
     }
 }
 
