@@ -25,7 +25,7 @@ fn main() {
         .register_taskset(GooseTaskSet::new("WebsiteUser")
             // After each task runs, sleep randomly from 5 to 15 seconds.
             .set_wait_time(5, 15)
-            // This task only runs one time when the client first sarts.
+            // This task only runs one time when the client first starts.
             .register_task(GooseTask::new(website_task_login).set_on_start())
             // These next two tasks run repeatedly as long as the load test is running.
             .register_task(GooseTask::new(website_task_index))
