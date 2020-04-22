@@ -1,4 +1,5 @@
-//! Simple Goose load test example. Duplicates the simple example on Locust project page.
+//! Simple Goose load test example. Duplicates the simple example on the
+//! Locust project page (https://locust.io/).
 //! 
 //! ## License
 //! 
@@ -34,16 +35,21 @@ fn main() {
         .execute();
 }
 
+/// Demonstrates how to log in when a client starts. We flag this task as an
+/// on_start task when registering it above.
 fn website_task_login(client: &mut GooseClient) {
-    let params = [("username", "test_user"), ("password", "")];
     let request_builder = client.goose_post("/login");
+    // https://docs.rs/reqwest/0.10.4/reqwest/blocking/struct.RequestBuilder.html#method.form
+    let params = [("username", "test_user"), ("password", "")];
     let _response = client.goose_send(request_builder.form(&params));
 }
 
+/// A very simple task that simply loads the front page.
 fn website_task_index(client: &mut GooseClient) {
     let _response = client.get("/");
 }
 
+/// A very simple task that simply loads the about page.
 fn website_task_about(client: &mut GooseClient) {
     let _response = client.get("/about/");
 }
