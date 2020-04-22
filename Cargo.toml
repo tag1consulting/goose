@@ -1,6 +1,6 @@
 [package]
 name = "goose"
-version = "0.5.3"
+version = "0.5.4"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A lood testing tool based on Locust."
@@ -24,3 +24,6 @@ reqwest = { version = "0.10", features = ["blocking", "cookies", "json"] }
 structopt = "0.3"
 simplelog = "0.7"
 url = "2.1"
+
+[dev-dependencies]
+scraper = "0.11.0"
