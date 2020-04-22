@@ -74,25 +74,19 @@
 //! 
 //! ```goose
 //! fn main() {
-//!     // Initialize Goose.
-//!     let mut goose_state = GooseState::initialize();
-//! 
-//!     // Create and configure our first task set.
-//!     let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks")
-//!         // Apply random sleep after each task runs.
-//!         .set_wait_time(0, 3);
-//! 
-//!     // Register the foo task, assigning it a weight of 10.
-//!     loadtest_tasks.register_task(GooseTask::new(loadtest_foo).set_weight(10));
-//!     // Register the bar task, assigning it a weight of 2 (so it runs 1/5 as
-//!     // often as bar). Apply a task name which shows up in statistics.
-//!     loadtest_tasks.register_task(GooseTask::new(loadtest_bar).set_name("bar").set_weight(2));
-//! 
-//!     // Register our task set.
-//!     goose_state.register_taskset(loadtest_tasks);
-//! 
-//!     // Execute the load test.
-//!     goose_state.execute();
+//!     GooseState::initialize()
+//!         .register_taskset(GooseTaskSet::new("LoadtestTasks")
+//!             .set_wait_time(0, 3)
+//!             // Register the foo task, assigning it a weight of 10.
+//!             .register_task(GooseTask::new(loadtest_foo).set_weight(10))
+//!             // Register the bar task, assigning it a weight of 2 (so it
+//!             // runs 1/5 as often as bar). Apply a task name which shows up
+//!             // in statistics.
+//!             .register_task(GooseTask::new(loadtest_bar).set_name("bar").set_weight(2))
+//!         )
+//!         // You could also set a default host here, for example:
+//!         //.set_host("http://dev.local/")
+//!         .execute();
 //! }
 //! ```
 //! 
@@ -119,7 +113,7 @@
 //! options to customize our load test.
 //! 
 //! ```bash
-//! $ cargo run --release -- --host http://apache.fosciana --print-stats -t 30s -v
+//! $ cargo run --release -- --host http://dev.local --print-stats -t 30s -v
 //! ```
 //! 
 //! The first option we specified is `--host`, and in this case tells Goose to run the load test
@@ -137,7 +131,7 @@
 //! 
 //! ```bash
 //!    Finished release [optimized] target(s) in 0.05s
-//!     Running `target/release/loadtest --host 'http://apache.fosciana' --print-stats -t 30s -v`
+//!     Running `target/release/loadtest --host 'http://dev.local' --print-stats -t 30s -v`
 //! 05:56:30 [ INFO] Output verbosity level: INFO
 //! 05:56:30 [ INFO] Logfile verbosity level: INFO
 //! 05:56:30 [ INFO] Writing to log file: goose.log
@@ -159,7 +153,7 @@
 //! would launch 30 clients over 15 seconds, or two clients per second.
 //! 
 //! ```bash
-//! 05:56:30 [ INFO] global host configured: http://apache.fosciana
+//! 05:56:30 [ INFO] global host configured: http://dev.local
 //! 05:56:30 [ INFO] launching client 1 from LoadtestTasks...
 //! 05:56:30 [ INFO] launching client 2 from LoadtestTasks...
 //! 05:56:30 [ INFO] launching client 3 from LoadtestTasks...
@@ -426,18 +420,22 @@ impl GooseState {
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
-    /// be reigstered into Goose's global state with this method for it to run.
+    /// be registered into Goose's global state with this method for it to run.
     /// 
     /// # Example
     /// ```rust
-    ///     let mut goose_state = GooseState::initialize();
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
-    ///     example_tasks.register_task(GooseTask::new(example_task));
-    ///     goose_state.register_taskset(example_tasks);
+    ///     GooseState::initialize()
+    ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
+    ///             .register_task(GooseTask::new(example_task))
+    ///         )
+    ///         .register_taskset(GooseTaskSet::new("OtherTasks")
+    ///             .register_task(GooseTask::new(other_task))
+    ///         );
     /// ```
-    pub fn register_taskset(&mut self, mut taskset: GooseTaskSet) {
+    pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
         taskset.task_sets_index = self.task_sets.len();
         self.task_sets.push(taskset);
+        self
     }
 
     /// Optionally configure a default host for the load test. This is used if
@@ -451,7 +449,8 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust
-    ///     let mut goose_state = GooseState::initialize().set_host("local.dev");
+    ///     GooseState::initialize()
+    ///         .set_host("local.dev");
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("set_host: {}", host);
@@ -522,16 +521,12 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust
-    ///     // Initial the global Goose State.
-    ///     let mut goose_state = GooseState::initialize();
-    /// 
-    ///     // Set up a simplistic load test with one task in one task set.
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
-    ///     example_tasks.register_task(GooseTask::new(example_task));
-    ///     goose_state.register_taskset(example_tasks);
-    /// 
-    ///     // Execute the load test as configured above.
-    ///     goose_state.execute();
+    ///     GooseState::initialize()
+    ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
+    ///             .register_task(GooseTask::new(example_task).set_weight(2))
+    ///             .register_task(GooseTask::new(another_example_task).set_weight(3))
+    ///         )
+    ///         .execute();
     /// ```
     pub fn execute(mut self) {
         // At least one task set is required.

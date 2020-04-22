@@ -243,10 +243,11 @@ impl GooseTaskSet {
     ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
     ///     example_tasks.register_task(GooseTask::new(a_task_function));
     /// ```
-    pub fn register_task(&mut self, mut task: GooseTask) {
+    pub fn register_task(mut self, mut task: GooseTask) -> Self {
         trace!("{} register_task: {}", self.name, task.name);
         task.tasks_index = self.tasks.len();
         self.tasks.push(task);
+        self
     }
 
     /// Sets a weight on a task set. The larger the value of weight, the more often the task set will 

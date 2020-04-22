@@ -20,19 +20,18 @@ use goose::GooseState;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 fn main() {
-    let mut goose_state = GooseState::initialize();
-
-    // Create and configure a task set.
-    let mut websiteuser_tasks = GooseTaskSet::new("WebsiteUser")
-        // Optional, a random sleep value selected from low to high, randomly invoked after each task is run
-        .set_wait_time(5, 15);
-    
-    websiteuser_tasks.register_task(GooseTask::new(website_task_login).set_on_start());
-    websiteuser_tasks.register_task(GooseTask::new(website_task_index));
-    websiteuser_tasks.register_task(GooseTask::new(website_task_about));
-    goose_state.register_taskset(websiteuser_tasks);
-
-    goose_state.execute();
+    GooseState::initialize()
+        // In this example, we only create a single taskset, named "WebsiteUser".
+        .register_taskset(GooseTaskSet::new("WebsiteUser")
+            // After each task runs, sleep randomly from 5 to 15 seconds.
+            .set_wait_time(5, 15)
+            // This task only runs one time when the client first sarts.
+            .register_task(GooseTask::new(website_task_login).set_on_start())
+            // These next two tasks run repeatedly as long as the load test is running.
+            .register_task(GooseTask::new(website_task_index))
+            .register_task(GooseTask::new(website_task_about))
+        )
+        .execute();
 }
 
 fn website_task_login(client: &mut GooseClient) {
@@ -43,8 +42,6 @@ fn website_task_login(client: &mut GooseClient) {
 
 fn website_task_index(client: &mut GooseClient) {
     let _response = client.get("/");
-    //client.set_response_err("error text here");
-    //client.set_response_ok();
 }
 
 fn website_task_about(client: &mut GooseClient) {
