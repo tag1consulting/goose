@@ -438,7 +438,8 @@ impl GooseClient {
     pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &GooseConfiguration) -> Self {
         trace!("new client");
         let builder = Client::builder()
-            .user_agent(APP_USER_AGENT);
+            .user_agent(APP_USER_AGENT)
+            .cookie_store(true);
         let client = match builder.build() {
             Ok(c) => c,
             Err(e) => {
