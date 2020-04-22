@@ -39,7 +39,7 @@ fn main() {
 /// on_start task when registering it above.
 fn website_task_login(client: &mut GooseClient) {
     let request_builder = client.goose_post("/login");
-    // https://docs.rs/reqwest/0.10.4/reqwest/blocking/struct.RequestBuilder.html#method.form
+    // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
     let _response = client.goose_send(request_builder.form(&params));
 }
