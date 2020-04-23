@@ -27,3 +27,4 @@ url = "2.1"
 
 [dev-dependencies]
 scraper = "0.11.0"
+select = "0.4"

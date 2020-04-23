@@ -19,6 +19,8 @@
 
 use rand::Rng;
 use scraper::{Html, Selector};
+use select::document::Document;
+use select::predicate::Name;
 
 use goose::GooseState;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
@@ -68,8 +70,30 @@ fn main() {
 
 /// View the front page.
 fn drupal_loadtest_front_page(client: &mut GooseClient) {
-    let _response = client.get("/");
-    // @TODO: static assets
+    let response = client.get("/");
+
+    // Grab some static assets from the front page.
+    match response {
+        Ok(r) => {
+            // Grab all src values from image tags.
+            Document::from_read(r)
+                .unwrap()
+                .find(Name("img"))
+                .filter_map(|n| n.attr("src"))
+                .for_each(|x| {
+                    // @TODO: once we're done comparing Goose to Locust, improve this
+                    // to do a better job of matching local assets
+                    if x.contains("/misc") || x.contains("/themes") {
+                        println!("getting {}", x);
+                        let _response = client.set_request_name("static asset").get(x);
+                    }
+                });
+        },
+        Err(e) => {
+            eprintln!("unexpected error when loading / page: {}", e);
+            client.set_failure();
+        },
+    }
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
