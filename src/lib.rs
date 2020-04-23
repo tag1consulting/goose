@@ -39,7 +39,7 @@
 //! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 //! ```
 //! 
-//! Below your `main` funcation (which currently is the default `Hello, world!`), add
+//! Below your `main` function (which currently is the default `Hello, world!`), add
 //! one or more load test functions. The names of these functions are arbitrary, but it is
 //! recommended you use self-documenting names. Each load test function must accept a mutable
 //! GooseClient pointer. For example:

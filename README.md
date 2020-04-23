@@ -11,8 +11,10 @@ Have you ever been attacked by a goose?
 Goose is a Rust load testing tool based on [Locust](https://locust.io/).
 User behavior is defined with standard Rust code.
 
-Goose load tests are built using Cargo to build a new application with a
-dependency on the Goose library.
+Goose load tests are built using Cargo to create a new application with a
+dependency on the Goose library. Web requests are made with the
+[Reqwest](https://docs.rs/reqwest) HTTP Client. Get started quickly with the
+[in-line documentation](https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test).
 
 Passing the included `simple` example the `-h` flag you can see the
 run-time configuration options available to Goose load tests:
@@ -21,7 +23,7 @@ run-time configuration options available to Goose load tests:
 $ cargo run --release --example simple -- -h
     Finished release [optimized] target(s) in 0.05s
      Running `target/release/examples/simple -h`
-client 0.5.3
+client 0.5.4
 Configuration options required for launching a Goose loadtest
 
 USAGE:
