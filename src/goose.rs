@@ -539,8 +539,8 @@ impl GooseClient {
     pub fn build_url(&mut self, path: &str) -> String {
         // If URL includes a host, use it.
         if let Ok(parsed_path) = Url::parse(path) {
-            if let Some(uri) = parsed_path.host() {
-                return uri.to_string()
+            if let Some(_uri) = parsed_path.host() {
+                return path.to_string()
             }
         }
 
@@ -747,7 +747,13 @@ impl GooseClient {
     /// ```
     pub fn goose_send(&mut self, request_builder: RequestBuilder) -> Result<Response, Error> {
         let started = Instant::now();
-        let request = request_builder.build()?;
+        let request = match request_builder.build() {
+            Ok(r) => r,
+            Err(e) => {
+                error!("goose_send failed to build request: {}", e);
+                std::process::exit(1);
+            }
+        };
 
         // Allows introspection, and toggling success/failure.
         self.previous_method = Some(request.method().clone());
