@@ -1,6 +1,11 @@
 //! Conversion of Locust load test used for the Drupal memcache module, from
 //! https://github.com/tag1consulting/drupal-loadtest/
 //! 
+//! To run, you must set up the load test environment as described in the above
+//! repository, and then run the example. You'll need to set --host and may want
+//! to set other command line options as well, starting with:
+//!      cargo run --release --example drupal_loadtest -- 
+//! 
 //! ## License
 //! 
 //! Copyright 2020 Jeremy Andrews
@@ -84,7 +89,6 @@ fn drupal_loadtest_front_page(client: &mut GooseClient) {
                     // @TODO: once we're done comparing Goose to Locust, improve this
                     // to do a better job of matching local assets
                     if x.contains("/misc") || x.contains("/themes") {
-                        println!("getting {}", x);
                         let _response = client.set_request_name("static asset").get(x);
                     }
                 });
