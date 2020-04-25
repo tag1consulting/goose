@@ -6,23 +6,8 @@ use crate::GooseState;
 use crate::goose::GooseRequest;
 use crate::util;
 
-trait FloatIterExt {
-    fn float_min(&mut self) -> f32;
-    fn float_max(&mut self) -> f32;
-}
-
-impl<T> FloatIterExt for T where T: Iterator<Item=f32> {
-    fn float_max(&mut self) -> f32 {
-        self.fold(f32::NAN, f32::max)
-    }
-    
-    fn float_min(&mut self) -> f32 {
-        self.fold(f32::NAN, f32::min)
-    }
-}
-
 /// Get the response time that a certain number of percent of the requests finished within.
-fn calculate_response_time_percentile(mut response_times: Vec<f32>, percent: f32) -> f32 {
+fn calculate_response_time_percentile(mut response_times: Vec<usize>, percent: f32) -> usize {
     let total_requests = response_times.len();
     let percentile_request = (total_requests as f32 * percent) as usize;
     debug!("percentile: {}, request {} of total {}", percent, percentile_request, total_requests);
@@ -100,7 +85,7 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
 }
 
 fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percentiles: bool) {
-    let mut aggregate_response_times: Vec<f32> = Vec::new();
+    let mut aggregate_response_times: Vec<usize> = Vec::new();
     println!("-------------------------------------------------------------------------------");
     println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
     println!(" ----------------------------------------------------------------------------- ");
@@ -111,8 +96,8 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
             util::truncate_string(&request_key, 23),
             util::mean(&request.response_times),
-            &request.response_times.iter().cloned().float_min(),
-            &request.response_times.iter().cloned().float_max(),
+            &request.response_times.iter().cloned().min().unwrap(),
+            &request.response_times.iter().cloned().max().unwrap(),
             util::median(&request.response_times),
         );
     }
@@ -120,8 +105,8 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
     println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
         "Aggregated",
         util::mean(&aggregate_response_times),
-        &aggregate_response_times.iter().cloned().float_min(),
-        &aggregate_response_times.iter().cloned().float_max(),
+        &aggregate_response_times.iter().cloned().min().unwrap(),
+        &aggregate_response_times.iter().cloned().max().unwrap(),
         util::median(&aggregate_response_times),
     );
 

@@ -51,19 +51,19 @@ pub fn gcd(u: usize, v: usize) -> usize {
 }
 
 /// Calculate mean for a vector of f32s.
-pub fn mean(list: &[f32]) -> f32 {
-    let sum: f32 = Iterator::sum(list.iter());
-    f32::from(sum) / (list.len() as f32)
+pub fn mean(list: &[usize]) -> usize {
+    let sum: usize = Iterator::sum(list.iter());
+    usize::from(sum) / (list.len() as usize)
 }
 
 /// Calculate median for a vector of f32s.
-pub fn median(list: &[f32]) -> f32 {
+pub fn median(list: &[usize]) -> usize {
     let len = list.len();
     let mid = len / 2;
     if len % 2 == 0 {
         mean(&list[(mid - 1)..(mid + 1)])
     } else {
-        f32::from(list[mid])
+        list[mid]
     }
 }
 

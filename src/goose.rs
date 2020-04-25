@@ -337,7 +337,7 @@ pub struct GooseRequest {
     /// The method for which statistics are being collected.
     pub method: Method,
     /// A record of every response time for every request of this path-method pair.
-    pub response_times: Vec<f32>,
+    pub response_times: Vec<usize>,
     /// Per-status-code counters, tracking how often each response code was returned for this request.
     pub status_code_counts: HashMap<u16, usize>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
@@ -360,7 +360,7 @@ impl GooseRequest {
     }
 
     /// Append response time to `response_times` vector.
-    fn set_response_time(&mut self, response_time: f32) {
+    fn set_response_time(&mut self, response_time: usize) {
         self.response_times.push(response_time);
     }
 
@@ -783,7 +783,7 @@ impl GooseClient {
             };
 
             let mut goose_request = self.get_request(&request_name, &method);
-            goose_request.set_response_time(elapsed.as_secs_f32());
+            goose_request.set_response_time(elapsed.as_millis() as usize);
             match &response {
                 Ok(r) => {
                     let status_code = r.status();
