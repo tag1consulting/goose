@@ -131,6 +131,7 @@ fn drupal_loadtest_login(client: &mut GooseClient) {
                         Some(i) => i,
                         None => {
                             eprintln!("no form_build_id found on /user");
+                            client.set_failure();
                             return;
                         }
                     };
