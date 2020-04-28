@@ -95,6 +95,7 @@ fn drupal_loadtest_front_page(client: &mut GooseClient) {
                 },
                 Err(e) => {
                     eprintln!("failed to parse front page: {}", e);
+                    client.set_failure();
                 }
             }
         },
