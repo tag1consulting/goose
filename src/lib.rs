@@ -840,7 +840,7 @@ pub struct GooseConfiguration {
     #[structopt(short, long)]
     clients: Option<usize>,
 
-    /// How many users to spawn per second (defaults to available CPUs).
+    /// How many users to spawn per second (defaults to 1 per available CPU).
     #[structopt(short = "r", long)]
     hatch_rate: Option<usize>,
 
