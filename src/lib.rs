@@ -1068,8 +1068,36 @@ fn merge_from_client(
 ) -> GooseRequest {
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
-    merged_request.response_times.extend_from_slice(&client_request.response_times);
+
+    // Iterate over client response times, and merge into global response times.
+    for (response_time, count) in &client_request.response_times {
+        let counter = match merged_request.response_times.get(&response_time) {
+            // We've seen this response_time before, increment counter.
+            Some(c) => {
+                *c + 1
+            }
+            // First time we've seen this response time, initialize counter.
+            None => {
+                *count
+            }
+        };
+        merged_request.response_times.insert(*response_time, counter);
+    }
+    // Increment total response time counter.
+    merged_request.total_response_time += &client_request.total_response_time;
+    // If client had new fastest response time, update global fastest response time.
+    if merged_request.min_response_time == 0 ||
+        (client_request.min_response_time > 0 && client_request.min_response_time < merged_request.min_response_time)
+    {
+        merged_request.min_response_time = client_request.min_response_time;
+    }
+    // If client had new slowest response time, update global slowest resposne time.
+    if merged_request.max_response_time < client_request.max_response_time {
+        merged_request.max_response_time = client_request.max_response_time;
+    }
+    // Increment total success counter.
     merged_request.success_count += &client_request.success_count;
+    // Increment total fail counter.
     merged_request.fail_count += &client_request.fail_count;
     // Only accrue overhead of merging status_code_counts if we're going to display the results
     if config.status_codes {
