@@ -77,7 +77,7 @@ pub fn median(
             }
         }
     }
-    return 0
+    return min;
 }
 
 /// Truncate strings when they're too long to display.
