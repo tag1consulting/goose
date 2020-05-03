@@ -2,9 +2,8 @@ use num_format::{Locale, ToFormattedString};
 use std::collections::HashMap;
 use std::f32;
 
-use crate::GooseState;
+use crate::{GooseState, util, merge_response_times, update_min_response_time, update_max_response_time};
 use crate::goose::GooseRequest;
-use crate::util;
 
 /// Get the response time that a certain number of percent of the requests finished within.
 fn calculate_response_time_percentile(mut response_times: Vec<usize>, percent: f32) -> usize {
@@ -84,6 +83,7 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
     }
 }
 
+/*
 fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percentiles: bool) {
     let mut aggregate_response_times: Vec<usize> = Vec::new();
     println!("-------------------------------------------------------------------------------");
@@ -141,6 +141,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         );
     }
 }
+*/
 
 fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     println!("-------------------------------------------------------------------------------");
@@ -192,7 +193,22 @@ fn merge_stats(goose_state: &GooseState) -> HashMap<String, GooseRequest> {
                 merged_request = existing_request.clone();
                 merged_request.success_count += request.success_count;
                 merged_request.fail_count += request.fail_count;
-                merged_request.response_times.append(&mut request.response_times.clone());
+
+                // Iterate over client response times, and merge into global response times.
+                merged_request.response_times = merge_response_times(
+                    merged_request.response_times,
+                    request.response_times.clone(),
+                );
+
+                // Increment total response time counter.
+                merged_request.total_response_time += &request.total_response_time;
+
+                // If client had new fastest response time, update global fastest response time.
+                merged_request.min_response_time = update_min_response_time(merged_request.min_response_time, request.min_response_time);
+
+                // If client had new slowest response time, update global slowest resposne time.
+                merged_request.max_response_time = update_max_response_time(merged_request.max_response_time, request.max_response_time);
+
                 // Only merge status_code_counts if we're displaying the results
                 if goose_state.configuration.status_codes {
                     for (status_code, count) in request.status_code_counts.clone() {
@@ -223,7 +239,7 @@ pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, with percentiles
-    print_response_times(&merged_requests, true);
+    //print_response_times(&merged_requests, true);
     // 4) print status_codes
     if goose_state.configuration.status_codes {
         print_status_codes(&merged_requests);
@@ -237,6 +253,6 @@ pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, without percentiles
-    print_response_times(&merged_requests, false);
+    //print_response_times(&merged_requests, false);
     println!();
 }
