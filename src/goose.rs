@@ -173,7 +173,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::time::Instant;
 
 use http::StatusCode;
@@ -337,7 +337,7 @@ pub struct GooseRequest {
     /// The method for which statistics are being collected.
     pub method: Method,
     /// Per-response-time counters, tracking how often pages are returned with this response time.
-    pub response_times: HashMap<usize, usize>,
+    pub response_times: BTreeMap<usize, usize>,
     /// The shortest response time seen so far.
     pub min_response_time: usize,
     /// The longest response time seen so far.
@@ -360,7 +360,7 @@ impl GooseRequest {
         GooseRequest {
             path: path.to_string(),
             method: method,
-            response_times: HashMap::new(),
+            response_times: BTreeMap::new(),
             min_response_time: 0,
             max_response_time: 0,
             total_response_time: 0,
@@ -399,7 +399,7 @@ impl GooseRequest {
         }
 
         // Update max_response_time if this one is slowest yet.
-        if rounded_response_time > self.max_response_time {
+        if rounded_response_time > self.min_response_time {
             self.max_response_time = rounded_response_time;
         }
 

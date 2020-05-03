@@ -1062,9 +1062,9 @@ fn timer_expired(started: time::Instant, run_time: usize) -> bool {
 
 // Merge local response times into global response times.
 pub fn merge_response_times(
-    mut global_response_times: HashMap<usize, usize>,
-    local_response_times: HashMap<usize, usize>,
-) -> HashMap<usize, usize> {
+    mut global_response_times: BTreeMap<usize, usize>,
+    local_response_times: BTreeMap<usize, usize>,
+) -> BTreeMap<usize, usize> {
     // Iterate over client response times, and merge into global response times.
     for (response_time, count) in &local_response_times {
         let counter = match global_response_times.get(&response_time) {

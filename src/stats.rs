@@ -1,5 +1,5 @@
 use num_format::{Locale, ToFormattedString};
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::f32;
 
 use crate::{GooseState, util, merge_response_times, update_min_response_time, update_max_response_time};
@@ -84,7 +84,7 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
 }
 
 fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percentiles: bool) {
-    let mut aggregate_response_times: HashMap<usize, usize> = HashMap::new();
+    let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
     let mut aggregate_total_response_time: usize = 0;
     let mut aggregate_response_time_counter: usize = 0;
     let mut aggregate_min_response_time: usize = 0;
@@ -92,7 +92,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
     println!("-------------------------------------------------------------------------------");
     println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
     println!(" ----------------------------------------------------------------------------- ");
-    for (request_key, mut request) in requests.clone() {
+    for (request_key, request) in requests.clone() {
         // Iterate over client response times, and merge into global response times.
         aggregate_response_times = merge_response_times(
             aggregate_response_times,
