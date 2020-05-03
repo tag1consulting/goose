@@ -336,8 +336,14 @@ pub struct GooseRequest {
     pub path: String,
     /// The method for which statistics are being collected.
     pub method: Method,
-    /// A record of every response time for every request of this path-method pair.
-    pub response_times: Vec<usize>,
+    /// Per-response-time counters, tracking how often pages are returned with this response time.
+    pub response_times: HashMap<usize, usize>,
+    /// The shortest response time seen so far.
+    pub min_response_time: usize,
+    /// The longest response time seen so far.
+    pub max_response_time: usize,
+    /// Total combined response times seen so far.
+    pub total_response_time: usize,
     /// Per-status-code counters, tracking how often each response code was returned for this request.
     pub status_code_counts: HashMap<u16, usize>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
@@ -352,7 +358,10 @@ impl GooseRequest {
         GooseRequest {
             path: path.to_string(),
             method: method,
-            response_times: Vec::new(),
+            response_times: HashMap::new(),
+            min_response_time: 0,
+            max_response_time: 0,
+            total_response_time: 0,
             status_code_counts: HashMap::new(),
             success_count: 0,
             fail_count: 0,
@@ -360,8 +369,54 @@ impl GooseRequest {
     }
 
     /// Append response time to `response_times` vector.
-    fn set_response_time(&mut self, response_time: usize) {
-        self.response_times.push(response_time);
+    fn set_response_time(&mut self, response_time: u128) {
+        // Round the response time so we can combine similar times together and
+        // minimize required memory to store and push upstream to the parent.
+        let rounded_response_time: usize;
+        // No rounding for 1-10ms response times.
+        if response_time < 10 {
+            rounded_response_time = response_time as usize;
+        }
+        // Round to nearest 10 for 10-100ms response times.
+        else if response_time < 100 {
+            rounded_response_time = ((response_time as f64 / 10.0).round() * 10.0) as usize;
+        }
+        // Round to nearest 100 for 100-1000ms response times.
+        else if response_time < 1000 {
+            rounded_response_time = ((response_time as f64 / 100.0).round() * 100.0) as usize;
+        }
+        // Round to nearest 1000 for all larger response times.
+        else {
+            rounded_response_time = ((response_time as f64 / 10000.0).round() * 10000.0) as usize;
+        }
+
+        // Update min_response_time if this one is fastest yet.
+        if self.min_response_time == 0 || rounded_response_time < self.min_response_time {
+            self.min_response_time = rounded_response_time;
+        }
+
+        // Update max_response_time if this one is slowest yet.
+        if rounded_response_time > self.min_response_time {
+            self.max_response_time = rounded_response_time;
+        }
+
+        // Update total_respone time, adding in this one.
+        self.total_response_time += rounded_response_time;
+
+        let counter = match self.response_times.get(&rounded_response_time) {
+            // We've seen this response_time before, increment counter.
+            Some(c) => {
+                debug!("got {:?} counter: {}", rounded_response_time, c);
+                *c + 1
+            }
+            // First time we've seen this response time, initialize counter.
+            None => {
+                debug!("no match for counter: {}", rounded_response_time);
+                1
+            }
+        };
+        self.response_times.insert(rounded_response_time, counter);
+        debug!("incremented {} counter: {}", rounded_response_time, counter);
     }
 
     /// Increment counter for status code, creating new counter if first time seeing status code.
@@ -783,7 +838,7 @@ impl GooseClient {
             };
 
             let mut goose_request = self.get_request(&request_name, &method);
-            goose_request.set_response_time(elapsed.as_millis() as usize);
+            goose_request.set_response_time(elapsed.as_millis());
             match &response {
                 Ok(r) => {
                     let status_code = r.status();
