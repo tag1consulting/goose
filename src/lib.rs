@@ -1114,6 +1114,8 @@ fn merge_from_client(
     );
     // Increment total response time counter.
     merged_request.total_response_time += &client_request.total_response_time;
+    // Increment count of how many resposne counters we've seen.
+    merged_request.response_time_counter += &client_request.response_time_counter;
     // If client had new fastest response time, update global fastest response time.
     merged_request.min_response_time = update_min_response_time(merged_request.min_response_time, client_request.min_response_time);
     // If client had new slowest response time, update global slowest resposne time.

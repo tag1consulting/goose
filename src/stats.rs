@@ -83,33 +83,55 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
     }
 }
 
-/*
 fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percentiles: bool) {
-    let mut aggregate_response_times: Vec<usize> = Vec::new();
+    let mut aggregate_response_times: HashMap<usize, usize> = HashMap::new();
+    let mut aggregate_total_response_time: usize = 0;
+    let mut aggregate_response_time_counter: usize = 0;
+    let mut aggregate_min_response_time: usize = 0;
+    let mut aggregate_max_response_time: usize = 0;
     println!("-------------------------------------------------------------------------------");
     println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
     println!(" ----------------------------------------------------------------------------- ");
     for (request_key, mut request) in requests.clone() {
-        // Sort response times so we can calculate a mean.
-        request.response_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        aggregate_response_times.append(&mut request.response_times.clone());
+        // Iterate over client response times, and merge into global response times.
+        aggregate_response_times = merge_response_times(
+            aggregate_response_times,
+            request.response_times.clone(),
+        );
+
+        // Increment total response time counter.
+        aggregate_total_response_time += &request.total_response_time;
+
+        // Increment counter tracking individual response times seen.
+        aggregate_response_time_counter += &request.response_time_counter;
+
+        // If client had new fastest response time, update global fastest response time.
+        aggregate_min_response_time = update_min_response_time(aggregate_min_response_time, request.min_response_time);
+
+        // If client had new slowest response time, update global slowest resposne time.
+        aggregate_max_response_time = update_max_response_time(aggregate_max_response_time, request.max_response_time);
+
         println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
             util::truncate_string(&request_key, 23),
-            util::mean(&request.response_times),
-            &request.response_times.iter().cloned().min().unwrap(),
-            &request.response_times.iter().cloned().max().unwrap(),
-            util::median(&request.response_times),
+            request.total_response_time / request.response_time_counter,
+            request.min_response_time,
+            request.max_response_time,
+            // @TODO: fix median calculation
+            //util::median(&request.response_times),
+            0.0,
         );
     }
     println!(" ------------------------+------------+------------+------------+------------- ");
     println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
         "Aggregated",
-        util::mean(&aggregate_response_times),
-        &aggregate_response_times.iter().cloned().min().unwrap(),
-        &aggregate_response_times.iter().cloned().max().unwrap(),
-        util::median(&aggregate_response_times),
+        aggregate_total_response_time / aggregate_response_time_counter,
+        aggregate_min_response_time,
+        aggregate_max_response_time,
+        0.0,
+        //util::median(&aggregate_response_times),
     );
 
+    /*
     if display_percentiles {
         println!("-------------------------------------------------------------------------------");
         println!(" Slowest page load within specified percentile of requests (in ms):");
@@ -140,8 +162,8 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
             calculate_response_time_percentile(aggregate_response_times.clone(), 0.9999),
         );
     }
+    */
 }
-*/
 
 fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     println!("-------------------------------------------------------------------------------");
@@ -203,6 +225,9 @@ fn merge_stats(goose_state: &GooseState) -> HashMap<String, GooseRequest> {
                 // Increment total response time counter.
                 merged_request.total_response_time += &request.total_response_time;
 
+                // Increment counter tracking individual response times seen.
+                merged_request.response_time_counter += &request.response_time_counter;
+
                 // If client had new fastest response time, update global fastest response time.
                 merged_request.min_response_time = update_min_response_time(merged_request.min_response_time, request.min_response_time);
 
@@ -239,7 +264,7 @@ pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, with percentiles
-    //print_response_times(&merged_requests, true);
+    print_response_times(&merged_requests, true);
     // 4) print status_codes
     if goose_state.configuration.status_codes {
         print_status_codes(&merged_requests);
@@ -253,6 +278,6 @@ pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
     // 2) print request and fail statistics.
     print_requests_and_fails(&merged_requests, elapsed);
     // 3) print respones time statistics, without percentiles
-    //print_response_times(&merged_requests, false);
+    print_response_times(&merged_requests, false);
     println!();
 }

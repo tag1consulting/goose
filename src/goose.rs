@@ -344,6 +344,8 @@ pub struct GooseRequest {
     pub max_response_time: usize,
     /// Total combined response times seen so far.
     pub total_response_time: usize,
+    /// Total number of response times seen so far.
+    pub response_time_counter: usize,
     /// Per-status-code counters, tracking how often each response code was returned for this request.
     pub status_code_counts: HashMap<u16, usize>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
@@ -362,6 +364,7 @@ impl GooseRequest {
             min_response_time: 0,
             max_response_time: 0,
             total_response_time: 0,
+            response_time_counter: 0,
             status_code_counts: HashMap::new(),
             success_count: 0,
             fail_count: 0,
@@ -396,12 +399,15 @@ impl GooseRequest {
         }
 
         // Update max_response_time if this one is slowest yet.
-        if rounded_response_time > self.min_response_time {
+        if rounded_response_time > self.max_response_time {
             self.max_response_time = rounded_response_time;
         }
 
         // Update total_respone time, adding in this one.
         self.total_response_time += rounded_response_time;
+
+        // Increment counter tracking total number of response times seen.
+        self.response_time_counter += 1;
 
         let counter = match self.response_times.get(&rounded_response_time) {
             // We've seen this response_time before, increment counter.
