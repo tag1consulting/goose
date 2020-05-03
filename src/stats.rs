@@ -116,9 +116,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
             request.total_response_time / request.response_time_counter,
             request.min_response_time,
             request.max_response_time,
-            // @TODO: fix median calculation
-            //util::median(&request.response_times),
-            0.0,
+            util::median(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time),
         );
     }
     println!(" ------------------------+------------+------------+------------+------------- ");
@@ -127,8 +125,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         aggregate_total_response_time / aggregate_response_time_counter,
         aggregate_min_response_time,
         aggregate_max_response_time,
-        0.0,
-        //util::median(&aggregate_response_times),
+        util::median(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time),
     );
 
     /*

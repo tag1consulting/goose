@@ -1,4 +1,5 @@
 use std::cmp::{min, max};
+use std::collections::BTreeMap;
 use std::str::FromStr;
 use regex::Regex;
 
@@ -50,21 +51,33 @@ pub fn gcd(u: usize, v: usize) -> usize {
     gcd
 }
 
-/// Calculate mean for a vector of f32s.
-pub fn mean(list: &[usize]) -> usize {
-    let sum: usize = Iterator::sum(list.iter());
-    usize::from(sum) / (list.len() as usize)
-}
-
-/// Calculate median for a vector of f32s.
-pub fn median(list: &[usize]) -> usize {
-    let len = list.len();
-    let mid = len / 2;
-    if len % 2 == 0 {
-        mean(&list[(mid - 1)..(mid + 1)])
-    } else {
-        list[mid]
+/// Calculate median for a BTreeMap of usizes.
+pub fn median(
+    btree: &BTreeMap<usize, usize>,
+    total_elements: usize,
+    min: usize,
+    max: usize,
+) -> usize {
+    let mut total_count: usize = 0;
+    let half_elements = total_elements / 2;
+    for (value, counter) in btree {
+        total_count += counter;
+        if total_count >= half_elements {
+            // We're working with rounded values, it's possible the mean is greater than the
+            // max response time, or smaller than the min response time -- in these cases
+            // return the actual values;
+            if *value > max {
+                return max;
+            }
+            else if *value < min {
+                return min;
+            }
+            else {
+                return *value;
+            }
+        }
     }
+    return 0
 }
 
 /// Truncate strings when they're too long to display.
