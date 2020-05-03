@@ -90,7 +90,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
     let mut aggregate_min_response_time: usize = 0;
     let mut aggregate_max_response_time: usize = 0;
     println!("-------------------------------------------------------------------------------");
-    println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Mean");
+    println!(" {:<23} | {:<10} | {:<10} | {:<10} | {:<10}", "Name", "Avg (ms)", "Min", "Max", "Median");
     println!(" ----------------------------------------------------------------------------- ");
     for (request_key, request) in requests.clone() {
         // Iterate over client response times, and merge into global response times.
