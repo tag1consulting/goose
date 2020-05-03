@@ -371,14 +371,34 @@ impl GooseRequest {
         }
     }
 
-    /// Append response time to `response_times` vector.
+    /// Track response time.
     fn set_response_time(&mut self, response_time: u128) {
+        // Perform this conversin only once, then re-use throughout this funciton.
+        let response_time_usize = response_time as usize;
+
+        // Update minimum if this one is fastest yet.
+        if self.min_response_time == 0 || response_time_usize < self.min_response_time {
+            self.min_response_time = response_time_usize;
+        }
+
+        // Update maximum if this one is slowest yet.
+        if response_time_usize > self.max_response_time {
+            self.max_response_time = response_time_usize;
+        }
+
+        // Update total_respone time, adding in this one.
+        self.total_response_time += response_time_usize;
+
+        // Each time we store a new response time, increment counter by one.
+        self.response_time_counter += 1;
+
         // Round the response time so we can combine similar times together and
         // minimize required memory to store and push upstream to the parent.
         let rounded_response_time: usize;
+
         // No rounding for 1-10ms response times.
         if response_time < 10 {
-            rounded_response_time = response_time as usize;
+            rounded_response_time = response_time_usize;
         }
         // Round to nearest 10 for 10-100ms response times.
         else if response_time < 100 {
@@ -390,24 +410,8 @@ impl GooseRequest {
         }
         // Round to nearest 1000 for all larger response times.
         else {
-            rounded_response_time = ((response_time as f64 / 10000.0).round() * 10000.0) as usize;
+            rounded_response_time = ((response_time as f64 / 1000.0).round() * 1000.0) as usize;
         }
-
-        // Update min_response_time if this one is fastest yet.
-        if self.min_response_time == 0 || rounded_response_time < self.min_response_time {
-            self.min_response_time = rounded_response_time;
-        }
-
-        // Update max_response_time if this one is slowest yet.
-        if rounded_response_time > self.min_response_time {
-            self.max_response_time = rounded_response_time;
-        }
-
-        // Update total_respone time, adding in this one.
-        self.total_response_time += rounded_response_time;
-
-        // Increment counter tracking total number of response times seen.
-        self.response_time_counter += 1;
 
         let counter = match self.response_times.get(&rounded_response_time) {
             // We've seen this response_time before, increment counter.
