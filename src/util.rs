@@ -90,3 +90,35 @@ pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
     }
     string_to_truncate
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timespan() {
+        assert_eq!(parse_timespan("0"), 0);
+        assert_eq!(parse_timespan("foo"), 0);
+        assert_eq!(parse_timespan("1"), 1);
+        assert_eq!(parse_timespan("1s"), 1);
+        assert_eq!(parse_timespan("1m"), 60);
+        assert_eq!(parse_timespan("61"), 61);
+        assert_eq!(parse_timespan("1m1s"), 61);
+        assert_eq!(parse_timespan("10m"), 600);
+        assert_eq!(parse_timespan("10m5s"), 605);
+        assert_eq!(parse_timespan("15mins"), 900);
+        assert_eq!(parse_timespan("60m"), 3600);
+        assert_eq!(parse_timespan("1h"), 3600);
+        assert_eq!(parse_timespan("1h15s"), 3615);
+        assert_eq!(parse_timespan("1h5m"), 3900);
+        assert_eq!(parse_timespan("1h5m13s"), 3913);
+        assert_eq!(parse_timespan("2h3min"), 7380);
+        assert_eq!(parse_timespan("3h3m"), 10980);
+        assert_eq!(parse_timespan("3h3m5s"), 10985);
+        assert_eq!(parse_timespan("5hours"), 18000);
+        assert_eq!(parse_timespan("450m"), 27000);
+        assert_eq!(parse_timespan("24h"), 86400);
+        assert_eq!(parse_timespan("88h88m88s"), 322168);
+        assert_eq!(parse_timespan("100hourblah"), 360000);
+    }
+}

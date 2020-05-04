@@ -36,7 +36,8 @@ fn main() {
 }
 
 /// Demonstrates how to log in when a client starts. We flag this task as an
-/// on_start task when registering it above.
+/// on_start task when registering it above. This means it only runs one time
+/// per client, when the client thread first starts.
 fn website_task_login(client: &mut GooseClient) {
     let request_builder = client.goose_post("/login");
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
