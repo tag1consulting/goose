@@ -68,36 +68,47 @@ pub fn client_main(
         // Invoke the task function.
         function(&mut thread_client);
 
-        if thread_continue && thread_client.min_wait > 0 {
-            // Prepare to sleep for a random value from min_wait to max_wait.
-            let wait_time: usize = rand::thread_rng().gen_range(thread_client.min_wait, thread_client.max_wait);
-            // Counter to track how long we've slept, waking regularly to check for messages.
-            let mut slept: usize = 0;
-            // Check if the parent thread has sent us any messages.
-            while thread_continue && slept < wait_time {
-                let mut message = thread_receiver.try_recv();
-                while message.is_ok() {
-                    match message.unwrap() {
-                        // Sync our state to the parent.
-                        GooseClientCommand::SYNC => {
-                            thread_sender.send(thread_client.clone()).unwrap();
-                            // Reset per-thread counters, as totals have been sent to the parent
-                            thread_client.requests = HashMap::new();
-                        },
-                        // Sync our state to the parent and then exit.
-                        GooseClientCommand::EXIT => {
-                            thread_client.set_mode(GooseClientMode::EXITING);
-                            // No need to reset per-thread counters, we're exiting and memory will be freed
-                            thread_continue = false;
-                        }
+        // Prepare to sleep for a random value from min_wait to max_wait.
+        let wait_time: usize;
+        if thread_client.max_wait > 0 {
+            wait_time = rand::thread_rng().gen_range(
+                thread_client.min_wait,
+                thread_client.max_wait,
+            );
+        }
+        else {
+            wait_time = 0;
+        }
+        // Counter to track how long we've slept, waking regularly to check for messages.
+        let mut slept: usize = 0;
+
+        // Check if the parent thread has sent us any messages.
+        while thread_continue {
+            let mut message = thread_receiver.try_recv();
+            while message.is_ok() {
+                match message.unwrap() {
+                    // Sync our state to the parent.
+                    GooseClientCommand::SYNC => {
+                        thread_sender.send(thread_client.clone()).unwrap();
+                        // Reset per-thread counters, as totals have been sent to the parent
+                        thread_client.requests = HashMap::new();
+                    },
+                    // Sync our state to the parent and then exit.
+                    GooseClientCommand::EXIT => {
+                        thread_client.set_mode(GooseClientMode::EXITING);
+                        // No need to reset per-thread counters, we're exiting and memory will be freed
+                        thread_continue = false;
                     }
-                    message = thread_receiver.try_recv();
                 }
-                if thread_continue {
-                    let sleep_duration = time::Duration::from_secs(1);
-                    slept += 1;
-                    debug!("client {} from {} sleeping {:?} second...", thread_number, thread_task_set.name, sleep_duration);
-                    thread::sleep(sleep_duration);
+                message = thread_receiver.try_recv();
+            }
+            if thread_continue && thread_client.max_wait > 0 {
+                let sleep_duration = time::Duration::from_secs(1);
+                debug!("client {} from {} sleeping {:?} second...", thread_number, thread_task_set.name, sleep_duration);
+                thread::sleep(sleep_duration);
+                slept += 1;
+                if slept > wait_time {
+                    thread_continue = false;
                 }
             }
         }
