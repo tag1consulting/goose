@@ -140,6 +140,9 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         );
     }
     println!(" ------------------------+------------+------------+------------+------------- ");
+    if aggregate_response_time_counter == 0 {
+        aggregate_response_time_counter = 1;
+    }
     println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
         "Aggregated",
         aggregate_total_response_time / aggregate_response_time_counter,
