@@ -121,4 +121,16 @@ mod tests {
         assert_eq!(parse_timespan("88h88m88s"), 322168);
         assert_eq!(parse_timespan("100hourblah"), 360000);
     }
+
+    #[test]
+    fn greatest_common_divisor() {
+        assert_eq!(gcd(2, 4), 2);
+        assert_eq!(gcd(1, 4), 1);
+        assert_eq!(gcd(9, 102), 3);
+        assert_eq!(gcd(12345, 98765), 5);
+        assert_eq!(gcd(2, 99), 1);
+        // More complicated two-part GCD
+        assert_eq!(gcd(gcd(30, 90), 60), 30);
+        assert_eq!(gcd(gcd(25, 7425), gcd(15, 9025)), 5);
+    }
 }
