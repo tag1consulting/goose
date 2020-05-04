@@ -6,13 +6,33 @@ use crate::{GooseState, util, merge_response_times, update_min_response_time, up
 use crate::goose::GooseRequest;
 
 /// Get the response time that a certain number of percent of the requests finished within.
-fn calculate_response_time_percentile(mut response_times: Vec<usize>, percent: f32) -> usize {
-    let total_requests = response_times.len();
+fn calculate_response_time_percentile(
+    response_times: &BTreeMap<usize, usize>,
+    total_requests: usize,
+    min: usize,
+    max: usize,
+    percent: f32,
+) -> usize {
     let percentile_request = (total_requests as f32 * percent) as usize;
     debug!("percentile: {}, request {} of total {}", percent, percentile_request, total_requests);
-    // Sort response times after which it's trivial to get the slowest request in a percentile
-    response_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    return response_times[percentile_request];
+
+    let mut total_count: usize = 0;
+
+    for (value, counter) in response_times {
+        total_count += counter;
+        if total_count >= percentile_request {
+            if *value < min {
+                return min;
+            }
+            else if *value > max {
+                return max;
+            }
+            else {
+                return *value
+            }
+        }
+    }
+    return 0
 }
 
 /// Display a table of requests and fails.
@@ -128,7 +148,6 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         util::median(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time),
     );
 
-    /*
     if display_percentiles {
         println!("-------------------------------------------------------------------------------");
         println!(" Slowest page load within specified percentile of requests (in ms):");
@@ -140,26 +159,25 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
             // Sort response times so we can calculate a mean.
             println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
                 util::truncate_string(&request_key, 23),
-                calculate_response_time_percentile(request.response_times.clone(), 0.5),
-                calculate_response_time_percentile(request.response_times.clone(), 0.75),
-                calculate_response_time_percentile(request.response_times.clone(), 0.98),
-                calculate_response_time_percentile(request.response_times.clone(), 0.99),
-                calculate_response_time_percentile(request.response_times.clone(), 0.999),
-                calculate_response_time_percentile(request.response_times.clone(), 0.9999),
+                calculate_response_time_percentile(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time, 0.5),
+                calculate_response_time_percentile(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time, 0.75),
+                calculate_response_time_percentile(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time, 0.98),
+                calculate_response_time_percentile(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time, 0.99),
+                calculate_response_time_percentile(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time, 0.999),
+                calculate_response_time_percentile(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time, 0.999),
             );
         }
         println!(" ------------------------+--------+--------+--------+--------+--------+------- ");
         println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
             "Aggregated",
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.5),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.75),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.98),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.99),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.999),
-            calculate_response_time_percentile(aggregate_response_times.clone(), 0.9999),
+            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.5),
+            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.75),
+            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.98),
+            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.99),
+            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.999),
+            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.9999),
         );
     }
-    */
 }
 
 fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
