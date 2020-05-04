@@ -59,7 +59,7 @@ pub fn median(
     max: usize,
 ) -> usize {
     let mut total_count: usize = 0;
-    let half_elements = total_elements / 2;
+    let half_elements: usize = (total_elements as f64 / 2.0).round() as usize;
     for (value, counter) in btree {
         total_count += counter;
         if total_count >= half_elements {
@@ -132,5 +132,76 @@ mod tests {
         // More complicated two-part GCD
         assert_eq!(gcd(gcd(30, 90), 60), 30);
         assert_eq!(gcd(gcd(25, 7425), gcd(15, 9025)), 5);
+    }
+
+    #[test]
+    fn median_test() {
+        // Simple median test - add 3 numbers and pick the middle one.
+        let mut btree: BTreeMap<usize, usize> = BTreeMap::new();
+        btree.insert(1, 1);
+        btree.insert(2, 1);
+        btree.insert(3, 1);
+        // 1: 1, 2: 1, 3: 1
+        assert_eq!(median(&btree, 3, 1, 3), 2);
+        assert_eq!(median(&btree, 3, 1, 1), 1);
+        assert_eq!(median(&btree, 3, 3, 3), 3);
+        btree.insert(1, 2);
+        // 1: 2, 2: 1, 3: 1
+        // We don't do a true median, we find the first value that is positioned >= 1/2 way
+        // into the total btree size
+        assert_eq!(median(&btree, 3, 1, 3), 1);
+        btree.insert(4, 1);
+        btree.insert(5, 1);
+        // 1: 2, 2: 1, 3: 1, 4: 1, 5: 1
+        assert_eq!(median(&btree, 6, 1, 5), 2);
+        btree.insert(6, 1);
+        btree.insert(7, 2);
+        btree.insert(8, 1);
+        btree.insert(9, 2);
+        // 1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 2, 8: 1, 9: 2
+        assert_eq!(median(&btree, 12, 1, 9), 5);
+
+        // Confirm we're counting and not just returning the key.
+        let mut btree: BTreeMap<usize, usize> = BTreeMap::new();
+        btree.insert(2, 1);
+        btree.insert(5, 1);
+        btree.insert(25, 1);
+        // 2: 1, 5: 1, 25: 1
+        assert_eq!(median(&btree, 3, 2, 25), 5);
+        btree.insert(5, 3);
+        // 2: 1, 5: 3, 25: 1
+        assert_eq!(median(&btree, 4, 2, 25), 5);
+        btree.insert(25, 10);
+        // 2: 1, 5: 3, 25: 10
+        assert_eq!(median(&btree, 14, 2, 25), 25);
+        btree.insert(100, 5);
+        // 2: 1, 5: 3, 25: 10, 100: 5
+        assert_eq!(median(&btree, 19, 2, 100), 25);
+        btree.insert(100, 20);
+        // 2: 1, 5: 3, 25: 20, 100: 5
+        assert_eq!(median(&btree, 29, 2, 100), 100);
+        
+        // We round response times, be sure we return min or max when appropriate.
+        let mut btree: BTreeMap<usize, usize> = BTreeMap::new();
+        btree.insert(100, 3);
+        btree.insert(210, 1);
+        btree.insert(240, 1);
+        // 100: 3, 210: 1, 240: 1
+        // Minimum is more than median, use minimum.
+        assert_eq!(median(&btree, 5, 101, 243), 101);
+        btree.insert(240, 1);
+        // 100: 3, 210: 1, 240: 5
+        // Maximum is less than median, use maximum.
+        assert_eq!(median(&btree, 9, 101, 239), 239);
+    }
+
+    #[test]
+    fn truncate() {
+        assert_eq!(truncate_string("the quick brown fox", 25), "the quick brown fox");
+        assert_eq!(truncate_string("the quick brown fox", 10), "the quic..");
+        assert_eq!(truncate_string("abcde", 5), "abcde");
+        assert_eq!(truncate_string("abcde", 4), "ab..");
+        assert_eq!(truncate_string("abcde", 3), "a..");
+        assert_eq!(truncate_string("abcde", 2), "..");
     }
 }
