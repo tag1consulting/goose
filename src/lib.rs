@@ -298,7 +298,7 @@ use simplelog::*;
 use structopt::StructOpt;
 use url::Url;
 
-use goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
+use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
 /// Internal global state for load test.
 #[derive(Clone)]
