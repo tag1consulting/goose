@@ -83,7 +83,8 @@ pub fn client_main(
         let mut slept: usize = 0;
 
         // Check if the parent thread has sent us any messages.
-        while thread_continue {
+        let mut in_sleep_loop = true;
+        while in_sleep_loop {
             let mut message = thread_receiver.try_recv();
             while message.is_ok() {
                 match message.unwrap() {
@@ -108,8 +109,12 @@ pub fn client_main(
                 thread::sleep(sleep_duration);
                 slept += 1;
                 if slept > wait_time {
+                    in_sleep_loop = false;
                     thread_continue = false;
                 }
+            }
+            else {
+                in_sleep_loop = false;
             }
         }
 
