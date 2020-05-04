@@ -5,6 +5,13 @@ Goose is a Rust load testing tool, based on Locust.
 ### In progress
 
 - [ ] automated testing of Goose logic
+- [x] optimize statistics
+  - [x] round and group response times
+  - [x] maintain running min/max/average
+  - [x] offload to parent process as much as possible
+- [ ] --stop-timeout to gracefully exit client threads
+  - [ ] add polling to sleeping clients to exit quicker
+- [ ] detect/report when available CPU power is bottleneck
 
 ### Future (post-MVP)
 
@@ -14,7 +21,6 @@ Goose is a Rust load testing tool, based on Locust.
 - [ ] more complicated wait_time implementations  
   - [ ] constant pacing (https://github.com/locustio/locust/blob/795b5a14dd5b0991fec5a7f96f0d6491ce19e3d0/locust/wait_time.py#L30)  
   - [ ] custom wait_time implementations  
-- [ ] --stop-timeout to gracefully exit client threads  
 - [ ] documentation  
 - [ ] website  
 - [ ] gaggle support (distributed Geese)  
