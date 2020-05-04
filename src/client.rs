@@ -90,9 +90,33 @@ pub fn client_main(
 
         if thread_continue && thread_client.min_wait > 0 {
             let wait_time = rand::thread_rng().gen_range(thread_client.min_wait, thread_client.max_wait);
-            let sleep_duration = time::Duration::from_secs(wait_time as u64);
-            debug!("client {} from {} sleeping {:?} seconds...", thread_number, thread_task_set.name, sleep_duration);
-            thread::sleep(sleep_duration);
+            let mut slept = 0;
+            while thread_continue && slept < wait_time {
+                slept += 1;
+                let sleep_duration = time::Duration::from_secs(1);
+                debug!("client {} from {} sleeping {:?} second...", thread_number, thread_task_set.name, sleep_duration);
+                thread::sleep(sleep_duration);
+                message = thread_receiver.try_recv();
+                match message {
+                    Ok(m) => {
+                        match m {
+                            // Sync our state to the parent.
+                            GooseClientCommand::SYNC => {
+                                thread_sender.send(thread_client.clone()).unwrap();
+                                // Reset per-thread counters, as totals have been sent to the parent
+                                thread_client.requests = HashMap::new();
+                            },
+                            // Sync our state to the parent and then exit.
+                            GooseClientCommand::EXIT => {
+                                thread_client.set_mode(GooseClientMode::EXITING);
+                                // No need to reset per-thread counters, we're exiting and memory will be freed
+                                thread_continue = false;
+                            }
+                        }
+                    },
+                    Err(_) => (),
+                }
+            }
         }
 
         // Move to the next task in thread_client.weighted_tasks.
