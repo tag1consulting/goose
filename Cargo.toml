@@ -1,9 +1,9 @@
 [package]
 name = "goose"
-version = "0.5.5"
+version = "0.5.6"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
-description = "A lood testing tool based on Locust."
+description = "A load testing tool based on Locust."
 homepage = "https://github.com/jeremyandrews/goose"
 documentation = "https://docs.rs/goose/"
 repository = "https://github.com/jeremyandrews/goose"
