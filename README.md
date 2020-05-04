@@ -23,7 +23,7 @@ run-time configuration options available to Goose load tests:
 $ cargo run --release --example simple -- -h
     Finished release [optimized] target(s) in 0.05s
      Running `target/release/examples/simple -h`
-client 0.5.6
+client 0.5.7
 Configuration options required for launching a Goose loadtest
 
 USAGE:
