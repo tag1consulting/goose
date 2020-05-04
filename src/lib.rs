@@ -1070,7 +1070,7 @@ pub fn merge_response_times(
         let counter = match global_response_times.get(&response_time) {
             // We've seen this response_time before, increment counter.
             Some(c) => {
-                *c + 1
+                *c + count
             }
             // First time we've seen this response time, initialize counter.
             None => {
