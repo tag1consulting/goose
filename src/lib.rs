@@ -45,6 +45,8 @@
 //! GooseClient pointer. For example:
 //! 
 //! ```rust
+//! use goose::goose::GooseClient;
+//!
 //! fn loadtest_foo(client: &mut GooseClient) {
 //!   let _response = client.get("/path/to/foo");
 //! }   
@@ -58,6 +60,8 @@
 //! 
 //! ```rust
 //! use std::time;
+//!
+//! use goose::goose::GooseClient;
 //! 
 //! fn loadtest_bar(client: &mut GooseClient) {
 //!   let request_builder = client.goose_get("/path/to/bar");
@@ -328,6 +332,8 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust
+    ///     use goose::GooseState;
+    ///
     ///     let mut goose_state = GooseState::initialize();
     /// ```
     pub fn initialize() -> GooseState {
@@ -424,6 +430,9 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust
+    ///     use goose::GooseState;
+    ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///
     ///     GooseState::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
     ///             .register_task(GooseTask::new(example_task))
@@ -431,6 +440,14 @@ impl GooseState {
     ///         .register_taskset(GooseTaskSet::new("OtherTasks")
     ///             .register_task(GooseTask::new(other_task))
     ///         );
+    ///
+    ///     fn example_task(client: &mut GooseClient) {
+    ///       let _response = client.get("/foo");
+    ///     }
+    ///
+    ///     fn other_task(client: &mut GooseClient) {
+    ///       let _response = client.get("/bar");
+    ///     }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
         taskset.task_sets_index = self.task_sets.len();
@@ -449,6 +466,8 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust
+    ///     use goose::GooseState;
+    ///
     ///     GooseState::initialize()
     ///         .set_host("local.dev");
     /// ```
@@ -520,13 +539,24 @@ impl GooseState {
     /// Execute the load test.
     /// 
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
+    ///     use goose::GooseState;
+    ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///
     ///     GooseState::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
     ///             .register_task(GooseTask::new(example_task).set_weight(2))
     ///             .register_task(GooseTask::new(another_example_task).set_weight(3))
     ///         )
     ///         .execute();
+    ///
+    ///     fn example_task(client: &mut GooseClient) {
+    ///       let _response = client.get("/foo");
+    ///     }
+    ///
+    ///     fn another_example_task(client: &mut GooseClient) {
+    ///       let _response = client.get("/bar");
+    ///     }
     /// ```
     pub fn execute(mut self) {
         // At least one task set is required.
