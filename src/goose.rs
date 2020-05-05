@@ -1380,3 +1380,106 @@ impl GooseTask {
         self
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn goose_task_set() {
+        // Simplistic test task functions.
+        fn test_task_function_a(client: &mut GooseClient) {
+            let _response = client.get("/a/");
+        }
+
+        fn test_task_function_b(client: &mut GooseClient) {
+            let _response = client.get("/b/");
+        }
+
+        let mut task_set = GooseTaskSet::new("foo");
+        assert_eq!(task_set.name, "foo");
+        assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(task_set.weight, 1);
+        assert_eq!(task_set.min_wait, 0);
+        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.host, None);
+        assert_eq!(task_set.tasks.len(), 0);
+        assert_eq!(task_set.weighted_tasks.len(), 0);
+        assert_eq!(task_set.weighted_on_start_tasks.len(), 0);
+        assert_eq!(task_set.weighted_on_stop_tasks.len(), 0);
+
+        // Registering a task adds it to tasks, but doesn't update weighted_tasks.
+        task_set = task_set.register_task(GooseTask::new(test_task_function_a));
+        assert_eq!(task_set.tasks.len(), 1);
+        assert_eq!(task_set.weighted_tasks.len(), 0);
+        assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(task_set.weight, 1);
+        assert_eq!(task_set.min_wait, 0);
+        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.host, None);
+
+        // Different task can be registered.
+        task_set = task_set.register_task(GooseTask::new(test_task_function_b));
+        assert_eq!(task_set.tasks.len(), 2);
+        assert_eq!(task_set.weighted_tasks.len(), 0);
+        assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(task_set.weight, 1);
+        assert_eq!(task_set.min_wait, 0);
+        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.host, None);
+
+        // Same task can be registered again.
+        task_set = task_set.register_task(GooseTask::new(test_task_function_a));
+        assert_eq!(task_set.tasks.len(), 3);
+        assert_eq!(task_set.weighted_tasks.len(), 0);
+        assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(task_set.weight, 1);
+        assert_eq!(task_set.min_wait, 0);
+        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.host, None);
+
+        // Setting weight only affects weight field.
+        task_set = task_set.set_weight(50);
+        assert_eq!(task_set.weight, 50);
+        assert_eq!(task_set.tasks.len(), 3);
+        assert_eq!(task_set.weighted_tasks.len(), 0);
+        assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(task_set.min_wait, 0);
+        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.host, None);
+
+        // Weight can be changed.
+        task_set = task_set.set_weight(5);
+        assert_eq!(task_set.weight, 5);
+
+        // Setting host only affects host field.
+        task_set = task_set.set_host("http://foo.example.com/");
+        assert_eq!(task_set.host, Some("http://foo.example.com/".to_string()));
+        assert_eq!(task_set.weight, 5);
+        assert_eq!(task_set.tasks.len(), 3);
+        assert_eq!(task_set.weighted_tasks.len(), 0);
+        assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(task_set.min_wait, 0);
+        assert_eq!(task_set.max_wait, 0);
+
+        // Host field can be changed.
+        task_set = task_set.set_host("https://bar.example.com/");
+        assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
+
+        // Wait time only affects wait time fields.
+        task_set = task_set.set_wait_time(1, 10);
+        assert_eq!(task_set.min_wait, 1);
+        assert_eq!(task_set.max_wait, 10);
+        assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
+        assert_eq!(task_set.weight, 5);
+        assert_eq!(task_set.tasks.len(), 3);
+        assert_eq!(task_set.weighted_tasks.len(), 0);
+        assert_eq!(task_set.task_sets_index, usize::max_value());
+
+        // Wait time can be changed.
+        task_set = task_set.set_wait_time(3, 9);
+        assert_eq!(task_set.min_wait, 3);
+        assert_eq!(task_set.max_wait, 9);
+    }
+}
