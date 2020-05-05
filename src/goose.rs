@@ -480,7 +480,7 @@ impl GooseRequest {
             self.max_response_time = response_time_usize;
         }
 
-        // Update total_respone time, adding in this one.
+        // Update total_response time, adding in this one.
         self.total_response_time += response_time_usize;
 
         // Each time we store a new response time, increment counter by one.
@@ -1559,5 +1559,211 @@ mod tests {
         // Sequence field can be changed multiple times.
         task = task.set_sequence(8);
         assert_eq!(task.sequence, 8);
+    }
+
+    #[test]
+    fn request() {
+        let mut request = GooseRequest::new("/", Method::GET);
+        assert_eq!(request.path, "/".to_string());
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.response_times.len(), 0);
+        assert_eq!(request.min_response_time, 0);
+        assert_eq!(request.max_response_time, 0);
+        assert_eq!(request.total_response_time, 0);
+        assert_eq!(request.response_time_counter, 0);
+        assert_eq!(request.status_code_counts.len(), 0);
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+
+        // Tracking a response time updates several fields.
+        request.set_response_time(1);
+        // We've seen only one response time so far.
+        assert_eq!(request.response_times.len(), 1);
+        // We've seen one response time of length 1.
+        assert_eq!(request.response_times[&1], 1);
+        // The minimum response time seen so far is 1.
+        assert_eq!(request.min_response_time, 1);
+        // The maximum response time seen so far is 1.
+        assert_eq!(request.max_response_time, 1);
+        // We've seen a total of 1 ms of response time so far.
+        assert_eq!(request.total_response_time, 1);
+        // We've seen a total of 2 response times so far.
+        assert_eq!(request.response_time_counter, 1);
+        // Nothing else changes.
+        assert_eq!(request.path, "/".to_string());
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.status_code_counts.len(), 0);
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(10);
+        // We've added a new unique response time.
+        assert_eq!(request.response_times.len(), 2);
+        // We've seen the 10 ms response time 1 time.
+        assert_eq!(request.response_times[&10], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum is new response time.
+        assert_eq!(request.max_response_time, 10);
+        // Total combined response times is now 11 ms.
+        assert_eq!(request.total_response_time, 11);
+        // We've seen two response times so far.
+        assert_eq!(request.response_time_counter, 2);
+        // Nothing else changes.
+        assert_eq!(request.path, "/".to_string());
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.status_code_counts.len(), 0);
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(10);
+        // We've incremented the counter of an existing response time.
+        assert_eq!(request.response_times.len(), 2);
+        // We've seen the 10 ms response time 2 times.
+        assert_eq!(request.response_times[&10], 2);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum doesn't change.
+        assert_eq!(request.max_response_time, 10);
+        // Total combined response times is now 21 ms.
+        assert_eq!(request.total_response_time, 21);
+        // We've seen three response times so far.
+        assert_eq!(request.response_time_counter, 3);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(101);
+        // We've added a new response time for the first time.
+        assert_eq!(request.response_times.len(), 3);
+        // The response time was internally rounded to 100, which we've seen once.
+        assert_eq!(request.response_times[&100], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 101);
+        // Total combined response times is now 122 ms.
+        assert_eq!(request.total_response_time, 122);
+        // We've seen four response times so far.
+        assert_eq!(request.response_time_counter, 4);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(102);
+        // Due to rounding, this increments the existing 100 ms response time.
+        assert_eq!(request.response_times.len(), 3);
+        // The response time was internally rounded to 100, which we've now seen twice.
+        assert_eq!(request.response_times[&100], 2);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 102);
+        // Add 102 to the total response time so far.
+        assert_eq!(request.total_response_time, 224);
+        // We've seen five response times so far.
+        assert_eq!(request.response_time_counter, 5);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(155);
+        // Adds a new response time.
+        assert_eq!(request.response_times.len(), 4);
+        // The response time was internally rounded to 200, seen for the first time.
+        assert_eq!(request.response_times[&200], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 155);
+        // Add 155 to the total response time so far.
+        assert_eq!(request.total_response_time, 379);
+        // We've seen six response times so far.
+        assert_eq!(request.response_time_counter, 6);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(2345);
+        // Adds a new response time.
+        assert_eq!(request.response_times.len(), 5);
+        // The response time was internally rounded to 2000, seen for the first time.
+        assert_eq!(request.response_times[&2000], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 2345);
+        // Add 2345 to the total response time so far.
+        assert_eq!(request.total_response_time, 2724);
+        // We've seen seven response times so far.
+        assert_eq!(request.response_time_counter, 7);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(987654321);
+        // Adds a new response time.
+        assert_eq!(request.response_times.len(), 6);
+        // The response time was internally rounded to 987654000, seen for the first time.
+        assert_eq!(request.response_times[&987654000], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 987654321);
+        // Add 987654321 to the total response time so far.
+        assert_eq!(request.total_response_time, 987657045);
+        // We've seen eight response times so far.
+        assert_eq!(request.response_time_counter, 8);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(Some(StatusCode::OK));
+        // We've seen only one status code.
+        assert_eq!(request.status_code_counts.len(), 1);
+        // First time seeing this status code.
+        assert_eq!(request.status_code_counts[&200], 1);
+        // As status code tracking is optional, we don't track success/fail here.
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+        // Nothing else changes.
+        assert_eq!(request.response_times.len(), 6);
+        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.max_response_time, 987654321);
+        assert_eq!(request.total_response_time, 987657045);
+        assert_eq!(request.response_time_counter, 8);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(Some(StatusCode::OK));
+        // We've seen only one unique status code.
+        assert_eq!(request.status_code_counts.len(), 1);
+        // Second time seeing this status code.
+        assert_eq!(request.status_code_counts[&200], 2);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(None);
+        // We've seen two unique status codes.
+        assert_eq!(request.status_code_counts.len(), 2);
+        // First time seeing a client-side error.
+        assert_eq!(request.status_code_counts[&0], 1);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(Some(StatusCode::INTERNAL_SERVER_ERROR));
+        // We've seen three unique status codes.
+        assert_eq!(request.status_code_counts.len(), 3);
+        // First time seeing an internal server error.
+        assert_eq!(request.status_code_counts[&500], 1);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(Some(StatusCode::PERMANENT_REDIRECT));
+        // We've seen four unique status codes.
+        assert_eq!(request.status_code_counts.len(), 4);
+        // First time seeing an internal server error.
+        assert_eq!(request.status_code_counts[&308], 1);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(Some(StatusCode::OK));
+        // We've seen four unique status codes.
+        assert_eq!(request.status_code_counts.len(), 4);
+        // Third time seeing this status code.
+        assert_eq!(request.status_code_counts[&200], 3);
+        // Nothing else changes.
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+        assert_eq!(request.response_times.len(), 6);
+        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.max_response_time, 987654321);
+        assert_eq!(request.total_response_time, 987657045);
+        assert_eq!(request.response_time_counter, 8);
     }
 }
