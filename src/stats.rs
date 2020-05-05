@@ -13,7 +13,7 @@ fn calculate_response_time_percentile(
     max: usize,
     percent: f32,
 ) -> usize {
-    let percentile_request = (total_requests as f32 * percent) as usize;
+    let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!("percentile: {}, request {} of total {}", percent, percentile_request, total_requests);
 
     let mut total_count: usize = 0;
@@ -298,4 +298,43 @@ pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
     // 3) print respones time statistics, without percentiles
     print_response_times(&merged_requests, false);
     println!();
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn max_response_time() {
+        let mut response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        response_times.insert(1, 1);
+        response_times.insert(2, 1);
+        response_times.insert(3, 1);
+        // 3 * .5 = 1.5, rounds to 2.
+        assert_eq!(calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5), 2);
+        response_times.insert(3, 2);
+        // 4 * .5 = 2
+        assert_eq!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5), 2);
+        // 4 * .25 = 1
+        assert_eq!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25), 1);
+        // 4 * .75 = 3
+        assert_eq!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75), 3);
+        // 4 * 1 = 4 (and the 4th response time is also 3)
+        assert_eq!(calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0), 3);
+
+        // 4 * .5 = 2, but uses specified minimum of 2
+        assert_eq!(calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25), 2);
+        // 4 * .75 = 3, but uses specified maximum of 2
+        assert_eq!(calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75), 2);
+
+        response_times.insert(10, 25);
+        response_times.insert(20, 25);
+        response_times.insert(30, 25);
+        response_times.insert(50, 25);
+        response_times.insert(100, 10);
+        response_times.insert(200, 1);
+        assert_eq!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9), 50);
+        assert_eq!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99), 100);
+        assert_eq!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999), 200);
+    }
 }
