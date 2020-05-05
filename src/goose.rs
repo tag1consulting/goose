@@ -402,7 +402,7 @@ impl GooseTaskSet {
 }
 
 /// Tracks the current run-mode of a client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GooseClientMode {
     /// Clients are briefly in the INIT mode when first allocated.
     INIT,
@@ -424,7 +424,7 @@ pub enum GooseClientCommand {
 }
 
 /// Statistics collected about a path-method pair, (for example `/index`-`GET`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GooseRequest {
     /// The path for which statistics are being collected.
     pub path: String,
@@ -1562,7 +1562,7 @@ mod tests {
     }
 
     #[test]
-    fn request() {
+    fn goose_request() {
         let mut request = GooseRequest::new("/", Method::GET);
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, Method::GET);
@@ -1765,5 +1765,158 @@ mod tests {
         assert_eq!(request.max_response_time, 987654321);
         assert_eq!(request.total_response_time, 987657045);
         assert_eq!(request.response_time_counter, 8);
+    }
+
+    #[test]
+    fn goose_client() {
+        let configuration = GooseConfiguration::default();
+        let mut client = GooseClient::new(0, 0, Some("http://example.com/".to_string()), None, 0, 0, &configuration);
+        assert_eq!(client.task_sets_index, 0);
+        assert_eq!(client.default_host, Some("http://example.com/".to_string()));
+        assert_eq!(client.task_set_host, None);
+        assert_eq!(client.min_wait, 0);
+        assert_eq!(client.max_wait, 0);
+        assert_eq!(client.weighted_clients_index, usize::max_value());
+        assert_eq!(client.mode, GooseClientMode::INIT);
+        assert_eq!(client.weighted_on_start_tasks.len(), 0);
+        assert_eq!(client.weighted_tasks.len(), 0);
+        assert_eq!(client.weighted_bucket, 0);
+        assert_eq!(client.weighted_bucket_position, 0);
+        assert_eq!(client.weighted_on_stop_tasks.len(), 0);
+        assert_eq!(client.task_request_name, None);
+        assert_eq!(client.request_name, None);
+        assert_eq!(client.previous_path, None);
+        assert_eq!(client.previous_method, None);
+        assert_eq!(client.previous_request_name, None);
+        assert_eq!(client.was_success, false);
+        assert_eq!(client.requests.len(), 0);
+
+        // Setting request name doesn't affect anything else.
+        client.set_request_name("foo");
+        assert_eq!(client.request_name, Some("foo".to_string()));
+        assert_eq!(client.task_sets_index, 0);
+        assert_eq!(client.default_host, Some("http://example.com/".to_string()));
+        assert_eq!(client.task_set_host, None);
+        assert_eq!(client.min_wait, 0);
+        assert_eq!(client.max_wait, 0);
+        assert_eq!(client.weighted_clients_index, usize::max_value());
+        assert_eq!(client.mode, GooseClientMode::INIT);
+        assert_eq!(client.weighted_on_start_tasks.len(), 0);
+        assert_eq!(client.weighted_tasks.len(), 0);
+        assert_eq!(client.weighted_bucket, 0);
+        assert_eq!(client.weighted_bucket_position, 0);
+        assert_eq!(client.weighted_on_stop_tasks.len(), 0);
+        assert_eq!(client.task_request_name, None);
+        assert_eq!(client.previous_path, None);
+        assert_eq!(client.previous_method, None);
+        assert_eq!(client.previous_request_name, None);
+        assert_eq!(client.was_success, false);
+        assert_eq!(client.requests.len(), 0);
+
+        // Can set request name multiple times.
+        client.set_request_name("bar");
+        assert_eq!(client.request_name, Some("bar".to_string()));
+
+        // Can change mode.
+        client.set_mode(GooseClientMode::HATCHING);
+        assert_eq!(client.mode, GooseClientMode::HATCHING);
+
+        // Returns new GooseRequest if never set before.
+        let request = client.get_request("/foo", &Method::GET);
+        assert_eq!(request, GooseRequest::new("/foo", Method::GET));
+
+        // Store a GooseRequest objet and confirm we can them retreive it.
+        let mut request = GooseRequest::new("/", Method::GET);
+        request.set_response_time(55);
+        request.set_status_code(Some(StatusCode::OK));
+        client.set_request("/", &Method::GET, request.clone());
+        let restored_request = client.get_request("/", &Method::GET);
+        // This is not an empty request object.
+        assert_ne!(restored_request, GooseRequest::new("/", Method::GET));
+        // This is the request we stored.
+        assert_eq!(&request, &restored_request);
+
+        // Make another change to the request and re-store.
+        request.set_response_time(951);
+        request.set_status_code(Some(StatusCode::OK));
+        client.set_request("/", &Method::GET, request.clone());
+        let restored_request_again = client.get_request("/", &Method::GET);
+        // This is not an empty request object.
+        assert_ne!(restored_request, GooseRequest::new("/", Method::GET));
+        // This is not first request we stored.
+        assert_ne!(&request, &restored_request);
+        // This is the new request we stored.
+        assert_eq!(&request, &restored_request_again);
+
+        // Confirm the URLs are correctly built using the default_host.
+        let url = client.build_url("/foo");
+        assert_eq!(url, "http://example.com/foo");
+        let url = client.build_url("bar/");
+        assert_eq!(url, "http://example.com/bar/");
+        let url = client.build_url("/foo/bar");
+        assert_eq!(url, "http://example.com/foo/bar");
+
+        // Confirm the URLs are built with their own specified host.
+        let url = client.build_url("https://example.com/foo");
+        assert_eq!(url, "https://example.com/foo");
+        let url = client.build_url("https://www.example.com/path/to/resource");
+        assert_eq!(url, "https://www.example.com/path/to/resource");
+
+        // Create a second client, this time setting a task_set_host.
+        let mut client2 = GooseClient::new(0, 0, Some("http://www.example.com/".to_string()), Some("http://www2.example.com/".to_string()), 1, 3, &configuration);
+        assert_eq!(client2.default_host, Some("http://www.example.com/".to_string()));
+        assert_eq!(client2.task_set_host, Some("http://www2.example.com/".to_string()));
+        assert_eq!(client2.min_wait, 1);
+        assert_eq!(client2.max_wait, 3);
+
+        // Confirm the URLs are correctly built using the task_set_host.
+        let url = client2.build_url("/foo");
+        assert_eq!(url, "http://www2.example.com/foo");
+
+        // Confirm URLs are still built with their own specified host.
+        let url = client.build_url("https://example.com/foo");
+        assert_eq!(url, "https://example.com/foo");
+
+        // Create a GET request.
+        let mut goose_request = client.goose_get("/foo");
+        let mut built_request = goose_request.build().unwrap();
+        assert_eq!(built_request.method(), &Method::GET);
+        assert_eq!(built_request.url().as_str(), "http://example.com/foo");
+        assert_eq!(built_request.timeout(), None);
+
+        // Create a POST request.
+        goose_request = client.goose_post("/path/to/post");
+        built_request = goose_request.build().unwrap();
+        assert_eq!(built_request.method(), &Method::POST);
+        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/post");
+        assert_eq!(built_request.timeout(), None);
+
+        // Create a PUT request.
+        goose_request = client.goose_put("/path/to/put");
+        built_request = goose_request.build().unwrap();
+        assert_eq!(built_request.method(), &Method::PUT);
+        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/put");
+        assert_eq!(built_request.timeout(), None);
+
+        // Create a PATCH request.
+        goose_request = client.goose_patch("/path/to/patch");
+        built_request = goose_request.build().unwrap();
+        assert_eq!(built_request.method(), &Method::PATCH);
+        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/patch");
+        assert_eq!(built_request.timeout(), None);
+
+        // Create a DELETE request.
+        goose_request = client.goose_delete("/path/to/delete");
+        built_request = goose_request.build().unwrap();
+        assert_eq!(built_request.method(), &Method::DELETE);
+        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/delete");
+        assert_eq!(built_request.timeout(), None);
+
+        // Create a HEAD request.
+        goose_request = client.goose_head("/path/to/head");
+        built_request = goose_request.build().unwrap();
+        assert_eq!(built_request.method(), &Method::HEAD);
+        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/head");
+        assert_eq!(built_request.timeout(), None);
     }
 }

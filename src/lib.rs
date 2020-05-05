@@ -855,7 +855,7 @@ impl GooseState {
 }
 
 /// CLI options available when launching a Goose loadtest, provided by StructOpt.
-#[derive(StructOpt, Debug, Clone)]
+#[derive(StructOpt, Debug, Default, Clone)]
 #[structopt(name = "client")]
 pub struct GooseConfiguration {
     /// Host to load test in the following format: http://10.21.32.33
