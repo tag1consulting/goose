@@ -66,9 +66,9 @@ use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 Then create a new load testing function. For our example we're simply going
 to load the front page of the website we're load-testing. Goose passes all
-load testing function a mutable pointer to a GooseClient object, which is used
+load testing functions a mutable pointer to a GooseClient object, which is used
 to track statistics and make web requests. Thanks to the Reqwest library, the
-Goose client manages things like cookies and headers for you.
+Goose client manages things like cookies, headers, and sessions for you.
 
 In load tests functions you typically do not set the host, and instead configure
 the host at run time, so you can easily run your load test against different
@@ -80,7 +80,7 @@ fn loadtest_index(client: &mut GooseClient) {
 }
 ```
 
-Finally, edit the main() function, removing the hello world text and replacing
+Finally, edit the `main()` function, removing the hello world text and replacing
 it as follows:
 
 ```rust
@@ -147,8 +147,9 @@ In most load tests you'll make have different tasks being run, and each will be
 split out in the statistics, along with a line showing all totaled together in
 aggregate.
 
-For examples of more complicated and useful load tests, refer to the
-[examples directory](https://github.com/jeremyandrews/goose/tree/master/examples).
+Refer to the
+[examples directory](https://github.com/jeremyandrews/goose/tree/master/examples)
+for more complicated and useful load test examples.
 
 ## Tips
 
