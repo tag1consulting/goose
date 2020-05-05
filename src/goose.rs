@@ -1482,4 +1482,82 @@ mod tests {
         assert_eq!(task_set.min_wait, 3);
         assert_eq!(task_set.max_wait, 9);
     }
+
+    #[test]
+    fn goose_task() {
+        // Simplistic test task functions.
+        fn test_task_function_a(client: &mut GooseClient) {
+            let _response = client.get("/a/");
+        }
+
+        // Initialize task set.
+        let mut task = GooseTask::new(test_task_function_a);
+        assert_eq!(task.tasks_index, usize::max_value());
+        assert_eq!(task.name, "".to_string());
+        assert_eq!(task.weight, 1);
+        assert_eq!(task.sequence, 0);
+        assert_eq!(task.on_start, false);
+        assert_eq!(task.on_stop, false);
+
+        // Name can be set, without affecting other fields.
+        task = task.set_name("foo");
+        assert_eq!(task.name, "foo".to_string());
+        assert_eq!(task.weight, 1);
+        assert_eq!(task.sequence, 0);
+        assert_eq!(task.on_start, false);
+        assert_eq!(task.on_stop, false);
+
+        // Name can be set multiple times.
+        task = task.set_name("bar");
+        assert_eq!(task.name, "bar".to_string());
+
+        // On start flag can be set, without affecting other fields.
+        task = task.set_on_start();
+        assert_eq!(task.on_start, true);
+        assert_eq!(task.name, "bar".to_string());
+        assert_eq!(task.weight, 1);
+        assert_eq!(task.sequence, 0);
+        assert_eq!(task.on_stop, false);
+
+        // Setting on start flag twice doesn't change anything.
+        task = task.set_on_start();
+        assert_eq!(task.on_start, true);
+
+        // On stop flag can be set, without affecting other fields.
+        // It's possible to set both on_start and on_stop for same task.
+        task = task.set_on_stop();
+        assert_eq!(task.on_stop, true);
+        assert_eq!(task.on_start, true);
+        assert_eq!(task.name, "bar".to_string());
+        assert_eq!(task.weight, 1);
+        assert_eq!(task.sequence, 0);
+
+        // Setting on stop flag twice doesn't change anything.
+        task = task.set_on_stop();
+        assert_eq!(task.on_stop, true);
+
+        // Setting weight doesn't change anything else.
+        task = task.set_weight(2);
+        assert_eq!(task.weight, 2);
+        assert_eq!(task.on_stop, true);
+        assert_eq!(task.on_start, true);
+        assert_eq!(task.name, "bar".to_string());
+        assert_eq!(task.sequence, 0);
+
+        // Weight field can be changed multiple times.
+        task = task.set_weight(3);
+        assert_eq!(task.weight, 3);
+
+        // Setting sequence doesn't change anything else.
+        task = task.set_sequence(4);
+        assert_eq!(task.sequence, 4);
+        assert_eq!(task.weight, 3);
+        assert_eq!(task.on_stop, true);
+        assert_eq!(task.on_start, true);
+        assert_eq!(task.name, "bar".to_string());
+
+        // Sequence field can be changed multiple times.
+        task = task.set_sequence(8);
+        assert_eq!(task.sequence, 8);
+    }
 }
