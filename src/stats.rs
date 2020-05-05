@@ -74,32 +74,34 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
         aggregate_total_count += total_count;
         aggregate_fail_count += request.fail_count;
     }
-    let aggregate_fail_percent: f32;
-    if aggregate_fail_count > 0 {
-        aggregate_fail_percent = aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0;
-    }
-    else {
-        aggregate_fail_percent = 0.0;
-    }
-    println!(" ------------------------+----------------+----------------+--------+--------- ");
-    // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-    if aggregate_fail_percent == 100.0 || aggregate_fail_percent == 0.0 {
-        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-            "Aggregated",
-            aggregate_total_count.to_formatted_string(&Locale::en),
-            format!("{} ({}%)", aggregate_fail_count.to_formatted_string(&Locale::en), aggregate_fail_percent as usize),
-            (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
-            (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
-        );
-    }
-    else {
-        println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-            "Aggregated",
-            aggregate_total_count.to_formatted_string(&Locale::en),
-            format!("{} ({:.1}%)", aggregate_fail_count.to_formatted_string(&Locale::en), aggregate_fail_percent),
-            (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
-            (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
-        );
+    if requests.len() > 1 {
+        let aggregate_fail_percent: f32;
+        if aggregate_fail_count > 0 {
+            aggregate_fail_percent = aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0;
+        }
+        else {
+            aggregate_fail_percent = 0.0;
+        }
+        println!(" ------------------------+----------------+----------------+--------+--------- ");
+        // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
+        if aggregate_fail_percent == 100.0 || aggregate_fail_percent == 0.0 {
+            println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                "Aggregated",
+                aggregate_total_count.to_formatted_string(&Locale::en),
+                format!("{} ({}%)", aggregate_fail_count.to_formatted_string(&Locale::en), aggregate_fail_percent as usize),
+                (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
+                (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+            );
+        }
+        else {
+            println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                "Aggregated",
+                aggregate_total_count.to_formatted_string(&Locale::en),
+                format!("{} ({:.1}%)", aggregate_fail_count.to_formatted_string(&Locale::en), aggregate_fail_percent),
+                (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
+                (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+            );
+        }
     }
 }
 
@@ -139,17 +141,19 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
             util::median(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time),
         );
     }
-    println!(" ------------------------+------------+------------+------------+------------- ");
-    if aggregate_response_time_counter == 0 {
-        aggregate_response_time_counter = 1;
+    if requests.len() > 1 {
+        println!(" ------------------------+------------+------------+------------+------------- ");
+        if aggregate_response_time_counter == 0 {
+            aggregate_response_time_counter = 1;
+        }
+        println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+            "Aggregated",
+            aggregate_total_response_time / aggregate_response_time_counter,
+            aggregate_min_response_time,
+            aggregate_max_response_time,
+            util::median(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time),
+        );
     }
-    println!(" {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
-        "Aggregated",
-        aggregate_total_response_time / aggregate_response_time_counter,
-        aggregate_min_response_time,
-        aggregate_max_response_time,
-        util::median(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time),
-    );
 
     if display_percentiles {
         println!("-------------------------------------------------------------------------------");
@@ -170,16 +174,18 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
                 calculate_response_time_percentile(&request.response_times, request.response_time_counter, request.min_response_time, request.max_response_time, 0.999),
             );
         }
-        println!(" ------------------------+--------+--------+--------+--------+--------+------- ");
-        println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
-            "Aggregated",
-            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.5),
-            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.75),
-            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.98),
-            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.99),
-            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.999),
-            calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.9999),
-        );
+        if requests.len() > 1 {
+            println!(" ------------------------+--------+--------+--------+--------+--------+------- ");
+            println!(" {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+                "Aggregated",
+                calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.5),
+                calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.75),
+                calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.98),
+                calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.99),
+                calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.999),
+                calculate_response_time_percentile(&aggregate_response_times, aggregate_response_time_counter, aggregate_min_response_time, aggregate_max_response_time, 0.9999),
+            );
+        }
     }
 }
 
