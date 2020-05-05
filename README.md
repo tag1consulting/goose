@@ -9,23 +9,163 @@ Have you ever been attacked by a goose?
 
 ## Overview
 
-Goose is a Rust load testing tool based on [Locust](https://locust.io/).
-User behavior is defined with standard Rust code.
+Goose is a Rust load testing tool inspired by [Locust](https://locust.io/).
+User behavior is defined with standard Rust code. Load tests are applications
+that have a dependency on the Goose library. Web requests are made with the
+[Reqwest](https://docs.rs/reqwest) HTTP Client.
 
-Goose load tests are built using Cargo to create a new application with a
-dependency on the Goose library. Web requests are made with the
-[Reqwest](https://docs.rs/reqwest) HTTP Client. Get started quickly with the
+## Getting Started
+
+Refer to the 
 [in-line documentation](https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test).
+to quickly get started load testing with Goose. Read on for more background detail.
+
+[Cargo](https://doc.rust-lang.org/cargo/) is the Rust package manager. To create a new
+load test, use Cargo to create a new application (you can name your application anything,
+we've generically selected 'loadtest'):
+
+```bash
+$ cargo new loadtest
+     Created binary (application) `loadtest` package
+$ cd loadtest/
+```
+
+This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` and
+`loadtest/src/main.rs`. Start by editing `Cargo.toml` adding Goose under the dependencies
+heading:
+
+
+```toml
+[dependencies]
+goose = "^0.5"
+```
+
+At this point it's possible to compile all dependencies, though the
+resulting binary only displays "Hello, world!":
+
+```
+$ cargo run
+    Updating crates.io index
+  Downloaded goose v0.5.7
+      ...
+   Compiling reqwest v0.10.4
+   Compiling goose v0.5.7
+   Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
+    Finished dev [unoptimized + debuginfo] target(s) in 52.97s
+     Running `target/debug/loadtest`
+Hello, world!
+```
+
+To create an actual load test, you first have to add the following boilerplate
+to the top of `src/main.rs`:
+
+```rust
+use goose::GooseState;
+use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+```
+
+Then create a new load testing function. For our example we're simply going
+to load the front page of the website we're load-testing. Goose passes all
+load testing function a mutable pointer to a GooseClient object, which is used
+to track statistics and make web requests. Thanks to the Reqwest library, the
+Goose client manages things like cookies and headers for you.
+
+In load tests functions you typically do not set the host, and instead configure
+the host at run time, so you can easily run your load test against different
+environments without recompiling:
+
+```rust
+fn loadtest_index(client: &mut GooseClient) {
+    let _response = client.get("/");
+}
+```
+
+Finally, edit the main() function, removing the hello world text and replacing
+it as follows:
+
+```rust
+fn main() {
+    GooseState::initialize()
+        .register_taskset(GooseTaskSet::new("LoadtestTasks")
+            .register_task(GooseTask::new(loadtest_index))
+        )
+        .execute();
+}
+```
+
+And that's it, you've created your first load test! Let's run it and see what
+happens.
+
+```bash
+$ cargo run
+   Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
+    Finished dev [unoptimized + debuginfo] target(s) in 3.56s
+     Running `target/debug/loadtest`
+12:09:56 [ERROR] Host must be defined globally or per-TaskSet. No host defined for LoadtestTasks.
+```
+
+Goose is unable to run, as it doesn't know the domain you want to load test. So,
+let's try again, this time passing in the `--host` flag. While we're at it, lets
+also tell Goose to collect and display statistics, with `--print-statistics`. After
+running for a few seconds, we then press `ctrl-c` to stop Goose:
+
+```bash
+$ cargo run -- --host http://apache.fosciana/ --print-stats
+    Finished dev [unoptimized + debuginfo] target(s) in 0.07s
+     Running `target/debug/loadtest --host 'http://apache.fosciana/' --print-stats`
+^C12:12:47 [ WARN] caught ctrl-c, stopping...
+------------------------------------------------------------------------------ 
+ Name                    | # reqs         | # fails        | req/s  | fail/s
+ ----------------------------------------------------------------------------- 
+ GET /                   | 905            | 0 (0%)         | 301    | 0    
+-------------------------------------------------------------------------------
+ Name                    | Avg (ms)   | Min        | Max        | Median    
+ ----------------------------------------------------------------------------- 
+ GET /                   | 3139       | 952        | 102412     | 3000      
+-------------------------------------------------------------------------------
+ Slowest page load within specified percentile of requests (in ms):
+ ------------------------------------------------------------------------------
+ Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
+ ----------------------------------------------------------------------------- 
+ GET /                   | 3000   | 4000   | 5000   | 6000   | 8000   |   8000
+```
+
+When printing statistics, Goose displays three tables. The first shows the total
+number of requests made (905), how many of those failed (0), the everage number
+of requests per second (301), and the average number of failed requests per
+second (0).
+
+The second table shows the average time required to load a page (3139 milliseconds),
+the mininimum time to load a page (952 ms), the maximum time to load a page (102412
+ms) and the median time to load a page (3000 ms).
+
+The final table shows the slowest page load time for a range of percentiles. In our
+example, in the 50% fastest page loads, the slowest page loaded in 3000 ms. In the
+75% fastest page loads, the slowest page loadd in 4000 ms, etc.
+
+In most load tests you'll make have different tasks being run, and each will be
+split out in the statistics, along with a line showing all totaled together in
+aggregate.
+
+For examples of more complicated and useful load tests, refer to the
+[examples directory](https://github.com/jeremyandrews/goose/tree/master/examples).
+
+## Tips
+
+* Avoid `unwrap()` in your task function -- Goose generates a lot of load, and this tends
+to trigger errors. Embrace Rust's warnings and properly handle all possible errors, this
+will save you time debugging later.
+* When running your load test for real, use the cargo `--release` flag to generate
+optimized code. This can generate considerably more load test traffic.
+
+## Simple Example
 
 Passing the included `simple` example the `-h` flag you can see the
 run-time configuration options available to Goose load tests:
 
 ```
-$ cargo run --release --example simple -- -h
-    Finished release [optimized] target(s) in 0.05s
-     Running `target/release/examples/simple -h`
 client 0.5.7
-Configuration options required for launching a Goose loadtest
+CLI options available when launching a Goose loadtest, provided by StructOpt
 
 USAGE:
     simple [FLAGS] [OPTIONS]
@@ -43,16 +183,12 @@ FLAGS:
 
 OPTIONS:
     -c, --clients <clients>          Number of concurrent Goose users (defaults to available CPUs)
-    -r, --hatch-rate <hatch-rate>    How many users to spawn per second (defaults to available CPUs)
+    -r, --hatch-rate <hatch-rate>    How many users to spawn per second (defaults to 1 per available CPU)
     -H, --host <host>                Host to load test in the following format: http://10.21.32.33 [default: ]
         --log-file <log-file>         [default: goose.log]
     -t, --run-time <run-time>        Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.)
                                      [default: ]
 ```
-
-## Examples
-
-### Simple
 
 The `examples/simple.rs` example copies the simple load test documented on the locust.io web page, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the client log in and then load a couple of pages.
 

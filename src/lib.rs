@@ -19,10 +19,9 @@
 //! First create a new empty cargo application, for example:
 //! 
 //! ```bash
-//! $ mkdir loadtest
+//! $ cargo new loadtest
+//!      Created binary (application) `loadtest` package
 //! $ cd loadtest/
-//! $ cargo init
-//!      Created binary (application) package
 //! ```
 //! 
 //! Add Goose as a dependency in `Cargo.toml`:
