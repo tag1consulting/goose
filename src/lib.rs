@@ -1171,3 +1171,73 @@ fn merge_from_client(
     }
     merged_request
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn max_response_time() {
+        let mut max_response_time = 99;
+        // Update max response time to a higher value.
+        max_response_time = update_max_response_time(max_response_time, 101);
+        assert_eq!(max_response_time, 101);
+        // Max response time doesn't update when updating with a lower value.
+        max_response_time = update_max_response_time(max_response_time, 1);
+        assert_eq!(max_response_time, 101);
+    }
+
+    #[test]
+    fn min_response_time() {
+        let mut min_response_time = 11;
+        // Update min response time to a lower value.
+        min_response_time = update_min_response_time(min_response_time, 9);
+        assert_eq!(min_response_time, 9);
+        // Min response time doesn't update when updating with a lower value.
+        min_response_time = update_min_response_time(min_response_time, 22);
+        assert_eq!(min_response_time, 9);
+        // Min response time doesn't update when updating with a 0 value.
+        min_response_time = update_min_response_time(min_response_time, 0);
+        assert_eq!(min_response_time, 9);
+    }
+
+    #[test]
+    fn response_time_merge() {
+        let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        global_response_times = merge_response_times(global_response_times, local_response_times.clone());
+        // @TODO: how can we do useful testing of private method and objects?
+        assert_eq!(&global_response_times, &local_response_times);
+    }
+
+    #[test]
+    fn timer() {
+        let started = time::Instant::now();
+
+        // 60 second timer has not expired.
+        let expired = timer_expired(started, 60);
+        assert_eq!(expired, false);
+
+        // Timer is disabled.
+        let expired = timer_expired(started, 0);
+        assert_eq!(expired, false);
+
+        let sleep_duration = time::Duration::from_secs(1);
+        thread::sleep(sleep_duration);
+
+        // Timer is now expired.
+        let expired = timer_expired(started, 1);
+        assert_eq!(expired, true);
+    }
+
+    #[test]
+    fn valid_host() {
+        // We can only test valid domains, as we exit on failure.
+        // @TODO: rework so we don't exit on failure
+        assert_eq!(is_valid_host("http://example.com"), true);
+        assert_eq!(is_valid_host("http://example.com/"), true);
+        assert_eq!(is_valid_host("https://www.example.com/and/with/path"), true);
+        assert_eq!(is_valid_host("foo://example.com"), true);
+        assert_eq!(is_valid_host("file:///path/to/file"), true);
+    }
+}

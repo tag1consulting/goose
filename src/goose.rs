@@ -1381,7 +1381,6 @@ impl GooseTask {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
