@@ -22,7 +22,7 @@ to quickly get started load testing with Goose. Read on for more background deta
 
 [Cargo](https://doc.rust-lang.org/cargo/) is the Rust package manager. To create a new
 load test, use Cargo to create a new application (you can name your application anything,
-we've generically selected 'loadtest'):
+we've generically selected `loadtest`):
 
 ```bash
 $ cargo new loadtest

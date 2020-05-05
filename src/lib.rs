@@ -147,7 +147,6 @@
 //! ```bash
 //! 05:56:30 [ INFO] run_time = 30
 //! 05:56:30 [ INFO] concurrent clients defaulted to 8 (number of CPUs)
-//! 05:56:30 [ INFO] hatch_rate defaulted to 8 (number of CPUs)
 //! ```
 //! 
 //! Goose will default to launching 1 client per available CPU core, and will launch them all in
@@ -577,23 +576,12 @@ impl GooseState {
             std::process::exit(0);
         }
 
-        // Configure number of client threads to launch per second, default to the number of CPU cores available.
-        let hatch_rate = match self.configuration.hatch_rate {
-            Some(h) => {
-                if h == 0 {
-                    error!("The hatch_rate must be greater than 0, and generally should be no more than 100 * NUM_CORES.");
-                    std::process::exit(1);
-                }
-                else {
-                    h
-                }
-            }
-            None => {
-                let h = self.number_of_cpus;
-                info!("hatch_rate defaulted to {} (number of CPUs)", h);
-                h
-            }
-        };
+        // Configure number of client threads to launch per second, defaults to 1.
+        let hatch_rate = self.configuration.hatch_rate;
+        if hatch_rate < 1 {
+            error!("Hatch rate must be greater than 0, or no clients will launch.");
+            std::process::exit(1);
+        }
         debug!("hatch_rate = {}", hatch_rate);
 
         // Confirm there's either a global host, or each task set has a host defined.
@@ -870,9 +858,9 @@ pub struct GooseConfiguration {
     #[structopt(short, long)]
     clients: Option<usize>,
 
-    /// How many users to spawn per second (defaults to 1 per available CPU).
-    #[structopt(short = "r", long)]
-    hatch_rate: Option<usize>,
+    /// How many users to spawn per second.
+    #[structopt(short = "r", long, required=false, default_value="1")]
+    hatch_rate: usize,
 
     /// Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.).
     #[structopt(short = "t", long, required=false, default_value="")]
