@@ -331,7 +331,7 @@ impl GooseState {
     /// Load configuration from command line and initialize a GooseState.
     /// 
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
     ///     use goose::GooseState;
     ///
     ///     let mut goose_state = GooseState::initialize();
@@ -429,7 +429,7 @@ impl GooseState {
     /// be registered into Goose's global state with this method for it to run.
     /// 
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
     ///     use goose::GooseState;
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///
@@ -465,7 +465,7 @@ impl GooseState {
     /// test against production.
     /// 
     /// # Example
-    /// ```rust
+    /// ```rust,no_run
     ///     use goose::GooseState;
     ///
     ///     GooseState::initialize()
