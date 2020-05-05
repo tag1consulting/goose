@@ -368,6 +368,7 @@ impl GooseState {
 
         let log_file = PathBuf::from(&goose_state.configuration.log_file);
 
+        // @TODO: get rid of unwrap(), TermLogger fails if there's no terminal.
         CombinedLogger::init(vec![
             TermLogger::new(
                 debug_level,

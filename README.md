@@ -5,6 +5,7 @@ Have you ever been attacked by a goose?
 [![crates.io](https://img.shields.io/crates/v/goose.svg)](https://crates.io/crates/goose)
 [![Documentation](https://docs.rs/goose/badge.svg)](https://docs.rs/goose)
 [![Apache-2.0 licensed](https://img.shields.io/crates/l/goose.svg)](./LICENSE)
+[![CI](https://github.com/jeremyandrews/goose/workflows/CI/badge.svg)](https://github.com/jeremyandrews/goose/actions?query=workflow%3ACI)
 
 ## Overview
 
