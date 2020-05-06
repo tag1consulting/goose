@@ -1028,7 +1028,7 @@ impl GooseClient {
 
         // Make the actual request.
         let response = self.client.execute(request);
-        let elapsed = started.elapsed() * 100;
+        let elapsed = started.elapsed();
 
         if self.config.print_stats {
             let path = self.previous_path.clone().expect("failed to unwrap previous_path").to_string();
