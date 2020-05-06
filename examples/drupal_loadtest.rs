@@ -23,9 +23,8 @@
 //! limitations under the License.
 
 use rand::Rng;
+use regex::Regex;
 use scraper::{Html, Selector};
-use select::document::Document;
-use select::predicate::Name;
 
 use goose::GooseState;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
@@ -80,23 +79,19 @@ fn drupal_loadtest_front_page(client: &mut GooseClient) {
     // Grab some static assets from the front page.
     match response {
         Ok(r) => {
-            // Grab all src values from image tags.
-            match Document::from_read(r) {
-                Ok(d) => {
-                    d.find(Name("img"))
-                        .filter_map(|n| n.attr("src"))
-                        .for_each(|x| {
-                            // @TODO: once we're done comparing Goose to Locust, improve this
-                            // to do a better job of matching local assets
-                            if x.contains("/misc") || x.contains("/themes") {
-                                let _response = client.set_request_name("static asset").get(x);
-                            }
-                        });
+            match r.text() {
+                Ok(t) => {
+                    let re = Regex::new(r#"src="(.*?)""#).unwrap();
+                    for url in re.captures_iter(&t) {
+                        if url[1].contains("/misc") || url[1].contains("/themes") {
+                            let _response = client.set_request_name("static asset").get(&url[1]);
+                        }
+                    }
                 },
                 Err(e) => {
                     eprintln!("failed to parse front page: {}", e);
                     client.set_failure();
-                }
+                },
             }
         },
         Err(e) => {
