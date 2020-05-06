@@ -24,7 +24,6 @@
 
 use rand::Rng;
 use regex::Regex;
-use scraper::{Html, Selector};
 
 use goose::GooseState;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
@@ -120,18 +119,15 @@ fn drupal_loadtest_login(client: &mut GooseClient) {
         Ok(r) => {
             match r.text() {
                 Ok(html) => {
-                    // Extract the form_build_id from the user login form.
-                    let user_page = Html::parse_document(&html);
-                    let selector = Selector::parse(r#"input[name='form_build_id']"#).expect("failed to parse selector");
-                    let input = match user_page.select(&selector).next() {
-                        Some(i) => i,
+                    let re = Regex::new( r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
+                    let form_build_id = match re.captures(&html) {
+                        Some(f) => f,
                         None => {
-                            eprintln!("no form_build_id found on /user");
+                            eprintln!("no form_build_id on page: /user page");
                             client.set_failure();
                             return;
                         }
                     };
-                    let form_build_id = input.value().attr("value").expect("failed to get form_build_id value");
 
                     // Log the user in.
                     let uid = rand::thread_rng().gen_range(3, 5_002);
@@ -139,7 +135,7 @@ fn drupal_loadtest_login(client: &mut GooseClient) {
                     let params = [
                         ("name", username.as_str()),
                         ("pass", "12345"),
-                        ("form_build_id", form_build_id),
+                        ("form_build_id", &form_build_id[1]),
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
@@ -167,40 +163,35 @@ fn drupal_loadtest_post_comment(client: &mut GooseClient) {
             match r.text() {
                 Ok(html) => {
                     // Extract the form_build_id from the user login form.
-                    let comment_page = Html::parse_document(&html);
-
-                    let selector = Selector::parse(r#"input[name='form_build_id']"#).expect("failed to parse form_build_id selector");
-                    let input = match comment_page.select(&selector).next() {
-                        Some(i) => i,
+                    let re = Regex::new( r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
+                    let form_build_id = match re.captures(&html) {
+                        Some(f) => f,
                         None => {
                             eprintln!("no form_build_id found on node/{}", &nid);
                             client.set_failure();
                             return;
                         }
                     };
-                    let form_build_id = input.value().attr("value").expect("failed to get form_build_id value");
 
-                    let selector = Selector::parse(r#"input[name='form_token']"#).expect("failed to parse form_token selector");
-                    let input = match comment_page.select(&selector).next() {
-                        Some(i) => i,
+                    let re = Regex::new( r#"name="form_token" value=['"](.*?)['"]"#).unwrap();
+                    let form_token = match re.captures(&html) {
+                        Some(f) => f,
                         None => {
                             eprintln!("no form_token found on node/{}", &nid);
                             client.set_failure();
                             return;
                         }
                     };
-                    let form_token = input.value().attr("value").expect("failed to get form_token value");
 
-                    let selector = Selector::parse(r#"input[name='form_id']"#).expect("failed to parse form_token selector");
-                    let input = match comment_page.select(&selector).next() {
-                        Some(i) => i,
+                    let re = Regex::new( r#"name="form_id" value=['"](.*?)['"]"#).unwrap();
+                    let form_id = match re.captures(&html) {
+                        Some(f) => f,
                         None => {
                             eprintln!("no form_id found on node/{}", &nid);
                             client.set_failure();
                             return;
                         }
                     };
-                    let form_id = input.value().attr("value").expect("failed to get form_id value");
                     //println!("form_id: {}, form_build_id: {}, form_token: {}", &form_id, &form_build_id, &form_token);
 
                     let comment_body = "this is a test comment body";
@@ -208,9 +199,9 @@ fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         ("subject", "this is a test comment subject"),
                         ("comment_body[und][0][value]", &comment_body),
                         ("comment_body[und][0][format]", "filtered_html"),
-                        ("form_build_id", form_build_id),
-                        ("form_token", form_token),
-                        ("form_id", form_id),
+                        ("form_build_id", &form_build_id[1]),
+                        ("form_token", &form_token[1]),
+                        ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
                     let request_builder = client.goose_post(format!("/comment/reply/{}", &nid).as_str());
