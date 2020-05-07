@@ -16,9 +16,10 @@ that have a dependency on the Goose library. Web requests are made with the
 
 ## Getting Started
 
-Refer to the 
-[in-line documentation](https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test).
-to quickly get started load testing with Goose. Read on for more background detail.
+The 
+[in-line documentation](https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test)
+offers much more detail about Goose specifics. For a general background to help you get
+started with Rust and Goose, read on.
 
 [Cargo](https://doc.rust-lang.org/cargo/) is the Rust package manager. To create a new
 load test, use Cargo to create a new application (you can name your application anything,
@@ -46,7 +47,7 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.5.7
+  Downloaded goose v0.5.8
       ...
    Compiling reqwest v0.10.4
    Compiling goose v0.5.7
