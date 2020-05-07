@@ -50,7 +50,7 @@ $ cargo run
   Downloaded goose v0.5.8
       ...
    Compiling reqwest v0.10.4
-   Compiling goose v0.5.7
+   Compiling goose v0.5.8
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -166,7 +166,7 @@ Passing the included `simple` example the `-h` flag you can see the
 run-time configuration options available to Goose load tests:
 
 ```
-client 0.5.7
+client 0.5.8
 CLI options available when launching a Goose loadtest, provided by StructOpt
 
 USAGE:
