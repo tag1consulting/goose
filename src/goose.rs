@@ -490,8 +490,12 @@ impl GooseRequest {
         // minimize required memory to store and push upstream to the parent.
         let rounded_response_time: usize;
 
+        // No rounding for 1-100ms response times.
+        if response_time < 100 {
+            rounded_response_time = response_time_usize;
+        }
         // Round to nearest 10 for 100-1000ms response times.
-        if response_time < 1000 {
+        else if response_time < 1000 {
             rounded_response_time = ((response_time as f64 / 10.0).round() * 10.0) as usize;
         }
         // Round to nearest 100 for 1000-10000ms response times.
@@ -1661,8 +1665,8 @@ mod tests {
         request.set_response_time(155);
         // Adds a new response time.
         assert_eq!(request.response_times.len(), 4);
-        // The response time was internally rounded to 200, seen for the first time.
-        assert_eq!(request.response_times[&200], 1);
+        // The response time was internally rounded to 160, seen for the first time.
+        assert_eq!(request.response_times[&160], 1);
         // Minimum doesn't change.
         assert_eq!(request.min_response_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
@@ -1676,8 +1680,8 @@ mod tests {
         request.set_response_time(2345);
         // Adds a new response time.
         assert_eq!(request.response_times.len(), 5);
-        // The response time was internally rounded to 2000, seen for the first time.
-        assert_eq!(request.response_times[&2000], 1);
+        // The response time was internally rounded to 2350, seen for the first time.
+        assert_eq!(request.response_times[&2300], 1);
         // Minimum doesn't change.
         assert_eq!(request.min_response_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
