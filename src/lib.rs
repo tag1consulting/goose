@@ -394,11 +394,20 @@ impl GooseState {
         }
 
         // Configure maximum run time if specified, otherwise run until canceled.
-        if goose_state.configuration.run_time != "" {
-            goose_state.run_time = util::parse_timespan(&goose_state.configuration.run_time);
+        if goose_state.configuration.worker {
+            if goose_state.configuration.run_time != "" {
+                error!("The --run-time option is only available to the manager.");
+                std::process::exit(1);
+            }
+            goose_state.run_time = 0;
         }
         else {
-            goose_state.run_time = 0;
+            if goose_state.configuration.run_time != "" {
+                goose_state.run_time = util::parse_timespan(&goose_state.configuration.run_time);
+            }
+            else {
+                goose_state.run_time = 0;
+            }
         }
         info!("run_time = {}", goose_state.run_time);
 
@@ -406,10 +415,19 @@ impl GooseState {
         goose_state.clients = match goose_state.configuration.clients {
             Some(c) => {
                 if c == 0 {
-                    error!("At least 1 client is required.");
-                    std::process::exit(1);
+                    if goose_state.configuration.worker {
+                        error!("At least 1 client is required.");
+                        std::process::exit(1);
+                    }
+                    else {
+                        0
+                    }
                 }
                 else {
+                    if goose_state.configuration.worker {
+                        error!("The --clients option is only available to the manager.");
+                        std::process::exit(1);
+                    }
                     c
                 }
             }
@@ -560,7 +578,7 @@ impl GooseState {
     pub fn execute(mut self) {
         // At least one task set is required.
         if self.task_sets.len() <= 0 {
-            error!("No task sets defined in goosefile.");
+            error!("No task sets defined.");
             std::process::exit(1);
         }
 
@@ -576,10 +594,42 @@ impl GooseState {
             std::process::exit(0);
         }
 
+        // Manager mode.
+        if self.configuration.manager {
+            // @TODO: support running in both manager and worker mode.
+            if self.configuration.worker {
+                error!("You can only run in manager or worker mode, not both.");
+                std::process::exit(1);
+            }
+
+            if self.configuration.expect_workers < 1 {
+                error!("You must set --expect-workers to 1 or more.");
+                std::process::exit(1);
+            }
+        }
+        
+        // Worker mode.
+        if self.configuration.worker {
+            // @TODO: support running in both manager and worker mode.
+            if self.configuration.manager {
+                error!("You can only run in manager or worker mode, not both.");
+                std::process::exit(1);
+            }
+
+            if self.configuration.expect_workers > 0 {
+                error!("The --expect-workers option is only available to the manager");
+                std::process::exit(1);
+            }
+        }
+
         // Configure number of client threads to launch per second, defaults to 1.
         let hatch_rate = self.configuration.hatch_rate;
         if hatch_rate < 1 {
             error!("Hatch rate must be greater than 0, or no clients will launch.");
+            std::process::exit(1);
+        }
+        if hatch_rate > 1 && self.configuration.worker {
+            error!("The --hatch-rate option is only available to the manager");
             std::process::exit(1);
         }
         debug!("hatch_rate = {}", hatch_rate);
@@ -601,8 +651,10 @@ impl GooseState {
                                 }
                             }
                             None => {
-                                error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
-                                std::process::exit(1);
+                                if ! self.configuration.worker {
+                                    error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
+                                    std::process::exit(1);
+                                }
                             }
                         }
                     }
@@ -867,13 +919,9 @@ impl GooseState {
 #[derive(StructOpt, Debug, Default, Clone)]
 #[structopt(name = "client")]
 pub struct GooseConfiguration {
-    /// Host to load test in the following format: http://10.21.32.33
+    /// Host to load test, for example: http://10.21.32.33
     #[structopt(short = "H", long, required=false, default_value="")]
     host: String,
-
-    ///// Rust module file to import, e.g. '../other.rs'.
-    //#[structopt(short = "f", long, default_value="goosefile")]
-    //goosefile: String,
 
     /// Number of concurrent Goose users (defaults to available CPUs).
     #[structopt(short, long)]
@@ -907,10 +955,6 @@ pub struct GooseConfiguration {
     #[structopt(short, long)]
     list: bool,
 
-    //// Number of seconds to wait for a simulated user to complete any executing task before exiting. Default is to terminate immediately.
-    //#[structopt(short, long, required=false, default_value="0")]
-    //stop_timeout: usize,
-
     // The number of occurrences of the `v/verbose` flag
     /// Debug level (-v, -vv, -vvv, etc.)
     #[structopt(short = "v", long, parse(from_occurrences))]
@@ -921,8 +965,38 @@ pub struct GooseConfiguration {
     #[structopt(short = "g", long, parse(from_occurrences))]
     log_level: u8,
 
+    /// Log file name
     #[structopt(long, default_value="goose.log")]
     log_file: String,
+
+    /// Enables manager mode
+    #[structopt(long)]
+    manager: bool,
+
+    /// Required when in manager mode, how many workers to expect
+    #[structopt(long, required=false, default_value="0")]
+    expect_workers: u16,
+
+    /// Define host manager listens on, formatted x.x.x.x
+    #[structopt(long, default_value="*")]
+    manager_bind_host: String,
+
+    /// Define port manager listens on
+    #[structopt(long, default_value="5557")]
+    manager_bind_port: u16,
+
+    /// Enables worker mode
+    #[structopt(long)]
+    worker: bool,
+
+    /// Host manager is running on
+    #[structopt(long)]
+    #[structopt(long, default_value="127.0.0.1")]
+    manager_host: String,
+
+    /// Port manager is listening on
+    #[structopt(long, default_value="5557")]
+    manager_port: u16,
 }
 
 /// Returns a sequenced bucket of weighted usize pointers to Goose Tasks
