@@ -494,12 +494,12 @@ impl GooseRequest {
         if response_time < 100 {
             rounded_response_time = response_time_usize;
         }
-        // Round to nearest 10 for 100-1000ms response times.
-        else if response_time < 1000 {
+        // Round to nearest 10 for 100-500ms response times.
+        else if response_time < 500 {
             rounded_response_time = ((response_time as f64 / 10.0).round() * 10.0) as usize;
         }
-        // Round to nearest 100 for 1000-10000ms response times.
-        else if response_time < 10000 {
+        // Round to nearest 100 for 500-1000ms response times.
+        else if response_time < 1000 {
             rounded_response_time = ((response_time as f64 / 100.0).round() * 100.0) as usize;
         }
         // Round to nearest 1000 for all larger response times.
@@ -1680,8 +1680,9 @@ mod tests {
         request.set_response_time(2345);
         // Adds a new response time.
         assert_eq!(request.response_times.len(), 5);
-        // The response time was internally rounded to 2350, seen for the first time.
-        assert_eq!(request.response_times[&2300], 1);
+        // The response time was internally rounded to 2000, seen for the first time.
+        println!("{:?}", &request);
+        assert_eq!(request.response_times[&2000], 1);
         // Minimum doesn't change.
         assert_eq!(request.min_response_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
