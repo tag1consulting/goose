@@ -1681,7 +1681,6 @@ mod tests {
         // Adds a new response time.
         assert_eq!(request.response_times.len(), 5);
         // The response time was internally rounded to 2000, seen for the first time.
-        println!("{:?}", &request);
         assert_eq!(request.response_times[&2000], 1);
         // Minimum doesn't change.
         assert_eq!(request.min_response_time, 1);
