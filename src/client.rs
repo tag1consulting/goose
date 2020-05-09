@@ -110,7 +110,6 @@ pub fn client_main(
                 slept += 1;
                 if slept > wait_time {
                     in_sleep_loop = false;
-                    thread_continue = false;
                 }
             }
             else {
@@ -144,4 +143,5 @@ pub fn client_main(
 
     // Do our final sync before we exit.
     thread_sender.send(thread_client.clone()).unwrap();
+    info!("exiting client {} from {}...", thread_number, thread_task_set.name);
 }
