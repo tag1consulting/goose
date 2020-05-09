@@ -682,6 +682,9 @@ impl GooseState {
                 debug!("sleeping {:?} milliseconds...", sleep_duration);
                 thread::sleep(sleep_duration);
             }
+            else {
+                warn!("no tasks for thread {} to run", self.task_sets[thread_client.task_sets_index].name);
+            }
         }
         // Restart the timer now that all threads are launched.
         started = time::Instant::now();
@@ -690,8 +693,14 @@ impl GooseState {
         // Ensure we have request statistics when we're displaying running statistics.
         if self.configuration.print_stats && !self.configuration.only_summary {
             for (index, send_to_client) in client_channels.iter().enumerate() {
-                send_to_client.send(GooseClientCommand::SYNC).unwrap();
-                debug!("telling client {} to sync stats", index);
+                match send_to_client.send(GooseClientCommand::SYNC) {
+                    Ok(_) => {
+                        debug!("telling client {} to sync stats", index);
+                    }
+                    Err(e) => {
+                        warn!("failed to tell client {} to sync stats: {}", index, e);
+                    }
+                }
             }
         }
 
@@ -731,8 +740,14 @@ impl GooseState {
                 if timer_expired(statistics_timer, 15) {
                     statistics_timer = time::Instant::now();
                     for (index, send_to_client) in client_channels.iter().enumerate() {
-                        send_to_client.send(GooseClientCommand::SYNC).unwrap();
-                        debug!("telling client {} to sync stats", index);
+                        match send_to_client.send(GooseClientCommand::SYNC) {
+                            Ok(_) => {
+                                debug!("telling client {} to sync stats", index);
+                            }
+                            Err(e) => {
+                                warn!("failed to tell client {} to sync stats: {}", index, e);
+                            }
+                        }
                     }
                     if !self.configuration.only_summary {
                         display_running_statistics = true;
@@ -789,8 +804,14 @@ impl GooseState {
                 run_time = started.elapsed().as_secs() as usize;
                 info!("stopping after {} seconds...", run_time);
                 for (index, send_to_client) in client_channels.iter().enumerate() {
-                    send_to_client.send(GooseClientCommand::EXIT).unwrap();
-                    debug!("telling client {} to sync stats", index);
+                    match send_to_client.send(GooseClientCommand::EXIT) {
+                        Ok(_) => {
+                            debug!("telling client {} to exit", index);
+                        }
+                        Err(e) => {
+                            warn!("failed to tell client {} to exit: {}", index, e);
+                        }
+                    }
                 }
                 info!("waiting for clients to exit");
                 for client in clients {
