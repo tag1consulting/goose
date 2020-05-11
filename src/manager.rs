@@ -1,36 +1,35 @@
 use crate::GooseState;
 
-use std::convert::TryInto;
+use std::str;
 
-use libzmq::{prelude::*, *};
+use nng::*;
 
 pub fn manager_main(state: &GooseState) {
-    // Build configured address and port.
-    let addr: TcpAddr = match format!("{}:{}", state.configuration.manager_bind_host, state.configuration.manager_bind_port).try_into() {
-        Ok(a) => a,
-        Err(e) => {
-            error!("failed to parse address '{}' and port '{}': {}.", state.configuration.manager_bind_host, state.configuration.manager_bind_port, e);
-            std::process::exit(1);
-        }
-    };
-    // Bind to configured address and port.
-    let mananger = match ServerBuilder::new().bind(&addr).build() {
+    // Creates a TCP address. @TODO: add optional support for UDP.
+    let address = format!("{}://{}:{}", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port);
+
+    // Create a reply socket.
+    let server = match Socket::new(Protocol::Rep0) {
         Ok(s) => s,
         Err(e) => {
-            error!("manager failed to bind to '{}': {}.", &addr, e);
+            error!("failed to create {}://{}:{} socket: {}.", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port, e);
             std::process::exit(1);
         }
     };
-    info!("manager waiting for {} workers on {}:{}", state.configuration.expect_workers, state.configuration.manager_bind_host, state.configuration.manager_bind_port);
-    // Confirm bound address, primarily for debug.
-    let bound = match mananger.last_endpoint() {
-        Ok(b) => b,
+    // Listen for connections.
+    match server.listen(&address) {
+        Ok(s) => (s),
         Err(e) => {
-            error!("manager failed to get bound address: {}.", e);
+            error!("failed to bind to socket {}://{}:{}: {}.", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port, e);
             std::process::exit(1);
         }
-    };
-    debug!("bound: {:?}", bound);
-    let msg = mananger.recv_msg().unwrap();
-    info!("msg: {:?}", msg);
+    }
+    info!("manager listening on {}, waiting for {} workers", &address, state.configuration.expect_workers);
+
+    // Currently loops forever receiving/printing utf8 messages.
+    let mut msg;
+    loop {
+        msg = server.recv().unwrap();
+        println!("{:?}", str::from_utf8(msg.as_slice()));
+    }
 }
