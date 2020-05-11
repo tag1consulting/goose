@@ -1,6 +1,8 @@
-use crate::GooseState;
-
 use nng::*;
+
+use crate::GooseState;
+use crate::goose::{GooseRequest, GooseMethod};
+
 
 pub fn worker_main(state: &GooseState) {
     // Creates a TCP address. @TODO: add optional support for UDP.
@@ -26,12 +28,15 @@ pub fn worker_main(state: &GooseState) {
     }
 
     // Let manager know we're ready to work.
-    let ready: Message = "READY".as_bytes().into();
-    match client.send(ready) {
+    let mut buf: Vec<u8> = Vec::new();
+    let ready = GooseRequest::new("/", GooseMethod::GET);
+    serde_cbor::to_writer(&mut buf, &ready).unwrap();
+    match client.send(&buf) {
         Ok(m) => m,
         Err(e) => {
             error!("communication failure to {}: {:?}.", &address, e);
             std::process::exit(1);
         }
     }
+
 }

@@ -1,8 +1,7 @@
-use crate::GooseState;
-
-use std::str;
-
 use nng::*;
+
+use crate::GooseState;
+use crate::goose::GooseRequest;
 
 pub fn manager_main(state: &GooseState) {
     // Creates a TCP address. @TODO: add optional support for UDP.
@@ -30,6 +29,7 @@ pub fn manager_main(state: &GooseState) {
     let mut msg;
     loop {
         msg = server.recv().unwrap();
-        println!("{:?}", str::from_utf8(msg.as_slice()));
+        let test: GooseRequest = serde_cbor::from_reader(msg.as_slice()).unwrap();
+        println!("{:?}", test);
     }
 }

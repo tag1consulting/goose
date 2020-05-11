@@ -22,6 +22,8 @@ num-format = "0.4"
 rand = "0.7"
 regex = "1"
 reqwest = { version = "0.10", features = ["blocking", "cookies", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11"
 simplelog = "0.7"
 structopt = "0.3"
 url = "2.1"
