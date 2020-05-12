@@ -17,6 +17,11 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+
+#[macro_use]
+extern crate macro_rules_attribute;
+
+use goose::dyn_async;
 use goose::GooseState;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
@@ -38,7 +43,8 @@ fn main() {
 /// Demonstrates how to log in when a client starts. We flag this task as an
 /// on_start task when registering it above. This means it only runs one time
 /// per client, when the client thread first starts.
-fn website_task_login(client: &mut GooseClient) {
+#[macro_rules_attribute(dyn_async!)]
+async fn website_task_login<'fut>(client: &'fut mut GooseClient) -> () {
     let request_builder = client.goose_post("/login");
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
@@ -46,11 +52,13 @@ fn website_task_login(client: &mut GooseClient) {
 }
 
 /// A very simple task that simply loads the front page.
-fn website_task_index(client: &mut GooseClient) {
+#[macro_rules_attribute(dyn_async!)]
+async fn website_task_index<'fut>(client: &'fut mut GooseClient) -> () {
     let _response = client.get("/");
 }
 
 /// A very simple task that simply loads the about page.
-fn website_task_about(client: &mut GooseClient) {
+#[macro_rules_attribute(dyn_async!)]
+async fn website_task_about<'fut>(client: &'fut mut GooseClient) -> () {
     let _response = client.get("/about/");
 }
