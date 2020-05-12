@@ -298,6 +298,7 @@ use std::{thread, time};
 
 use rand::thread_rng;
 use rand::seq::SliceRandom;
+use serde::{Serialize, Deserialize};
 use simplelog::*;
 use structopt::StructOpt;
 use url::Url;
@@ -894,6 +895,7 @@ impl GooseState {
                         let mut message = parent_receiver.try_recv();
                         while message.is_ok() {
                             let unwrapped_message = message.unwrap();
+                            // @TODO, merge into a single client
                             let weighted_clients_index = unwrapped_message.weighted_clients_index;
                             self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                             // Syncronize client requests
@@ -935,7 +937,7 @@ impl GooseState {
 }
 
 /// CLI options available when launching a Goose loadtest, provided by StructOpt.
-#[derive(StructOpt, Debug, Default, Clone)]
+#[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
 #[structopt(name = "client")]
 pub struct GooseConfiguration {
     /// Host to load test, for example: http://10.21.32.33

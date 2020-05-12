@@ -1,9 +1,8 @@
-use std::{thread, time};
-
 use nng::*;
 
 use crate::GooseState;
-use crate::goose::GooseRequest;
+use crate::goose::{GooseRequest, GooseClient};
+use crate::manager::GooseClientInitializer;
 
 pub fn worker_main(state: &GooseState) {
     // Creates a TCP address. @TODO: add optional support for UDP.
@@ -48,19 +47,40 @@ pub fn worker_main(state: &GooseState) {
     }
 
     // Wait for the manager to give us client parameters.
-    info!("waiting for instructions from manager");
-    let _msg = match client.recv() {
-        Ok(m) => m,
-        Err(e) => {
-            error!("unexpected error receiving manager message: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    // @TODO: perform actual work.
     loop {
-        let sleep_duration = time::Duration::from_secs(5);
-        info!("client sleeping {:?} second...", sleep_duration);
-        thread::sleep(sleep_duration);
+        info!("waiting for instructions from manager");
+        let msg = match client.recv() {
+            Ok(m) => m,
+            Err(e) => {
+                error!("unexpected error receiving manager message: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let initializers: Vec<GooseClientInitializer> = match serde_cbor::from_reader(msg.as_slice()) {
+            Ok(i) => i,
+            Err(e) => {
+                error!("invalid message received: {}", e);
+                continue;
+            }
+        };
+        // Message received, onto the next step.
+
+        // Allocate a state for each client that will be spawned.
+        info!("initializing client states...");
+        let mut weighted_clients = Vec::new();
+        for initializer in initializers {
+            weighted_clients.push(GooseClient::new(
+                weighted_clients.len(),
+                initializer.task_sets_index,
+                initializer.default_host.clone(),
+                initializer.task_set_host.clone(),
+                initializer.min_wait,
+                initializer.max_wait,
+                &initializer.config,
+            ));
+        }
+        info!("initialized {} client states", weighted_clients.len());
+        break;
     }
+    // @TODO: perform actual work.
 }
