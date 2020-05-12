@@ -1,7 +1,9 @@
+use std::{thread, time};
+
 use nng::*;
 
 use crate::GooseState;
-use crate::goose::{GooseRequest, GooseClient};
+use crate::goose::{GooseRequest, GooseClient, GooseClientCommand};
 use crate::manager::GooseClientInitializer;
 
 pub fn worker_main(state: &GooseState) {
@@ -46,6 +48,8 @@ pub fn worker_main(state: &GooseState) {
         }
     }
 
+    let mut hatch_rate: Option<f32> = None;
+
     // Wait for the manager to give us client parameters.
     loop {
         info!("waiting for instructions from manager");
@@ -58,12 +62,26 @@ pub fn worker_main(state: &GooseState) {
         };
         let initializers: Vec<GooseClientInitializer> = match serde_cbor::from_reader(msg.as_slice()) {
             Ok(i) => i,
-            Err(e) => {
-                error!("invalid message received: {}", e);
+            Err(_) => {
+                let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice()) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("invalid message received: {}", e);
+                        continue;
+                    }
+                };
+                match command {
+                    GooseClientCommand::EXIT => {
+                        warn!("received EXIT command from manager");
+                        std::process::exit(0);
+                    },
+                    other => {
+                        info!("received unknown command from manager: {:?}", other);
+                    }
+                }
                 continue;
             }
         };
-        // Message received, onto the next step.
 
         // Allocate a state for each client that will be spawned.
         info!("initializing client states...");
@@ -78,9 +96,49 @@ pub fn worker_main(state: &GooseState) {
                 initializer.max_wait,
                 &initializer.config,
             ));
+            if hatch_rate == None {
+                hatch_rate = Some(1.0 / (initializer.config.hatch_rate as f32 / (initializer.config.expect_workers as f32)));
+                info!("prepared to start 1 client every {:.2} seconds", hatch_rate.unwrap());
+            }
         }
         info!("initialized {} client states", weighted_clients.len());
         break;
     }
+
+    info!("waiting for go-ahead from manager");
+    // Tell manager we're ready to load test.
+    loop {
+        match client.send(&buf) {
+            Ok(m) => m,
+            Err(e) => {
+                error!("communication failure to {}: {:?}.", &address, e);
+                std::process::exit(1);
+            }
+        }
+        let msg = match client.recv() {
+            Ok(m) => m,
+            Err(e) => {
+                error!("unexpected error receiving manager message: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice()) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("invalid message received: {}", e);
+                continue;
+            }
+        };
+
+        match command {
+            GooseClientCommand::RUN => break,
+            _ => {
+                let sleep_duration = time::Duration::from_secs(1);
+                debug!("sleeping {:?} second waiting for manager...", sleep_duration);
+                thread::sleep(sleep_duration);
+            }
+        }
+    }
     // @TODO: perform actual work.
+    info!("gaggle launching, load test initializing on all workers");
 }

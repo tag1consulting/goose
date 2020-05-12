@@ -685,7 +685,9 @@ impl GooseState {
         }
 
         // Allocate a state for each of the clients we are about to start.
-        self.weighted_clients = self.weight_task_set_clients();
+        if !self.configuration.worker {
+            self.weighted_clients = self.weight_task_set_clients();
+        }
 
         // Our load test is officially starting.
         let mut started = time::Instant::now();

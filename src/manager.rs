@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 
 use std::collections::HashSet;
 
-use crate::{GooseState, GooseConfiguration};
+use crate::{GooseState, GooseConfiguration, GooseClientCommand};
 use crate::goose::GooseRequest;
 
 /// All elements required to initialize a client in a worker process.
@@ -58,14 +58,10 @@ pub fn manager_main(state: &GooseState) {
     // A mutable bucket of clients to be assigned to workers.
     let mut available_clients = state.weighted_clients.clone();
 
-    // @TODO: do this on the worker?
-    //let hatch_rate = 1.0 / (state.configuration.hatch_rate as f32 / (state.configuration.expect_workers as f32));
-    //info!("each worker to start 1 client every {:.2} seconds", hatch_rate);
-
     // Track how many workers we've seen.
     let mut workers: HashSet<Pipe> = HashSet::new();
 
-    // Loop accepted connetions unitl we hear from all expected workers.
+    // Worker control loop.
     let mut msg;
     loop {
         msg = match server.recv() {
@@ -87,50 +83,30 @@ pub fn manager_main(state: &GooseState) {
         let request: Vec<GooseRequest> = serde_cbor::from_reader(msg.as_slice()).unwrap();
         debug!("{:?}", request);
 
-        // @TODO: how to handle another request from an existing client?
-        if !workers.contains(&pipe) {
-            workers.insert(pipe);
-            info!("worker {} of {} connected", workers.len(), state.configuration.expect_workers);
-
-            // Send new worker a batch of clients.
-            let mut client_batch = split_clients;
-            // If remainder, put extra client in this batch.
-            if split_clients_remainder > 0 {
-                split_clients_remainder -= 1;
-                client_batch += 1;
-            }
-            let mut clients = Vec::new();
-
-            // Pop clients from available_clients vector and build worker initializer.
-            for _ in 1..=client_batch {
-                let client = match available_clients.pop() {
-                    Some(c) => c,
-                    None => {
-                        error!("not enough available clients!?");
+        // We've seen this worker before.
+        if workers.contains(&pipe) {
+            debug!("worker ready");
+            let mut buf: Vec<u8> = Vec::new();
+            // All workers are running load test, sending statistics.
+            if workers.len() == state.configuration.expect_workers as usize {
+                match serde_cbor::to_writer(&mut buf, &GooseClientCommand::RUN) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("failed to serialize client command: {}", e);
                         std::process::exit(1);
                     }
-                };
-                // Build a vector of GooseClient initializers for next worker.
-                clients.push(GooseClientInitializer{
-                    task_sets_index: client.task_sets_index,
-                    default_host: client.default_host.clone(),
-                    task_set_host: client.task_set_host.clone(),
-                    min_wait: client.min_wait,
-                    max_wait: client.max_wait,
-                    config: client.config.clone(),
-                });
-            }
-
-            // Send vector of client initializers to worker.
-            let mut buf: Vec<u8> = Vec::new();
-            match serde_cbor::to_writer(&mut buf, &clients) {
-                Ok(_) => (),
-                Err(e) => {
-                    error!("failed to serialize client initializers: {}", e);
-                    std::process::exit(1);
                 }
             }
-            info!("sending worker-{} {} clients", workers.len(), clients.len());
+            // All workers are not yet running, tell worker to wait.
+            else { 
+                match serde_cbor::to_writer(&mut buf, &GooseClientCommand::WAIT) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("failed to serialize client command: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
             let message: Message = buf.as_slice().into();
             match server.send(message) {
                 Ok(m) => m,
@@ -140,11 +116,86 @@ pub fn manager_main(state: &GooseState) {
                 }
             }
         }
+        // This is the first time we've seen this worker.
+        else {
+            // Make sure we're not already conneted to all of our workers.
+            if workers.len() >= state.configuration.expect_workers as usize {
+                // We already have enough workers, tell this one to EXIT.
+                let mut buf: Vec<u8> = Vec::new();
+                match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("failed to serialize client command: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                let message: Message = buf.as_slice().into();
+                match server.send(message) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("communication failure: {:?}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            // We need another worker, accept the connection.
+            else {
+                workers.insert(pipe);
+                if workers.len() == state.configuration.expect_workers as usize {
+                    info!("all {} workers have connected", state.configuration.expect_workers);
+                }
+                else {
+                    info!("worker {} of {} connected", workers.len(), state.configuration.expect_workers);
+                }
 
-        if workers.len() == state.configuration.expect_workers as usize {
-            info!("all workers have connected, starting load test..");
-            // @TODO: start load test.
-            break;
+                // Send new worker a batch of clients.
+                let mut client_batch = split_clients;
+                // If remainder, put extra client in this batch.
+                if split_clients_remainder > 0 {
+                    split_clients_remainder -= 1;
+                    client_batch += 1;
+                }
+                let mut clients = Vec::new();
+
+                // Pop clients from available_clients vector and build worker initializer.
+                for _ in 1..=client_batch {
+                    let client = match available_clients.pop() {
+                        Some(c) => c,
+                        None => {
+                            error!("not enough available clients!?");
+                            std::process::exit(1);
+                        }
+                    };
+                    // Build a vector of GooseClient initializers for next worker.
+                    clients.push(GooseClientInitializer{
+                        task_sets_index: client.task_sets_index,
+                        default_host: client.default_host.clone(),
+                        task_set_host: client.task_set_host.clone(),
+                        min_wait: client.min_wait,
+                        max_wait: client.max_wait,
+                        config: client.config.clone(),
+                    });
+                }
+
+                // Send vector of client initializers to worker.
+                let mut buf: Vec<u8> = Vec::new();
+                match serde_cbor::to_writer(&mut buf, &clients) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("failed to serialize client initializers: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                info!("sending worker-{} {} clients", workers.len(), clients.len());
+                let message: Message = buf.as_slice().into();
+                match server.send(message) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("communication failure: {:?}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
     }
 }

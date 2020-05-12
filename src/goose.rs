@@ -416,11 +416,15 @@ pub enum GooseClientMode {
 }
 
 /// Commands sent between the parent and client threads.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GooseClientCommand {
-    /// Tell client thread to push statistics to parent
+    /// Tell remote client to pause load test.
+    WAIT,
+    /// Tell remote client to start load test.
+    RUN,
+    /// Tell client thread to push statistics to parent.
     SYNC,
-    /// Tell client thread to exit
+    /// Tell client thread to exit.
     EXIT,
 }
 
