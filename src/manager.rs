@@ -1,5 +1,7 @@
 use nng::*;
 
+use std::collections::HashSet;
+
 use crate::GooseState;
 use crate::goose::GooseRequest;
 
@@ -25,11 +27,39 @@ pub fn manager_main(state: &GooseState) {
     }
     info!("manager listening on {}, waiting for {} workers", &address, state.configuration.expect_workers);
 
-    // Currently loops forever receiving/printing utf8 messages.
+    let mut workers: HashSet<Pipe> = HashSet::new();
+
+    // Loop accepted connetions unitl we hear from all expected workers.
     let mut msg;
     loop {
-        msg = server.recv().unwrap();
-        let test: GooseRequest = serde_cbor::from_reader(msg.as_slice()).unwrap();
-        println!("{:?}", test);
+        msg = match server.recv() {
+            Ok(m) => m,
+            Err(e) => {
+                error!("unexpected error receiving client message: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let pipe = match msg.pipe() {
+            Some(p) => p,
+            None => {
+                error!("unexpected fatal error reading worker pipe");
+                std::process::exit(1);
+            }
+        };
+
+        let request: Vec<GooseRequest> = serde_cbor::from_reader(msg.as_slice()).unwrap();
+        debug!("{:?}", request);
+
+        if !workers.contains(&pipe) {
+            workers.insert(pipe);
+            info!("worker {} of {} connected", workers.len(), state.configuration.expect_workers);
+        }
+
+        if workers.len() == state.configuration.expect_workers as usize {
+            info!("all workers have connected, starting load test..");
+            // @TODO: start load test.
+            break;
+        }
     }
 }

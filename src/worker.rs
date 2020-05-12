@@ -1,8 +1,9 @@
+use std::{thread, time};
+
 use nng::*;
 
 use crate::GooseState;
-use crate::goose::{GooseRequest, GooseMethod};
-
+use crate::goose::GooseRequest;
 
 pub fn worker_main(state: &GooseState) {
     // Creates a TCP address. @TODO: add optional support for UDP.
@@ -29,8 +30,15 @@ pub fn worker_main(state: &GooseState) {
 
     // Let manager know we're ready to work.
     let mut buf: Vec<u8> = Vec::new();
-    let ready = GooseRequest::new("/", GooseMethod::GET);
-    serde_cbor::to_writer(&mut buf, &ready).unwrap();
+    let requests: Vec<GooseRequest> = Vec::new();
+    match serde_cbor::to_writer(&mut buf, &requests) {
+        Ok(_) => (),
+        Err(e) => {
+            error!("failed to serialize empty Vec<GooseRequest>: {}", e);
+            std::process::exit(1);
+        }
+    }
+
     match client.send(&buf) {
         Ok(m) => m,
         Err(e) => {
@@ -39,4 +47,20 @@ pub fn worker_main(state: &GooseState) {
         }
     }
 
+    // Wait for the manager to give us client parameters.
+    info!("waiting for instructions from manager");
+    let _msg = match client.recv() {
+        Ok(m) => m,
+        Err(e) => {
+            error!("unexpected error receiving manager message: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // @TODO: perform actual work.
+    loop {
+        let sleep_duration = time::Duration::from_secs(5);
+        info!("client sleeping {:?} second...", sleep_duration);
+        thread::sleep(sleep_duration);
+    }
 }
