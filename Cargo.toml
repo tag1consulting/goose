@@ -16,6 +16,7 @@ license = "Apache-2.0"
 ctrlc = "3.1"
 http = "0.2"
 log = "0.4"
+macro_rules_attribute = "*"
 num_cpus = "1.0"
 num-format = "0.4"
 rand = "0.7"
@@ -25,6 +26,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 simplelog = "0.7"
 structopt = "0.3"
+tokio = "0.2.20"
 url = "2.1"
 
 # optional dependencies

@@ -274,6 +274,9 @@
 
 #[macro_use]
 extern crate log;
+#[cfg(test)]
+#[macro_use]
+extern crate macro_rules_attribute;
 
 //#[macro_use]
 //extern crate goose_codegen;
@@ -312,6 +315,29 @@ use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseC
 #[cfg(not(feature = "gaggle"))]
 #[derive(Debug)]
 pub struct Socket {}
+
+// FIXME: For some reason this borks if you don't specify -> ()
+#[macro_export]
+macro_rules! dyn_async {(
+    $( #[$attr:meta] )* // includes doc strings
+    $pub:vis
+    async
+    fn $fname:ident<$lt:lifetime> ( $($args:tt)* ) $(-> $Ret:ty)?
+    {
+        $($body:tt)*
+    }
+) => (
+    $( #[$attr] )*
+    #[allow(unused_parens)]
+    $pub
+    fn $fname<$lt> ( $($args)* ) -> ::std::pin::Pin<::std::boxed::Box<
+        dyn ::std::future::Future<Output = ($($Ret)?)>
+            + ::std::marker::Send + $lt
+    >>
+    {
+        ::std::boxed::Box::pin(async move { $($body)* })
+    }
+)}
 
 /// Internal global state for load test.
 #[derive(Clone)]
@@ -634,7 +660,12 @@ impl GooseAttack {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
-    pub fn execute(mut self) {
+    pub fn execute(self) {
+        let mut rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(self.execute_async())
+    }
+
+    async fn execute_async(mut self) {
         // At least one task set is required.
         if self.task_sets.len() <= 0 {
             error!("No task sets defined.");
