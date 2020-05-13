@@ -37,6 +37,7 @@ fn calculate_response_time_percentile(
 
 /// Display a table of requests and fails.
 fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: usize) {
+    debug!("entering print_requests_and_fails");
     // Display stats from merged HashMap
     println!("------------------------------------------------------------------------------ ");
     println!(" {:<23} | {:<14} | {:<14} | {:<6} | {:<5}", "Name", "# reqs", "# fails", "req/s", "fail/s");
@@ -106,6 +107,7 @@ fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: u
 }
 
 fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percentiles: bool) {
+    debug!("entering print_response_times");
     let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
     let mut aggregate_total_response_time: usize = 0;
     let mut aggregate_response_time_counter: usize = 0;
@@ -190,6 +192,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
 }
 
 fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
+    debug!("entering print_status_codes");
     println!("-------------------------------------------------------------------------------");
     println!(" {:<23} | {:<25} ", "Name", "Status codes");
     println!(" ----------------------------------------------------------------------------- ");

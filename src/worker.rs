@@ -2,7 +2,7 @@ use std::{thread, time};
 
 use nng::*;
 
-use crate::{GooseState, GooseConfiguration, launch_clients};
+use crate::{GooseState, GooseConfiguration};
 use crate::goose::{GooseRequest, GooseClient, GooseClientCommand};
 use crate::manager::GooseClientInitializer;
 use crate::stats;
@@ -143,8 +143,10 @@ pub fn worker_main(state: &GooseState) {
             }
         }
     }
-    // @TODO: perform actual work.
-    info!("gaggle launching, load test initializing on all workers");
+    // Worker is officially starting the load test.
+    let started = time::Instant::now();
+    info!("entering gaggle mode, starting load test");
+    let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
 
     let mut goose_state = GooseState::initialize_with_config(config.clone());
     goose_state.task_sets = state.task_sets.clone();
@@ -156,12 +158,7 @@ pub fn worker_main(state: &GooseState) {
         goose_state.run_time = 0;
     }
     goose_state.weighted_clients = weighted_clients;
-
-    // Our load test is officially starting.
-    let started = time::Instant::now();
-    let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
-
-    goose_state = launch_clients(goose_state, started, sleep_duration);
+    goose_state = goose_state.launch_clients(started, sleep_duration);
 
     if goose_state.configuration.print_stats {
         stats::print_final_stats(&goose_state, started.elapsed().as_secs() as usize);
