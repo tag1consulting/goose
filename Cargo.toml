@@ -26,8 +26,7 @@ reqwest = { version = "0.10", features = ["blocking", "cookies", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 simplelog = "0.7"
-structopt = "0.3"
-tokio = "0.2.20"
+tokio = { version = "0.2.20", features = ["rt-core", "time"] }
 url = "2.1"
 
 # optional dependencies

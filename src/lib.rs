@@ -933,9 +933,9 @@ impl GooseAttack {
                 let is_worker = self.configuration.worker;
 
                 // Launch a new client.
-                let client = thread::spawn(move || {
-                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender, is_worker)
-                });
+                let client = tokio::spawn(
+                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
+                );
 
                 clients.push(client);
                 self.active_clients += 1;
@@ -1080,7 +1080,7 @@ impl GooseAttack {
                     info!("waiting for clients to exit");
                 }
                 for client in clients {
-                    let _ = client.join();
+                    let _ = client.await;
                 }
                 debug!("all clients exited");
 
