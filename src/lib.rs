@@ -357,7 +357,8 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseState;
+    ///     use goose::{GooseState, GooseConfiguration};
+    ///     use structopt::StructOpt;
     ///
     ///     let configuration = GooseConfiguration::from_args();
     ///     let mut goose_state = GooseState::initialize_with_config(configuration);
