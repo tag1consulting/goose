@@ -2,9 +2,11 @@ use std::{thread, time};
 
 use nng::*;
 
-use crate::GooseState;
+use crate::{GooseState, GooseConfiguration, launch_clients};
 use crate::goose::{GooseRequest, GooseClient, GooseClientCommand};
 use crate::manager::GooseClientInitializer;
+use crate::stats;
+use crate::util;
 
 pub fn worker_main(state: &GooseState) {
     // Creates a TCP address. @TODO: add optional support for UDP.
@@ -49,6 +51,8 @@ pub fn worker_main(state: &GooseState) {
     }
 
     let mut hatch_rate: Option<f32> = None;
+    let mut config: GooseConfiguration = GooseConfiguration::default();
+    let mut weighted_clients: Vec<GooseClient> = Vec::new();
 
     // Wait for the manager to give us client parameters.
     loop {
@@ -85,7 +89,6 @@ pub fn worker_main(state: &GooseState) {
 
         // Allocate a state for each client that will be spawned.
         info!("initializing client states...");
-        let mut weighted_clients = Vec::new();
         for initializer in initializers {
             weighted_clients.push(GooseClient::new(
                 weighted_clients.len(),
@@ -98,6 +101,7 @@ pub fn worker_main(state: &GooseState) {
             ));
             if hatch_rate == None {
                 hatch_rate = Some(1.0 / (initializer.config.hatch_rate as f32 / (initializer.config.expect_workers as f32)));
+                config = initializer.config;
                 info!("prepared to start 1 client every {:.2} seconds", hatch_rate.unwrap());
             }
         }
@@ -141,4 +145,25 @@ pub fn worker_main(state: &GooseState) {
     }
     // @TODO: perform actual work.
     info!("gaggle launching, load test initializing on all workers");
+
+    let mut goose_state = GooseState::initialize_with_config(config.clone());
+    goose_state.task_sets = state.task_sets.clone();
+    if config.run_time != "" {
+        goose_state.run_time = util::parse_timespan(&config.run_time);
+        info!("run_time = {}", goose_state.run_time);
+    }
+    else {
+        goose_state.run_time = 0;
+    }
+    goose_state.weighted_clients = weighted_clients;
+
+    // Our load test is officially starting.
+    let started = time::Instant::now();
+    let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
+
+    goose_state = launch_clients(goose_state, started, sleep_duration);
+
+    if goose_state.configuration.print_stats {
+        stats::print_final_stats(&goose_state, started.elapsed().as_secs() as usize);
+    }
 }

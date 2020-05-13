@@ -338,7 +338,7 @@ impl GooseState {
     ///     let mut goose_state = GooseState::initialize();
     /// ```
     pub fn initialize() -> GooseState {
-        let mut goose_state = GooseState {
+        let goose_state = GooseState {
             task_sets: Vec::new(),
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
@@ -349,10 +349,37 @@ impl GooseState {
             clients: 0,
             active_clients: 0,
         };
+        goose_state.setup()
+    }
 
+    /// Initialize a GooseState with an already loaded configuration.
+    /// This should only be called by worker instances.
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::GooseState;
+    ///
+    ///     let configuration = GooseConfiguration::from_args();
+    ///     let mut goose_state = GooseState::initialize_with_config(configuration);
+    /// ```
+    pub fn initialize_with_config(config: GooseConfiguration) -> GooseState {
+        GooseState {
+            task_sets: Vec::new(),
+            weighted_clients: Vec::new(),
+            weighted_clients_order: Vec::new(),
+            host: None,
+            configuration: config,
+            number_of_cpus: num_cpus::get(),
+            run_time: 0,
+            clients: 0,
+            active_clients: 0,
+        }
+    }
+    
+    pub fn setup(mut self) -> Self {
         // Allow optionally controlling debug output level
         let debug_level;
-        match goose_state.configuration.verbose {
+        match self.configuration.verbose {
             0 => debug_level = LevelFilter::Warn,
             1 => debug_level = LevelFilter::Info,
             2 => debug_level = LevelFilter::Debug,
@@ -361,64 +388,75 @@ impl GooseState {
 
         // Allow optionally controlling log level
         let log_level;
-        match goose_state.configuration.log_level {
+        match self.configuration.log_level {
             0 => log_level = LevelFilter::Info,
             1 => log_level = LevelFilter::Debug,
             _ => log_level = LevelFilter::Trace,
         }
 
-        let log_file = PathBuf::from(&goose_state.configuration.log_file);
+        let log_file = PathBuf::from(&self.configuration.log_file);
 
         // @TODO: get rid of unwrap(), TermLogger fails if there's no terminal.
-        CombinedLogger::init(vec![
-            TermLogger::new(
+        match CombinedLogger::init(vec![
+            match TermLogger::new(
                 debug_level,
                 Config::default(),
-                TerminalMode::Mixed).unwrap(),
+                TerminalMode::Mixed) {
+                    Some(t) => t,
+                    None => {
+                        error!("failed to initialize TermLogger");
+                        std::process::exit(1);
+                    }
+                },
             WriteLogger::new(
                 log_level,
                 Config::default(),
                 File::create(&log_file).unwrap(),
-            )]).unwrap();
+            )]) {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("failed to initialize CombinedLogger: {}", e);
+                }
+            }
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
         info!("Writing to log file: {}", log_file.display());
 
         // Don't allow overhead of collecting status codes unless we're printing statistics.
-        if goose_state.configuration.status_codes && !goose_state.configuration.print_stats {
+        if self.configuration.status_codes && !self.configuration.print_stats {
             error!("You must enable --print-stats to enable --status-codes.");
             std::process::exit(1);
         }
 
         // Don't allow overhead of collecting statistics unless we're printing them.
-        if goose_state.configuration.only_summary && !goose_state.configuration.print_stats {
+        if self.configuration.only_summary && !self.configuration.print_stats {
             error!("You must enable --print-stats to enable --only-summary.");
             std::process::exit(1);
         }
 
         // Configure maximum run time if specified, otherwise run until canceled.
-        if goose_state.configuration.worker {
-            if goose_state.configuration.run_time != "" {
+        if self.configuration.worker {
+            if self.configuration.run_time != "" {
                 error!("The --run-time option is only available to the manager.");
                 std::process::exit(1);
             }
-            goose_state.run_time = 0;
+            self.run_time = 0;
         }
         else {
-            if goose_state.configuration.run_time != "" {
-                goose_state.run_time = util::parse_timespan(&goose_state.configuration.run_time);
-                info!("run_time = {}", goose_state.run_time);
+            if self.configuration.run_time != "" {
+                self.run_time = util::parse_timespan(&self.configuration.run_time);
+                info!("run_time = {}", self.run_time);
             }
             else {
-                goose_state.run_time = 0;
+                self.run_time = 0;
             }
         }
 
         // Configure number of client threads to launch, default to the number of CPU cores available.
-        goose_state.clients = match goose_state.configuration.clients {
+        self.clients = match self.configuration.clients {
             Some(c) => {
                 if c == 0 {
-                    if goose_state.configuration.worker {
+                    if self.configuration.worker {
                         error!("At least 1 client is required.");
                         std::process::exit(1);
                     }
@@ -427,7 +465,7 @@ impl GooseState {
                     }
                 }
                 else {
-                    if goose_state.configuration.worker {
+                    if self.configuration.worker {
                         error!("The --clients option is only available to the manager.");
                         std::process::exit(1);
                     }
@@ -435,19 +473,19 @@ impl GooseState {
                 }
             }
             None => {
-                let c = goose_state.number_of_cpus;
-                if !goose_state.configuration.manager && !goose_state.configuration.worker {
+                let c = self.number_of_cpus;
+                if !self.configuration.manager && !self.configuration.worker {
                     info!("concurrent clients defaulted to {} (number of CPUs)", c);
                 }
                 c
             }
         };
 
-        if !goose_state.configuration.manager && !goose_state.configuration.worker {
-            debug!("clients = {}", goose_state.clients);
+        if !self.configuration.manager && !self.configuration.worker {
+            debug!("clients = {}", self.clients);
         }
 
-        goose_state
+        self
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
