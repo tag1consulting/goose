@@ -148,7 +148,7 @@ async fn drupal_loadtest_login<'fut>(client: &'fut mut GooseClient) -> () {
                         ("op", "Log+in"),
                     ];
                     let request_builder = client.goose_post("/user");
-                    let _response = client.goose_send(request_builder.form(&params));
+                    let _response = client.goose_send(request_builder.form(&params)).await;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
