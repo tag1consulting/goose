@@ -690,7 +690,7 @@ impl GooseState {
         }
 
         // Our load test is officially starting.
-        let mut started = time::Instant::now();
+        let started = time::Instant::now();
         // Spawn clients at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_float = 1.0 / hatch_rate as f32;
         let sleep_duration = time::Duration::from_secs_f32(sleep_float);
@@ -705,66 +705,124 @@ impl GooseState {
         }
         // Start goose in single-process mode.
         else {
-            // Collect client threads in a vector for when we want to stop them later.
-            let mut clients = vec![];
-            // Collect client thread channels in a vector so we can talk to the client threads.
-            let mut client_channels = vec![];
-            // Create a single channel allowing all Goose child threads to sync state back to parent
-            let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseClient>, mpsc::Receiver<GooseClient>) = mpsc::channel();
-            // Spawn clients, each with their own weighted task_set.
-            for mut thread_client in self.weighted_clients.clone() {
-                // Stop launching threads if the run_timer has expired.
-                if timer_expired(started, self.run_time) {
-                    break;
+            self = launch_clients(self, started, sleep_duration);
+        }
+
+        if self.configuration.print_stats {
+            stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
+        }
+    }
+}
+
+/// Launch clients
+pub fn launch_clients(mut state: GooseState, mut started: time::Instant, sleep_duration: time::Duration) -> GooseState {
+    // Collect client threads in a vector for when we want to stop them later.
+    let mut clients = vec![];
+    // Collect client thread channels in a vector so we can talk to the client threads.
+    let mut client_channels = vec![];
+    // Create a single channel allowing all Goose child threads to sync state back to parent
+    let (all_threads_sender, parent_receiver): (mpsc::Sender<GooseClient>, mpsc::Receiver<GooseClient>) = mpsc::channel();
+    // Spawn clients, each with their own weighted task_set.
+    for mut thread_client in state.weighted_clients.clone() {
+        // Stop launching threads if the run_timer has expired.
+        if timer_expired(started, state.run_time) {
+            break;
+        }
+
+        // Copy weighted tasks and weighted on start tasks into the client thread.
+        thread_client.weighted_tasks = state.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
+        thread_client.weighted_on_start_tasks = state.task_sets[thread_client.task_sets_index].weighted_on_start_tasks.clone();
+        thread_client.weighted_on_stop_tasks = state.task_sets[thread_client.task_sets_index].weighted_on_stop_tasks.clone();
+        // Remember which task group this client is using.
+        thread_client.weighted_clients_index = state.active_clients;
+
+        // Create a per-thread channel allowing parent thread to control child threads.
+        let (parent_sender, thread_receiver): (mpsc::Sender<GooseClientCommand>, mpsc::Receiver<GooseClientCommand>) = mpsc::channel();
+        client_channels.push(parent_sender);
+
+        // We can only launch tasks if the task list is non-empty
+        if thread_client.weighted_tasks.len() > 0 {
+            // Copy the client-to-parent sender channel, used by all threads.
+            let thread_sender = all_threads_sender.clone();
+
+            // Hatching a new Goose client.
+            thread_client.set_mode(GooseClientMode::HATCHING);
+            // Notify parent that our run mode has changed to Hatching.
+            thread_sender.send(thread_client.clone()).unwrap();
+
+            // Copy the appropriate task_set into the thread.
+            let thread_task_set = state.task_sets[thread_client.task_sets_index].clone();
+
+            // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
+            let thread_number = state.active_clients + 1;
+
+            // Launch a new client.
+            let client = thread::spawn(move || {
+                client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
+            });
+
+            clients.push(client);
+            state.active_clients += 1;
+            debug!("sleeping {:?} milliseconds...", sleep_duration);
+            thread::sleep(sleep_duration);
+        }
+        else {
+            warn!("no tasks for thread {} to run", state.task_sets[thread_client.task_sets_index].name);
+        }
+    }
+    // Restart the timer now that all threads are launched.
+    started = time::Instant::now();
+    info!("launched {} clients...", state.active_clients);
+
+    // Ensure we have request statistics when we're displaying running statistics.
+    if state.configuration.print_stats && !state.configuration.only_summary {
+        for (index, send_to_client) in client_channels.iter().enumerate() {
+            match send_to_client.send(GooseClientCommand::SYNC) {
+                Ok(_) => {
+                    debug!("telling client {} to sync stats", index);
                 }
-
-                // Copy weighted tasks and weighted on start tasks into the client thread.
-                thread_client.weighted_tasks = self.task_sets[thread_client.task_sets_index].weighted_tasks.clone();
-                thread_client.weighted_on_start_tasks = self.task_sets[thread_client.task_sets_index].weighted_on_start_tasks.clone();
-                thread_client.weighted_on_stop_tasks = self.task_sets[thread_client.task_sets_index].weighted_on_stop_tasks.clone();
-                // Remember which task group this client is using.
-                thread_client.weighted_clients_index = self.active_clients;
-
-                // Create a per-thread channel allowing parent thread to control child threads.
-                let (parent_sender, thread_receiver): (mpsc::Sender<GooseClientCommand>, mpsc::Receiver<GooseClientCommand>) = mpsc::channel();
-                client_channels.push(parent_sender);
-
-                // We can only launch tasks if the task list is non-empty
-                if thread_client.weighted_tasks.len() > 0 {
-                    // Copy the client-to-parent sender channel, used by all threads.
-                    let thread_sender = all_threads_sender.clone();
-
-                    // Hatching a new Goose client.
-                    thread_client.set_mode(GooseClientMode::HATCHING);
-                    // Notify parent that our run mode has changed to Hatching.
-                    thread_sender.send(thread_client.clone()).unwrap();
-
-                    // Copy the appropriate task_set into the thread.
-                    let thread_task_set = self.task_sets[thread_client.task_sets_index].clone();
-
-                    // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
-                    let thread_number = self.active_clients + 1;
-
-                    // Launch a new client.
-                    let client = thread::spawn(move || {
-                        client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
-                    });
-
-                    clients.push(client);
-                    self.active_clients += 1;
-                    debug!("sleeping {:?} milliseconds...", sleep_duration);
-                    thread::sleep(sleep_duration);
-                }
-                else {
-                    warn!("no tasks for thread {} to run", self.task_sets[thread_client.task_sets_index].name);
+                Err(e) => {
+                    warn!("failed to tell client {} to sync stats: {}", index, e);
                 }
             }
-            // Restart the timer now that all threads are launched.
-            started = time::Instant::now();
-            info!("launched {} clients...", self.active_clients);
+        }
+    }
 
-            // Ensure we have request statistics when we're displaying running statistics.
-            if self.configuration.print_stats && !self.configuration.only_summary {
+    // Track whether or not we've (optionally) reset the statistics after all clients started.
+    let mut statistics_reset: bool = false;
+
+    // Catch ctrl-c to allow clean shutdown to display statistics.
+    let canceled = Arc::new(AtomicBool::new(false));
+    let caught_ctrlc = canceled.clone();
+    match ctrlc::set_handler(move || {
+        // We've caught a ctrl-c, determine if it's the first time or an additional time.
+        if caught_ctrlc.load(Ordering::SeqCst) {
+            warn!("caught another ctrl-c, exiting immediately...");
+            std::process::exit(1);
+        }
+        else {
+            warn!("caught ctrl-c, stopping...");
+            caught_ctrlc.store(true, Ordering::SeqCst);
+        }
+    }) {
+        Ok(_) => (),
+        Err(e) => {
+            warn!("failed to set ctrl-c handler: {}", e);
+        }
+    }
+
+    // Determine when to display running statistics (if enabled).
+    let mut statistics_timer = time::Instant::now();
+    let mut display_running_statistics = false;
+
+    // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
+    let mut run_time = state.run_time;
+    loop {
+        // When displaying running statistics, sync data from client threads first.
+        if state.configuration.print_stats {
+            // Synchronize statistics from client threads into parent.
+            if timer_expired(statistics_timer, 15) {
+                statistics_timer = time::Instant::now();
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     match send_to_client.send(GooseClientCommand::SYNC) {
                         Ok(_) => {
@@ -775,167 +833,115 @@ impl GooseState {
                         }
                     }
                 }
-            }
-
-            // Track whether or not we've (optionally) reset the statistics after all clients started.
-            let mut statistics_reset: bool = false;
-
-            // Catch ctrl-c to allow clean shutdown to display statistics.
-            let canceled = Arc::new(AtomicBool::new(false));
-            let caught_ctrlc = canceled.clone();
-            match ctrlc::set_handler(move || {
-                // We've caught a ctrl-c, determine if it's the first time or an additional time.
-                if caught_ctrlc.load(Ordering::SeqCst) {
-                    warn!("caught another ctrl-c, exiting immediately...");
-                    std::process::exit(1);
-                }
-                else {
-                    warn!("caught ctrl-c, stopping...");
-                    caught_ctrlc.store(true, Ordering::SeqCst);
-                }
-            }) {
-                Ok(_) => (),
-                Err(e) => {
-                    warn!("failed to set ctrl-c handler: {}", e);
+                if !state.configuration.only_summary {
+                    display_running_statistics = true;
+                    // Give client threads time to send statstics.
+                    let pause = time::Duration::from_millis(100);
+                    thread::sleep(pause);
                 }
             }
 
-            // Determine when to display running statistics (if enabled).
-            let mut statistics_timer = time::Instant::now();
-            let mut display_running_statistics = false;
-
-            // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
-            let mut run_time = self.run_time;
-            loop {
-                // When displaying running statistics, sync data from client threads first.
-                if self.configuration.print_stats {
-                    // Synchronize statistics from client threads into parent.
-                    if timer_expired(statistics_timer, 15) {
-                        statistics_timer = time::Instant::now();
-                        for (index, send_to_client) in client_channels.iter().enumerate() {
-                            match send_to_client.send(GooseClientCommand::SYNC) {
-                                Ok(_) => {
-                                    debug!("telling client {} to sync stats", index);
-                                }
-                                Err(e) => {
-                                    warn!("failed to tell client {} to sync stats: {}", index, e);
-                                }
-                            }
-                        }
-                        if !self.configuration.only_summary {
-                            display_running_statistics = true;
-                            // Give client threads time to send statstics.
-                            let pause = time::Duration::from_millis(100);
-                            thread::sleep(pause);
-                        }
-                    }
-
-                    // Load messages from client threads until the receiver queue is empty.
-                    let mut message = parent_receiver.try_recv();
-                    while message.is_ok() {
-                        // Messages contain per-client statistics: merge them into the global statistics.
-                        let unwrapped_message = message.unwrap();
-                        let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                        self.weighted_clients[weighted_clients_index].weighted_bucket = unwrapped_message.weighted_bucket;
-                        self.weighted_clients[weighted_clients_index].weighted_bucket_position = unwrapped_message.weighted_bucket_position;
-                        self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
-                        // If our local copy of the task set doesn't have tasks, clone them from the remote thread
-                        if self.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
-                            self.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
-                            self.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
-                        }
-                        // Syncronize client requests
-                        for (request_key, request) in unwrapped_message.requests {
-                            trace!("request_key: {}", request_key);
-                            let merged_request;
-                            if let Some(parent_request) = self.weighted_clients[weighted_clients_index].requests.get(&request_key) {
-                                merged_request = merge_from_client(parent_request, &request, &self.configuration);
-                            }
-                            else {
-                                // First time seeing this request, simply insert it.
-                                merged_request = request.clone();
-                            }
-                            self.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
-                        }
-                        message = parent_receiver.try_recv();
-                    }
-
-                    // Flush statistics collected prior to all client threads running
-                    if self.configuration.reset_stats && !statistics_reset {
-                        info!("statistics reset...");
-                        for (client_index, client) in self.weighted_clients.clone().iter().enumerate() {
-                            let mut reset_client = client.clone();
-                            // Start again with an empty requests hashmap.
-                            reset_client.requests = HashMap::new();
-                            self.weighted_clients[client_index] = reset_client;
-                        }
-                        statistics_reset = true;
-                    }
+            // Load messages from client threads until the receiver queue is empty.
+            let mut message = parent_receiver.try_recv();
+            while message.is_ok() {
+                // Messages contain per-client statistics: merge them into the global statistics.
+                let unwrapped_message = message.unwrap();
+                let weighted_clients_index = unwrapped_message.weighted_clients_index;
+                state.weighted_clients[weighted_clients_index].weighted_bucket = unwrapped_message.weighted_bucket;
+                state.weighted_clients[weighted_clients_index].weighted_bucket_position = unwrapped_message.weighted_bucket_position;
+                state.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
+                // If our local copy of the task set doesn't have tasks, clone them from the remote thread
+                if state.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
+                    state.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
+                    state.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
                 }
-
-                if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
-                    run_time = started.elapsed().as_secs() as usize;
-                    info!("stopping after {} seconds...", run_time);
-                    for (index, send_to_client) in client_channels.iter().enumerate() {
-                        match send_to_client.send(GooseClientCommand::EXIT) {
-                            Ok(_) => {
-                                debug!("telling client {} to exit", index);
-                            }
-                            Err(e) => {
-                                warn!("failed to tell client {} to exit: {}", index, e);
-                            }
-                        }
+                // Syncronize client requests
+                for (request_key, request) in unwrapped_message.requests {
+                    trace!("request_key: {}", request_key);
+                    let merged_request;
+                    if let Some(parent_request) = state.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                        merged_request = merge_from_client(parent_request, &request, &state.configuration);
                     }
-                    info!("waiting for clients to exit");
-                    for client in clients {
-                        let _ = client.join();
+                    else {
+                        // First time seeing this request, simply insert it.
+                        merged_request = request.clone();
                     }
-                    debug!("all clients exited");
-
-                    // If we're printing statistics, collect the final messages received from clients
-                    if self.configuration.print_stats {
-                        let mut message = parent_receiver.try_recv();
-                        while message.is_ok() {
-                            let unwrapped_message = message.unwrap();
-                            // @TODO, merge into a single client
-                            let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                            self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
-                            // Syncronize client requests
-                            for (request_key, request) in unwrapped_message.requests {
-                                trace!("request_key: {}", request_key);
-                                let merged_request;
-                                if let Some(parent_request) = self.weighted_clients[weighted_clients_index].requests.get(&request_key) {
-                                    merged_request = merge_from_client(parent_request, &request, &self.configuration);
-                                }
-                                else {
-                                    // First time seeing this request, simply insert it.
-                                    merged_request = request.clone();
-                                }
-                                self.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
-                            }
-                            message = parent_receiver.try_recv();
-                        }
-                    }
-
-                    // All clients are done, exit out of loop for final cleanup.
-                    break;
+                    state.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
                 }
+                message = parent_receiver.try_recv();
+            }
 
-                // If enabled, display running statistics after sync
-                if display_running_statistics {
-                    display_running_statistics = false;
-                    stats::print_running_stats(&self, started.elapsed().as_secs() as usize);
+            // Flush statistics collected prior to all client threads running
+            if state.configuration.reset_stats && !statistics_reset {
+                info!("statistics reset...");
+                for (client_index, client) in state.weighted_clients.clone().iter().enumerate() {
+                    let mut reset_client = client.clone();
+                    // Start again with an empty requests hashmap.
+                    reset_client.requests = HashMap::new();
+                    state.weighted_clients[client_index] = reset_client;
                 }
-
-                let one_second = time::Duration::from_secs(1);
-                thread::sleep(one_second);
+                statistics_reset = true;
             }
         }
 
-        if self.configuration.print_stats {
-            stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
+        if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
+            run_time = started.elapsed().as_secs() as usize;
+            info!("stopping after {} seconds...", run_time);
+            for (index, send_to_client) in client_channels.iter().enumerate() {
+                match send_to_client.send(GooseClientCommand::EXIT) {
+                    Ok(_) => {
+                        debug!("telling client {} to exit", index);
+                    }
+                    Err(e) => {
+                        warn!("failed to tell client {} to exit: {}", index, e);
+                    }
+                }
+            }
+            info!("waiting for clients to exit");
+            for client in clients {
+                let _ = client.join();
+            }
+            debug!("all clients exited");
+
+            // If we're printing statistics, collect the final messages received from clients
+            if state.configuration.print_stats {
+                let mut message = parent_receiver.try_recv();
+                while message.is_ok() {
+                    let unwrapped_message = message.unwrap();
+                    // @TODO, merge into a single client
+                    let weighted_clients_index = unwrapped_message.weighted_clients_index;
+                    state.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
+                    // Syncronize client requests
+                    for (request_key, request) in unwrapped_message.requests {
+                        trace!("request_key: {}", request_key);
+                        let merged_request;
+                        if let Some(parent_request) = state.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                            merged_request = merge_from_client(parent_request, &request, &state.configuration);
+                        }
+                        else {
+                            // First time seeing this request, simply insert it.
+                            merged_request = request.clone();
+                        }
+                        state.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                    }
+                    message = parent_receiver.try_recv();
+                }
+            }
+
+            // All clients are done, exit out of loop for final cleanup.
+            break;
         }
+
+        // If enabled, display running statistics after sync
+        if display_running_statistics {
+            display_running_statistics = false;
+            stats::print_running_stats(&state, started.elapsed().as_secs() as usize);
+        }
+
+        let one_second = time::Duration::from_secs(1);
+        thread::sleep(one_second);
     }
+    state
 }
 
 /// CLI options available when launching a Goose loadtest, provided by StructOpt.
