@@ -48,17 +48,17 @@ async fn website_task_login<'fut>(client: &'fut mut GooseClient) -> () {
     let request_builder = client.goose_post("/login");
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
-    let _response = client.goose_send(request_builder.form(&params));
+    let _response = client.goose_send(request_builder.form(&params)).await;
 }
 
 /// A very simple task that simply loads the front page.
 #[macro_rules_attribute(dyn_async!)]
 async fn website_task_index<'fut>(client: &'fut mut GooseClient) -> () {
-    let _response = client.get("/");
+    let _response = client.get("/").await;
 }
 
 /// A very simple task that simply loads the about page.
 #[macro_rules_attribute(dyn_async!)]
 async fn website_task_about<'fut>(client: &'fut mut GooseClient) -> () {
-    let _response = client.get("/about/");
+    let _response = client.get("/about/").await;
 }
