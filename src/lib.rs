@@ -704,9 +704,9 @@ impl GooseState {
                 let thread_number = self.active_clients + 1;
 
                 // Launch a new client.
-                let client = thread::spawn(move || {
+                let client = tokio::spawn(
                     client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
-                });
+                );
 
                 clients.push(client);
                 self.active_clients += 1;
@@ -846,7 +846,7 @@ impl GooseState {
                 }
                 info!("waiting for clients to exit");
                 for client in clients {
-                    let _ = client.join();
+                    let _ = client.await;
                 }
                 debug!("all clients exited");
 

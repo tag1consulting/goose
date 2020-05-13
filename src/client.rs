@@ -4,11 +4,11 @@ use std::sync::mpsc;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::{thread, time};
+use std::time;
 
 use crate::goose::{GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
 
-pub fn client_main(
+pub async fn client_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     mut thread_client: GooseClient,
@@ -66,7 +66,7 @@ pub fn client_main(
             thread_client.task_request_name = Some(thread_task_name.to_string());
         }
         // Invoke the task function.
-        function(&mut thread_client);
+        function(&mut thread_client).await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time: usize;
@@ -106,7 +106,7 @@ pub fn client_main(
             if thread_continue && thread_client.max_wait > 0 {
                 let sleep_duration = time::Duration::from_secs(1);
                 debug!("client {} from {} sleeping {:?} second...", thread_number, thread_task_set.name, sleep_duration);
-                thread::sleep(sleep_duration);
+                tokio::time::delay_for(sleep_duration).await;
                 slept += 1;
                 if slept > wait_time {
                     in_sleep_loop = false;

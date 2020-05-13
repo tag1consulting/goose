@@ -24,7 +24,7 @@ regex = "1"
 reqwest = { version = "0.10", features = ["blocking", "cookies", "json"] }
 structopt = "0.3"
 simplelog = "0.7"
-tokio = "0.2.20"
+tokio = { version = "0.2.20", features = ["rt-core", "time"] }
 url = "2.1"
 
 [dev-dependencies]
