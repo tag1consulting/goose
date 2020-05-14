@@ -249,7 +249,7 @@ pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
 }
 
 pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
-    if !goose_state.configuration.worker {
+    if !goose_state.configuration.worker && goose_state.merged_requests.len() > 0 {
         info!("printing running statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
         print_requests_and_fails(&goose_state.merged_requests, elapsed);

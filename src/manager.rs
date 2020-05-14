@@ -339,7 +339,7 @@ pub fn manager_main(mut state: GooseState) -> GooseState {
                                 std::process::exit(1);
                             }
                         }
-                        info!("sending worker-{} {} clients", workers.len(), clients.len());
+                        info!("sending {} clients to worker {}", clients.len(), workers.len());
                         let message: Message = buf.as_slice().into();
                         match server.try_send(message) {
                             Ok(_) => (),
