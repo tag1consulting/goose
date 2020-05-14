@@ -296,6 +296,7 @@ use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
 
+use nng::Socket;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 use serde::{Serialize, Deserialize};
@@ -744,7 +745,7 @@ impl GooseState {
         }
         // Start goose in single-process mode.
         else {
-            self = self.launch_clients(started, sleep_duration);
+            self = self.launch_clients(started, sleep_duration, None);
         }
 
         if self.configuration.print_stats && !self.configuration.worker {
@@ -752,7 +753,8 @@ impl GooseState {
         }
     }
 
-    pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration) -> GooseState {
+    /// Called internally in local-mode and gaggle-mode.
+    pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseState {
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
         // Collect client thread channels in a vector so we can talk to the client threads.
@@ -879,8 +881,10 @@ impl GooseState {
                 }
 
                 // Load messages from client threads until the receiver queue is empty.
+                let mut received_message = false;
                 let mut message = parent_receiver.try_recv();
                 while message.is_ok() {
+                    received_message = true;
                     // Messages contain per-client statistics: merge them into the global statistics.
                     let unwrapped_message = message.unwrap();
                     let weighted_clients_index = unwrapped_message.weighted_clients_index;
@@ -906,6 +910,17 @@ impl GooseState {
                         self.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
                     }
                     message = parent_receiver.try_recv();
+                }
+                // As worker, push statistics up to manager.
+                if self.configuration.worker && received_message {
+                    // Push all statistics to manager process.
+                    for client in &self.weighted_clients {
+                        worker::push_stats_to_manager(&socket.clone().unwrap(), &client.requests.clone());
+                    }
+                    // Now reset all statistics.
+                    for key in 0..self.weighted_clients.len() {
+                        self.weighted_clients[key].requests = HashMap::new();
+                    }
                 }
 
                 // Flush statistics collected prior to all client threads running
@@ -965,6 +980,17 @@ impl GooseState {
                     }
                 }
 
+                // As worker, push statistics up to manager.
+                if self.configuration.worker {
+                    // Push all statistics to manager process.
+                    for client in &self.weighted_clients {
+                        worker::push_stats_to_manager(&socket.clone().unwrap(), &client.requests.clone());
+                    }
+                    // Now reset all statistics.
+                    for key in 0..self.weighted_clients.len() {
+                        self.weighted_clients[key].requests = HashMap::new();
+                    }
+                }
                 // All clients are done, exit out of loop for final cleanup.
                 break;
             }

@@ -1,7 +1,7 @@
 use nng::*;
 use serde::{Serialize, Deserialize};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{GooseState, GooseConfiguration, GooseClientCommand};
 use crate::goose::GooseRequest;
@@ -80,15 +80,18 @@ pub fn manager_main(state: &GooseState) {
             }
         };
 
-        let request: Vec<GooseRequest> = serde_cbor::from_reader(msg.as_slice()).unwrap();
-        debug!("{:?}", request);
+        let requests: HashMap<String, GooseRequest> = serde_cbor::from_reader(msg.as_slice()).unwrap();
+        debug!("requests statistics received: {:?}", requests.len());
 
         // We've seen this worker before.
         if workers.contains(&pipe) {
-            debug!("worker ready");
             let mut buf: Vec<u8> = Vec::new();
             // All workers are running load test, sending statistics.
             if workers.len() == state.configuration.expect_workers as usize {
+                // @TODO: merge in statistics
+                if requests.len() > 0 {
+                    info!("requests statistics received: {:?}", requests.len());
+                }
                 match serde_cbor::to_writer(&mut buf, &GooseClientCommand::RUN) {
                     Ok(_) => (),
                     Err(e) => {

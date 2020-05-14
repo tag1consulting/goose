@@ -1,4 +1,5 @@
 use std::{thread, time};
+use std::collections::HashMap;
 
 use nng::*;
 
@@ -14,7 +15,7 @@ pub fn worker_main(state: &GooseState) {
     info!("worker connecting to manager at {}", &address);
 
     // Create a request socket.
-    let client = match Socket::new(Protocol::Req0) {
+    let manager = match Socket::new(Protocol::Req0) {
         Ok(c) => c,
         Err(e) => {
             error!("failed to create socket {}: {}.", &address, e);
@@ -23,7 +24,7 @@ pub fn worker_main(state: &GooseState) {
     };
 
     // Connect to manager.
-    match client.dial(&address) {
+    match manager.dial(&address) {
         Ok(d) => d,
         Err(e) => {
             error!("failed to create socket {}: {}.", &address, e);
@@ -32,23 +33,8 @@ pub fn worker_main(state: &GooseState) {
     }
 
     // Let manager know we're ready to work.
-    let mut buf: Vec<u8> = Vec::new();
-    let requests: Vec<GooseRequest> = Vec::new();
-    match serde_cbor::to_writer(&mut buf, &requests) {
-        Ok(_) => (),
-        Err(e) => {
-            error!("failed to serialize empty Vec<GooseRequest>: {}", e);
-            std::process::exit(1);
-        }
-    }
-
-    match client.send(&buf) {
-        Ok(m) => m,
-        Err(e) => {
-            error!("communication failure to {}: {:?}.", &address, e);
-            std::process::exit(1);
-        }
-    }
+    let requests: HashMap<String, GooseRequest> = HashMap::new();
+    push_stats_to_manager(&manager, &requests);
 
     let mut hatch_rate: Option<f32> = None;
     let mut config: GooseConfiguration = GooseConfiguration::default();
@@ -57,7 +43,7 @@ pub fn worker_main(state: &GooseState) {
     // Wait for the manager to give us client parameters.
     loop {
         info!("waiting for instructions from manager");
-        let msg = match client.recv() {
+        let msg = match manager.recv() {
             Ok(m) => m,
             Err(e) => {
                 error!("unexpected error receiving manager message: {}", e);
@@ -112,14 +98,8 @@ pub fn worker_main(state: &GooseState) {
     info!("waiting for go-ahead from manager");
     // Tell manager we're ready to load test.
     loop {
-        match client.send(&buf) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("communication failure to {}: {:?}.", &address, e);
-                std::process::exit(1);
-            }
-        }
-        let msg = match client.recv() {
+        push_stats_to_manager(&manager, &requests);
+        let msg = match manager.recv() {
             Ok(m) => m,
             Err(e) => {
                 error!("unexpected error receiving manager message: {}", e);
@@ -158,9 +138,31 @@ pub fn worker_main(state: &GooseState) {
         goose_state.run_time = 0;
     }
     goose_state.weighted_clients = weighted_clients;
-    goose_state = goose_state.launch_clients(started, sleep_duration);
+    goose_state.configuration.worker = true;
+    goose_state = goose_state.launch_clients(started, sleep_duration, Some(manager));
 
     if goose_state.configuration.print_stats {
         stats::print_final_stats(&goose_state, started.elapsed().as_secs() as usize);
+    }
+}
+
+pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>) {
+    info!("pushing stats to manager: {}", requests.len());
+    // Let manager know we're ready to work.
+    let mut buf: Vec<u8> = Vec::new();
+    match serde_cbor::to_writer(&mut buf, requests) {
+        Ok(_) => (),
+        Err(e) => {
+            error!("failed to serialize empty Vec<GooseRequest>: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    match manager.send(&buf) {
+        Ok(m) => m,
+        Err(e) => {
+            error!("communication failure: {:?}.", e);
+            std::process::exit(1);
+        }
     }
 }
