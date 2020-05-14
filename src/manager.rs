@@ -166,6 +166,10 @@ pub fn manager_main(mut state: GooseState) -> GooseState {
                 stats::print_requests_and_fails(&state.merged_requests, started.elapsed().as_secs() as usize);
             }
         }
+        if canceled.load(Ordering::SeqCst) {
+            info!("cleanup finished");
+            std::process::exit(0);
+        }
 
         match server.try_recv() {
             Ok(mut msg) => {
