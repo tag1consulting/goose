@@ -106,14 +106,13 @@ $ cargo run
 ```
 
 Goose is unable to run, as it doesn't know the domain you want to load test. So,
-let's try again, this time passing in the `--host` flag. While we're at it, lets
-also tell Goose to collect and display statistics, with `--print-statistics`. After
-running for a few seconds, we then press `ctrl-c` to stop Goose:
+let's try again, this time passing in the `--host` flag. After running for a few
+seconds, we then press `ctrl-c` to stop Goose:
 
 ```bash
-$ cargo run -- --host http://apache.fosciana/ --print-stats
+$ cargo run -- --host http://apache.fosciana/
     Finished dev [unoptimized + debuginfo] target(s) in 0.07s
-     Running `target/debug/loadtest --host 'http://apache.fosciana/' --print-stats`
+     Running `target/debug/loadtest --host 'http://apache.fosciana/'`
 ^C12:12:47 [ WARN] caught ctrl-c, stopping...
 ------------------------------------------------------------------------------ 
  Name                    | # reqs         | # fails        | req/s  | fail/s
@@ -178,7 +177,7 @@ FLAGS:
     -g, --log-level       Log level (-g, -gg, -ggg, etc.)
         --manager         Enables manager mode
         --only-summary    Only prints summary stats
-        --print-stats     Prints stats in the console
+        --no-stats        Don't print stats in the console
         --reset-stats     Resets statistics once hatching has been completed
         --status-codes    Includes status code counts in console stats
     -V, --version         Prints version information
@@ -300,30 +299,33 @@ process how many Worker processes it will be coordinating. For example:
 cargo run --example simple -- --manager --expect-workers 2 --host http://local.dev/ -v
 ```
 
-This configures a Goose manager to listen on on all interfaces on the default
+This configures a Goose manager to listen on all interfaces on the default
 port (0.0.0.0:5115) for 2 Goose worker processes.
 
 ### Goose Worker
 
 At this time, a Goose process can be either a manager or a worker, not both.
 Therefor, it makes sense to launch your first worker on the same server that
-the master is running on. This can be done as folows:
+the master is running on. If not otherwise configured, a Goose worker will
+try to connect to the manager on the localhost. This can be done as folows:
 
 ```
 cargo run --example simple -- --worker -v
 ```
 
 In our above example, we expected 2 workers. The second Goose process should
-be started on a different server. This will require telling it where the
-Goose manager proocess is running. For example:
+be started on a different server. This will require telling it the host where
+the Goose manager proocess is running. For example:
 
 ```
 cargo run --example simple -- --worker --manager-host 192.168.1.55 -v
 ```
 
-Once all expected workers are running, the distributed load test will start. In
-our example, the load test will run until it is canceled. You can cancel the
-manager or either of the worker processes, and the test will stop on all servers.
+Once all expected workers are running, the distributed load test will
+automatically start. We set the `-v` flag so Goose provides verbose output
+indicating what is happening. In our example, the load test will run until
+it is canceled. You can cancel the manager or either of the worker processes,
+and the test will stop on all servers.
 
 ## Roadmap
 
