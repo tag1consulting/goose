@@ -306,7 +306,7 @@ port (0.0.0.0:5115) for 2 Goose worker processes.
 
 At this time, a Goose process can be either a manager or a worker, not both.
 Therefor, it makes sense to launch your first worker on the same server that
-the master is running on. If not otherwise configured, a Goose worker will
+the manager is running on. If not otherwise configured, a Goose worker will
 try to connect to the manager on the localhost. This can be done as folows:
 
 ```
