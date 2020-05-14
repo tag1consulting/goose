@@ -36,7 +36,7 @@ fn calculate_response_time_percentile(
 }
 
 /// Display a table of requests and fails.
-fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: usize) {
+pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: usize) {
     debug!("entering print_requests_and_fails");
     // Display stats from merged HashMap
     println!("------------------------------------------------------------------------------ ");
@@ -286,27 +286,32 @@ fn merge_stats(goose_state: &GooseState) -> HashMap<String, GooseRequest> {
 
 /// Display running and ending statistics
 pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
-    // 1) merge statistics from all clients.
-    let merged_requests = merge_stats(&goose_state);
-    // 2) print request and fail statistics.
-    print_requests_and_fails(&merged_requests, elapsed);
-    // 3) print respones time statistics, with percentiles
-    print_response_times(&merged_requests, true);
-    // 4) print status_codes
-    if goose_state.configuration.status_codes {
-        print_status_codes(&merged_requests);
+    if !goose_state.configuration.worker {
+        info!("printing final statistics after {} seconds...", elapsed);
+        // 1) merge statistics from all clients.
+        let merged_requests = merge_stats(&goose_state);
+        // 2) print request and fail statistics.
+        print_requests_and_fails(&merged_requests, elapsed);
+        // 3) print respones time statistics, with percentiles
+        print_response_times(&merged_requests, true);
+        // 4) print status_codes
+        if goose_state.configuration.status_codes {
+            print_status_codes(&merged_requests);
+        }
     }
 }
 
 pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
-    info!("printing running statistics after {} seconds...", elapsed);
-    // 1) merge statistics from all clients.
-    let merged_requests = merge_stats(&goose_state);
-    // 2) print request and fail statistics.
-    print_requests_and_fails(&merged_requests, elapsed);
-    // 3) print respones time statistics, without percentiles
-    print_response_times(&merged_requests, false);
-    println!();
+    if !goose_state.configuration.worker {
+        info!("printing running statistics after {} seconds...", elapsed);
+        // 1) merge statistics from all clients.
+        let merged_requests = merge_stats(&goose_state);
+        // 2) print request and fail statistics.
+        print_requests_and_fails(&merged_requests, elapsed);
+        // 3) print respones time statistics, without percentiles
+        print_response_times(&merged_requests, false);
+        println!();
+    }
 }
 
 #[cfg(test)]

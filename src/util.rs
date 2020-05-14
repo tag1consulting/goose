@@ -1,6 +1,7 @@
 use std::cmp::{min, max};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::time;
 use regex::Regex;
 
 /// Parse a string representing a time span and return the number of seconds.
@@ -89,6 +90,16 @@ pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
         string_to_truncate = string_to_truncate + "..";
     }
     string_to_truncate
+}
+
+/// If run_time was specified, detect when it's time to shut down
+pub fn timer_expired(started: time::Instant, run_time: usize) -> bool {
+    if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
+        true
+    }
+    else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -203,5 +214,27 @@ mod tests {
         assert_eq!(truncate_string("abcde", 4), "ab..");
         assert_eq!(truncate_string("abcde", 3), "a..");
         assert_eq!(truncate_string("abcde", 2), "..");
+    }
+
+    #[test]
+    fn timer() {
+        use std::thread;
+
+        let started = time::Instant::now();
+
+        // 60 second timer has not expired.
+        let expired = timer_expired(started, 60);
+        assert_eq!(expired, false);
+
+        // Timer is disabled.
+        let expired = timer_expired(started, 0);
+        assert_eq!(expired, false);
+
+        let sleep_duration = time::Duration::from_secs(1);
+        thread::sleep(sleep_duration);
+
+        // Timer is now expired.
+        let expired = timer_expired(started, 1);
+        assert_eq!(expired, true);
     }
 }

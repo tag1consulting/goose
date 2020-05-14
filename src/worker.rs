@@ -6,8 +6,14 @@ use nng::*;
 use crate::{GooseState, GooseConfiguration};
 use crate::goose::{GooseRequest, GooseClient, GooseClientCommand};
 use crate::manager::GooseClientInitializer;
-use crate::stats;
 use crate::util;
+
+fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
+    if event == PipeEvent::RemovePost {
+        warn!("manager went away, exiting");
+        std::process::exit(1);
+    }
+}
 
 pub fn worker_main(state: &GooseState) {
     // Creates a TCP address. @TODO: add optional support for UDP.
@@ -22,17 +28,36 @@ pub fn worker_main(state: &GooseState) {
             std::process::exit(1);
         }
     };
-
-    // Connect to manager.
-    match manager.dial(&address) {
-        Ok(d) => d,
+    match manager.pipe_notify(pipe_closed) {
+        Ok(_) => (),
         Err(e) => {
-            error!("failed to create socket {}: {}.", &address, e);
+            error!("failed to set up pipe handler: {}", e);
             std::process::exit(1);
         }
     }
 
-    // Let manager know we're ready to work.
+    // Pause 1/10 of a second in case we're blocking on a cargo lock.
+    thread::sleep(time::Duration::from_millis(100));
+    // Connect to manager.
+    let mut retries = 0;
+    loop {
+        match manager.dial(&address) {
+            Ok(_) => break,
+            Err(e) => {
+                if retries >= 5 {
+                    error!("failed to communicate with manager at {}: {}.", &address, e);
+                    std::process::exit(1);
+                }
+                info!("failed to communicate with manager at {}: {}.", &address, e);
+                let sleep_duration = time::Duration::from_millis(500);
+                debug!("sleeping {:?} milliseconds waiting for manager...", sleep_duration);
+                thread::sleep(sleep_duration);
+                retries += 1;
+            }
+        }
+    }
+
+    // Let manager know we're ready to work -- push empty HashMap.
     let requests: HashMap<String, GooseRequest> = HashMap::new();
     push_stats_to_manager(&manager, &requests);
 
@@ -116,6 +141,10 @@ pub fn worker_main(state: &GooseState) {
 
         match command {
             GooseClientCommand::RUN => break,
+            GooseClientCommand::EXIT => {
+                warn!("received EXIT command from manager");
+                std::process::exit(0);
+            },
             _ => {
                 let sleep_duration = time::Duration::from_secs(1);
                 debug!("sleeping {:?} second waiting for manager...", sleep_duration);
@@ -139,16 +168,11 @@ pub fn worker_main(state: &GooseState) {
     }
     goose_state.weighted_clients = weighted_clients;
     goose_state.configuration.worker = true;
-    goose_state = goose_state.launch_clients(started, sleep_duration, Some(manager));
-
-    if goose_state.configuration.print_stats {
-        stats::print_final_stats(&goose_state, started.elapsed().as_secs() as usize);
-    }
+    goose_state.launch_clients(started, sleep_duration, Some(manager));
 }
 
 pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>) {
-    info!("pushing stats to manager: {}", requests.len());
-    // Let manager know we're ready to work.
+    debug!("pushing stats to manager: {}", requests.len());
     let mut buf: Vec<u8> = Vec::new();
     match serde_cbor::to_writer(&mut buf, requests) {
         Ok(_) => (),

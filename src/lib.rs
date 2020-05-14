@@ -327,6 +327,8 @@ pub struct GooseState {
     clients: usize,
     /// Track how many clients are already loaded.
     active_clients: usize,
+    /// All requests statistics merged together.
+    merged_requests: HashMap<String, GooseRequest>,
 }
 /// Goose's internal global state.
 impl GooseState {
@@ -349,6 +351,7 @@ impl GooseState {
             run_time: 0,
             clients: 0,
             active_clients: 0,
+            merged_requests: HashMap::new(),
         };
         goose_state.setup()
     }
@@ -375,6 +378,7 @@ impl GooseState {
             run_time: 0,
             clients: 0,
             active_clients: 0,
+            merged_requests: HashMap::new(),
         }
     }
     
@@ -737,7 +741,7 @@ impl GooseState {
 
         // Start goose in manager mode.
         if self.configuration.manager {
-            manager::manager_main(&self);
+            self = manager::manager_main(self);
         }
         // Start goose in worker mode.
         else if self.configuration.worker {
@@ -764,7 +768,7 @@ impl GooseState {
         // Spawn clients, each with their own weighted task_set.
         for mut thread_client in self.weighted_clients.clone() {
             // Stop launching threads if the run_timer has expired.
-            if timer_expired(started, self.run_time) {
+            if util::timer_expired(started, self.run_time) {
                 break;
             }
 
@@ -854,13 +858,11 @@ impl GooseState {
         let mut statistics_timer = time::Instant::now();
         let mut display_running_statistics = false;
 
-        // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
-        let mut run_time = self.run_time;
         loop {
             // When displaying running statistics, sync data from client threads first.
             if self.configuration.print_stats {
                 // Synchronize statistics from client threads into parent.
-                if timer_expired(statistics_timer, 15) {
+                if util::timer_expired(statistics_timer, 15) {
                     statistics_timer = time::Instant::now();
                     for (index, send_to_client) in client_channels.iter().enumerate() {
                         match send_to_client.send(GooseClientCommand::SYNC) {
@@ -936,9 +938,8 @@ impl GooseState {
                 }
             }
 
-            if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
-                run_time = started.elapsed().as_secs() as usize;
-                info!("stopping after {} seconds...", run_time);
+            if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) {
+                info!("stopping after {} seconds...", started.elapsed().as_secs());
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     match send_to_client.send(GooseClientCommand::EXIT) {
                         Ok(_) => {
@@ -986,10 +987,7 @@ impl GooseState {
                     for client in &self.weighted_clients {
                         worker::push_stats_to_manager(&socket.clone().unwrap(), &client.requests.clone());
                     }
-                    // Now reset all statistics.
-                    for key in 0..self.weighted_clients.len() {
-                        self.weighted_clients[key].requests = HashMap::new();
-                    }
+                    // No need to cleanup, the worker is going to exit.
                 }
                 // All clients are done, exit out of loop for final cleanup.
                 break;
@@ -1256,16 +1254,6 @@ fn is_valid_host(host: &str) -> bool {
     }
 }
 
-/// If run_time was specified, detect when it's time to shut down
-fn timer_expired(started: time::Instant, run_time: usize) -> bool {
-    if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
-        true
-    }
-    else {
-        false
-    }
-}
-
 // Merge local response times into global response times.
 pub fn merge_response_times(
     mut global_response_times: BTreeMap<usize, usize>,
@@ -1384,26 +1372,6 @@ mod test {
         global_response_times = merge_response_times(global_response_times, local_response_times.clone());
         // @TODO: how can we do useful testing of private method and objects?
         assert_eq!(&global_response_times, &local_response_times);
-    }
-
-    #[test]
-    fn timer() {
-        let started = time::Instant::now();
-
-        // 60 second timer has not expired.
-        let expired = timer_expired(started, 60);
-        assert_eq!(expired, false);
-
-        // Timer is disabled.
-        let expired = timer_expired(started, 0);
-        assert_eq!(expired, false);
-
-        let sleep_duration = time::Duration::from_secs(1);
-        thread::sleep(sleep_duration);
-
-        // Timer is now expired.
-        let expired = timer_expired(started, 1);
-        assert_eq!(expired, true);
     }
 
     #[test]
