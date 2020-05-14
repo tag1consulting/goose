@@ -283,8 +283,10 @@ extern crate structopt;
 pub mod goose;
 
 mod client;
+mod manager;
 mod stats;
 mod util;
+mod worker;
 
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
@@ -294,8 +296,10 @@ use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
 
+use nng::Socket;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
+use serde::{Serialize, Deserialize};
 use simplelog::*;
 use structopt::StructOpt;
 use url::Url;
@@ -323,6 +327,8 @@ pub struct GooseState {
     clients: usize,
     /// Track how many clients are already loaded.
     active_clients: usize,
+    /// All requests statistics merged together.
+    merged_requests: HashMap<String, GooseRequest>,
 }
 /// Goose's internal global state.
 impl GooseState {
@@ -335,7 +341,7 @@ impl GooseState {
     ///     let mut goose_state = GooseState::initialize();
     /// ```
     pub fn initialize() -> GooseState {
-        let mut goose_state = GooseState {
+        let goose_state = GooseState {
             task_sets: Vec::new(),
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
@@ -345,11 +351,41 @@ impl GooseState {
             run_time: 0,
             clients: 0,
             active_clients: 0,
+            merged_requests: HashMap::new(),
         };
+        goose_state.setup()
+    }
 
+    /// Initialize a GooseState with an already loaded configuration.
+    /// This should only be called by worker instances.
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::{GooseState, GooseConfiguration};
+    ///     use structopt::StructOpt;
+    ///
+    ///     let configuration = GooseConfiguration::from_args();
+    ///     let mut goose_state = GooseState::initialize_with_config(configuration);
+    /// ```
+    pub fn initialize_with_config(config: GooseConfiguration) -> GooseState {
+        GooseState {
+            task_sets: Vec::new(),
+            weighted_clients: Vec::new(),
+            weighted_clients_order: Vec::new(),
+            host: None,
+            configuration: config,
+            number_of_cpus: num_cpus::get(),
+            run_time: 0,
+            clients: 0,
+            active_clients: 0,
+            merged_requests: HashMap::new(),
+        }
+    }
+    
+    pub fn setup(mut self) -> Self {
         // Allow optionally controlling debug output level
         let debug_level;
-        match goose_state.configuration.verbose {
+        match self.configuration.verbose {
             0 => debug_level = LevelFilter::Warn,
             1 => debug_level = LevelFilter::Info,
             2 => debug_level = LevelFilter::Debug,
@@ -358,70 +394,104 @@ impl GooseState {
 
         // Allow optionally controlling log level
         let log_level;
-        match goose_state.configuration.log_level {
+        match self.configuration.log_level {
             0 => log_level = LevelFilter::Info,
             1 => log_level = LevelFilter::Debug,
             _ => log_level = LevelFilter::Trace,
         }
 
-        let log_file = PathBuf::from(&goose_state.configuration.log_file);
+        let log_file = PathBuf::from(&self.configuration.log_file);
 
         // @TODO: get rid of unwrap(), TermLogger fails if there's no terminal.
-        CombinedLogger::init(vec![
-            TermLogger::new(
+        match CombinedLogger::init(vec![
+            match TermLogger::new(
                 debug_level,
                 Config::default(),
-                TerminalMode::Mixed).unwrap(),
+                TerminalMode::Mixed) {
+                    Some(t) => t,
+                    None => {
+                        error!("failed to initialize TermLogger");
+                        std::process::exit(1);
+                    }
+                },
             WriteLogger::new(
                 log_level,
                 Config::default(),
                 File::create(&log_file).unwrap(),
-            )]).unwrap();
+            )]) {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("failed to initialize CombinedLogger: {}", e);
+                }
+            }
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
         info!("Writing to log file: {}", log_file.display());
 
         // Don't allow overhead of collecting status codes unless we're printing statistics.
-        if goose_state.configuration.status_codes && !goose_state.configuration.print_stats {
+        if self.configuration.status_codes && !self.configuration.print_stats {
             error!("You must enable --print-stats to enable --status-codes.");
             std::process::exit(1);
         }
 
         // Don't allow overhead of collecting statistics unless we're printing them.
-        if goose_state.configuration.only_summary && !goose_state.configuration.print_stats {
+        if self.configuration.only_summary && !self.configuration.print_stats {
             error!("You must enable --print-stats to enable --only-summary.");
             std::process::exit(1);
         }
 
         // Configure maximum run time if specified, otherwise run until canceled.
-        if goose_state.configuration.run_time != "" {
-            goose_state.run_time = util::parse_timespan(&goose_state.configuration.run_time);
+        if self.configuration.worker {
+            if self.configuration.run_time != "" {
+                error!("The --run-time option is only available to the manager.");
+                std::process::exit(1);
+            }
+            self.run_time = 0;
         }
         else {
-            goose_state.run_time = 0;
+            if self.configuration.run_time != "" {
+                self.run_time = util::parse_timespan(&self.configuration.run_time);
+                info!("run_time = {}", self.run_time);
+            }
+            else {
+                self.run_time = 0;
+            }
         }
-        info!("run_time = {}", goose_state.run_time);
 
         // Configure number of client threads to launch, default to the number of CPU cores available.
-        goose_state.clients = match goose_state.configuration.clients {
+        self.clients = match self.configuration.clients {
             Some(c) => {
                 if c == 0 {
-                    error!("At least 1 client is required.");
-                    std::process::exit(1);
+                    if self.configuration.worker {
+                        error!("At least 1 client is required.");
+                        std::process::exit(1);
+                    }
+                    else {
+                        0
+                    }
                 }
                 else {
+                    if self.configuration.worker {
+                        error!("The --clients option is only available to the manager.");
+                        std::process::exit(1);
+                    }
                     c
                 }
             }
             None => {
-                let c = goose_state.number_of_cpus;
-                info!("concurrent clients defaulted to {} (number of CPUs)", c);
+                let c = self.number_of_cpus;
+                if !self.configuration.manager && !self.configuration.worker {
+                    info!("concurrent clients defaulted to {} (number of CPUs)", c);
+                }
                 c
             }
         };
-        debug!("clients = {}", goose_state.clients);
 
-        goose_state
+        if !self.configuration.manager && !self.configuration.worker {
+            debug!("clients = {}", self.clients);
+        }
+
+        self
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
@@ -560,7 +630,7 @@ impl GooseState {
     pub fn execute(mut self) {
         // At least one task set is required.
         if self.task_sets.len() <= 0 {
-            error!("No task sets defined in goosefile.");
+            error!("No task sets defined.");
             std::process::exit(1);
         }
 
@@ -576,10 +646,42 @@ impl GooseState {
             std::process::exit(0);
         }
 
+        // Manager mode.
+        if self.configuration.manager {
+            // @TODO: support running in both manager and worker mode.
+            if self.configuration.worker {
+                error!("You can only run in manager or worker mode, not both.");
+                std::process::exit(1);
+            }
+
+            if self.configuration.expect_workers < 1 {
+                error!("You must set --expect-workers to 1 or more.");
+                std::process::exit(1);
+            }
+        }
+        
+        // Worker mode.
+        if self.configuration.worker {
+            // @TODO: support running in both manager and worker mode.
+            if self.configuration.manager {
+                error!("You can only run in manager or worker mode, not both.");
+                std::process::exit(1);
+            }
+
+            if self.configuration.expect_workers > 0 {
+                error!("The --expect-workers option is only available to the manager");
+                std::process::exit(1);
+            }
+        }
+
         // Configure number of client threads to launch per second, defaults to 1.
         let hatch_rate = self.configuration.hatch_rate;
         if hatch_rate < 1 {
             error!("Hatch rate must be greater than 0, or no clients will launch.");
+            std::process::exit(1);
+        }
+        if hatch_rate > 1 && self.configuration.worker {
+            error!("The --hatch-rate option is only available to the manager");
             std::process::exit(1);
         }
         debug!("hatch_rate = {}", hatch_rate);
@@ -601,8 +703,10 @@ impl GooseState {
                                 }
                             }
                             None => {
-                                error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
-                                std::process::exit(1);
+                                if ! self.configuration.worker {
+                                    error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
+                                    std::process::exit(1);
+                                }
                             }
                         }
                     }
@@ -625,13 +729,36 @@ impl GooseState {
         }
 
         // Allocate a state for each of the clients we are about to start.
-        self.weighted_clients = self.weight_task_set_clients();
+        if !self.configuration.worker {
+            self.weighted_clients = self.weight_task_set_clients();
+        }
 
         // Our load test is officially starting.
-        let mut started = time::Instant::now();
+        let started = time::Instant::now();
         // Spawn clients at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_float = 1.0 / hatch_rate as f32;
         let sleep_duration = time::Duration::from_secs_f32(sleep_float);
+
+        // Start goose in manager mode.
+        if self.configuration.manager {
+            self = manager::manager_main(self);
+        }
+        // Start goose in worker mode.
+        else if self.configuration.worker {
+            worker::worker_main(&self);
+        }
+        // Start goose in single-process mode.
+        else {
+            self = self.launch_clients(started, sleep_duration, None);
+        }
+
+        if self.configuration.print_stats && !self.configuration.worker {
+            stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
+        }
+    }
+
+    /// Called internally in local-mode and gaggle-mode.
+    pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseState {
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
         // Collect client thread channels in a vector so we can talk to the client threads.
@@ -641,7 +768,7 @@ impl GooseState {
         // Spawn clients, each with their own weighted task_set.
         for mut thread_client in self.weighted_clients.clone() {
             // Stop launching threads if the run_timer has expired.
-            if timer_expired(started, self.run_time) {
+            if util::timer_expired(started, self.run_time) {
                 break;
             }
 
@@ -731,13 +858,11 @@ impl GooseState {
         let mut statistics_timer = time::Instant::now();
         let mut display_running_statistics = false;
 
-        // Move into a local variable, actual run_time may be less due to SIGINT (ctrl-c).
-        let mut run_time = self.run_time;
         loop {
             // When displaying running statistics, sync data from client threads first.
             if self.configuration.print_stats {
                 // Synchronize statistics from client threads into parent.
-                if timer_expired(statistics_timer, 15) {
+                if util::timer_expired(statistics_timer, 15) {
                     statistics_timer = time::Instant::now();
                     for (index, send_to_client) in client_channels.iter().enumerate() {
                         match send_to_client.send(GooseClientCommand::SYNC) {
@@ -758,33 +883,38 @@ impl GooseState {
                 }
 
                 // Load messages from client threads until the receiver queue is empty.
+                let mut received_message = false;
                 let mut message = parent_receiver.try_recv();
                 while message.is_ok() {
+                    received_message = true;
                     // Messages contain per-client statistics: merge them into the global statistics.
                     let unwrapped_message = message.unwrap();
                     let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                    self.weighted_clients[weighted_clients_index].weighted_bucket = unwrapped_message.weighted_bucket;
-                    self.weighted_clients[weighted_clients_index].weighted_bucket_position = unwrapped_message.weighted_bucket_position;
                     self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
-                    // If our local copy of the task set doesn't have tasks, clone them from the remote thread
-                    if self.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
-                        self.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
-                        self.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
-                    }
                     // Syncronize client requests
                     for (request_key, request) in unwrapped_message.requests {
                         trace!("request_key: {}", request_key);
                         let merged_request;
-                        if let Some(parent_request) = self.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                        if let Some(parent_request) = self.merged_requests.get(&request_key) {
                             merged_request = merge_from_client(parent_request, &request, &self.configuration);
                         }
                         else {
                             // First time seeing this request, simply insert it.
                             merged_request = request.clone();
                         }
-                        self.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                        self.merged_requests.insert(request_key.to_string(), merged_request);
                     }
                     message = parent_receiver.try_recv();
+                }
+                // As worker, push statistics up to manager.
+                if self.configuration.worker && received_message {
+                    // Push all statistics to manager process.
+                    if !worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true) {
+                        // EXIT received, cancel.
+                        canceled.store(true, Ordering::SeqCst);
+                    }
+                    // The manager has all our statistics, reset locally.
+                    self.merged_requests = HashMap::new();
                 }
 
                 // Flush statistics collected prior to all client threads running
@@ -800,9 +930,8 @@ impl GooseState {
                 }
             }
 
-            if timer_expired(started, run_time) || canceled.load(Ordering::SeqCst) {
-                run_time = started.elapsed().as_secs() as usize;
-                info!("stopping after {} seconds...", run_time);
+            if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) {
+                info!("stopping after {} seconds...", started.elapsed().as_secs());
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     match send_to_client.send(GooseClientCommand::EXIT) {
                         Ok(_) => {
@@ -830,19 +959,25 @@ impl GooseState {
                         for (request_key, request) in unwrapped_message.requests {
                             trace!("request_key: {}", request_key);
                             let merged_request;
-                            if let Some(parent_request) = self.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                            if let Some(parent_request) = self.merged_requests.get(&request_key) {
                                 merged_request = merge_from_client(parent_request, &request, &self.configuration);
                             }
                             else {
                                 // First time seeing this request, simply insert it.
                                 merged_request = request.clone();
                             }
-                            self.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                            self.merged_requests.insert(request_key.to_string(), merged_request);
                         }
                         message = parent_receiver.try_recv();
                     }
                 }
 
+                // As worker, push statistics up to manager.
+                if self.configuration.worker {
+                    // Push all statistics to manager process.
+                    worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true);
+                    // No need to reset local stats, the worker is exiting.
+                }
                 // All clients are done, exit out of loop for final cleanup.
                 break;
             }
@@ -856,24 +991,17 @@ impl GooseState {
             let one_second = time::Duration::from_secs(1);
             thread::sleep(one_second);
         }
-
-        if self.configuration.print_stats {
-            stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
-        }
+        self
     }
 }
 
 /// CLI options available when launching a Goose loadtest, provided by StructOpt.
-#[derive(StructOpt, Debug, Default, Clone)]
+#[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
 #[structopt(name = "client")]
 pub struct GooseConfiguration {
-    /// Host to load test in the following format: http://10.21.32.33
+    /// Host to load test, for example: http://10.21.32.33
     #[structopt(short = "H", long, required=false, default_value="")]
     host: String,
-
-    ///// Rust module file to import, e.g. '../other.rs'.
-    //#[structopt(short = "f", long, default_value="goosefile")]
-    //goosefile: String,
 
     /// Number of concurrent Goose users (defaults to available CPUs).
     #[structopt(short, long)]
@@ -907,10 +1035,6 @@ pub struct GooseConfiguration {
     #[structopt(short, long)]
     list: bool,
 
-    //// Number of seconds to wait for a simulated user to complete any executing task before exiting. Default is to terminate immediately.
-    //#[structopt(short, long, required=false, default_value="0")]
-    //stop_timeout: usize,
-
     // The number of occurrences of the `v/verbose` flag
     /// Debug level (-v, -vv, -vvv, etc.)
     #[structopt(short = "v", long, parse(from_occurrences))]
@@ -921,8 +1045,37 @@ pub struct GooseConfiguration {
     #[structopt(short = "g", long, parse(from_occurrences))]
     log_level: u8,
 
+    /// Log file name
     #[structopt(long, default_value="goose.log")]
     log_file: String,
+
+    /// Enables manager mode
+    #[structopt(long)]
+    manager: bool,
+
+    /// Required when in manager mode, how many workers to expect
+    #[structopt(long, required=false, default_value="0")]
+    expect_workers: u16,
+
+    /// Define host manager listens on, formatted x.x.x.x
+    #[structopt(long, default_value="0.0.0.0")]
+    manager_bind_host: String,
+
+    /// Define port manager listens on
+    #[structopt(long, default_value="5115")]
+    manager_bind_port: u16,
+
+    /// Enables worker mode
+    #[structopt(long)]
+    worker: bool,
+
+    /// Host manager is running on
+    #[structopt(long, default_value="127.0.0.1")]
+    manager_host: String,
+
+    /// Port manager is listening on
+    #[structopt(long, default_value="5115")]
+    manager_port: u16,
 }
 
 /// Returns a sequenced bucket of weighted usize pointers to Goose Tasks
@@ -1089,16 +1242,6 @@ fn is_valid_host(host: &str) -> bool {
     }
 }
 
-/// If run_time was specified, detect when it's time to shut down
-fn timer_expired(started: time::Instant, run_time: usize) -> bool {
-    if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
-        true
-    }
-    else {
-        false
-    }
-}
-
 // Merge local response times into global response times.
 pub fn merge_response_times(
     mut global_response_times: BTreeMap<usize, usize>,
@@ -1217,26 +1360,6 @@ mod test {
         global_response_times = merge_response_times(global_response_times, local_response_times.clone());
         // @TODO: how can we do useful testing of private method and objects?
         assert_eq!(&global_response_times, &local_response_times);
-    }
-
-    #[test]
-    fn timer() {
-        let started = time::Instant::now();
-
-        // 60 second timer has not expired.
-        let expired = timer_expired(started, 60);
-        assert_eq!(expired, false);
-
-        // Timer is disabled.
-        let expired = timer_expired(started, 0);
-        assert_eq!(expired, false);
-
-        let sleep_duration = time::Duration::from_secs(1);
-        thread::sleep(sleep_duration);
-
-        // Timer is now expired.
-        let expired = timer_expired(started, 1);
-        assert_eq!(expired, true);
     }
 
     #[test]

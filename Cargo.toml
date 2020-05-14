@@ -1,6 +1,6 @@
 [package]
 name = "goose"
-version = "0.5.9"
+version = "0.6.0"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A load testing tool inspired by Locust."
@@ -16,15 +16,14 @@ license = "Apache-2.0"
 ctrlc = "3.1"
 http = "0.2"
 log = "0.4"
+nng = "0.5"
 num_cpus = "1.0"
 num-format = "0.4"
 rand = "0.7"
 regex = "1"
 reqwest = { version = "0.10", features = ["blocking", "cookies", "json"] }
-structopt = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11"
 simplelog = "0.7"
+structopt = "0.3"
 url = "2.1"
-
-[dev-dependencies]
-scraper = "0.11.0"
-select = "0.4"

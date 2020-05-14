@@ -259,6 +259,7 @@ use http::StatusCode;
 use http::method::Method;
 use reqwest::blocking::{Client, Response, RequestBuilder};
 use reqwest::Error;
+use serde::{Serialize, Deserialize};
 use url::Url;
 
 use crate::GooseConfiguration;
@@ -415,21 +416,60 @@ pub enum GooseClientMode {
 }
 
 /// Commands sent between the parent and client threads.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GooseClientCommand {
-    /// Tell client thread to push statistics to parent
+    /// Tell remote client to pause load test.
+    WAIT,
+    /// Tell remote client to start load test.
+    RUN,
+    /// Tell client thread to push statistics to parent.
     SYNC,
-    /// Tell client thread to exit
+    /// Tell client thread to exit.
     EXIT,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum GooseMethod {
+    DELETE,
+    GET,
+    HEAD,
+    PATCH,
+    POST,
+    PUT,
+}
+
+/*
+fn method_from_goose_method(method: GooseMethod) -> Method {
+    match method {
+        GooseMethod::DELETE => Method::DELETE,
+        GooseMethod::GET => Method::GET,
+        GooseMethod::HEAD => Method::HEAD,
+        GooseMethod::PATCH => Method::PATCH,
+        GooseMethod::POST => Method::POST,
+        GooseMethod::PUT => Method::PUT,
+    }
+}
+*/
+
+fn goose_method_from_method(method: Method) -> Option<GooseMethod> {
+    match method {
+        Method::DELETE => Some(GooseMethod::DELETE),
+        Method::GET => Some(GooseMethod::GET),
+        Method::HEAD => Some(GooseMethod::HEAD),
+        Method::PATCH => Some(GooseMethod::PATCH),
+        Method::POST => Some(GooseMethod::POST),
+        Method::PUT => Some(GooseMethod::PUT),
+        _ => None,
+    }
+}
+
 /// Statistics collected about a path-method pair, (for example `/index`-`GET`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequest {
     /// The path for which statistics are being collected.
     pub path: String,
     /// The method for which statistics are being collected.
-    pub method: Method,
+    pub method: GooseMethod,
     /// Per-response-time counters, tracking how often pages are returned with this response time.
     pub response_times: BTreeMap<usize, usize>,
     /// The shortest response time seen so far.
@@ -449,7 +489,7 @@ pub struct GooseRequest {
 }
 impl GooseRequest {
     /// Create a new GooseRequest object.
-    fn new(path: &str, method: Method) -> Self {
+    pub fn new(path: &str, method: GooseMethod) -> Self {
         trace!("new request");
         GooseRequest {
             path: path.to_string(),
@@ -584,7 +624,7 @@ pub struct GooseClient {
     /// Store the previous url.
     pub previous_path: Option<String>,
     /// Store the previous url.
-    pub previous_method: Option<Method>,
+    pub previous_method: Option<GooseMethod>,
     /// Store the optional request_name allowing tasks to toggle success/failure.
     pub previous_request_name: Option<String>,
     /// Store if the previous request was a success (false for failure).
@@ -681,7 +721,7 @@ impl GooseClient {
     }
 
     /// Checks if the current path-method pair has been requested before.
-    fn get_request(&mut self, path: &str, method: &Method) -> GooseRequest {
+    fn get_request(&mut self, path: &str, method: &GooseMethod) -> GooseRequest {
         let key = format!("{:?} {}", method, path);
         trace!("get key: {}", &key);
         match self.requests.get(&key) {
@@ -691,7 +731,7 @@ impl GooseClient {
     }
 
     /// Stores request statistics about the current path-method pair.
-    fn set_request(&mut self, path: &str, method: &Method, request: GooseRequest) {
+    fn set_request(&mut self, path: &str, method: &GooseMethod, request: GooseRequest) {
         let key = format!("{:?} {}", method, path);
         trace!("set key: {}", &key);
         self.requests.insert(key, request.clone());
@@ -1016,7 +1056,7 @@ impl GooseClient {
         };
 
         // Allows introspection, and toggling success/failure.
-        self.previous_method = Some(request.method().clone());
+        self.previous_method = goose_method_from_method(request.method().clone());
         self.previous_path = match Url::parse(&request.url().to_string()) {
             Ok(u) => Some(u.path().to_string()),
             Err(e) => {
@@ -1562,9 +1602,9 @@ mod tests {
 
     #[test]
     fn goose_request() {
-        let mut request = GooseRequest::new("/", Method::GET);
+        let mut request = GooseRequest::new("/", GooseMethod::GET);
         assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.method, GooseMethod::GET);
         assert_eq!(request.response_times.len(), 0);
         assert_eq!(request.min_response_time, 0);
         assert_eq!(request.max_response_time, 0);
@@ -1590,7 +1630,7 @@ mod tests {
         assert_eq!(request.response_time_counter, 1);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.method, GooseMethod::GET);
         assert_eq!(request.status_code_counts.len(), 0);
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
@@ -1611,7 +1651,7 @@ mod tests {
         assert_eq!(request.response_time_counter, 2);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.method, GooseMethod::GET);
         assert_eq!(request.status_code_counts.len(), 0);
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
@@ -1821,27 +1861,27 @@ mod tests {
         assert_eq!(client.mode, GooseClientMode::HATCHING);
 
         // Returns new GooseRequest if never set before.
-        let request = client.get_request("/foo", &Method::GET);
-        assert_eq!(request, GooseRequest::new("/foo", Method::GET));
+        let request = client.get_request("/foo", &GooseMethod::GET);
+        assert_eq!(request, GooseRequest::new("/foo", GooseMethod::GET));
 
         // Store a GooseRequest objet and confirm we can them retreive it.
-        let mut request = GooseRequest::new("/", Method::GET);
+        let mut request = GooseRequest::new("/", GooseMethod::GET);
         request.set_response_time(55);
         request.set_status_code(Some(StatusCode::OK));
-        client.set_request("/", &Method::GET, request.clone());
-        let restored_request = client.get_request("/", &Method::GET);
+        client.set_request("/", &GooseMethod::GET, request.clone());
+        let restored_request = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", Method::GET));
+        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET));
         // This is the request we stored.
         assert_eq!(&request, &restored_request);
 
         // Make another change to the request and re-store.
         request.set_response_time(951);
         request.set_status_code(Some(StatusCode::OK));
-        client.set_request("/", &Method::GET, request.clone());
-        let restored_request_again = client.get_request("/", &Method::GET);
+        client.set_request("/", &GooseMethod::GET, request.clone());
+        let restored_request_again = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", Method::GET));
+        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET));
         // This is not first request we stored.
         assert_ne!(&request, &restored_request);
         // This is the new request we stored.

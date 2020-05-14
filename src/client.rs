@@ -99,6 +99,9 @@ pub fn client_main(
                         thread_client.set_mode(GooseClientMode::EXITING);
                         // No need to reset per-thread counters, we're exiting and memory will be freed
                         thread_continue = false;
+                    },
+                    command => {
+                        debug!("ignoring unexpected GooseClientCommand: {:?}", command);
                     }
                 }
                 message = thread_receiver.try_recv();
