@@ -429,14 +429,14 @@ impl GooseState {
         info!("Writing to log file: {}", log_file.display());
 
         // Don't allow overhead of collecting status codes unless we're printing statistics.
-        if self.configuration.status_codes && !self.configuration.print_stats {
-            error!("You must enable --print-stats to enable --status-codes.");
+        if self.configuration.status_codes && self.configuration.no_stats {
+            error!("You must not enable --no-stats when enabling --status-codes.");
             std::process::exit(1);
         }
 
         // Don't allow overhead of collecting statistics unless we're printing them.
-        if self.configuration.only_summary && !self.configuration.print_stats {
-            error!("You must enable --print-stats to enable --only-summary.");
+        if self.configuration.only_summary && self.configuration.no_stats {
+            error!("You must not enable --no-stats when enabling --only-summary.");
             std::process::exit(1);
         }
 
@@ -672,6 +672,36 @@ impl GooseState {
                 error!("The --expect-workers option is only available to the manager");
                 std::process::exit(1);
             }
+
+            if self.configuration.host != "" {
+                error!("The --host option is only available to the manager");
+                std::process::exit(1);
+            }
+
+            if self.configuration.manager_bind_host != "0.0.0.0" {
+                error!("The --manager-bind-host option is only available to the manager");
+                std::process::exit(1);
+            }
+
+            if self.configuration.manager_bind_port != 5115 {
+                error!("The --manager-bind-port option is only available to the manager");
+                std::process::exit(1);
+            }
+
+            if self.configuration.no_stats {
+                error!("The --no-stats option is only available to the manager");
+                std::process::exit(1);
+            }
+
+            if self.configuration.only_summary {
+                error!("The --only-summary option is only available to the manager");
+                std::process::exit(1);
+            }
+
+            if self.configuration.status_codes {
+                error!("The --status-codes option is only available to the manager");
+                std::process::exit(1);
+            }
         }
 
         // Configure number of client threads to launch per second, defaults to 1.
@@ -752,7 +782,7 @@ impl GooseState {
             self = self.launch_clients(started, sleep_duration, None);
         }
 
-        if self.configuration.print_stats && !self.configuration.worker {
+        if !self.configuration.no_stats && !self.configuration.worker {
             stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
         }
     }
@@ -818,7 +848,7 @@ impl GooseState {
         info!("launched {} clients...", self.active_clients);
 
         // Ensure we have request statistics when we're displaying running statistics.
-        if self.configuration.print_stats && !self.configuration.only_summary {
+        if !self.configuration.no_stats && !self.configuration.only_summary {
             for (index, send_to_client) in client_channels.iter().enumerate() {
                 match send_to_client.send(GooseClientCommand::SYNC) {
                     Ok(_) => {
@@ -860,7 +890,7 @@ impl GooseState {
 
         loop {
             // When displaying running statistics, sync data from client threads first.
-            if self.configuration.print_stats {
+            if !self.configuration.no_stats {
                 // Synchronize statistics from client threads into parent.
                 if util::timer_expired(statistics_timer, 15) {
                     statistics_timer = time::Instant::now();
@@ -949,7 +979,7 @@ impl GooseState {
                 debug!("all clients exited");
 
                 // If we're printing statistics, collect the final messages received from clients
-                if self.configuration.print_stats {
+                if !self.configuration.no_stats {
                     let mut message = parent_receiver.try_recv();
                     while message.is_ok() {
                         let unwrapped_message = message.unwrap();
@@ -1015,9 +1045,9 @@ pub struct GooseConfiguration {
     #[structopt(short = "t", long, required=false, default_value="")]
     run_time: String,
 
-    /// Prints stats in the console
+    /// Don't print stats in the console
     #[structopt(long)]
-    print_stats: bool,
+    no_stats: bool,
 
     /// Includes status code counts in console stats
     #[structopt(long)]
