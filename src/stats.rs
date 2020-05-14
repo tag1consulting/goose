@@ -233,70 +233,17 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     println!(" {:<23} | {:<25} ", "Aggregated", codes);
 }
 
-fn merge_stats(goose_state: &GooseState) -> HashMap<String, GooseRequest> {
-    let mut merged_requests: HashMap<String, GooseRequest> = HashMap::new();
-    for weighted_client in &goose_state.weighted_clients {
-        for (request_key, request) in weighted_client.requests.clone() {
-            let mut merged_request;
-            if let Some(existing_request) = merged_requests.get(&request_key) {
-                merged_request = existing_request.clone();
-                merged_request.success_count += request.success_count;
-                merged_request.fail_count += request.fail_count;
-
-                // Iterate over client response times, and merge into global response times.
-                merged_request.response_times = merge_response_times(
-                    merged_request.response_times,
-                    request.response_times.clone(),
-                );
-
-                // Increment total response time counter.
-                merged_request.total_response_time += &request.total_response_time;
-
-                // Increment counter tracking individual response times seen.
-                merged_request.response_time_counter += &request.response_time_counter;
-
-                // If client had new fastest response time, update global fastest response time.
-                merged_request.min_response_time = update_min_response_time(merged_request.min_response_time, request.min_response_time);
-
-                // If client had new slowest response time, update global slowest resposne time.
-                merged_request.max_response_time = update_max_response_time(merged_request.max_response_time, request.max_response_time);
-
-                // Only merge status_code_counts if we're displaying the results
-                if goose_state.configuration.status_codes {
-                    for (status_code, count) in request.status_code_counts.clone() {
-                        let new_count;
-                        if let Some(existing_status_code_count) = merged_request.status_code_counts.get(&status_code) {
-                            new_count = *existing_status_code_count + count;
-                        }
-                        else {
-                            new_count = count;
-                        }
-                        merged_request.status_code_counts.insert(status_code, new_count);
-                    }
-                }
-                merged_requests.insert(request_key, merged_request);
-            }
-            else {
-                merged_requests.insert(request_key, request);
-            }
-        }
-    }
-    merged_requests
-}
-
 /// Display running and ending statistics
 pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
     if !goose_state.configuration.worker {
         info!("printing final statistics after {} seconds...", elapsed);
-        // 1) merge statistics from all clients.
-        let merged_requests = merge_stats(&goose_state);
-        // 2) print request and fail statistics.
-        print_requests_and_fails(&merged_requests, elapsed);
-        // 3) print respones time statistics, with percentiles
-        print_response_times(&merged_requests, true);
-        // 4) print status_codes
+        // 1) print request and fail statistics.
+        print_requests_and_fails(&goose_state.merged_requests, elapsed);
+        // 2) print respones time statistics, with percentiles
+        print_response_times(&goose_state.merged_requests, true);
+        // 3) print status_codes
         if goose_state.configuration.status_codes {
-            print_status_codes(&merged_requests);
+            print_status_codes(&goose_state.merged_requests);
         }
     }
 }
@@ -304,12 +251,10 @@ pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
 pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
     if !goose_state.configuration.worker {
         info!("printing running statistics after {} seconds...", elapsed);
-        // 1) merge statistics from all clients.
-        let merged_requests = merge_stats(&goose_state);
-        // 2) print request and fail statistics.
-        print_requests_and_fails(&merged_requests, elapsed);
-        // 3) print respones time statistics, without percentiles
-        print_response_times(&merged_requests, false);
+        // 1) print request and fail statistics.
+        print_requests_and_fails(&goose_state.merged_requests, elapsed);
+        // 2) print respones time statistics, without percentiles
+        print_response_times(&goose_state.merged_requests, false);
         println!();
     }
 }

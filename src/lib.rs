@@ -890,39 +890,28 @@ impl GooseState {
                     // Messages contain per-client statistics: merge them into the global statistics.
                     let unwrapped_message = message.unwrap();
                     let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                    self.weighted_clients[weighted_clients_index].weighted_bucket = unwrapped_message.weighted_bucket;
-                    self.weighted_clients[weighted_clients_index].weighted_bucket_position = unwrapped_message.weighted_bucket_position;
                     self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
-                    // If our local copy of the task set doesn't have tasks, clone them from the remote thread
-                    if self.weighted_clients[weighted_clients_index].weighted_tasks.len() == 0 {
-                        self.weighted_clients[weighted_clients_index].weighted_clients_index = unwrapped_message.weighted_clients_index;
-                        self.weighted_clients[weighted_clients_index].weighted_tasks = unwrapped_message.weighted_tasks.clone();
-                    }
                     // Syncronize client requests
                     for (request_key, request) in unwrapped_message.requests {
                         trace!("request_key: {}", request_key);
                         let merged_request;
-                        if let Some(parent_request) = self.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                        if let Some(parent_request) = self.merged_requests.get(&request_key) {
                             merged_request = merge_from_client(parent_request, &request, &self.configuration);
                         }
                         else {
                             // First time seeing this request, simply insert it.
                             merged_request = request.clone();
                         }
-                        self.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                        self.merged_requests.insert(request_key.to_string(), merged_request);
                     }
                     message = parent_receiver.try_recv();
                 }
                 // As worker, push statistics up to manager.
                 if self.configuration.worker && received_message {
                     // Push all statistics to manager process.
-                    for client in &self.weighted_clients {
-                        worker::push_stats_to_manager(&socket.clone().unwrap(), &client.requests.clone());
-                    }
-                    // Now reset all statistics.
-                    for key in 0..self.weighted_clients.len() {
-                        self.weighted_clients[key].requests = HashMap::new();
-                    }
+                    worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone());
+                    // The manager has all our statistics, reset locally.
+                    self.merged_requests = HashMap::new();
                 }
 
                 // Flush statistics collected prior to all client threads running
@@ -961,21 +950,20 @@ impl GooseState {
                     let mut message = parent_receiver.try_recv();
                     while message.is_ok() {
                         let unwrapped_message = message.unwrap();
-                        // @TODO, merge into a single client
                         let weighted_clients_index = unwrapped_message.weighted_clients_index;
                         self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                         // Syncronize client requests
                         for (request_key, request) in unwrapped_message.requests {
                             trace!("request_key: {}", request_key);
                             let merged_request;
-                            if let Some(parent_request) = self.weighted_clients[weighted_clients_index].requests.get(&request_key) {
+                            if let Some(parent_request) = self.merged_requests.get(&request_key) {
                                 merged_request = merge_from_client(parent_request, &request, &self.configuration);
                             }
                             else {
                                 // First time seeing this request, simply insert it.
                                 merged_request = request.clone();
                             }
-                            self.weighted_clients[weighted_clients_index].requests.insert(request_key.to_string(), merged_request);
+                            self.merged_requests.insert(request_key.to_string(), merged_request);
                         }
                         message = parent_receiver.try_recv();
                     }
@@ -984,10 +972,8 @@ impl GooseState {
                 // As worker, push statistics up to manager.
                 if self.configuration.worker {
                     // Push all statistics to manager process.
-                    for client in &self.weighted_clients {
-                        worker::push_stats_to_manager(&socket.clone().unwrap(), &client.requests.clone());
-                    }
-                    // No need to cleanup, the worker is going to exit.
+                    worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone());
+                    // No need to reset local stats, the worker is exiting.
                 }
                 // All clients are done, exit out of loop for final cleanup.
                 break;

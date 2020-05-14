@@ -202,7 +202,7 @@ pub fn manager_main(mut state: GooseState) -> GooseState {
                             }
                         }
                         if load_test_finished {
-                            info!("telling worker to exit");
+                            debug!("telling worker to exit");
                             match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
                                 Ok(_) => (),
                                 Err(e) => {
