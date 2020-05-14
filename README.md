@@ -38,7 +38,7 @@ heading:
 
 ```toml
 [dependencies]
-goose = "^0.5"
+goose = "^0.6"
 ```
 
 At this point it's possible to compile all dependencies, though the
@@ -47,10 +47,10 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.5.9
+  Downloaded goose v0.6.0
       ...
    Compiling reqwest v0.10.4
-   Compiling goose v0.5.9
+   Compiling goose v0.6.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -166,7 +166,7 @@ Passing the included `simple` example the `-h` flag you can see the
 run-time configuration options available to Goose load tests:
 
 ```
-client 0.5.9
+client 0.6.0
 CLI options available when launching a Goose loadtest, provided by StructOpt
 
 USAGE:
@@ -176,20 +176,29 @@ FLAGS:
     -h, --help            Prints help information
     -l, --list            Shows list of all possible Goose tasks and exits
     -g, --log-level       Log level (-g, -gg, -ggg, etc.)
+        --manager         Enables manager mode
         --only-summary    Only prints summary stats
         --print-stats     Prints stats in the console
         --reset-stats     Resets statistics once hatching has been completed
         --status-codes    Includes status code counts in console stats
     -V, --version         Prints version information
     -v, --verbose         Debug level (-v, -vv, -vvv, etc.)
+        --worker          Enables worker mode
 
 OPTIONS:
-    -c, --clients <clients>          Number of concurrent Goose users (defaults to available CPUs)
-    -r, --hatch-rate <hatch-rate>    How many users to spawn per second (defaults to 1 per available CPU)
-    -H, --host <host>                Host to load test in the following format: http://10.21.32.33 [default: ]
-        --log-file <log-file>         [default: goose.log]
-    -t, --run-time <run-time>        Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.)
-                                     [default: ]
+    -c, --clients <clients>                        Number of concurrent Goose users (defaults to available CPUs)
+        --expect-workers <expect-workers>
+            Required when in manager mode, how many workers to expect [default: 0]
+
+    -r, --hatch-rate <hatch-rate>                  How many users to spawn per second [default: 1]
+    -H, --host <host>                              Host to load test, for example: http://10.21.32.33 [default: ]
+        --log-file <log-file>                      Log file name [default: goose.log]
+        --manager-bind-host <manager-bind-host>    Define host manager listens on, formatted x.x.x.x [default: 0.0.0.0]
+        --manager-bind-port <manager-bind-port>    Define port manager listens on [default: 5115]
+        --manager-host <manager-host>              Host manager is running on [default: 127.0.0.1]
+        --manager-port <manager-port>              Port manager is listening on [default: 5115]
+    -t, --run-time <run-time>
+            Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.) [default: ]
 ```
 
 The `examples/simple.rs` example copies the simple load test documented on the locust.io web page, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the client log in and then load a couple of pages.
@@ -271,6 +280,50 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -c102
 -------------------------------------------------------------------------------
  Aggregated              | 67,953 [200]              
 ```
+
+## Gaggle: Distributed Load Test
+
+Goose also supports distributed load testing. First, you must copy your
+load test application to all servers from which you wish to generate
+load. A Gaggle is one Goose process running in manager mode, and 1 or more
+Goose processes running in worker mode. The manager coordinates starting
+and stopping the workers, and collects aggregated statistics.
+
+### Goose Manager
+
+To launch a Gaggle, you first must start a Goose application in manager
+mode. All configuration happens in the manager. To start, add the `--manager`
+flag and the `--expect-workers` flag, the latter necessary to tell the Manager
+process how many Worker processes it will be coordinating. For example:
+
+```
+cargo run --example simple -- --manager --expect-workers 2 --host http://local.dev/ -v
+```
+
+This configures a Goose manager to listen on on all interfaces on the default
+port (0.0.0.0:5115) for 2 Goose worker processes.
+
+### Goose Worker
+
+At this time, a Goose process can be either a manager or a worker, not both.
+Therefor, it makes sense to launch your first worker on the same server that
+the master is running on. This can be done as folows:
+
+```
+cargo run --example simple -- --worker -v
+```
+
+In our above example, we expected 2 workers. The second Goose process should
+be started on a different server. This will require telling it where the
+Goose manager proocess is running. For example:
+
+```
+cargo run --example simple -- --worker --manager-host 192.168.1.55 -v
+```
+
+Once all expected workers are running, the distributed load test will start. In
+our example, the load test will run until it is canceled. You can cancel the
+manager or either of the worker processes, and the test will stop on all servers.
 
 ## Roadmap
 

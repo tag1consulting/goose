@@ -4,15 +4,22 @@ Goose is a Rust load testing tool, based on Locust.
 
 ### In progress
 
-- [ ] detect/report when available CPU power is bottleneck
+- [ ] gaggle support (distributed Geese)
+  - [x] 1:n manager:worker processes
+  - [ ] make gaggle mode optional (adds cmake requirement)
+  - [ ] load test checksum, warn/err if workers are running different tests
+  - [ ] code cleanup, better code re-use
+- [ ] async clients
 
 ### Future
 
-- [ ] gaggle support (distributed Geese)
 - [ ] web UI
 - [ ] website
-- [ ] async clients
 - [ ] metaprogramming, impleent goose_codegen macros to simplify goosefile creation
+- [ ] detect/report when available CPU power is bottleneck
+- [ ] alternative HTTP clients
+- [ ] alternative non-HTTP clients
+  - [ ] gRPC
 - [ ] detect terminal width and adjust statistics output (when wide enough collapse into a single table, etc)
 - [ ] more complicated wait_time implementations
   - [ ] constant pacing (https://github.com/locustio/locust/blob/795b5a14dd5b0991fec5a7f96f0d6491ce19e3d0/locust/wait_time.py#L30)

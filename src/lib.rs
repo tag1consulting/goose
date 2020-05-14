@@ -1070,7 +1070,6 @@ pub struct GooseConfiguration {
     worker: bool,
 
     /// Host manager is running on
-    #[structopt(long)]
     #[structopt(long, default_value="127.0.0.1")]
     manager_host: String,
 

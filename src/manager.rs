@@ -163,7 +163,7 @@ pub fn manager_main(mut state: GooseState) -> GooseState {
             ) { 
                 // Reset timer each time we display statistics.
                 running_statistics_timer = time::Instant::now();
-                stats::print_requests_and_fails(&state.merged_requests, started.elapsed().as_secs() as usize);
+                stats::print_running_stats(&state, started.elapsed().as_secs() as usize);
             }
         }
         if canceled.load(Ordering::SeqCst) {

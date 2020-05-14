@@ -17,7 +17,7 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
 
 pub fn worker_main(state: &GooseState) {
     // Creates a TCP address. @TODO: add optional support for UDP.
-    let address = format!("{}://{}:{}", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port);
+    let address = format!("{}://{}:{}", "tcp", state.configuration.manager_host, state.configuration.manager_port);
     info!("worker connecting to manager at {}", &address);
 
     // Create a request socket.

@@ -1,6 +1,6 @@
 [package]
 name = "goose"
-version = "0.5.9"
+version = "0.6.0"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A load testing tool inspired by Locust."
@@ -27,7 +27,3 @@ serde_cbor = "0.11"
 simplelog = "0.7"
 structopt = "0.3"
 url = "2.1"
-
-[dev-dependencies]
-scraper = "0.11.0"
-select = "0.4"
