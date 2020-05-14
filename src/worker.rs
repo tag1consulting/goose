@@ -59,7 +59,7 @@ pub fn worker_main(state: &GooseState) {
 
     // Let manager know we're ready to work -- push empty HashMap.
     let requests: HashMap<String, GooseRequest> = HashMap::new();
-    push_stats_to_manager(&manager, &requests);
+    push_stats_to_manager(&manager, &requests, false);
 
     let mut hatch_rate: Option<f32> = None;
     let mut config: GooseConfiguration = GooseConfiguration::default();
@@ -123,7 +123,7 @@ pub fn worker_main(state: &GooseState) {
     info!("waiting for go-ahead from manager");
     // Tell manager we're ready to load test.
     loop {
-        push_stats_to_manager(&manager, &requests);
+        push_stats_to_manager(&manager, &requests, false);
         let msg = match manager.recv() {
             Ok(m) => m,
             Err(e) => {
@@ -171,7 +171,7 @@ pub fn worker_main(state: &GooseState) {
     goose_state.launch_clients(started, sleep_duration, Some(manager));
 }
 
-pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>) {
+pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>, get_response: bool) -> bool {
     debug!("pushing stats to manager: {}", requests.len());
     let mut buf: Vec<u8> = Vec::new();
     match serde_cbor::to_writer(&mut buf, requests) {
@@ -181,12 +181,38 @@ pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseR
             std::process::exit(1);
         }
     }
-
-    match manager.send(&buf) {
+    match manager.try_send(&buf) {
         Ok(m) => m,
         Err(e) => {
             error!("communication failure: {:?}.", e);
             std::process::exit(1);
         }
     }
+
+    if get_response {
+        // Wait for server to reply.
+        let msg = match manager.recv() {
+            Ok(m) => m,
+            Err(e) => {
+                error!("unexpected error receiving manager message: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice()) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("invalid message received: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        match command {
+            GooseClientCommand::EXIT => {
+                warn!("received EXIT command from manager");
+                return false;
+            },
+            _ => (),
+        }
+    }
+    true
 }

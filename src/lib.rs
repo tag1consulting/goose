@@ -909,7 +909,10 @@ impl GooseState {
                 // As worker, push statistics up to manager.
                 if self.configuration.worker && received_message {
                     // Push all statistics to manager process.
-                    worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone());
+                    if !worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true) {
+                        // EXIT received, cancel.
+                        canceled.store(true, Ordering::SeqCst);
+                    }
                     // The manager has all our statistics, reset locally.
                     self.merged_requests = HashMap::new();
                 }
@@ -972,7 +975,7 @@ impl GooseState {
                 // As worker, push statistics up to manager.
                 if self.configuration.worker {
                     // Push all statistics to manager process.
-                    worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone());
+                    worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true);
                     // No need to reset local stats, the worker is exiting.
                 }
                 // All clients are done, exit out of loop for final cleanup.
