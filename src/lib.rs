@@ -283,9 +283,11 @@ extern crate structopt;
 pub mod goose;
 
 mod client;
+#[cfg(feature = "gaggle")]
 mod manager;
 mod stats;
 mod util;
+#[cfg(feature = "gaggle")]
 mod worker;
 
 use std::collections::{BTreeMap, HashMap};
@@ -296,6 +298,7 @@ use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
 
+#[cfg(feature = "gaggle")]
 use nng::Socket;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
@@ -305,6 +308,10 @@ use structopt::StructOpt;
 use url::Url;
 
 use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
+
+#[cfg(not(feature = "gaggle"))]
+#[derive(Debug)]
+pub struct Socket {}
 
 /// Internal global state for load test.
 #[derive(Clone)]
@@ -771,11 +778,29 @@ impl GooseState {
 
         // Start goose in manager mode.
         if self.configuration.manager {
-            self = manager::manager_main(self);
+            #[cfg(feature = "gaggle")]
+            {
+                self = manager::manager_main(self);
+            }
+
+            #[cfg(not(feature = "gaggle"))]
+            {
+                error!("goose must be recompiled with `--features gaggle` to start in manager mode");
+                std::process::exit(1);
+            }
         }
         // Start goose in worker mode.
         else if self.configuration.worker {
-            worker::worker_main(&self);
+            #[cfg(feature = "gaggle")]
+            {
+                worker::worker_main(&self);
+            }
+
+            #[cfg(not(feature = "gaggle"))]
+            {
+                error!("goose must be recompiled with `--features gaggle` to start in manager mode");
+                std::process::exit(1);
+            }
         }
         // Start goose in single-process mode.
         else {
@@ -789,6 +814,7 @@ impl GooseState {
 
     /// Called internally in local-mode and gaggle-mode.
     pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseState {
+        trace!("launch clients: started({:?}) sleep_duration({:?}) socket({:?})", started, sleep_duration, socket);
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
         // Collect client thread channels in a vector so we can talk to the client threads.
@@ -936,15 +962,19 @@ impl GooseState {
                     }
                     message = parent_receiver.try_recv();
                 }
+
                 // As worker, push statistics up to manager.
                 if self.configuration.worker && received_message {
-                    // Push all statistics to manager process.
-                    if !worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true) {
-                        // EXIT received, cancel.
-                        canceled.store(true, Ordering::SeqCst);
+                    #[cfg(feature = "gaggle")]
+                    {
+                        // Push all statistics to manager process.
+                        if !worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true) {
+                            // EXIT received, cancel.
+                            canceled.store(true, Ordering::SeqCst);
+                        }
+                        // The manager has all our statistics, reset locally.
+                        self.merged_requests = HashMap::new();
                     }
-                    // The manager has all our statistics, reset locally.
-                    self.merged_requests = HashMap::new();
                 }
 
                 // Flush statistics collected prior to all client threads running
@@ -1002,12 +1032,16 @@ impl GooseState {
                     }
                 }
 
-                // As worker, push statistics up to manager.
-                if self.configuration.worker {
-                    // Push all statistics to manager process.
-                    worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true);
-                    // No need to reset local stats, the worker is exiting.
+                #[cfg(feature = "gaggle")]
+                {
+                    // As worker, push statistics up to manager.
+                    if self.configuration.worker {
+                        // Push all statistics to manager process.
+                        worker::push_stats_to_manager(&socket.clone().unwrap(), &self.merged_requests.clone(), true);
+                        // No need to reset local stats, the worker is exiting.
+                    }
                 }
+
                 // All clients are done, exit out of loop for final cleanup.
                 break;
             }

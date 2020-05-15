@@ -282,11 +282,29 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -c102
 
 ## Gaggle: Distributed Load Test
 
-Goose also supports distributed load testing. First, you must copy your
-load test application to all servers from which you wish to generate
-load. A Gaggle is one Goose process running in manager mode, and 1 or more
-Goose processes running in worker mode. The manager coordinates starting
-and stopping the workers, and collects aggregated statistics.
+Goose also supports distributed load testing. A Gaggle is one Goose process
+running in manager mode, and 1 or more Goose processes running in worker mode.
+The manager coordinates starting and stopping the workers, and collects
+aggregated statistics. Gaggle support is a cargo feature that must be enabled
+at compile-time as documented below. To launch a Gaggle, you must copy your
+load test application to all servers from which you wish to generate load.
+
+### Gaggle Compile-time Feature
+
+Gaggle support is a compile-time Cargo feature that must be enabled. Goose uses
+the [`nng`](https://docs.rs/nng/) library to manage network connections, and
+compiling `nng` requires that `cmake` be available.
+
+The `gaggle` feature can be enabled from the command line by adding
+`--features gaggle` to your cargo command.
+
+When writing load test applications, you can default to compiling in the Gaggle
+feature in the `dependencies` section of your `Cargo.toml`, for example:
+
+```toml
+[dependencies]
+goose = { version = "^0.6", features = ["gaggle"] }
+```
 
 ### Goose Manager
 
@@ -296,7 +314,7 @@ flag and the `--expect-workers` flag, the latter necessary to tell the Manager
 process how many Worker processes it will be coordinating. For example:
 
 ```
-cargo run --example simple -- --manager --expect-workers 2 --host http://local.dev/ -v
+cargo run --features gaggle --example simple -- --manager --expect-workers 2 --host http://local.dev/ -v
 ```
 
 This configures a Goose manager to listen on all interfaces on the default
@@ -310,7 +328,7 @@ the manager is running on. If not otherwise configured, a Goose worker will
 try to connect to the manager on the localhost. This can be done as folows:
 
 ```
-cargo run --example simple -- --worker -v
+cargo run --features gaggle --example simple -- --worker -v
 ```
 
 In our above example, we expected 2 workers. The second Goose process should
@@ -326,6 +344,32 @@ automatically start. We set the `-v` flag so Goose provides verbose output
 indicating what is happening. In our example, the load test will run until
 it is canceled. You can cancel the manager or either of the worker processes,
 and the test will stop on all servers.
+
+### Goose Run-time Flags
+
+* `--manager`: starts a Goose process in manager mode. There currently can only be one manager per Gaggle.
+* `--worker`: stars a Goose process in worker mode. How many workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
+
+The `--no-stats`, `--only-summary`, `--reset-stats`, and `--status-codes` flags must be set on the manager. Workers inheret these flags from the manager
+
+### Goose Run-time Options
+
+* `--manager-bind-host <manager-bind-host>`: configures the host that the manager listens on. By default Goose will listen on all interfaces, or `0.0.0.0`.
+* `--manager-bind-port <manager-bind-port>`: configures the port that the manager listens on. By default Goose will listen on port `5115`.
+* `--manager-host <manager-host>`: configures the host that the worker will talk to the manager on. By default, a Goose worker will connect to the localhost, or `127.0.0.1`. In a distributed load test, this must be set to the IP of the Goose manager.
+* `--manager-port <manager-port>`: configures the port that a worker will talk to the manager on. By default, a Goose worker will connect to port `5115`.
+
+The `--clients`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the manager. Workers inheret these options from the manager.
+
+### Technical Details
+
+Goose uses [`nng`](https://docs.rs/nng/) to send network messages between
+the manager and all workers. [Serde](https://docs.serde.rs/serde/index.html)
+and [Serde CBOR](https://github.com/pyfisch/cbor) are used to serialize messages
+into [Concise Binary Object Representation](https://tools.ietf.org/html/rfc7049).
+
+Workers initiate all network connections, and push a HashMap containing load test
+statistics up to the manager process.
 
 ## Roadmap
 
