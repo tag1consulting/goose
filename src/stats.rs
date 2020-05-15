@@ -2,7 +2,7 @@ use num_format::{Locale, ToFormattedString};
 use std::collections::{HashMap, BTreeMap};
 use std::f32;
 
-use crate::{GooseState, util, merge_response_times, update_min_response_time, update_max_response_time};
+use crate::{GooseAttack, util, merge_response_times, update_min_response_time, update_max_response_time};
 use crate::goose::GooseRequest;
 
 /// Get the response time that a certain number of percent of the requests finished within.
@@ -234,7 +234,7 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
 }
 
 /// Display running and ending statistics
-pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
+pub fn print_final_stats(goose_state: &GooseAttack, elapsed: usize) {
     if !goose_state.configuration.worker {
         info!("printing final statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
@@ -248,7 +248,7 @@ pub fn print_final_stats(goose_state: &GooseState, elapsed: usize) {
     }
 }
 
-pub fn print_running_stats(goose_state: &GooseState, elapsed: usize) {
+pub fn print_running_stats(goose_state: &GooseAttack, elapsed: usize) {
     if !goose_state.configuration.worker && goose_state.merged_requests.len() > 0 {
         info!("printing running statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.

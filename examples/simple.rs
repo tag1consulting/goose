@@ -17,11 +17,11 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use goose::GooseState;
+use goose::GooseAttack;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 fn main() {
-    GooseState::initialize()
+    GooseAttack::initialize()
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(GooseTaskSet::new("WebsiteUser")
             // After each task runs, sleep randomly from 5 to 15 seconds.
