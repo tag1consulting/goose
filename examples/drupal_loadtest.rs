@@ -25,11 +25,11 @@
 use rand::Rng;
 use regex::Regex;
 
-use goose::GooseState;
+use goose::GooseAttack;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 fn main() {
-    GooseState::initialize()
+    GooseAttack::initialize()
         .register_taskset(GooseTaskSet::new("AnonBrowsingUser")
             .set_weight(4)
             .register_task(GooseTask::new(drupal_loadtest_front_page)

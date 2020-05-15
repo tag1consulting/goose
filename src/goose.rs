@@ -292,7 +292,7 @@ pub struct GooseTaskSet {
 }
 impl GooseTaskSet {
     /// Creates a new GooseTaskSet. Once created, GooseTasks must be assigned to it, and finally it must be
-    /// registered with the GooseState object. The returned object must be stored in a mutable value.
+    /// registered with the GooseAttack object. The returned object must be stored in a mutable value.
     /// 
     /// # Example
     /// ```rust

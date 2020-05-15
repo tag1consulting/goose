@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use nng::*;
 
-use crate::{GooseState, GooseConfiguration};
+use crate::{GooseAttack, GooseConfiguration};
 use crate::goose::{GooseRequest, GooseClient, GooseClientCommand};
 use crate::manager::GooseClientInitializer;
 use crate::util;
@@ -15,7 +15,7 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-pub fn worker_main(state: &GooseState) {
+pub fn worker_main(state: &GooseAttack) {
     // Creates a TCP address. @TODO: add optional support for UDP.
     let address = format!("{}://{}:{}", "tcp", state.configuration.manager_host, state.configuration.manager_port);
     info!("worker connecting to manager at {}", &address);
@@ -157,7 +157,7 @@ pub fn worker_main(state: &GooseState) {
     info!("entering gaggle mode, starting load test");
     let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
 
-    let mut goose_state = GooseState::initialize_with_config(config.clone());
+    let mut goose_state = GooseAttack::initialize_with_config(config.clone());
     goose_state.task_sets = state.task_sets.clone();
     if config.run_time != "" {
         goose_state.run_time = util::parse_timespan(&config.run_time);

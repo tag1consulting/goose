@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
 
-use crate::{GooseState, GooseConfiguration, GooseClientCommand};
+use crate::{GooseAttack, GooseConfiguration, GooseClientCommand};
 use crate::goose::GooseRequest;
 use crate::stats;
 use crate::util;
@@ -16,7 +16,7 @@ use crate::util;
 pub struct GooseClientInitializer {
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
-    /// The global GooseState host.
+    /// The global GooseAttack host.
     pub default_host: Option<String>,
     /// The GooseTaskSet.host.
     pub task_set_host: Option<String>,
@@ -51,7 +51,7 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-pub fn manager_main(mut state: GooseState) -> GooseState {
+pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
     // Creates a TCP address. @TODO: add optional support for UDP.
     let address = format!("{}://{}:{}", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port);
 

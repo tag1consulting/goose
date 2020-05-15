@@ -61,7 +61,7 @@ To create an actual load test, you first have to add the following boilerplate
 to the top of `src/main.rs`:
 
 ```rust
-use goose::GooseState;
+use goose::GooseAttack;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 ```
 
@@ -86,7 +86,7 @@ it as follows:
 
 ```rust
 fn main() {
-    GooseState::initialize()
+    GooseAttack::initialize()
         .register_taskset(GooseTaskSet::new("LoadtestTasks")
             .register_task(GooseTask::new(loadtest_index))
         )

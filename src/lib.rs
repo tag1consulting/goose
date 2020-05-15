@@ -34,7 +34,7 @@
 //! Add the following boilerplate use declarations at the top of your `src/main.rs`:
 //! 
 //! ```rust
-//! use goose::GooseState;
+//! use goose::GooseAttack;
 //! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 //! ```
 //! 
@@ -77,7 +77,7 @@
 //! 
 //! ```goose
 //! fn main() {
-//!     GooseState::initialize()
+//!     GooseAttack::initialize()
 //!         .register_taskset(GooseTaskSet::new("LoadtestTasks")
 //!             .set_wait_time(0, 3)
 //!             // Register the foo task, assigning it a weight of 10.
@@ -315,7 +315,7 @@ pub struct Socket {}
 
 /// Internal global state for load test.
 #[derive(Clone)]
-pub struct GooseState {
+pub struct GooseAttack {
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
     task_sets: Vec<GooseTaskSet>,
     /// A weighted vector containing a GooseClient object for each client that will run during this load test.
@@ -338,17 +338,17 @@ pub struct GooseState {
     merged_requests: HashMap<String, GooseRequest>,
 }
 /// Goose's internal global state.
-impl GooseState {
-    /// Load configuration from command line and initialize a GooseState.
+impl GooseAttack {
+    /// Load configuration from command line and initialize a GooseAttack.
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseState;
+    ///     use goose::GooseAttack;
     ///
-    ///     let mut goose_state = GooseState::initialize();
+    ///     let mut goose_state = GooseAttack::initialize();
     /// ```
-    pub fn initialize() -> GooseState {
-        let goose_state = GooseState {
+    pub fn initialize() -> GooseAttack {
+        let goose_state = GooseAttack {
             task_sets: Vec::new(),
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
@@ -363,19 +363,19 @@ impl GooseState {
         goose_state.setup()
     }
 
-    /// Initialize a GooseState with an already loaded configuration.
+    /// Initialize a GooseAttack with an already loaded configuration.
     /// This should only be called by worker instances.
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::{GooseState, GooseConfiguration};
+    ///     use goose::{GooseAttack, GooseConfiguration};
     ///     use structopt::StructOpt;
     ///
     ///     let configuration = GooseConfiguration::from_args();
-    ///     let mut goose_state = GooseState::initialize_with_config(configuration);
+    ///     let mut goose_state = GooseAttack::initialize_with_config(configuration);
     /// ```
-    pub fn initialize_with_config(config: GooseConfiguration) -> GooseState {
-        GooseState {
+    pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
+        GooseAttack {
             task_sets: Vec::new(),
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
@@ -506,10 +506,10 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseState;
+    ///     use goose::GooseAttack;
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///
-    ///     GooseState::initialize()
+    ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
     ///             .register_task(GooseTask::new(example_task))
     ///         )
@@ -542,9 +542,9 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseState;
+    ///     use goose::GooseAttack;
     ///
-    ///     GooseState::initialize()
+    ///     GooseAttack::initialize()
     ///         .set_host("local.dev");
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
@@ -616,10 +616,10 @@ impl GooseState {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseState;
+    ///     use goose::GooseAttack;
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///
-    ///     GooseState::initialize()
+    ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
     ///             .register_task(GooseTask::new(example_task).set_weight(2))
     ///             .register_task(GooseTask::new(another_example_task).set_weight(3))
@@ -813,7 +813,7 @@ impl GooseState {
     }
 
     /// Called internally in local-mode and gaggle-mode.
-    pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseState {
+    pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
         trace!("launch clients: started({:?}) sleep_duration({:?}) socket({:?})", started, sleep_duration, socket);
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
