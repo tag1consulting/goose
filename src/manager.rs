@@ -158,7 +158,7 @@ pub fn manager_main(mut state: GooseState) -> GooseState {
             }
         
             // When displaying running statistics, sync data from client threads first.
-            if !state.configuration.no_stats &&
+            if !state.configuration.only_summary &&
                 util::timer_expired(running_statistics_timer, 15
             ) { 
                 // Reset timer each time we display statistics.
