@@ -785,7 +785,7 @@ impl GooseState {
 
             #[cfg(not(feature = "gaggle"))]
             {
-                error!("goose must be recompiled with the gaggle feature to start in manager mode");
+                error!("goose must be recompiled with `--features gaggle` to start in manager mode");
                 std::process::exit(1);
             }
         }
@@ -798,7 +798,7 @@ impl GooseState {
 
             #[cfg(not(feature = "gaggle"))]
             {
-                error!("goose must be recompiled with the gaggle feature to start in worker mode");
+                error!("goose must be recompiled with `--features gaggle` to start in manager mode");
                 std::process::exit(1);
             }
         }
