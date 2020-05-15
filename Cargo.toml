@@ -16,7 +16,6 @@ license = "Apache-2.0"
 ctrlc = "3.1"
 http = "0.2"
 log = "0.4"
-nng = "0.5"
 num_cpus = "1.0"
 num-format = "0.4"
 rand = "0.7"
@@ -27,3 +26,9 @@ serde_cbor = "0.11"
 simplelog = "0.7"
 structopt = "0.3"
 url = "2.1"
+
+# optional dependencies
+nng = { version = "0.5", optional = true }
+
+[features]
+gaggle = ["nng"]
