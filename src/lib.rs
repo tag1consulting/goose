@@ -28,7 +28,7 @@
 //! 
 //! ```toml
 //! [dependencies]
-//! goose = "0.5"
+//! goose = "0.6"
 //! ```
 //! 
 //! Add the following boilerplate use declarations at the top of your `src/main.rs`:

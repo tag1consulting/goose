@@ -47,10 +47,10 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.6.0
+  Downloaded goose v0.6.1
       ...
    Compiling reqwest v0.10.4
-   Compiling goose v0.6.0
+   Compiling goose v0.6.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -165,7 +165,7 @@ Passing the included `simple` example the `-h` flag you can see the
 run-time configuration options available to Goose load tests:
 
 ```
-client 0.6.0
+client 0.6.1
 CLI options available when launching a Goose loadtest, provided by StructOpt
 
 USAGE:
