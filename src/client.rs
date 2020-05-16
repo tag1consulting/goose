@@ -42,7 +42,7 @@ pub async fn client_main(
                     thread_client.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&mut thread_client);
+                function(&mut thread_client).await;
             }
         }
     }
@@ -146,7 +146,7 @@ pub async fn client_main(
                     thread_client.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&mut thread_client);
+                function(&mut thread_client).await;
             }
         }
     }
