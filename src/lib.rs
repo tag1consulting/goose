@@ -679,12 +679,7 @@ impl GooseAttack {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
-    pub fn execute(self) {
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(self.execute_async())
-    }
-
-    async fn execute_async(mut self) {
+    pub fn execute(mut self) {
         // At least one task set is required.
         if self.task_sets.len() <= 0 {
             error!("No task sets defined.");
@@ -879,7 +874,8 @@ impl GooseAttack {
         }
         // Start goose in single-process mode.
         else {
-            self = self.launch_clients(started, sleep_duration, None);
+            let mut rt = tokio::runtime::Runtime::new().unwrap();
+            self = rt.block_on(self.launch_clients(started, sleep_duration, None));
         }
 
         if !self.configuration.no_stats && !self.configuration.worker {
@@ -887,8 +883,8 @@ impl GooseAttack {
         }
     }
 
-    /// Called internally in single-process mode and distributed load test gaggle-mode.
-    pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
+    /// Called internally in local-mode and gaggle-mode.
+    async fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
         trace!("launch clients: started({:?}) sleep_duration({:?}) socket({:?})", started, sleep_duration, socket);
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
