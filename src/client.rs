@@ -6,9 +6,46 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use std::time;
 
+#[cfg(not(feature = "async"))]
+use std::thread;
+
 use crate::goose::{GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
 
-pub async fn client_main(
+#[cfg(not(feature = "async"))]
+pub fn client_main_wrapper(
+    thread_number: usize,
+    thread_task_set: GooseTaskSet,
+    thread_client: GooseClient,
+    thread_receiver: mpsc::Receiver<GooseClientCommand>,
+    thread_sender: mpsc::Sender<GooseClient>,
+) {
+    client_main(
+        thread_number,
+        thread_task_set,
+        thread_client,
+        thread_receiver,
+        thread_sender,
+    );
+}
+
+#[cfg(feature = "async")]
+pub async fn client_main_async_wrapper(
+    thread_number: usize,
+    thread_task_set: GooseTaskSet,
+    thread_client: GooseClient,
+    thread_receiver: mpsc::Receiver<GooseClientCommand>,
+    thread_sender: mpsc::Sender<GooseClient>,
+) {
+    client_main(
+        thread_number,
+        thread_task_set,
+        thread_client,
+        thread_receiver,
+        thread_sender,
+    );
+}
+
+pub fn client_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     mut thread_client: GooseClient,
@@ -35,7 +72,15 @@ pub async fn client_main(
                     thread_client.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&mut thread_client).await;
+                #[cfg(feature = "async")]
+                async {
+                    function(&mut thread_client).await
+                };
+
+                #[cfg(not(feature = "async"))]
+                {
+                    function(&mut thread_client);
+                }
             }
         }
     }
@@ -66,7 +111,15 @@ pub async fn client_main(
             thread_client.task_request_name = Some(thread_task_name.to_string());
         }
         // Invoke the task function.
-        function(&mut thread_client).await;
+        #[cfg(feature = "async")]
+        async {
+            function(&mut thread_client).await
+        };
+
+        #[cfg(not(feature = "async"))]
+        {
+            function(&mut thread_client);
+        }
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time: usize;
@@ -109,7 +162,17 @@ pub async fn client_main(
             if thread_continue && thread_client.max_wait > 0 {
                 let sleep_duration = time::Duration::from_secs(1);
                 debug!("client {} from {} sleeping {:?} second...", thread_number, thread_task_set.name, sleep_duration);
-                tokio::time::delay_for(sleep_duration).await;
+
+                #[cfg(feature = "async")]
+                async {
+                    tokio::time::delay_for(sleep_duration).await
+                };
+
+                #[cfg(not(feature = "async"))]
+                {
+                    thread::sleep(sleep_duration);
+                }
+
                 slept += 1;
                 if slept > wait_time {
                     in_sleep_loop = false;
@@ -139,9 +202,17 @@ pub async fn client_main(
                     thread_client.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&mut thread_client).await;
-            }
-        }
+                #[cfg(feature = "async")]
+                async {
+                    function(&mut thread_client).await
+                };
+
+                #[cfg(not(feature = "async"))]
+                {
+                    function(&mut thread_client);
+                }
+                    }
+                }
     }
 
     // Do our final sync before we exit.

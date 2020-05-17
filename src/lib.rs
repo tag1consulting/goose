@@ -275,6 +275,8 @@
 #[macro_use]
 extern crate log;
 #[cfg(test)]
+
+#[cfg(feature = "async")]
 #[macro_use]
 extern crate macro_rules_attribute;
 
@@ -301,6 +303,9 @@ use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
 
+#[cfg(feature = "async")]
+use tokio::task;
+
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use rand::thread_rng;
@@ -317,6 +322,7 @@ use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseC
 pub struct Socket {}
 
 // FIXME: For some reason this borks if you don't specify -> ()
+#[cfg(feature = "async")]
 #[macro_export]
 macro_rules! dyn_async {(
     $( #[$attr:meta] )* // includes doc strings
@@ -830,8 +836,14 @@ impl GooseAttack {
         }
         // Start goose in single-process mode.
         else {
-            let mut rt = tokio::runtime::Runtime::new().unwrap();
-            self = rt.block_on(self.launch_clients(started, sleep_duration, None));
+            /*
+            #[cfg(feature = "async")]
+            {
+                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                self = rt.block_on(self.launch_clients(started, sleep_duration, None));
+            }
+            */
+            self = self.launch_clients(started, sleep_duration, None);
         }
 
         if !self.configuration.no_stats && !self.configuration.worker {
@@ -840,7 +852,7 @@ impl GooseAttack {
     }
 
     /// Called internally in local-mode and gaggle-mode.
-    async fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
+    fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
         trace!("launch clients: started({:?}) sleep_duration({:?}) socket({:?})", started, sleep_duration, socket);
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
@@ -882,12 +894,23 @@ impl GooseAttack {
                 // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
                 let thread_number = self.active_clients + 1;
 
-                // Launch a new client.
-                let client = tokio::spawn(
-                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
-                );
+                let client_thread;
+                #[cfg(feature = "async")]
+                {
+                    // Launch a new client.
+                    client_thread = tokio::spawn(
+                        client::client_main_async_wrapper(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
+                    );
+                }
 
-                clients.push(client);
+                #[cfg(not(feature = "async"))]
+                {
+                    client_thread = thread::spawn(move || {
+                        client::client_main_wrapper(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender);
+                    });
+                }
+
+                clients.push(client_thread);
                 self.active_clients += 1;
                 debug!("sleeping {:?} milliseconds...", sleep_duration);
                 thread::sleep(sleep_duration);
@@ -1030,8 +1053,16 @@ impl GooseAttack {
                     }
                 }
                 info!("waiting for clients to exit");
-                for client in clients {
-                    let _ = client.await;
+                #[cfg(feature = "async")]
+                {
+                    let mut rt = tokio::runtime::Runtime::new().unwrap();
+                    self = rt.block_on(self.join_clients(clients));
+                }
+                #[cfg(not(feature = "async"))]
+                {
+                    for client in clients {
+                        let _ = client.join();
+                    }
                 }
                 debug!("all clients exited");
 
@@ -1081,6 +1112,14 @@ impl GooseAttack {
 
             let one_second = time::Duration::from_secs(1);
             thread::sleep(one_second);
+        }
+        self
+    }
+
+    #[cfg(feature = "async")]
+    async fn join_clients(self, clients: Vec<task::JoinHandle<()>>) -> GooseAttack {
+        for client in clients {
+            let _ = client.await;
         }
         self
     }

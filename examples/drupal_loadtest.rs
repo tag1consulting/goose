@@ -22,6 +22,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+#[cfg(feature = "async")]
 #[macro_use]
 extern crate macro_rules_attribute;
 
@@ -29,9 +30,15 @@ use rand::Rng;
 use regex::Regex;
 
 use goose::GooseAttack;
+#[cfg(feature = "async")]
 use goose::dyn_async;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
+#[cfg(not(feature = "async"))]
+fn main() {
+}
+
+#[cfg(feature = "async")]
 fn main() {
     GooseAttack::initialize()
         .register_taskset(GooseTaskSet::new("AnonBrowsingUser")
@@ -76,6 +83,7 @@ fn main() {
 }
 
 /// View the front page.
+#[cfg(feature = "async")]
 #[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_front_page<'fut>(client: &'fut mut GooseClient) -> () {
     let response = client.get("/").await;
@@ -106,6 +114,7 @@ async fn drupal_loadtest_front_page<'fut>(client: &'fut mut GooseClient) -> () {
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
+#[cfg(feature = "async")]
 #[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_node_page<'fut>(client: &'fut mut GooseClient) -> () {
     let nid = rand::thread_rng().gen_range(1, 10_000);
@@ -113,6 +122,7 @@ async fn drupal_loadtest_node_page<'fut>(client: &'fut mut GooseClient) -> () {
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
+#[cfg(feature = "async")]
 #[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_profile_page<'fut>(client: &'fut mut GooseClient) -> () {
     let uid = rand::thread_rng().gen_range(2, 5_001);
@@ -120,6 +130,7 @@ async fn drupal_loadtest_profile_page<'fut>(client: &'fut mut GooseClient) -> ()
 }
 
 /// Log in.
+#[cfg(feature = "async")]
 #[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_login<'fut>(client: &'fut mut GooseClient) -> () {
     let response = client.get("/user").await;
@@ -163,6 +174,7 @@ async fn drupal_loadtest_login<'fut>(client: &'fut mut GooseClient) -> () {
 }
 
 /// Post a comment.
+#[cfg(feature = "async")]
 #[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_post_comment<'fut>(client: &'fut mut GooseClient) -> () {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
