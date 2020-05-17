@@ -831,24 +831,32 @@ impl GooseAttack {
             #[cfg(not(feature = "gaggle"))]
             {
                 error!("goose must be recompiled with `--features gaggle` to start in manager mode");
-                std::process::exit(1);
+            std::process::exit(1);
             }
         }
         // Start goose in single-process mode.
         else {
-            /*
             #[cfg(feature = "async")]
             {
                 let mut rt = tokio::runtime::Runtime::new().unwrap();
-                self = rt.block_on(self.launch_clients(started, sleep_duration, None));
+                self = rt.block_on(self.launch_clients_async(started, sleep_duration, None));
             }
-            */
             self = self.launch_clients(started, sleep_duration, None);
         }
 
         if !self.configuration.no_stats && !self.configuration.worker {
             stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
         }
+    }
+
+    #[cfg(feature = "async")]
+    async fn launch_clients_async(
+        self,
+        started: time::Instant,
+        sleep_duration: time::Duration,
+        socket: Option<Socket>,
+    ) -> GooseAttack {
+        self.launch_clients(started, sleep_duration, socket)
     }
 
     /// Called internally in local-mode and gaggle-mode.
@@ -1054,10 +1062,11 @@ impl GooseAttack {
                 }
                 info!("waiting for clients to exit");
                 #[cfg(feature = "async")]
-                {
-                    let mut rt = tokio::runtime::Runtime::new().unwrap();
-                    self = rt.block_on(self.join_clients(clients));
-                }
+                async {
+                    for client in clients {
+                        let _ = client.await;
+                    }
+                };
                 #[cfg(not(feature = "async"))]
                 {
                     for client in clients {
@@ -1112,14 +1121,6 @@ impl GooseAttack {
 
             let one_second = time::Duration::from_secs(1);
             thread::sleep(one_second);
-        }
-        self
-    }
-
-    #[cfg(feature = "async")]
-    async fn join_clients(self, clients: Vec<task::JoinHandle<()>>) -> GooseAttack {
-        for client in clients {
-            let _ = client.await;
         }
         self
     }
