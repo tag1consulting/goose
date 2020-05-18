@@ -1,9 +1,10 @@
 # Changelog
 
-## 0.6.1-dev
+## 0.6.2 May 18, 2020
  - replace `unsafe` code blocks with lazy_static singleton
  - perform checksum to confirm workers are running same load test,
    `--no-hash-check` to ignore
+ - code and documentation consistency
 
 ## 0.6.1 May 16, 2020
  - replace `--print-stats` with `--no-stats`, default to printing stats
