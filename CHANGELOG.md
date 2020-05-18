@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.1-dev
+ - replace `unsafe` code blocks with lazy_static singleton
+
 ## 0.6.1 May 16, 2020
  - replace --print-stats with --no-stats, default to printing stats
  - make gaggle an optional compile-time feature

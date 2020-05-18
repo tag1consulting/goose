@@ -1,10 +1,11 @@
+use lazy_static::lazy_static;
 use nng::*;
 use serde::{Serialize, Deserialize};
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::{GooseAttack, GooseConfiguration, GooseClientCommand};
 use crate::goose::GooseRequest;
@@ -28,25 +29,21 @@ pub struct GooseClientInitializer {
     pub config: GooseConfiguration,
 }
 
-// @TODO: replace with lazy-static to remove unsafe code blocks.
-static mut ACTIVE_WORKERS: usize = 0;
+// Mutable singleton globally tracking how many workers are currently being managed.
+lazy_static! {
+    static ref ACTIVE_WORKERS: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
+}
 
 fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     match event {
         PipeEvent::AddPost => {
-            // A mutable static can only be used in an unsafe block.
-            // https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html
-            unsafe {
-                debug!("worker pipe added");
-                ACTIVE_WORKERS += 1;
-            }
+            debug!("worker pipe added");
+            ACTIVE_WORKERS.lock().unwrap().fetch_add(1, Ordering::SeqCst);
         },
         PipeEvent::RemovePost => {
-            unsafe {
-                info!("worker {} exited", ACTIVE_WORKERS);
-                ACTIVE_WORKERS -= 1;
-            }
-        }
+            let active_workers = ACTIVE_WORKERS.lock().unwrap().fetch_sub(1, Ordering::SeqCst);
+            info!("worker {} exited", active_workers);
+        },
         _ => {},
     }
 }
@@ -127,19 +124,17 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
     // Worker control loop.
     loop {
         if !load_test_finished {
-            unsafe {
-                if ACTIVE_WORKERS < workers.len() {
-                    // If worked goes away during load test, exit gracefully.
-                    if load_test_running {
-                        info!("worker went away, stopping gracefully afer {} seconds...", started.elapsed().as_secs());
-                        load_test_finished = true;
-                        exit_timer = time::Instant::now();
-                    }
-                    // If a worker goes away during start up, exit immediately.
-                    else { 
-                        warn!("worker went away, stopping immediately...");
-                        break;
-                    }
+            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) < workers.len() {
+                // If worked goes away during load test, exit gracefully.
+                if load_test_running {
+                    info!("worker went away, stopping gracefully afer {} seconds...", started.elapsed().as_secs());
+                    load_test_finished = true;
+                    exit_timer = time::Instant::now();
+                }
+                // If a worker goes away during start up, exit immediately.
+                else { 
+                    warn!("worker went away, stopping immediately...");
+                    break;
                 }
             }
         }
@@ -243,11 +238,9 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                                 Error::TryAgain => {
                                     if workers.len() > 0 {
                                         // A mutable static can only be used in an unsafe block.
-                                        unsafe {
-                                        if ACTIVE_WORKERS == 0 {
+                                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
                                             info!("all workers have exited");
                                             break;
-                                            }
                                         }
                                     }
                                 },
@@ -280,11 +273,9 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                                     Error::TryAgain => {
                                         if workers.len() > 0 {
                                             // A mutable static can only be used in an unsafe block.
-                                            unsafe {
-                                            if ACTIVE_WORKERS == 0 {
+                                            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
                                                 info!("all workers have exited");
                                                 break;
-                                                }
                                             }
                                         }
                                     },
@@ -348,11 +339,9 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                                     Error::TryAgain => {
                                         if workers.len() > 0 {
                                             // A mutable static can only be used in an unsafe block.
-                                            unsafe {
-                                            if ACTIVE_WORKERS == 0 {
+                                            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
                                                 info!("all workers have exited");
                                                 break;
-                                                }
                                             }
                                         }
                                     },
@@ -377,12 +366,9 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
             Err(e) => {
                 if e == Error::TryAgain {
                     if workers.len() > 0 {
-                        // A mutable static can only be used in an unsafe block.
-                        unsafe {
-                            if ACTIVE_WORKERS == 0 {
-                                info!("all workers have exited");
-                                break;
-                            }
+                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                            info!("all workers have exited");
+                            break;
                         }
                     }
                     if !load_test_finished {
