@@ -2,11 +2,11 @@
 //! 
 //! Have you ever been attacked by a goose?
 //! 
-//! Goose is a load testing tool based on [Locust](https://locust.io/).
+//! Goose is a load testing tool inspired by [Locust](https://locust.io/).
 //! User behavior is defined with standard Rust code.
 //! 
-//! Goose load tests are built by creating an application with Cargo,
-//! and declaring a dependency on the Goose library.
+//! Goose load tests, called Goose Attacks, are built by creating an application
+//! with Cargo, and declaring a dependency on the Goose library.
 //! 
 //! Goose uses the [`reqwest::blocking`](https://docs.rs/reqwest/*/reqwest/blocking/)
 //! API to provide a convenient HTTP client. (Async support is on the roadmap, also
@@ -69,7 +69,7 @@
 //! ```
 //! 
 //! We pass the `request_builder` object to `goose_send` which builds and executes it, also
-//! collecting useful statistics which can be viewed with the `--print-stats` flag.
+//! collecting useful statistics.
 //! 
 //! Once all our tasks are created, we edit the main function to initialize goose and register
 //! the tasks. In this very simple example we only have two tasks to register, while in a real
@@ -101,12 +101,12 @@
 //! ### Running the Goose load test
 //! 
 //! Attempts to run our example will result in an error, as we have not yet defined the
-//! host against which this loadtest should be run. We intentionally do not hard code the
+//! host against which this load test should be run. We intentionally do not hard code the
 //! host in the individual tasks, as this allows us to run the test against different
 //! environments, such as local and staging.
 //! 
 //! ```bash
-//! $ cargo run --release -- 
+//! $ cargo run --release
 //!    Compiling loadtest v0.1.0 (~/loadtest)
 //!     Finished release [optimized] target(s) in 1.52s
 //!      Running `target/release/loadtest`
@@ -116,25 +116,23 @@
 //! options to customize our load test.
 //! 
 //! ```bash
-//! $ cargo run --release -- --host http://dev.local --print-stats -t 30s -v
+//! $ cargo run --release -- --host http://dev.local -t 30s -v
 //! ```
 //! 
 //! The first option we specified is `--host`, and in this case tells Goose to run the load test
-//! against an 8-core VM on my local network. The `--print-stats` flag configures Goose to collect
-//! statistics as the load test runs, printing running statistics during the test and final summary
-//! statistics when finished. The `-t 30s` option tells Goose to end the load test after 30 seconds
-//! (for real load tests you'll certainly want to run it longer, you can use `m` to specify minutes
-//! and `h` to specify hours. For example, `-t 1h30m` would run the load test for 1 hour 30 minutes).
-//! Finally, the `-v` flag tells goose to display INFO and higher level logs to stdout, giving more
-//! insight into what is happening. (Additional `-v` flags will result in considerably more debug
-//! output, and are not recommended for running actual load tests; they're only useful if you're
-//! trying to debug Goose itself.)
+//! against an 8-core VM on my local network. The `-t 30s` option tells Goose to end the load test
+//! after 30 seconds (for real load tests you'll certainly want to run it longer, you can use `m` to
+//! specify minutes and `h` to specify hours. For example, `-t 1h30m` would run the load test for 1
+//! hour 30 minutes). Finally, the `-v` flag tells goose to display INFO and higher level logs to
+//! stdout, giving more insight into what is happening. (Additional `-v` flags will result in
+//! considerably more debug output, and are not recommended for running actual load tests; they're
+//! only useful if you're trying to debug Goose itself.)
 //! 
 //! Running the test results in the following output (broken up to explain it as it goes):
 //! 
 //! ```bash
 //!    Finished release [optimized] target(s) in 0.05s
-//!     Running `target/release/loadtest --host 'http://dev.local' --print-stats -t 30s -v`
+//!     Running `target/release/loadtest --host 'http://dev.local' -t 30s -v`
 //! 05:56:30 [ INFO] Output verbosity level: INFO
 //! 05:56:30 [ INFO] Logfile verbosity level: INFO
 //! 05:56:30 [ INFO] Writing to log file: goose.log
@@ -313,6 +311,7 @@ use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseC
 
 #[cfg(not(feature = "gaggle"))]
 #[derive(Debug)]
+/// Socket used for coordinating a Gaggle, a distributed load test.
 pub struct Socket {}
 
 /// Internal global state for load test.
@@ -349,10 +348,10 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::GooseAttack;
     ///
-    ///     let mut goose_state = GooseAttack::initialize();
+    ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> GooseAttack {
-        let goose_state = GooseAttack {
+        let goose_attack = GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
@@ -365,7 +364,7 @@ impl GooseAttack {
             active_clients: 0,
             merged_requests: HashMap::new(),
         };
-        goose_state.setup()
+        goose_attack.setup()
     }
 
     /// Initialize a GooseAttack with an already loaded configuration.
@@ -377,7 +376,7 @@ impl GooseAttack {
     ///     use structopt::StructOpt;
     ///
     ///     let configuration = GooseConfiguration::from_args();
-    ///     let mut goose_state = GooseAttack::initialize_with_config(configuration);
+    ///     let mut goose_attack = GooseAttack::initialize_with_config(configuration);
     /// ```
     pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
         GooseAttack {
@@ -823,7 +822,7 @@ impl GooseAttack {
 
             #[cfg(not(feature = "gaggle"))]
             {
-                error!("goose must be recompiled with `--features gaggle` to start in manager mode");
+                error!("goose must be recompiled with `--features gaggle` to start in worker mode");
                 std::process::exit(1);
             }
         }
@@ -837,7 +836,7 @@ impl GooseAttack {
         }
     }
 
-    /// Called internally in local-mode and gaggle-mode.
+    /// Called internally in single-process mode and distributed load test gaggle-mode.
     pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
         trace!("launch clients: started({:?}) sleep_duration({:?}) socket({:?})", started, sleep_duration, socket);
         // Collect client threads in a vector for when we want to stop them later.
@@ -1084,7 +1083,7 @@ impl GooseAttack {
     }
 }
 
-/// CLI options available when launching a Goose loadtest.
+/// CLI options available when launching a Goose load test.
 #[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
 #[structopt(name = "client")]
 pub struct GooseConfiguration {
@@ -1335,7 +1334,10 @@ fn is_valid_host(host: &str) -> bool {
     }
 }
 
-// Merge local response times into global response times.
+/// A helper function that merges together response times.
+///
+/// Used in `lib.rs` to merge together per-thread response times, and in `stats.rs`
+/// to aggregate all response times.
 pub fn merge_response_times(
     mut global_response_times: BTreeMap<usize, usize>,
     local_response_times: BTreeMap<usize, usize>,

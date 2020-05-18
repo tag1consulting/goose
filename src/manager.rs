@@ -48,15 +48,15 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
+pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     // Creates a TCP address. @TODO: add optional support for UDP.
-    let address = format!("{}://{}:{}", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port);
+    let address = format!("{}://{}:{}", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port);
 
     // Create a reply socket.
     let server = match Socket::new(Protocol::Rep0) {
         Ok(s) => s,
         Err(e) => {
-            error!("failed to create {}://{}:{} socket: {}.", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port, e);
+            error!("failed to create {}://{}:{} socket: {}.", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port, e);
             std::process::exit(1);
         }
     };
@@ -72,15 +72,15 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
     match server.listen(&address) {
         Ok(s) => (s),
         Err(e) => {
-            error!("failed to bind to socket {}://{}:{}: {}.", "tcp", state.configuration.manager_bind_host, state.configuration.manager_bind_port, e);
+            error!("failed to bind to socket {}://{}:{}: {}.", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port, e);
             std::process::exit(1);
         }
     }
-    info!("manager listening on {}, waiting for {} workers", &address, state.configuration.expect_workers);
+    info!("manager listening on {}, waiting for {} workers", &address, goose_attack.configuration.expect_workers);
 
     // Calculate how many clients each worker will be responsible for.
-    let split_clients = state.clients / (state.configuration.expect_workers as usize);
-    let mut split_clients_remainder = state.clients % (state.configuration.expect_workers as usize);
+    let split_clients = goose_attack.clients / (goose_attack.configuration.expect_workers as usize);
+    let mut split_clients_remainder = goose_attack.clients % (goose_attack.configuration.expect_workers as usize);
     if split_clients_remainder > 0 {
         info!("each worker to start {} clients, assigning 1 extra to {} workers", split_clients, split_clients_remainder);
     }
@@ -89,7 +89,7 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
     }
 
     // A mutable bucket of clients to be assigned to workers.
-    let mut available_clients = state.weighted_clients.clone();
+    let mut available_clients = goose_attack.weighted_clients.clone();
 
     // Track how many workers we've seen.
     let mut workers: HashSet<Pipe> = HashSet::new();
@@ -140,7 +140,7 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
         }
         if load_test_running {
             if !load_test_finished {
-                if util::timer_expired(started, state.run_time) || canceled.load(Ordering::SeqCst) {
+                if util::timer_expired(started, goose_attack.run_time) || canceled.load(Ordering::SeqCst) {
                     info!("stopping after {} seconds...", started.elapsed().as_secs());
                     load_test_finished = true;
                     exit_timer = time::Instant::now();
@@ -153,12 +153,12 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
             }
         
             // When displaying running statistics, sync data from client threads first.
-            if !state.configuration.only_summary &&
+            if !goose_attack.configuration.only_summary &&
                 util::timer_expired(running_statistics_timer, 15
             ) { 
                 // Reset timer each time we display statistics.
                 running_statistics_timer = time::Instant::now();
-                stats::print_running_stats(&state, started.elapsed().as_secs() as usize);
+                stats::print_running_stats(&goose_attack, started.elapsed().as_secs() as usize);
             }
         }
         if canceled.load(Ordering::SeqCst) {
@@ -183,21 +183,21 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                 if workers.contains(&pipe) {
                     let mut buf: Vec<u8> = Vec::new();
                     // All workers are running load test, sending statistics.
-                    if workers.len() == state.configuration.expect_workers as usize {
+                    if workers.len() == goose_attack.configuration.expect_workers as usize {
                         // Requests statistics received, merge them into our local copy.
                         if requests.len() > 0 {
                             debug!("requests statistics received: {:?}", requests.len());
                             for (request_key, request) in requests {
                                 trace!("request_key: {}", request_key);
                                 let merged_request;
-                                if let Some(parent_request) = state.merged_requests.get(&request_key) {
-                                    merged_request = crate::merge_from_client(parent_request, &request, &state.configuration);
+                                if let Some(parent_request) = goose_attack.merged_requests.get(&request_key) {
+                                    merged_request = crate::merge_from_client(parent_request, &request, &goose_attack.configuration);
                                 }
                                 else {
                                     // First time seeing this request, simply insert it.
                                     merged_request = request.clone();
                                 }
-                                state.merged_requests.insert(request_key.to_string(), merged_request);
+                                goose_attack.merged_requests.insert(request_key.to_string(), merged_request);
                             }
                         }
                         if load_test_finished {
@@ -255,7 +255,7 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                 // This is the first time we've seen this worker.
                 else {
                     // Make sure we're not already conneted to all of our workers.
-                    if workers.len() >= state.configuration.expect_workers as usize {
+                    if workers.len() >= goose_attack.configuration.expect_workers as usize {
                         // We already have enough workers, tell this one to EXIT.
                         let mut buf: Vec<u8> = Vec::new();
                         match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
@@ -292,8 +292,8 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                         // Validate worker load test hash.
                         match requests.get("load_test_hash") {
                             Some(r) => {
-                                if r.load_test_hash != state.task_sets_hash {
-                                    if state.configuration.no_hash_check {
+                                if r.load_test_hash != goose_attack.task_sets_hash {
+                                    if goose_attack.configuration.no_hash_check {
                                         warn!("worker is running a different load test, ignoring")
                                     }
                                     else {
@@ -304,7 +304,7 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
 
                             },
                             None => {
-                                if state.configuration.no_hash_check {
+                                if goose_attack.configuration.no_hash_check {
                                     warn!("worker is running a different load test, ignoring")
                                 }
                                 else {
@@ -315,7 +315,7 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                         };
 
                         workers.insert(pipe);
-                        info!("worker {} of {} connected", workers.len(), state.configuration.expect_workers);
+                        info!("worker {} of {} connected", workers.len(), goose_attack.configuration.expect_workers);
 
                         // Send new worker a batch of clients.
                         let mut client_batch = split_clients;
@@ -378,7 +378,7 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                             }
                         }
 
-                        if workers.len() == state.configuration.expect_workers as usize {
+                        if workers.len() == goose_attack.configuration.expect_workers as usize {
                             info!("gaggle distributed load test started");
                             // Reset start time, the distributed load test is truly starting now.
                             started = time::Instant::now();
@@ -409,5 +409,5 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
         }
 
     }
-    state
+    goose_attack
 }
