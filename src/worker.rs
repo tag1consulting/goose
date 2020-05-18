@@ -15,9 +15,9 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-pub fn worker_main(state: &GooseAttack) {
+pub fn worker_main(goose_attack: &GooseAttack) {
     // Creates a TCP address. @TODO: add optional support for UDP.
-    let address = format!("{}://{}:{}", "tcp", state.configuration.manager_host, state.configuration.manager_port);
+    let address = format!("{}://{}:{}", "tcp", goose_attack.configuration.manager_host, goose_attack.configuration.manager_port);
     info!("worker connecting to manager at {}", &address);
 
     // Create a request socket.
@@ -63,9 +63,9 @@ pub fn worker_main(state: &GooseAttack) {
     requests.insert("load_test_hash".to_string(), GooseRequest::new(
         "none",
         GooseMethod::GET,
-        state.task_sets_hash,
+        goose_attack.task_sets_hash,
     ));
-    debug!("sending load test hash to manager: {}", state.task_sets_hash);
+    debug!("sending load test hash to manager: {}", goose_attack.task_sets_hash);
     push_stats_to_manager(&manager, &requests, false);
 
     // Only send load_test_hash one time.
@@ -119,7 +119,7 @@ pub fn worker_main(state: &GooseAttack) {
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
-                state.task_sets_hash,
+                goose_attack.task_sets_hash,
             ));
             if hatch_rate == None {
                 hatch_rate = Some(1.0 / (initializer.config.hatch_rate as f32 / (initializer.config.expect_workers as f32)));
@@ -168,18 +168,18 @@ pub fn worker_main(state: &GooseAttack) {
     info!("entering gaggle mode, starting load test");
     let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
 
-    let mut goose_state = GooseAttack::initialize_with_config(config.clone());
-    goose_state.task_sets = state.task_sets.clone();
+    let mut goose_attack = GooseAttack::initialize_with_config(config.clone());
+    goose_attack.task_sets = goose_attack.task_sets.clone();
     if config.run_time != "" {
-        goose_state.run_time = util::parse_timespan(&config.run_time);
-        info!("run_time = {}", goose_state.run_time);
+        goose_attack.run_time = util::parse_timespan(&config.run_time);
+        info!("run_time = {}", goose_attack.run_time);
     }
     else {
-        goose_state.run_time = 0;
+        goose_attack.run_time = 0;
     }
-    goose_state.weighted_clients = weighted_clients;
-    goose_state.configuration.worker = true;
-    goose_state.launch_clients(started, sleep_duration, Some(manager));
+    goose_attack.weighted_clients = weighted_clients;
+    goose_attack.configuration.worker = true;
+    goose_attack.launch_clients(started, sleep_duration, Some(manager));
 }
 
 pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>, get_response: bool) -> bool {

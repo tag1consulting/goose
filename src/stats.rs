@@ -234,27 +234,27 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
 }
 
 /// Display running and ending statistics
-pub fn print_final_stats(goose_state: &GooseAttack, elapsed: usize) {
-    if !goose_state.configuration.worker {
+pub fn print_final_stats(goose_attack: &GooseAttack, elapsed: usize) {
+    if !goose_attack.configuration.worker {
         info!("printing final statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
-        print_requests_and_fails(&goose_state.merged_requests, elapsed);
+        print_requests_and_fails(&goose_attack.merged_requests, elapsed);
         // 2) print respones time statistics, with percentiles
-        print_response_times(&goose_state.merged_requests, true);
+        print_response_times(&goose_attack.merged_requests, true);
         // 3) print status_codes
-        if goose_state.configuration.status_codes {
-            print_status_codes(&goose_state.merged_requests);
+        if goose_attack.configuration.status_codes {
+            print_status_codes(&goose_attack.merged_requests);
         }
     }
 }
 
-pub fn print_running_stats(goose_state: &GooseAttack, elapsed: usize) {
-    if !goose_state.configuration.worker && goose_state.merged_requests.len() > 0 {
+pub fn print_running_stats(goose_attack: &GooseAttack, elapsed: usize) {
+    if !goose_attack.configuration.worker && goose_attack.merged_requests.len() > 0 {
         info!("printing running statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
-        print_requests_and_fails(&goose_state.merged_requests, elapsed);
+        print_requests_and_fails(&goose_attack.merged_requests, elapsed);
         // 2) print respones time statistics, without percentiles
-        print_response_times(&goose_state.merged_requests, false);
+        print_response_times(&goose_attack.merged_requests, false);
         println!();
     }
 }

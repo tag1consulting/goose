@@ -349,10 +349,10 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::GooseAttack;
     ///
-    ///     let mut goose_state = GooseAttack::initialize();
+    ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> GooseAttack {
-        let goose_state = GooseAttack {
+        let goose_attack = GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
@@ -365,7 +365,7 @@ impl GooseAttack {
             active_clients: 0,
             merged_requests: HashMap::new(),
         };
-        goose_state.setup()
+        goose_attack.setup()
     }
 
     /// Initialize a GooseAttack with an already loaded configuration.
@@ -377,7 +377,7 @@ impl GooseAttack {
     ///     use structopt::StructOpt;
     ///
     ///     let configuration = GooseConfiguration::from_args();
-    ///     let mut goose_state = GooseAttack::initialize_with_config(configuration);
+    ///     let mut goose_attack = GooseAttack::initialize_with_config(configuration);
     /// ```
     pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
         GooseAttack {
