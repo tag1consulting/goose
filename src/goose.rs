@@ -1619,7 +1619,7 @@ mod tests {
 
     #[test]
     fn goose_request() {
-        let mut request = GooseRequest::new("/", GooseMethod::GET);
+        let mut request = GooseRequest::new("/", GooseMethod::GET, 0);
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::GET);
         assert_eq!(request.response_times.len(), 0);
@@ -1826,7 +1826,7 @@ mod tests {
     #[test]
     fn goose_client() {
         let configuration = GooseConfiguration::default();
-        let mut client = GooseClient::new(0, 0, Some("http://example.com/".to_string()), None, 0, 0, &configuration);
+        let mut client = GooseClient::new(0, 0, Some("http://example.com/".to_string()), None, 0, 0, &configuration, 0);
         assert_eq!(client.task_sets_index, 0);
         assert_eq!(client.default_host, Some("http://example.com/".to_string()));
         assert_eq!(client.task_set_host, None);
@@ -1879,16 +1879,16 @@ mod tests {
 
         // Returns new GooseRequest if never set before.
         let request = client.get_request("/foo", &GooseMethod::GET);
-        assert_eq!(request, GooseRequest::new("/foo", GooseMethod::GET));
+        assert_eq!(request, GooseRequest::new("/foo", GooseMethod::GET, 0));
 
         // Store a GooseRequest objet and confirm we can them retreive it.
-        let mut request = GooseRequest::new("/", GooseMethod::GET);
+        let mut request = GooseRequest::new("/", GooseMethod::GET, 0);
         request.set_response_time(55);
         request.set_status_code(Some(StatusCode::OK));
         client.set_request("/", &GooseMethod::GET, request.clone());
         let restored_request = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET));
+        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET, 0));
         // This is the request we stored.
         assert_eq!(&request, &restored_request);
 
@@ -1898,7 +1898,7 @@ mod tests {
         client.set_request("/", &GooseMethod::GET, request.clone());
         let restored_request_again = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET));
+        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET, 0));
         // This is not first request we stored.
         assert_ne!(&request, &restored_request);
         // This is the new request we stored.
@@ -1919,7 +1919,7 @@ mod tests {
         assert_eq!(url, "https://www.example.com/path/to/resource");
 
         // Create a second client, this time setting a task_set_host.
-        let mut client2 = GooseClient::new(0, 0, Some("http://www.example.com/".to_string()), Some("http://www2.example.com/".to_string()), 1, 3, &configuration);
+        let mut client2 = GooseClient::new(0, 0, Some("http://www.example.com/".to_string()), Some("http://www2.example.com/".to_string()), 1, 3, &configuration, 0);
         assert_eq!(client2.default_host, Some("http://www.example.com/".to_string()));
         assert_eq!(client2.task_set_host, Some("http://www2.example.com/".to_string()));
         assert_eq!(client2.min_wait, 1);
