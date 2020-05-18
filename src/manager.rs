@@ -189,6 +189,10 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                             debug!("requests statistics received: {:?}", requests.len());
                             for (request_key, request) in requests {
                                 trace!("request_key: {}", request_key);
+                                if request.load_test_hash != state.task_sets_hash {
+                                    error!("worker is running a different load test");
+                                    std::process::exit(1);
+                                }
                                 let merged_request;
                                 if let Some(parent_request) = state.merged_requests.get(&request_key) {
                                     merged_request = crate::merge_from_client(parent_request, &request, &state.configuration);

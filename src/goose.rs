@@ -254,6 +254,7 @@
 
 use std::collections::{HashMap, BTreeMap};
 use std::time::Instant;
+use std::hash::{Hash, Hasher};
 
 use http::StatusCode;
 use http::method::Method;
@@ -267,7 +268,7 @@ use crate::GooseConfiguration;
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 /// An individual task set.
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 pub struct GooseTaskSet {
     /// The name of the task set.
     pub name: String,
@@ -486,10 +487,12 @@ pub struct GooseRequest {
     pub success_count: usize,
     /// Total number of times this path-method request resulted in a non-successful (non-2xx) status code.
     pub fail_count: usize,
+    /// Load test hash.
+    pub load_test_hash: u64,
 }
 impl GooseRequest {
     /// Create a new GooseRequest object.
-    pub fn new(path: &str, method: GooseMethod) -> Self {
+    pub fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
         trace!("new request");
         GooseRequest {
             path: path.to_string(),
@@ -502,6 +505,7 @@ impl GooseRequest {
             status_code_counts: HashMap::new(),
             success_count: 0,
             fail_count: 0,
+            load_test_hash: load_test_hash,
         }
     }
 
@@ -631,10 +635,12 @@ pub struct GooseClient {
     pub was_success: bool,
     /// Optional statistics collected about all requests made by this client.
     pub requests: HashMap<String, GooseRequest>,
+    /// Load test hash.
+    pub load_test_hash: u64,
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &GooseConfiguration) -> Self {
+    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &GooseConfiguration, load_test_hash: u64) -> Self {
         trace!("new client");
         let builder = Client::builder()
             .user_agent(APP_USER_AGENT)
@@ -669,6 +675,7 @@ impl GooseClient {
             previous_request_name: None,
             was_success: false,
             requests: HashMap::new(),
+            load_test_hash: load_test_hash,
         }
     }
 
@@ -726,7 +733,7 @@ impl GooseClient {
         trace!("get key: {}", &key);
         match self.requests.get(&key) {
             Some(r) => r.clone(),
-            None => GooseRequest::new(path, method.clone()),
+            None => GooseRequest::new(path, method.clone(), self.load_test_hash),
         }
     }
 
@@ -1418,6 +1425,16 @@ impl GooseTask {
         }
         self.sequence = sequence;
         self
+    }
+}
+impl Hash for GooseTask {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.tasks_index.hash(state);
+        self.name.hash(state);
+        self.weight.hash(state);
+        self.sequence.hash(state);
+        self.on_start.hash(state);
+        self.on_stop.hash(state);
     }
 }
 

@@ -109,6 +109,7 @@ pub fn worker_main(state: &GooseAttack) {
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
+                state.task_sets_hash,
             ));
             if hatch_rate == None {
                 hatch_rate = Some(1.0 / (initializer.config.hatch_rate as f32 / (initializer.config.expect_workers as f32)));
