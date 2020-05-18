@@ -254,8 +254,7 @@
 
 use std::collections::{HashMap, BTreeMap};
 use std::hash::{Hash, Hasher};
-use std::{pin::Pin, time::Instant, future::Future};
-
+use std::{time::Instant, future::Future, pin::Pin};
 use http::StatusCode;
 use http::method::Method;
 use reqwest::{Client, Response, RequestBuilder};
@@ -266,6 +265,8 @@ use url::Url;
 use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
+type GooseTaskFn = Box<dyn Fn(&mut GooseClient) -> Pin<Box<dyn Future<Output = ()>>>>;
 
 /// An individual task set.
 #[derive(Clone, Hash)]
@@ -333,6 +334,7 @@ impl GooseTaskSet {
     ///       let _response = client.get("/a/");
     ///     }
     /// ```
+    //pub fn register_task(mut self, mut task: GooseTask<dyn Future<Output = ()>>) -> Self {
     pub fn register_task(mut self, mut task: GooseTask) -> Self {
         trace!("{} register_task: {}", self.name, task.name);
         task.tasks_index = self.tasks.len();
@@ -1221,20 +1223,6 @@ impl GooseClient {
     }
 }
 
-
-// TODO: https://users.rust-lang.org/t/how-to-store-async-function-pointer/38343/4
-// * make a macro to mark dyn async functions
-// * mark all callbacks with this macro when defining them
-// * pass them into GooseTask::new() as function pointers
-type AsyncTaskCallbackFunction =
-    fn (&'_ mut GooseClient) ->
-        Pin<Box<dyn // owned trait object
-            Future<Output = ()> // future API / pollable
-            + Send // required by non-single-threaded executors
-            + '_ // may capture `client`, which is only valid for the `'_` lifetime
-        >>
-;
-
 /// An individual task within a `GooseTaskSet`.
 #[derive(Clone)]
 pub struct GooseTask {
@@ -1251,10 +1239,10 @@ pub struct GooseTask {
     /// A flag indicating that this task runs when the client stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    pub function: AsyncTaskCallbackFunction,
+    pub function: GooseTaskFn<>,
 }
 impl GooseTask {
-    pub fn new(function: AsyncTaskCallbackFunction) -> Self {
+    pub fn new(function: fn(GooseClient)) -> Self {
         trace!("new task");
         let task = GooseTask {
             tasks_index: usize::max_value(),
@@ -1263,7 +1251,7 @@ impl GooseTask {
             sequence: 0,
             on_start: false,
             on_stop: false,
-            function: function,
+            function: Box::new(function),
         };
         task
     }

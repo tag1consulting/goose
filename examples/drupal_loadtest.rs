@@ -22,9 +22,6 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-#[macro_use]
-extern crate macro_rules_attribute;
-
 use rand::Rng;
 use regex::Regex;
 
@@ -76,7 +73,6 @@ fn main() {
 }
 
 /// View the front page.
-#[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_front_page<'fut>(client: &'fut mut GooseClient) -> () {
     let response = client.get("/").await;
 
@@ -106,21 +102,18 @@ async fn drupal_loadtest_front_page<'fut>(client: &'fut mut GooseClient) -> () {
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
-#[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_node_page<'fut>(client: &'fut mut GooseClient) -> () {
     let nid = rand::thread_rng().gen_range(1, 10_000);
     let _response = client.get(format!("/node/{}", &nid).as_str()).await;
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
-#[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_profile_page<'fut>(client: &'fut mut GooseClient) -> () {
     let uid = rand::thread_rng().gen_range(2, 5_001);
     let _response = client.get(format!("/user/{}", &uid).as_str()).await;
 }
 
 /// Log in.
-#[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_login<'fut>(client: &'fut mut GooseClient) -> () {
     let response = client.get("/user").await;
     match response {
@@ -163,7 +156,6 @@ async fn drupal_loadtest_login<'fut>(client: &'fut mut GooseClient) -> () {
 }
 
 /// Post a comment.
-#[macro_rules_attribute(dyn_async!)]
 async fn drupal_loadtest_post_comment<'fut>(client: &'fut mut GooseClient) -> () {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
     let response = client.get(format!("/node/{}", &nid).as_str()).await;
