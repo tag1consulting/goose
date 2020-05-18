@@ -716,6 +716,18 @@ impl GooseAttack {
                 error!("The --status-codes option is only available to the manager");
                 std::process::exit(1);
             }
+
+            if self.configuration.no_hash_check {
+                error!("The --no-hash-check option is only available to the manager");
+                std::process::exit(1);
+            }
+        }
+
+        if !self.configuration.manager && !self.configuration.worker {
+            if self.configuration.no_hash_check {
+                error!("The --no-hash-check option is only available when running in manager mode");
+                std::process::exit(1);
+            }
         }
 
         // Configure number of client threads to launch per second, defaults to 1.
@@ -1072,7 +1084,7 @@ impl GooseAttack {
     }
 }
 
-/// CLI options available when launching a Goose loadtest, provided by StructOpt.
+/// CLI options available when launching a Goose loadtest.
 #[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
 #[structopt(name = "client")]
 pub struct GooseConfiguration {
@@ -1129,6 +1141,10 @@ pub struct GooseConfiguration {
     /// Enables manager mode
     #[structopt(long)]
     manager: bool,
+
+    /// Ignore worker load test hash
+    #[structopt(long)]
+    no_hash_check: bool,
 
     /// Required when in manager mode, how many workers to expect
     #[structopt(long, required=false, default_value="0")]
