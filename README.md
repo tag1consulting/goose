@@ -161,28 +161,30 @@ optimized code. This can generate considerably more load test traffic.
 
 ## Simple Example
 
-Passing the included `simple` example the `-h` flag you can see the
-run-time configuration options available to Goose load tests:
+The `-h` flag will show all run-time configuration options available to Goose
+load tests. For example, pass the `-h` flag to the `simple` example,
+`cargo run --example simple -- --no-hash-check -h`:
 
 ```
 client 0.6.1
-CLI options available when launching a Goose loadtest, provided by StructOpt
+CLI options available when launching a Goose loadtest
 
 USAGE:
     simple [FLAGS] [OPTIONS]
 
 FLAGS:
-    -h, --help            Prints help information
-    -l, --list            Shows list of all possible Goose tasks and exits
-    -g, --log-level       Log level (-g, -gg, -ggg, etc.)
-        --manager         Enables manager mode
-        --only-summary    Only prints summary stats
-        --no-stats        Don't print stats in the console
-        --reset-stats     Resets statistics once hatching has been completed
-        --status-codes    Includes status code counts in console stats
-    -V, --version         Prints version information
-    -v, --verbose         Debug level (-v, -vv, -vvv, etc.)
-        --worker          Enables worker mode
+    -h, --help             Prints help information
+    -l, --list             Shows list of all possible Goose tasks and exits
+    -g, --log-level        Log level (-g, -gg, -ggg, etc.)
+        --manager          Enables manager mode
+        --no-hash-check    Ignore worker load test checksum
+        --no-stats         Don't print stats in the console
+        --only-summary     Only prints summary stats
+        --reset-stats      Resets statistics once hatching has been completed
+        --status-codes     Includes status code counts in console stats
+    -V, --version          Prints version information
+    -v, --verbose          Debug level (-v, -vv, -vvv, etc.)
+        --worker           Enables worker mode
 
 OPTIONS:
     -c, --clients <clients>                        Number of concurrent Goose users (defaults to available CPUs)

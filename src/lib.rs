@@ -291,8 +291,10 @@ mod util;
 mod worker;
 
 use std::collections::{BTreeMap, HashMap};
+use std::collections::hash_map::DefaultHasher;
 use std::f32;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -318,6 +320,8 @@ pub struct Socket {}
 pub struct GooseAttack {
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
     task_sets: Vec<GooseTaskSet>,
+    /// A hash of the task_sets vector. @TODO
+    task_sets_hash: u64,
     /// A weighted vector containing a GooseClient object for each client that will run during this load test.
     weighted_clients: Vec<GooseClient>,
     /// A weighted vector of integers used to randomize the order that the GooseClient threads are launched.
@@ -350,6 +354,7 @@ impl GooseAttack {
     pub fn initialize() -> GooseAttack {
         let goose_state = GooseAttack {
             task_sets: Vec::new(),
+            task_sets_hash: 0,
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
             host: None,
@@ -377,6 +382,7 @@ impl GooseAttack {
     pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
         GooseAttack {
             task_sets: Vec::new(),
+            task_sets_hash: 0,
             weighted_clients: Vec::new(),
             weighted_clients_order: Vec::new(),
             host: None,
@@ -601,7 +607,8 @@ impl GooseAttack {
                     task_set_host,
                     self.task_sets[*task_sets_index].min_wait,
                     self.task_sets[*task_sets_index].max_wait,
-                    &config
+                    &config,
+                    self.task_sets_hash,
                 ));
                 client_count += 1;
                 if client_count >= self.clients {
@@ -709,6 +716,18 @@ impl GooseAttack {
                 error!("The --status-codes option is only available to the manager");
                 std::process::exit(1);
             }
+
+            if self.configuration.no_hash_check {
+                error!("The --no-hash-check option is only available to the manager");
+                std::process::exit(1);
+            }
+        }
+
+        if !self.configuration.manager && !self.configuration.worker {
+            if self.configuration.no_hash_check {
+                error!("The --no-hash-check option is only available when running in manager mode");
+                std::process::exit(1);
+            }
         }
 
         // Configure number of client threads to launch per second, defaults to 1.
@@ -769,6 +788,12 @@ impl GooseAttack {
         if !self.configuration.worker {
             self.weighted_clients = self.weight_task_set_clients();
         }
+
+        // Calculate a unique hash for the current load test.
+        let mut s = DefaultHasher::new();
+        self.task_sets.hash(&mut s);
+        self.task_sets_hash = s.finish();
+        debug!("task_sets_hash: {}", self.task_sets_hash);
 
         // Our load test is officially starting.
         let started = time::Instant::now();
@@ -1059,7 +1084,7 @@ impl GooseAttack {
     }
 }
 
-/// CLI options available when launching a Goose loadtest, provided by StructOpt.
+/// CLI options available when launching a Goose loadtest.
 #[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
 #[structopt(name = "client")]
 pub struct GooseConfiguration {
@@ -1116,6 +1141,10 @@ pub struct GooseConfiguration {
     /// Enables manager mode
     #[structopt(long)]
     manager: bool,
+
+    /// Ignore worker load test checksum
+    #[structopt(long)]
+    no_hash_check: bool,
 
     /// Required when in manager mode, how many workers to expect
     #[structopt(long, required=false, default_value="0")]

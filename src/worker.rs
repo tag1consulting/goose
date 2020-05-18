@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use nng::*;
 
 use crate::{GooseAttack, GooseConfiguration};
-use crate::goose::{GooseRequest, GooseClient, GooseClientCommand};
+use crate::goose::{GooseRequest, GooseClient, GooseClientCommand, GooseMethod};
 use crate::manager::GooseClientInitializer;
 use crate::util;
 
@@ -58,8 +58,18 @@ pub fn worker_main(state: &GooseAttack) {
     }
 
     // Let manager know we're ready to work -- push empty HashMap.
-    let requests: HashMap<String, GooseRequest> = HashMap::new();
+    let mut requests: HashMap<String, GooseRequest> = HashMap::new();
+    // "Fake" request for manager to validate this worker's load test hash.
+    requests.insert("load_test_hash".to_string(), GooseRequest::new(
+        "none",
+        GooseMethod::GET,
+        state.task_sets_hash,
+    ));
+    debug!("sending load test hash to manager: {}", state.task_sets_hash);
     push_stats_to_manager(&manager, &requests, false);
+
+    // Only send load_test_hash one time.
+    requests = HashMap::new();
 
     let mut hatch_rate: Option<f32> = None;
     let mut config: GooseConfiguration = GooseConfiguration::default();
@@ -109,6 +119,7 @@ pub fn worker_main(state: &GooseAttack) {
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
+                state.task_sets_hash,
             ));
             if hatch_rate == None {
                 hatch_rate = Some(1.0 / (initializer.config.hatch_rate as f32 / (initializer.config.expect_workers as f32)));

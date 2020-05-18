@@ -289,6 +289,31 @@ pub fn manager_main(mut state: GooseAttack) -> GooseAttack {
                     }
                     // We need another worker, accept the connection.
                     else {
+                        // Validate worker load test hash.
+                        match requests.get("load_test_hash") {
+                            Some(r) => {
+                                if r.load_test_hash != state.task_sets_hash {
+                                    if state.configuration.no_hash_check {
+                                        warn!("worker is running a different load test, ignoring")
+                                    }
+                                    else {
+                                        error!("worker is running a different load test, set --no-hash-check to ignore");
+                                        std::process::exit(1);
+                                    }
+                                }
+
+                            },
+                            None => {
+                                if state.configuration.no_hash_check {
+                                    warn!("worker is running a different load test, ignoring")
+                                }
+                                else {
+                                    error!("worker is running a different load test, set --no-hash-check to ignore");
+                                    std::process::exit(1);
+                                }
+                            }
+                        };
+
                         workers.insert(pipe);
                         info!("worker {} of {} connected", workers.len(), state.configuration.expect_workers);
 

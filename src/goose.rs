@@ -254,6 +254,7 @@
 
 use std::collections::{HashMap, BTreeMap};
 use std::time::Instant;
+use std::hash::{Hash, Hasher};
 
 use http::StatusCode;
 use http::method::Method;
@@ -267,7 +268,7 @@ use crate::GooseConfiguration;
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 /// An individual task set.
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 pub struct GooseTaskSet {
     /// The name of the task set.
     pub name: String,
@@ -486,10 +487,12 @@ pub struct GooseRequest {
     pub success_count: usize,
     /// Total number of times this path-method request resulted in a non-successful (non-2xx) status code.
     pub fail_count: usize,
+    /// Load test hash.
+    pub load_test_hash: u64,
 }
 impl GooseRequest {
     /// Create a new GooseRequest object.
-    pub fn new(path: &str, method: GooseMethod) -> Self {
+    pub fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
         trace!("new request");
         GooseRequest {
             path: path.to_string(),
@@ -502,6 +505,7 @@ impl GooseRequest {
             status_code_counts: HashMap::new(),
             success_count: 0,
             fail_count: 0,
+            load_test_hash: load_test_hash,
         }
     }
 
@@ -631,10 +635,12 @@ pub struct GooseClient {
     pub was_success: bool,
     /// Optional statistics collected about all requests made by this client.
     pub requests: HashMap<String, GooseRequest>,
+    /// Load test hash.
+    pub load_test_hash: u64,
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &GooseConfiguration) -> Self {
+    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &GooseConfiguration, load_test_hash: u64) -> Self {
         trace!("new client");
         let builder = Client::builder()
             .user_agent(APP_USER_AGENT)
@@ -669,6 +675,7 @@ impl GooseClient {
             previous_request_name: None,
             was_success: false,
             requests: HashMap::new(),
+            load_test_hash: load_test_hash,
         }
     }
 
@@ -726,7 +733,7 @@ impl GooseClient {
         trace!("get key: {}", &key);
         match self.requests.get(&key) {
             Some(r) => r.clone(),
-            None => GooseRequest::new(path, method.clone()),
+            None => GooseRequest::new(path, method.clone(), self.load_test_hash),
         }
     }
 
@@ -1420,6 +1427,16 @@ impl GooseTask {
         self
     }
 }
+impl Hash for GooseTask {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.tasks_index.hash(state);
+        self.name.hash(state);
+        self.weight.hash(state);
+        self.sequence.hash(state);
+        self.on_start.hash(state);
+        self.on_stop.hash(state);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1602,7 +1619,7 @@ mod tests {
 
     #[test]
     fn goose_request() {
-        let mut request = GooseRequest::new("/", GooseMethod::GET);
+        let mut request = GooseRequest::new("/", GooseMethod::GET, 0);
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::GET);
         assert_eq!(request.response_times.len(), 0);
@@ -1809,7 +1826,7 @@ mod tests {
     #[test]
     fn goose_client() {
         let configuration = GooseConfiguration::default();
-        let mut client = GooseClient::new(0, 0, Some("http://example.com/".to_string()), None, 0, 0, &configuration);
+        let mut client = GooseClient::new(0, 0, Some("http://example.com/".to_string()), None, 0, 0, &configuration, 0);
         assert_eq!(client.task_sets_index, 0);
         assert_eq!(client.default_host, Some("http://example.com/".to_string()));
         assert_eq!(client.task_set_host, None);
@@ -1862,16 +1879,16 @@ mod tests {
 
         // Returns new GooseRequest if never set before.
         let request = client.get_request("/foo", &GooseMethod::GET);
-        assert_eq!(request, GooseRequest::new("/foo", GooseMethod::GET));
+        assert_eq!(request, GooseRequest::new("/foo", GooseMethod::GET, 0));
 
         // Store a GooseRequest objet and confirm we can them retreive it.
-        let mut request = GooseRequest::new("/", GooseMethod::GET);
+        let mut request = GooseRequest::new("/", GooseMethod::GET, 0);
         request.set_response_time(55);
         request.set_status_code(Some(StatusCode::OK));
         client.set_request("/", &GooseMethod::GET, request.clone());
         let restored_request = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET));
+        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET, 0));
         // This is the request we stored.
         assert_eq!(&request, &restored_request);
 
@@ -1881,7 +1898,7 @@ mod tests {
         client.set_request("/", &GooseMethod::GET, request.clone());
         let restored_request_again = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET));
+        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET, 0));
         // This is not first request we stored.
         assert_ne!(&request, &restored_request);
         // This is the new request we stored.
@@ -1902,7 +1919,7 @@ mod tests {
         assert_eq!(url, "https://www.example.com/path/to/resource");
 
         // Create a second client, this time setting a task_set_host.
-        let mut client2 = GooseClient::new(0, 0, Some("http://www.example.com/".to_string()), Some("http://www2.example.com/".to_string()), 1, 3, &configuration);
+        let mut client2 = GooseClient::new(0, 0, Some("http://www.example.com/".to_string()), Some("http://www2.example.com/".to_string()), 1, 3, &configuration, 0);
         assert_eq!(client2.default_host, Some("http://www.example.com/".to_string()));
         assert_eq!(client2.task_set_host, Some("http://www2.example.com/".to_string()));
         assert_eq!(client2.min_wait, 1);
