@@ -1142,7 +1142,7 @@ pub struct GooseConfiguration {
     #[structopt(long)]
     manager: bool,
 
-    /// Ignore worker load test hash
+    /// Ignore worker load test checksum
     #[structopt(long)]
     no_hash_check: bool,
 

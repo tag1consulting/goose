@@ -2,9 +2,11 @@
 
 ## 0.6.1-dev
  - replace `unsafe` code blocks with lazy_static singleton
+ - perform checksum to confirm workers are running same load test,
+   `--no-hash-check` to ignore
 
 ## 0.6.1 May 16, 2020
- - replace --print-stats with --no-stats, default to printing stats
+ - replace `--print-stats` with `--no-stats`, default to printing stats
  - make gaggle an optional compile-time feature
  - GooseState is now GooseAttack
 
