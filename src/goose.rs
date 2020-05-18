@@ -416,12 +416,13 @@ pub enum GooseClientMode {
     EXITING,
 }
 
-/// Commands sent between the parent and client threads.
+/// Commands sent between the parent and client threads, and between manager and
+/// worker processes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GooseClientCommand {
-    /// Tell remote client to pause load test.
+    /// Tell worker process to pause load test.
     WAIT,
-    /// Tell remote client to start load test.
+    /// Tell worker process to start load test.
     RUN,
     /// Tell client thread to push statistics to parent.
     SYNC,
@@ -429,6 +430,7 @@ pub enum GooseClientCommand {
     EXIT,
 }
 
+/// Supported HTTP methods.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GooseMethod {
     DELETE,
@@ -438,19 +440,6 @@ pub enum GooseMethod {
     POST,
     PUT,
 }
-
-/*
-fn method_from_goose_method(method: GooseMethod) -> Method {
-    match method {
-        GooseMethod::DELETE => Method::DELETE,
-        GooseMethod::GET => Method::GET,
-        GooseMethod::HEAD => Method::HEAD,
-        GooseMethod::PATCH => Method::PATCH,
-        GooseMethod::POST => Method::POST,
-        GooseMethod::PUT => Method::PUT,
-    }
-}
-*/
 
 fn goose_method_from_method(method: Method) -> Option<GooseMethod> {
     match method {
@@ -597,9 +586,9 @@ pub struct GooseClient {
     pub task_sets_index: usize,
     /// A [`reqwest.blocking.client`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Client.html) instance (@TODO: async).
     pub client: Client,
-    /// The global GooseState host.
+    /// Optional global host, can be overridden per-task-set or via the cli.
     pub default_host: Option<String>,
-    /// The GooseTaskSet.host.
+    /// Optional per-task-set .host.
     pub task_set_host: Option<String>,
     /// Minimum amount of time to sleep after running a task.
     pub min_wait: usize,
@@ -746,7 +735,7 @@ impl GooseClient {
 
     /// A helper that pre-pends a hostname to the path. For example, if you pass in `/foo`
     /// and `--host` is set to `http://127.0.0.1` it will return `http://127.0.0.1/foo`.
-    /// Respects per-`GooseTaskSet` `host` configuration, global `GooseState` `host`
+    /// Respects per-`GooseTaskSet` `host` configuration, global `GooseAttack` `host`
     /// configuration, and `--host` CLI configuration option.
     /// 
     /// If `path` is passed in with a hard-coded host, this will be used instead.
@@ -755,7 +744,7 @@ impl GooseClient {
     ///  - If `path` includes the host, use this
     ///  - Otherwise, if `--host` is defined, use this
     ///  - Otherwise, if `GooseTaskSet.host` is defined, use this
-    ///  - Otherwise, use global `GooseState.host`.
+    ///  - Otherwise, use global `GooseAttack.host`.
     pub fn build_url(&mut self, path: &str) -> String {
         // If URL includes a host, use it.
         if let Ok(parsed_path) = Url::parse(path) {
@@ -773,7 +762,7 @@ impl GooseClient {
             base_url = match &self.task_set_host {
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
                 Some(host) => Url::parse(host).unwrap(),
-                // Otherwise, use global `GooseState.host`. `unwrap` okay as host validation was done at startup.
+                // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
                 None => Url::parse(&self.default_host.clone().unwrap()).unwrap(),
             };
         }
