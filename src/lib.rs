@@ -823,7 +823,7 @@ impl GooseAttack {
 
             #[cfg(not(feature = "gaggle"))]
             {
-                error!("goose must be recompiled with `--features gaggle` to start in manager mode");
+                error!("goose must be recompiled with `--features gaggle` to start in worker mode");
                 std::process::exit(1);
             }
         }

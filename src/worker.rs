@@ -168,18 +168,18 @@ pub fn worker_main(goose_attack: &GooseAttack) {
     info!("entering gaggle mode, starting load test");
     let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
 
-    let mut goose_attack = GooseAttack::initialize_with_config(config.clone());
-    goose_attack.task_sets = goose_attack.task_sets.clone();
+    let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone());
+    worker_goose_attack.task_sets = goose_attack.task_sets.clone();
     if config.run_time != "" {
-        goose_attack.run_time = util::parse_timespan(&config.run_time);
-        info!("run_time = {}", goose_attack.run_time);
+        worker_goose_attack.run_time = util::parse_timespan(&config.run_time);
+        info!("run_time = {}", worker_goose_attack.run_time);
     }
     else {
-        goose_attack.run_time = 0;
+        worker_goose_attack.run_time = 0;
     }
-    goose_attack.weighted_clients = weighted_clients;
-    goose_attack.configuration.worker = true;
-    goose_attack.launch_clients(started, sleep_duration, Some(manager));
+    worker_goose_attack.weighted_clients = weighted_clients;
+    worker_goose_attack.configuration.worker = true;
+    worker_goose_attack.launch_clients(started, sleep_duration, Some(manager));
 }
 
 pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>, get_response: bool) -> bool {
