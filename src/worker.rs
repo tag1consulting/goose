@@ -76,7 +76,7 @@ pub fn worker_main(goose_attack: &GooseAttack) {
     let mut config: GooseConfiguration = GooseConfiguration::default();
     let mut weighted_clients: Vec<GooseClient> = Vec::new();
 
-    // Wait for the manager to give us client parameters.
+    // Wait for the manager to send client parameters.
     loop {
         info!("waiting for instructions from manager");
         let msg = match manager.recv() {
@@ -138,8 +138,10 @@ pub fn worker_main(goose_attack: &GooseAttack) {
     }
 
     info!("[{}] waiting for go-ahead from manager", get_worker_id());
-    // Tell manager we're ready to load test.
+
+    // Wait for the manager to send go-ahead to start the load test.
     loop {
+        // Push statistics to manager to force a reply, waiting for RUN.
         push_stats_to_manager(&manager, &requests, false);
         let msg = match manager.recv() {
             Ok(m) => m,
@@ -157,11 +159,14 @@ pub fn worker_main(goose_attack: &GooseAttack) {
         };
 
         match command {
+            // Break out of loop and start the load test.
             GooseClientCommand::RUN => break,
+            // Exit worker process immediately.
             GooseClientCommand::EXIT => {
                 warn!("[{}] received EXIT command from manager", get_worker_id());
                 std::process::exit(0);
             },
+            // Sleep and then loop again.
             _ => {
                 let sleep_duration = time::Duration::from_secs(1);
                 debug!("[{}] sleeping {:?} second waiting for manager...", get_worker_id(), sleep_duration);
@@ -169,6 +174,7 @@ pub fn worker_main(goose_attack: &GooseAttack) {
             }
         }
     }
+
     // Worker is officially starting the load test.
     let started = time::Instant::now();
     info!("[{}] entering gaggle mode, starting load test", get_worker_id());
