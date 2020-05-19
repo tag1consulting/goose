@@ -1,16 +1,19 @@
-use lazy_static::lazy_static;
-use nng::*;
-use serde::{Serialize, Deserialize};
-
 use std::collections::{HashMap, HashSet};
 use std::{thread, time};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use lazy_static::lazy_static;
+use nng::*;
+use serde::{Serialize, Deserialize};
+
 use crate::{GooseAttack, GooseConfiguration, GooseClientCommand};
 use crate::goose::GooseRequest;
 use crate::stats;
 use crate::util;
+
+/// How long the manager will wait for all workers to stop after the load test ends.
+const GRACEFUL_SHUTDOWN_TIMEOUT: usize = 30;
 
 /// All elements required to initialize a client in a worker process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,11 +30,25 @@ pub struct GooseClientInitializer {
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
+    /// Numerical identifier for worker.
+    pub worker_id: usize,
 }
 
 // Mutable singleton globally tracking how many workers are currently being managed.
 lazy_static! {
     static ref ACTIVE_WORKERS: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
+}
+
+fn distribute_clients(goose_attack: &GooseAttack) -> (usize, usize) {
+    let clients_per_worker = goose_attack.clients / (goose_attack.configuration.expect_workers as usize);
+    let clients_remainder = goose_attack.clients % (goose_attack.configuration.expect_workers as usize);
+    if clients_remainder > 0 {
+        info!("each worker to start {} clients, assigning 1 extra to {} workers", clients_per_worker, clients_remainder);
+    }
+    else {
+        info!("each worker to start {} clients", clients_per_worker);
+    }
+    (clients_per_worker, clients_remainder)
 }
 
 fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
@@ -49,17 +66,20 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
 }
 
 pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
-    // Creates a TCP address. @TODO: add optional support for UDP.
-    let address = format!("{}://{}:{}", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port);
+    // Creates a TCP address.
+    let address = format!("tcp://{}:{}", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port);
+    info!("worker connecting to manager at {}", &address);
 
-    // Create a reply socket.
+    // Create a Rep0 reply socket.
     let server = match Socket::new(Protocol::Rep0) {
         Ok(s) => s,
         Err(e) => {
-            error!("failed to create {}://{}:{} socket: {}.", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port, e);
+            error!("failed to create socket: {}.", e);
             std::process::exit(1);
         }
     };
+
+    // Set up callback function to receive pipe event notifications.
     match server.pipe_notify(pipe_closed) {
         Ok(_) => (),
         Err(e) => {
@@ -72,21 +92,14 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     match server.listen(&address) {
         Ok(s) => (s),
         Err(e) => {
-            error!("failed to bind to socket {}://{}:{}: {}.", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port, e);
+            error!("failed to bind to socket {}: {}.", address, e);
             std::process::exit(1);
         }
     }
     info!("manager listening on {}, waiting for {} workers", &address, goose_attack.configuration.expect_workers);
 
     // Calculate how many clients each worker will be responsible for.
-    let split_clients = goose_attack.clients / (goose_attack.configuration.expect_workers as usize);
-    let mut split_clients_remainder = goose_attack.clients % (goose_attack.configuration.expect_workers as usize);
-    if split_clients_remainder > 0 {
-        info!("each worker to start {} clients, assigning 1 extra to {} workers", split_clients, split_clients_remainder);
-    }
-    else {
-        info!("each worker to start {} clients", split_clients);
-    }
+    let (clients_per_worker, mut clients_remainder) = distribute_clients(&goose_attack);
 
     // A mutable bucket of clients to be assigned to workers.
     let mut available_clients = goose_attack.weighted_clients.clone();
@@ -103,27 +116,13 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     // Catch ctrl-c to allow clean shutdown to display statistics.
     let canceled = Arc::new(AtomicBool::new(false));
-    let caught_ctrlc = canceled.clone();
-    match ctrlc::set_handler(move || {
-        // We've caught a ctrl-c, determine if it's the first time or an additional time.
-        if caught_ctrlc.load(Ordering::SeqCst) {
-            warn!("caught another ctrl-c, exiting immediately...");
-            std::process::exit(1);
-        }
-        else {
-            warn!("caught ctrl-c, stopping...");
-            caught_ctrlc.store(true, Ordering::SeqCst);
-        }
-    }) {
-        Ok(_) => (),
-        Err(e) => {
-            warn!("failed to set ctrl-c handler: {}", e);
-        }
-    }
+    util::setup_ctrlc_handler(&canceled);
 
     // Worker control loop.
     loop {
+        // While running load test, check if any workers go away.
         if !load_test_finished {
+            // If ACTIVE_WORKERS is less than the total workers seen, a worker went away.
             if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) < workers.len() {
                 // If worked goes away during load test, exit gracefully.
                 if load_test_running {
@@ -140,6 +139,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         }
         if load_test_running {
             if !load_test_finished {
+                // Test ran to completion or was canceled with ctrl-c.
                 if util::timer_expired(started, goose_attack.run_time) || canceled.load(Ordering::SeqCst) {
                     info!("stopping after {} seconds...", started.elapsed().as_secs());
                     load_test_finished = true;
@@ -147,27 +147,30 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 }
             }
 
-            if load_test_finished && util::timer_expired(exit_timer, 30) {
-                info!("exit timer expired, stopping...");
+            // Aborting graceful shutdown, workers took too long to shut down.
+            if load_test_finished && util::timer_expired(exit_timer, GRACEFUL_SHUTDOWN_TIMEOUT) {
+                warn!("graceful shutdown timer expired, exiting...");
                 break;
             }
         
             // When displaying running statistics, sync data from client threads first.
             if !goose_attack.configuration.only_summary &&
-                util::timer_expired(running_statistics_timer, 15
+                util::timer_expired(running_statistics_timer, crate::RUNNING_STATS_EVERY
             ) { 
                 // Reset timer each time we display statistics.
                 running_statistics_timer = time::Instant::now();
                 stats::print_running_stats(&goose_attack, started.elapsed().as_secs() as usize);
             }
         }
-        if canceled.load(Ordering::SeqCst) {
-            info!("cleanup finished");
-            std::process::exit(0);
+        else if canceled.load(Ordering::SeqCst) {
+            info!("load test canceled, exiting");
+            std::process::exit(1);
         }
 
+        // Check for messages from workers.
         match server.try_recv() {
             Ok(mut msg) => {
+                // Message received, grab the pipe to determine which worker it is.
                 let pipe = match msg.pipe() {
                     Some(p) => p,
                     None => {
@@ -176,10 +179,11 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     }
                 };
 
+                // Workers always send a HashMap<String, GooseRequest>.
                 let requests: HashMap<String, GooseRequest> = serde_cbor::from_reader(msg.as_slice()).unwrap();
                 debug!("requests statistics received: {:?}", requests.len());
 
-                // We've seen this worker before.
+                // If workers already contains this pipe, we've seen this worker before.
                 if workers.contains(&pipe) {
                     let mut buf: Vec<u8> = Vec::new();
                     // All workers are running load test, sending statistics.
@@ -200,6 +204,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 goose_attack.merged_requests.insert(request_key.to_string(), merged_request);
                             }
                         }
+                        // Notify the worker that the load test is over and to exit.
                         if load_test_finished {
                             debug!("telling worker to exit");
                             match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
@@ -210,6 +215,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 }
                             }
                         }
+                        // Notify the worker that the load test is still running.
                         else {
                             match serde_cbor::to_writer(&mut buf, &GooseClientCommand::RUN) {
                                 Ok(_) => (),
@@ -233,17 +239,17 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     let message: Message = buf.as_slice().into();
                     match server.try_send(message) {
                         Ok(_) => (),
+                        // Determine why there was an error.
                         Err((_, e)) => {
                             match e {
+                                // A worker went away, this happens during shutdown.
                                 Error::TryAgain => {
-                                    if workers.len() > 0 {
-                                        // A mutable static can only be used in an unsafe block.
-                                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
-                                            info!("all workers have exited");
-                                            break;
-                                        }
+                                    if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                        info!("all workers have exited");
+                                        break;
                                     }
                                 },
+                                // An unexpected error.
                                 _ => {
                                     error!("communication failure: {:?}", e);
                                     std::process::exit(1);
@@ -254,9 +260,9 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 }
                 // This is the first time we've seen this worker.
                 else {
-                    // Make sure we're not already conneted to all of our workers.
+                    // Make sure we're not already connected to all of our workers.
                     if workers.len() >= goose_attack.configuration.expect_workers as usize {
-                        // We already have enough workers, tell this one to EXIT.
+                        // We already have enough workers, tell this extra one to EXIT.
                         let mut buf: Vec<u8> = Vec::new();
                         match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
                             Ok(_) => (),
@@ -268,15 +274,13 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         let message: Message = buf.as_slice().into();
                         match server.try_send(message) {
                             Ok(_) => (),
+                            // Determine why our send failed.
                             Err((_, e)) => {
                                 match e {
                                     Error::TryAgain => {
-                                        if workers.len() > 0 {
-                                            // A mutable static can only be used in an unsafe block.
-                                            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
-                                                info!("all workers have exited");
-                                                break;
-                                            }
+                                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                            info!("all workers have exited");
+                                            break;
                                         }
                                     },
                                     _ => {
@@ -318,10 +322,10 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         info!("worker {} of {} connected", workers.len(), goose_attack.configuration.expect_workers);
 
                         // Send new worker a batch of clients.
-                        let mut client_batch = split_clients;
+                        let mut client_batch = clients_per_worker;
                         // If remainder, put extra client in this batch.
-                        if split_clients_remainder > 0 {
-                            split_clients_remainder -= 1;
+                        if clients_remainder > 0 {
+                            clients_remainder -= 1;
                             client_batch += 1;
                         }
                         let mut clients = Vec::new();
@@ -343,6 +347,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 min_wait: client.min_wait,
                                 max_wait: client.max_wait,
                                 config: client.config.clone(),
+                                worker_id: workers.len(),
                             });
                         }
 
@@ -362,12 +367,9 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             Err((_, e)) => {
                                 match e {
                                     Error::TryAgain => {
-                                        if workers.len() > 0 {
-                                            // A mutable static can only be used in an unsafe block.
-                                            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
-                                                info!("all workers have exited");
-                                                break;
-                                            }
+                                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                            info!("all workers have exited");
+                                            break;
                                         }
                                     },
                                     _ => {
@@ -410,4 +412,33 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     }
     goose_attack
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_distribute_clients() {
+        let config = GooseConfiguration::default();
+        let mut goose_attack = GooseAttack::initialize_with_config(config);
+
+        goose_attack.clients = 10;
+        goose_attack.configuration.expect_workers = 2;
+        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
+        assert_eq!(clients_per_process, 5);
+        assert_eq!(clients_remainder, 0);
+
+        goose_attack.clients = 1;
+        goose_attack.configuration.expect_workers = 1;
+        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
+        assert_eq!(clients_per_process, 1);
+        assert_eq!(clients_remainder, 0);
+
+        goose_attack.clients = 100;
+        goose_attack.configuration.expect_workers = 21;
+        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
+        assert_eq!(clients_per_process, 4);
+        assert_eq!(clients_remainder, 16);
+    }
 }

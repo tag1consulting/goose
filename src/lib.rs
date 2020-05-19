@@ -294,10 +294,11 @@ use std::f32;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{thread, time};
 
+use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use rand::thread_rng;
@@ -309,6 +310,22 @@ use url::Url;
 
 use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
+/// Constant defining how often statistics should be displayed while load test is running.
+const RUNNING_STATS_EVERY: usize = 15;
+
+/// Constant defining Goose's default port when running a Gaggle.
+const DEFAULT_PORT: &str = "5115";
+
+// WORKER_ID is only used when running a gaggle (a distributed load test).
+lazy_static! {
+    static ref WORKER_ID: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
+}
+
+/// Worker ID to aid in tracing logs when running a Gaggle.
+pub fn get_worker_id() -> usize {
+    WORKER_ID.lock().unwrap().load(Ordering::Relaxed)
+}
+
 #[cfg(not(feature = "gaggle"))]
 #[derive(Debug)]
 /// Socket used for coordinating a Gaggle, a distributed load test.
@@ -319,12 +336,10 @@ pub struct Socket {}
 pub struct GooseAttack {
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
     task_sets: Vec<GooseTaskSet>,
-    /// A hash of the task_sets vector. @TODO
+    /// A checksum of the task_sets vector to be sure all workers are running the same load test.
     task_sets_hash: u64,
     /// A weighted vector containing a GooseClient object for each client that will run during this load test.
     weighted_clients: Vec<GooseClient>,
-    /// A weighted vector of integers used to randomize the order that the GooseClient threads are launched.
-    weighted_clients_order: Vec<usize>,
     /// An optional default host to run this load test against.
     host: Option<String>,
     /// Configuration object managed by StructOpt.
@@ -355,7 +370,6 @@ impl GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
-            weighted_clients_order: Vec::new(),
             host: None,
             configuration: GooseConfiguration::from_args(),
             number_of_cpus: num_cpus::get(),
@@ -383,7 +397,6 @@ impl GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
-            weighted_clients_order: Vec::new(),
             host: None,
             configuration: config,
             number_of_cpus: num_cpus::get(),
@@ -671,6 +684,12 @@ impl GooseAttack {
                 error!("You must set --expect-workers to 1 or more.");
                 std::process::exit(1);
             }
+            if self.configuration.expect_workers as usize > self.clients {
+                error!("You must enable at least as many clients ({}) as workers ({}).",
+                    self.clients, self.configuration.expect_workers);
+                std::process::exit(1);
+            }
+
         }
         
         // Worker mode.
@@ -696,7 +715,8 @@ impl GooseAttack {
                 std::process::exit(1);
             }
 
-            if self.configuration.manager_bind_port != 5115 {
+            let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
+            if self.configuration.manager_bind_port != default_port {
                 error!("The --manager-bind-port option is only available to the manager");
                 std::process::exit(1);
             }
@@ -879,9 +899,11 @@ impl GooseAttack {
                 // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
                 let thread_number = self.active_clients + 1;
 
+                let is_worker = self.configuration.worker;
+
                 // Launch a new client.
                 let client = thread::spawn(move || {
-                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
+                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender, is_worker)
                 });
 
                 clients.push(client);
@@ -895,7 +917,12 @@ impl GooseAttack {
         }
         // Restart the timer now that all threads are launched.
         started = time::Instant::now();
-        info!("launched {} clients...", self.active_clients);
+        if self.configuration.worker {
+            info!("[{}] launched {} clients...", get_worker_id(), self.active_clients);
+        }
+        else {
+            info!("launched {} clients...", self.active_clients);
+        }
 
         // Ensure we have request statistics when we're displaying running statistics.
         if !self.configuration.no_stats && !self.configuration.only_summary {
@@ -916,23 +943,7 @@ impl GooseAttack {
 
         // Catch ctrl-c to allow clean shutdown to display statistics.
         let canceled = Arc::new(AtomicBool::new(false));
-        let caught_ctrlc = canceled.clone();
-        match ctrlc::set_handler(move || {
-            // We've caught a ctrl-c, determine if it's the first time or an additional time.
-            if caught_ctrlc.load(Ordering::SeqCst) {
-                warn!("caught another ctrl-c, exiting immediately...");
-                std::process::exit(1);
-            }
-            else {
-                warn!("caught ctrl-c, stopping...");
-                caught_ctrlc.store(true, Ordering::SeqCst);
-            }
-        }) {
-            Ok(_) => (),
-            Err(e) => {
-                warn!("failed to set ctrl-c handler: {}", e);
-            }
-        }
+        util::setup_ctrlc_handler(&canceled);
 
         // Determine when to display running statistics (if enabled).
         let mut statistics_timer = time::Instant::now();
@@ -942,7 +953,7 @@ impl GooseAttack {
             // When displaying running statistics, sync data from client threads first.
             if !self.configuration.no_stats {
                 // Synchronize statistics from client threads into parent.
-                if util::timer_expired(statistics_timer, 15) {
+                if util::timer_expired(statistics_timer, RUNNING_STATS_EVERY) {
                     statistics_timer = time::Instant::now();
                     for (index, send_to_client) in client_channels.iter().enumerate() {
                         match send_to_client.send(GooseClientCommand::SYNC) {
@@ -1015,7 +1026,12 @@ impl GooseAttack {
             }
 
             if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) {
-                info!("stopping after {} seconds...", started.elapsed().as_secs());
+                if self.configuration.worker {
+                    info!("[{}] stopping after {} seconds...", get_worker_id(), started.elapsed().as_secs());
+                }
+                else {
+                    info!("stopping after {} seconds...", started.elapsed().as_secs());
+                }
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     match send_to_client.send(GooseClientCommand::EXIT) {
                         Ok(_) => {
@@ -1026,7 +1042,12 @@ impl GooseAttack {
                         }
                     }
                 }
-                info!("waiting for clients to exit");
+                if self.configuration.worker {
+                    info!("[{}] waiting for clients to exit", get_worker_id());
+                }
+                else {
+                    info!("waiting for clients to exit");
+                }
                 for client in clients {
                     let _ = client.join();
                 }
@@ -1154,7 +1175,7 @@ pub struct GooseConfiguration {
     manager_bind_host: String,
 
     /// Define port manager listens on
-    #[structopt(long, default_value="5115")]
+    #[structopt(long, default_value=DEFAULT_PORT)]
     manager_bind_port: u16,
 
     /// Enables worker mode
@@ -1166,7 +1187,7 @@ pub struct GooseConfiguration {
     manager_host: String,
 
     /// Port manager is listening on
-    #[structopt(long, default_value="5115")]
+    #[structopt(long, default_value=DEFAULT_PORT)]
     manager_port: u16,
 }
 

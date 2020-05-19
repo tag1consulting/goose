@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.3-dev
+ - nng does not support udp as a transport protocol, and tcp overhead isn't
+   problematic; remove to-do to add udp, hard-code tcp
+ - add worker id for tracing gaggle worker threads
+ - cleanup gaggle logic and comments
+
 ## 0.6.2 May 18, 2020
  - replace `unsafe` code blocks with lazy_static singleton
  - perform checksum to confirm workers are running same load test,
