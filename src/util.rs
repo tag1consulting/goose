@@ -2,6 +2,9 @@ use std::cmp::{min, max};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::time;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use regex::Regex;
 
 /// Parse a string representing a time span and return the number of seconds.
@@ -99,6 +102,26 @@ pub fn timer_expired(started: time::Instant, run_time: usize) -> bool {
     }
     else {
         false
+    }
+}
+
+pub fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
+    let caught_ctrlc = canceled.clone();
+    match ctrlc::set_handler(move || {
+        // We've caught a ctrl-c, determine if it's the first time or an additional time.
+        if caught_ctrlc.load(Ordering::SeqCst) {
+            warn!("caught another ctrl-c, exiting immediately...");
+            std::process::exit(1);
+        }
+        else {
+            warn!("caught ctrl-c, stopping...");
+            caught_ctrlc.store(true, Ordering::SeqCst);
+        }
+    }) {
+        Ok(_) => (),
+        Err(e) => {
+            warn!("failed to set ctrl-c handler: {}", e);
+        }
     }
 }
 

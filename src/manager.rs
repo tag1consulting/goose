@@ -12,6 +12,9 @@ use crate::goose::GooseRequest;
 use crate::stats;
 use crate::util;
 
+/// How long the manager will wait for all workers to stop after the load test ends.
+const GRACEFUL_SHUTDOWN_TIMEOUT: usize = 30;
+
 /// All elements required to initialize a client in a worker process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseClientInitializer {
@@ -108,27 +111,13 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     // Catch ctrl-c to allow clean shutdown to display statistics.
     let canceled = Arc::new(AtomicBool::new(false));
-    let caught_ctrlc = canceled.clone();
-    match ctrlc::set_handler(move || {
-        // We've caught a ctrl-c, determine if it's the first time or an additional time.
-        if caught_ctrlc.load(Ordering::SeqCst) {
-            warn!("caught another ctrl-c, exiting immediately...");
-            std::process::exit(1);
-        }
-        else {
-            warn!("caught ctrl-c, stopping...");
-            caught_ctrlc.store(true, Ordering::SeqCst);
-        }
-    }) {
-        Ok(_) => (),
-        Err(e) => {
-            warn!("failed to set ctrl-c handler: {}", e);
-        }
-    }
+    util::setup_ctrlc_handler(&canceled);
 
     // Worker control loop.
     loop {
+        // While running load test, check if any workers go away.
         if !load_test_finished {
+            // If ACTIVE_WORKERS is less than the total workers seen, a worker went away.
             if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) < workers.len() {
                 // If worked goes away during load test, exit gracefully.
                 if load_test_running {
@@ -152,14 +141,14 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 }
             }
 
-            if load_test_finished && util::timer_expired(exit_timer, 30) {
+            if load_test_finished && util::timer_expired(exit_timer, GRACEFUL_SHUTDOWN_TIMEOUT) {
                 info!("exit timer expired, stopping...");
                 break;
             }
         
             // When displaying running statistics, sync data from client threads first.
             if !goose_attack.configuration.only_summary &&
-                util::timer_expired(running_statistics_timer, 15
+                util::timer_expired(running_statistics_timer, crate::RUNNING_STATS_EVERY
             ) { 
                 // Reset timer each time we display statistics.
                 running_statistics_timer = time::Instant::now();

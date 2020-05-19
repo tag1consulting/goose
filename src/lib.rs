@@ -310,6 +310,12 @@ use url::Url;
 
 use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
 
+/// Constant defining how often statistics should be displayed while load test is running.
+const RUNNING_STATS_EVERY: usize = 15;
+
+/// Constant defining Goose's default port when running a Gaggle.
+const DEFAULT_PORT: &str = "5115";
+
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
     static ref WORKER_ID: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
@@ -703,7 +709,8 @@ impl GooseAttack {
                 std::process::exit(1);
             }
 
-            if self.configuration.manager_bind_port != 5115 {
+            let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
+            if self.configuration.manager_bind_port != default_port {
                 error!("The --manager-bind-port option is only available to the manager");
                 std::process::exit(1);
             }
@@ -930,23 +937,7 @@ impl GooseAttack {
 
         // Catch ctrl-c to allow clean shutdown to display statistics.
         let canceled = Arc::new(AtomicBool::new(false));
-        let caught_ctrlc = canceled.clone();
-        match ctrlc::set_handler(move || {
-            // We've caught a ctrl-c, determine if it's the first time or an additional time.
-            if caught_ctrlc.load(Ordering::SeqCst) {
-                warn!("caught another ctrl-c, exiting immediately...");
-                std::process::exit(1);
-            }
-            else {
-                warn!("caught ctrl-c, stopping...");
-                caught_ctrlc.store(true, Ordering::SeqCst);
-            }
-        }) {
-            Ok(_) => (),
-            Err(e) => {
-                warn!("failed to set ctrl-c handler: {}", e);
-            }
-        }
+        util::setup_ctrlc_handler(&canceled);
 
         // Determine when to display running statistics (if enabled).
         let mut statistics_timer = time::Instant::now();
@@ -956,7 +947,7 @@ impl GooseAttack {
             // When displaying running statistics, sync data from client threads first.
             if !self.configuration.no_stats {
                 // Synchronize statistics from client threads into parent.
-                if util::timer_expired(statistics_timer, 15) {
+                if util::timer_expired(statistics_timer, RUNNING_STATS_EVERY) {
                     statistics_timer = time::Instant::now();
                     for (index, send_to_client) in client_channels.iter().enumerate() {
                         match send_to_client.send(GooseClientCommand::SYNC) {
@@ -1178,7 +1169,7 @@ pub struct GooseConfiguration {
     manager_bind_host: String,
 
     /// Define port manager listens on
-    #[structopt(long, default_value="5115")]
+    #[structopt(long, default_value=DEFAULT_PORT)]
     manager_bind_port: u16,
 
     /// Enables worker mode
@@ -1190,7 +1181,7 @@ pub struct GooseConfiguration {
     manager_host: String,
 
     /// Port manager is listening on
-    #[structopt(long, default_value="5115")]
+    #[structopt(long, default_value=DEFAULT_PORT)]
     manager_port: u16,
 }
 
