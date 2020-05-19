@@ -157,9 +157,15 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 stats::print_running_stats(&goose_attack, started.elapsed().as_secs() as usize);
             }
         }
+        else if canceled.load(Ordering::SeqCst) {
+            info!("load test canceled, exiting");
+            std::process::exit(1);
+        }
 
+        // Check for messages from workers.
         match server.try_recv() {
             Ok(mut msg) => {
+                // Message received, grab the pipe to determine which worker it is.
                 let pipe = match msg.pipe() {
                     Some(p) => p,
                     None => {
@@ -168,10 +174,11 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     }
                 };
 
+                // Workers always send a HashMap<String, GooseRequest>.
                 let requests: HashMap<String, GooseRequest> = serde_cbor::from_reader(msg.as_slice()).unwrap();
                 debug!("requests statistics received: {:?}", requests.len());
 
-                // We've seen this worker before.
+                // If workers already contains this pipe, we've seen this worker before.
                 if workers.contains(&pipe) {
                     let mut buf: Vec<u8> = Vec::new();
                     // All workers are running load test, sending statistics.
@@ -192,6 +199,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 goose_attack.merged_requests.insert(request_key.to_string(), merged_request);
                             }
                         }
+                        // Notify the worker that the load test is over and to exit.
                         if load_test_finished {
                             debug!("telling worker to exit");
                             match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
@@ -202,6 +210,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 }
                             }
                         }
+                        // Notify the worker that the load test is still running.
                         else {
                             match serde_cbor::to_writer(&mut buf, &GooseClientCommand::RUN) {
                                 Ok(_) => (),
@@ -225,17 +234,17 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     let message: Message = buf.as_slice().into();
                     match server.try_send(message) {
                         Ok(_) => (),
+                        // Determine why there was an error.
                         Err((_, e)) => {
                             match e {
+                                // A worker went away, this happens during shutdown.
                                 Error::TryAgain => {
-                                    if workers.len() > 0 {
-                                        // A mutable static can only be used in an unsafe block.
-                                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
-                                            info!("all workers have exited");
-                                            break;
-                                        }
+                                    if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                        info!("all workers have exited");
+                                        break;
                                     }
                                 },
+                                // An unexpected error.
                                 _ => {
                                     error!("communication failure: {:?}", e);
                                     std::process::exit(1);
@@ -246,9 +255,9 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 }
                 // This is the first time we've seen this worker.
                 else {
-                    // Make sure we're not already conneted to all of our workers.
+                    // Make sure we're not already connected to all of our workers.
                     if workers.len() >= goose_attack.configuration.expect_workers as usize {
-                        // We already have enough workers, tell this one to EXIT.
+                        // We already have enough workers, tell this extra one to EXIT.
                         let mut buf: Vec<u8> = Vec::new();
                         match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
                             Ok(_) => (),
@@ -260,15 +269,13 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         let message: Message = buf.as_slice().into();
                         match server.try_send(message) {
                             Ok(_) => (),
+                            // Determine why our send failed.
                             Err((_, e)) => {
                                 match e {
                                     Error::TryAgain => {
-                                        if workers.len() > 0 {
-                                            // A mutable static can only be used in an unsafe block.
-                                            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
-                                                info!("all workers have exited");
-                                                break;
-                                            }
+                                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                            info!("all workers have exited");
+                                            break;
                                         }
                                     },
                                     _ => {
@@ -355,12 +362,9 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             Err((_, e)) => {
                                 match e {
                                     Error::TryAgain => {
-                                        if workers.len() > 0 {
-                                            // A mutable static can only be used in an unsafe block.
-                                            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
-                                                info!("all workers have exited");
-                                                break;
-                                            }
+                                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                            info!("all workers have exited");
+                                            break;
                                         }
                                     },
                                     _ => {
