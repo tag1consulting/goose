@@ -39,6 +39,18 @@ lazy_static! {
     static ref ACTIVE_WORKERS: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
 }
 
+fn distribute_clients(goose_attack: &GooseAttack) -> (usize, usize) {
+    let clients_per_worker = goose_attack.clients / (goose_attack.configuration.expect_workers as usize);
+    let clients_remainder = goose_attack.clients % (goose_attack.configuration.expect_workers as usize);
+    if clients_remainder > 0 {
+        info!("each worker to start {} clients, assigning 1 extra to {} workers", clients_per_worker, clients_remainder);
+    }
+    else {
+        info!("each worker to start {} clients", clients_per_worker);
+    }
+    (clients_per_worker, clients_remainder)
+}
+
 fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     match event {
         PipeEvent::AddPost => {
@@ -87,14 +99,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     info!("manager listening on {}, waiting for {} workers", &address, goose_attack.configuration.expect_workers);
 
     // Calculate how many clients each worker will be responsible for.
-    let split_clients = goose_attack.clients / (goose_attack.configuration.expect_workers as usize);
-    let mut split_clients_remainder = goose_attack.clients % (goose_attack.configuration.expect_workers as usize);
-    if split_clients_remainder > 0 {
-        info!("each worker to start {} clients, assigning 1 extra to {} workers", split_clients, split_clients_remainder);
-    }
-    else {
-        info!("each worker to start {} clients", split_clients);
-    }
+    let (clients_per_worker, mut clients_remainder) = distribute_clients(&goose_attack);
 
     // A mutable bucket of clients to be assigned to workers.
     let mut available_clients = goose_attack.weighted_clients.clone();
@@ -317,10 +322,10 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         info!("worker {} of {} connected", workers.len(), goose_attack.configuration.expect_workers);
 
                         // Send new worker a batch of clients.
-                        let mut client_batch = split_clients;
+                        let mut client_batch = clients_per_worker;
                         // If remainder, put extra client in this batch.
-                        if split_clients_remainder > 0 {
-                            split_clients_remainder -= 1;
+                        if clients_remainder > 0 {
+                            clients_remainder -= 1;
                             client_batch += 1;
                         }
                         let mut clients = Vec::new();
@@ -407,4 +412,33 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     }
     goose_attack
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_distribute_clients() {
+        let config = GooseConfiguration::default();
+        let mut goose_attack = GooseAttack::initialize_with_config(config);
+
+        goose_attack.clients = 10;
+        goose_attack.configuration.expect_workers = 2;
+        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
+        assert_eq!(clients_per_process, 5);
+        assert_eq!(clients_remainder, 0);
+
+        goose_attack.clients = 1;
+        goose_attack.configuration.expect_workers = 1;
+        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
+        assert_eq!(clients_per_process, 1);
+        assert_eq!(clients_remainder, 0);
+
+        goose_attack.clients = 100;
+        goose_attack.configuration.expect_workers = 21;
+        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
+        assert_eq!(clients_per_process, 4);
+        assert_eq!(clients_remainder, 16);
+    }
 }

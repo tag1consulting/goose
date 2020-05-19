@@ -684,6 +684,12 @@ impl GooseAttack {
                 error!("You must set --expect-workers to 1 or more.");
                 std::process::exit(1);
             }
+            if self.configuration.expect_workers as usize > self.clients {
+                error!("You must enable at least as many clients ({}) as workers ({}).",
+                    self.clients, self.configuration.expect_workers);
+                std::process::exit(1);
+            }
+
         }
         
         // Worker mode.
