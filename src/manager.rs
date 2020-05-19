@@ -134,6 +134,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         }
         if load_test_running {
             if !load_test_finished {
+                // Test ran to completion or was canceled with ctrl-c.
                 if util::timer_expired(started, goose_attack.run_time) || canceled.load(Ordering::SeqCst) {
                     info!("stopping after {} seconds...", started.elapsed().as_secs());
                     load_test_finished = true;
@@ -141,8 +142,9 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 }
             }
 
+            // Aborting graceful shutdown, workers took too long to shut down.
             if load_test_finished && util::timer_expired(exit_timer, GRACEFUL_SHUTDOWN_TIMEOUT) {
-                info!("exit timer expired, stopping...");
+                warn!("graceful shutdown timer expired, exiting...");
                 break;
             }
         
@@ -154,10 +156,6 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 running_statistics_timer = time::Instant::now();
                 stats::print_running_stats(&goose_attack, started.elapsed().as_secs() as usize);
             }
-        }
-        if canceled.load(Ordering::SeqCst) {
-            info!("cleanup finished");
-            std::process::exit(0);
         }
 
         match server.try_recv() {
