@@ -49,14 +49,15 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
 }
 
 pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
-    // Creates a TCP address. @TODO: add optional support for UDP.
-    let address = format!("{}://{}:{}", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port);
+    // Creates a TCP address.
+    let address = format!("tcp://{}:{}", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port);
+    info!("worker connecting to manager at {}", &address);
 
     // Create a reply socket.
     let server = match Socket::new(Protocol::Rep0) {
         Ok(s) => s,
         Err(e) => {
-            error!("failed to create {}://{}:{} socket: {}.", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port, e);
+            error!("failed to create {}: {}.", address, e);
             std::process::exit(1);
         }
     };
@@ -72,7 +73,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     match server.listen(&address) {
         Ok(s) => (s),
         Err(e) => {
-            error!("failed to bind to socket {}://{}:{}: {}.", "tcp", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port, e);
+            error!("failed to bind to socket {}: {}.", address, e);
             std::process::exit(1);
         }
     }

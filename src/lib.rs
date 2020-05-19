@@ -319,7 +319,7 @@ pub struct Socket {}
 pub struct GooseAttack {
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
     task_sets: Vec<GooseTaskSet>,
-    /// A hash of the task_sets vector. @TODO
+    /// A checksum of the task_sets vector to be sure all workers are running the same load test.
     task_sets_hash: u64,
     /// A weighted vector containing a GooseClient object for each client that will run during this load test.
     weighted_clients: Vec<GooseClient>,

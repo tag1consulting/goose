@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.3-dev
+ - remove UDP TODO, unsupported transport protocol and tcp overhead isn't problematic
+
 ## 0.6.2 May 18, 2020
  - replace `unsafe` code blocks with lazy_static singleton
  - perform checksum to confirm workers are running same load test,

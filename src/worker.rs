@@ -16,8 +16,8 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
 }
 
 pub fn worker_main(goose_attack: &GooseAttack) {
-    // Creates a TCP address. @TODO: add optional support for UDP.
-    let address = format!("{}://{}:{}", "tcp", goose_attack.configuration.manager_host, goose_attack.configuration.manager_port);
+    // Creates a TCP address.
+    let address = format!("tcp://{}:{}", goose_attack.configuration.manager_host, goose_attack.configuration.manager_port);
     info!("worker connecting to manager at {}", &address);
 
     // Create a request socket.
@@ -48,7 +48,7 @@ pub fn worker_main(goose_attack: &GooseAttack) {
                     error!("failed to communicate with manager at {}: {}.", &address, e);
                     std::process::exit(1);
                 }
-                info!("failed to communicate with manager at {}: {}.", &address, e);
+                debug!("failed to communicate with manager at {}: {}.", &address, e);
                 let sleep_duration = time::Duration::from_millis(500);
                 debug!("sleeping {:?} milliseconds waiting for manager...", sleep_duration);
                 thread::sleep(sleep_duration);
