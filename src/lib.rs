@@ -294,10 +294,11 @@ use std::f32;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{thread, time};
 
+use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use rand::thread_rng;
@@ -308,6 +309,16 @@ use structopt::StructOpt;
 use url::Url;
 
 use crate::goose::{GooseTaskSet, GooseTask, GooseClient, GooseClientMode, GooseClientCommand, GooseRequest};
+
+// WORKER_ID is only used when running a gaggle (a distributed load test).
+lazy_static! {
+    static ref WORKER_ID: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
+}
+
+/// Worker ID to aid in tracing logs when running a Gaggle.
+pub fn get_worker_id() -> usize {
+    WORKER_ID.lock().unwrap().load(Ordering::Relaxed)
+}
 
 #[cfg(not(feature = "gaggle"))]
 #[derive(Debug)]
@@ -323,8 +334,6 @@ pub struct GooseAttack {
     task_sets_hash: u64,
     /// A weighted vector containing a GooseClient object for each client that will run during this load test.
     weighted_clients: Vec<GooseClient>,
-    /// A weighted vector of integers used to randomize the order that the GooseClient threads are launched.
-    weighted_clients_order: Vec<usize>,
     /// An optional default host to run this load test against.
     host: Option<String>,
     /// Configuration object managed by StructOpt.
@@ -355,7 +364,6 @@ impl GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
-            weighted_clients_order: Vec::new(),
             host: None,
             configuration: GooseConfiguration::from_args(),
             number_of_cpus: num_cpus::get(),
@@ -383,7 +391,6 @@ impl GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
-            weighted_clients_order: Vec::new(),
             host: None,
             configuration: config,
             number_of_cpus: num_cpus::get(),
@@ -879,9 +886,11 @@ impl GooseAttack {
                 // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
                 let thread_number = self.active_clients + 1;
 
+                let is_worker = self.configuration.worker;
+
                 // Launch a new client.
                 let client = thread::spawn(move || {
-                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
+                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender, is_worker)
                 });
 
                 clients.push(client);
@@ -895,7 +904,12 @@ impl GooseAttack {
         }
         // Restart the timer now that all threads are launched.
         started = time::Instant::now();
-        info!("launched {} clients...", self.active_clients);
+        if self.configuration.worker {
+            info!("[{}] launched {} clients...", get_worker_id(), self.active_clients);
+        }
+        else {
+            info!("launched {} clients...", self.active_clients);
+        }
 
         // Ensure we have request statistics when we're displaying running statistics.
         if !self.configuration.no_stats && !self.configuration.only_summary {
@@ -1015,7 +1029,12 @@ impl GooseAttack {
             }
 
             if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) {
-                info!("stopping after {} seconds...", started.elapsed().as_secs());
+                if self.configuration.worker {
+                    info!("[{}] stopping after {} seconds...", get_worker_id(), started.elapsed().as_secs());
+                }
+                else {
+                    info!("stopping after {} seconds...", started.elapsed().as_secs());
+                }
                 for (index, send_to_client) in client_channels.iter().enumerate() {
                     match send_to_client.send(GooseClientCommand::EXIT) {
                         Ok(_) => {
@@ -1026,7 +1045,12 @@ impl GooseAttack {
                         }
                     }
                 }
-                info!("waiting for clients to exit");
+                if self.configuration.worker {
+                    info!("[{}] waiting for clients to exit", get_worker_id());
+                }
+                else {
+                    info!("waiting for clients to exit");
+                }
                 for client in clients {
                     let _ = client.join();
                 }

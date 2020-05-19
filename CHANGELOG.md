@@ -1,7 +1,9 @@
 # Changelog
 
 ## 0.6.3-dev
- - remove UDP TODO, unsupported transport protocol and tcp overhead isn't problematic
+ - nng does not support udp as a transport protocol, and tcp overhead isn't
+   problematic; remove to-do to add udp, hard-code tcp
+ - add worker id for tracing gaggle worker threads
 
 ## 0.6.2 May 18, 2020
  - replace `unsafe` code blocks with lazy_static singleton

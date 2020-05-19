@@ -6,6 +6,7 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use std::{thread, time};
 
+use crate::get_worker_id;
 use crate::goose::{GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
 
 pub fn client_main(
@@ -14,8 +15,14 @@ pub fn client_main(
     mut thread_client: GooseClient,
     thread_receiver: mpsc::Receiver<GooseClientCommand>,
     thread_sender: mpsc::Sender<GooseClient>,
+    worker: bool,
 ) {
-    info!("launching client {} from {}...", thread_number, thread_task_set.name);
+    if worker {
+        info!("[{}] launching client {} from {}...", get_worker_id(), thread_number, thread_task_set.name);
+    }
+    else {
+        info!("launching client {} from {}...", thread_number, thread_task_set.name);
+    }
     // Notify parent that our run mode has changed to Running.
     thread_client.set_mode(GooseClientMode::RUNNING);
     thread_sender.send(thread_client.clone()).unwrap();
@@ -146,5 +153,10 @@ pub fn client_main(
 
     // Do our final sync before we exit.
     thread_sender.send(thread_client.clone()).unwrap();
-    info!("exiting client {} from {}...", thread_number, thread_task_set.name);
+    if worker {
+        info!("[{}] exiting client {} from {}...", get_worker_id(), thread_number, thread_task_set.name);
+    }
+    else {
+        info!("exiting client {} from {}...", thread_number, thread_task_set.name);
+    }
 }

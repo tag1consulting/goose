@@ -1,11 +1,11 @@
-use lazy_static::lazy_static;
-use nng::*;
-use serde::{Serialize, Deserialize};
-
 use std::collections::{HashMap, HashSet};
 use std::{thread, time};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use lazy_static::lazy_static;
+use nng::*;
+use serde::{Serialize, Deserialize};
 
 use crate::{GooseAttack, GooseConfiguration, GooseClientCommand};
 use crate::goose::GooseRequest;
@@ -27,6 +27,8 @@ pub struct GooseClientInitializer {
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
+    /// Numerical identifier for worker.
+    pub worker_id: usize,
 }
 
 // Mutable singleton globally tracking how many workers are currently being managed.
@@ -53,14 +55,16 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     let address = format!("tcp://{}:{}", goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port);
     info!("worker connecting to manager at {}", &address);
 
-    // Create a reply socket.
+    // Create a Rep0 reply socket.
     let server = match Socket::new(Protocol::Rep0) {
         Ok(s) => s,
         Err(e) => {
-            error!("failed to create {}: {}.", address, e);
+            error!("failed to create socket: {}.", e);
             std::process::exit(1);
         }
     };
+
+    // Set up callback function to receive pipe event notifications.
     match server.pipe_notify(pipe_closed) {
         Ok(_) => (),
         Err(e) => {
@@ -344,6 +348,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 min_wait: client.min_wait,
                                 max_wait: client.max_wait,
                                 config: client.config.clone(),
+                                worker_id: workers.len(),
                             });
                         }
 
