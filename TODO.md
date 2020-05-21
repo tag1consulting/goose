@@ -12,6 +12,7 @@ Goose is a Rust load testing tool, based on Locust.
 - [ ] website
 - [ ] metaprogramming, implement goose_codegen macros to simplify goosefile creation
 - [ ] detect/report when available CPU power is bottleneck
+- [ ] add TLS support (https://gitlab.com/neachdainn/nng-rs/-/issues/46)
 - [ ] alternative HTTP clients
 - [ ] alternative non-HTTP clients
   - [ ] gRPC
