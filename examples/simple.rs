@@ -17,6 +17,9 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+use std::boxed::Box;
+use std::pin::Pin;
+use std::future::Future;
 
 use goose::GooseAttack;
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
@@ -39,19 +42,25 @@ fn main() {
 /// Demonstrates how to log in when a client starts. We flag this task as an
 /// on_start task when registering it above. This means it only runs one time
 /// per client, when the client thread first starts.
-async fn website_task_login<'fut>(client: &'fut mut GooseClient) -> () {
-    let request_builder = client.goose_post("/login");
-    // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
-    let params = [("username", "test_user"), ("password", "")];
-    let _response = client.goose_send(request_builder.form(&params)).await;
+async fn website_task_login<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + 'r>> {
+    Box::pin(async move {
+        let request_builder = client.goose_post("/login");
+        // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
+        let params = [("username", "test_user"), ("password", "")];
+        let _response = client.goose_send(request_builder.form(&params)).await;
+    })
 }
 
 /// A very simple task that simply loads the front page.
-async fn website_task_index<'fut>(client: &'fut mut GooseClient) -> () {
-    let _response = client.get("/").await;
+async fn website_task_index<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + 'r>> {
+    Box::pin(async move {
+        let _response = client.get("/").await;
+    })
 }
 
 /// A very simple task that simply loads the about page.
-async fn website_task_about<'fut>(client: &'fut mut GooseClient) -> () {
-    let _response = client.get("/about/").await;
+async fn website_task_about<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
+    Box::pin(async move {
+        let _response = client.get("/about/").await;
+    })
 }

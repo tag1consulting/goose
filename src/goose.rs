@@ -266,8 +266,6 @@ use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-type GooseTaskFn = Box<dyn Fn(&mut GooseClient) -> Pin<Box<dyn Future<Output = ()>>>>;
-
 /// An individual task set.
 #[derive(Clone, Hash)]
 pub struct GooseTaskSet {
@@ -334,7 +332,6 @@ impl GooseTaskSet {
     ///       let _response = client.get("/a/");
     ///     }
     /// ```
-    //pub fn register_task(mut self, mut task: GooseTask<dyn Future<Output = ()>>) -> Self {
     pub fn register_task(mut self, mut task: GooseTask) -> Self {
         trace!("{} register_task: {}", self.name, task.name);
         task.tasks_index = self.tasks.len();
@@ -1239,10 +1236,10 @@ pub struct GooseTask {
     /// A flag indicating that this task runs when the client stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    pub function: GooseTaskFn<>,
+    pub function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
 }
 impl GooseTask {
-    pub fn new(function: fn(GooseClient)) -> Self {
+    pub fn new(function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>) -> Self {
         trace!("new task");
         let task = GooseTask {
             tasks_index: usize::max_value(),
@@ -1251,7 +1248,7 @@ impl GooseTask {
             sequence: 0,
             on_start: false,
             on_stop: false,
-            function: Box::new(function),
+            function: function,
         };
         task
     }
