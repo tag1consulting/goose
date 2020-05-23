@@ -907,7 +907,7 @@ impl GooseAttack {
 
                 // Launch a new client.
                 let client = tokio::spawn(
-                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender)
+                    client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender, is_worker)
                 );
 
                 clients.push(client);
