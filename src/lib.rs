@@ -524,15 +524,15 @@ impl GooseAttack {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseAttack;
+    ///     use goose::GooseAttack, task;
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(example_task))
+    ///             .register_task(GooseTask::new(task!(example_task)))
     ///         )
     ///         .register_taskset(GooseTaskSet::new("OtherTasks")
-    ///             .register_task(GooseTask::new(other_task))
+    ///             .register_task(GooseTask::new(task!(other_task)))
     ///         );
     ///
     ///     fn example_task(client: &mut GooseClient) {
@@ -1049,9 +1049,7 @@ impl GooseAttack {
                 else {
                     info!("waiting for clients to exit");
                 }
-                for client in clients {
-                    let _ = client.await;
-                }
+                futures::future::join_all(clients).await;
                 debug!("all clients exited");
 
                 // If we're printing statistics, collect the final messages received from clients
