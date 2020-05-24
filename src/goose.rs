@@ -280,10 +280,8 @@ macro_rules! boilerplate {
 /// Async tasks must be boxed and pinned for Goose to store and invoke them.
 #[macro_export]
 macro_rules! task {
-    ($task_func:ident, $task_func_wrapped:ident) => {
-        fn $task_func_wrapped<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-            Box::pin($task_func(client))
-        }
+    ($task_func:ident) => {
+        move |s| Box::pin($task_func(s))
     };
 }
 
@@ -1475,8 +1473,7 @@ mod tests {
         assert_eq!(task_set.weighted_on_stop_tasks.len(), 0);
 
         // Registering a task adds it to tasks, but doesn't update weighted_tasks.
-        task!(test_function_a, test_function_a_task);
-        task_set = task_set.register_task(GooseTask::new(test_function_a_task));
+        task_set = task_set.register_task(GooseTask::new(task!(test_function_a)));
         assert_eq!(task_set.tasks.len(), 1);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
@@ -1486,8 +1483,7 @@ mod tests {
         assert_eq!(task_set.host, None);
 
         // Different task can be registered.
-        task!(test_function_b, test_function_b_task);
-        task_set = task_set.register_task(GooseTask::new(test_function_b_task));
+        task_set = task_set.register_task(GooseTask::new(task!(test_function_b)));
         assert_eq!(task_set.tasks.len(), 2);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
@@ -1497,7 +1493,7 @@ mod tests {
         assert_eq!(task_set.host, None);
 
         // Same task can be registered again.
-        task_set = task_set.register_task(GooseTask::new(test_function_a_task));
+        task_set = task_set.register_task(GooseTask::new(task!(test_function_a)));
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
@@ -1558,8 +1554,7 @@ mod tests {
         }
 
         // Initialize task set.
-        task!(test_function_a, test_function_a_task);
-        let mut task = GooseTask::new(test_function_a_task);
+        let mut task = GooseTask::new(task!(test_function_a));
         assert_eq!(task.tasks_index, usize::max_value());
         assert_eq!(task.name, "".to_string());
         assert_eq!(task.weight, 1);

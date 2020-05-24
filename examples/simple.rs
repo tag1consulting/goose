@@ -27,10 +27,10 @@ fn main() {
             // After each task runs, sleep randomly from 5 to 15 seconds.
             .set_wait_time(5, 15)
             // This task only runs one time when the client first starts.
-            .register_task(GooseTask::new(website_login_task).set_on_start())
+            .register_task(GooseTask::new(task!(website_login)).set_on_start())
             // These next two tasks run repeatedly as long as the load test is running.
-            .register_task(GooseTask::new(website_index_task))
-            .register_task(GooseTask::new(website_about_task))
+            .register_task(GooseTask::new(task!(website_index)))
+            .register_task(GooseTask::new(task!(website_about)))
         )
         .execute();
 }
@@ -43,14 +43,14 @@ async fn website_login<'r>(client: &'r mut GooseClient) {
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
     let _response = client.goose_send(request_builder.form(&params)).await;
-} task!(website_login, website_login_task);
+}
 
 /// A very simple task that simply loads the front page.
 async fn website_index<'r>(client: &'r mut GooseClient) {
     let _response = client.get("/").await;
-} task!(website_index, website_index_task);
+}
 
 /// A very simple task that simply loads the about page.
 async fn website_about<'r>(client: &'r mut GooseClient) {
     let _response = client.get("/about/").await;
-} task!(website_about, website_about_task);
+}
