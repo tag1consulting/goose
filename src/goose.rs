@@ -1450,18 +1450,15 @@ impl Hash for GooseTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dyn_async;
 
     #[test]
     fn goose_task_set() {
         // Simplistic test task functions.
-        #[macro_rules_attribute(dyn_async!)]
-        async fn test_task_function_a<'fut>(client: &'fut mut GooseClient) -> () {
+        async fn test_function_a<'fut>(client: &'fut mut GooseClient) -> () {
             let _response = client.get("/a/").await;
         }
 
-        #[macro_rules_attribute(dyn_async!)]
-        async fn test_task_function_b<'fut>(client: &'fut mut GooseClient) -> () {
+        async fn test_function_b<'fut>(client: &'fut mut GooseClient) -> () {
             let _response = client.get("/b/").await;
         }
 
@@ -1478,7 +1475,8 @@ mod tests {
         assert_eq!(task_set.weighted_on_stop_tasks.len(), 0);
 
         // Registering a task adds it to tasks, but doesn't update weighted_tasks.
-        task_set = task_set.register_task(GooseTask::new(test_task_function_a));
+        task!(test_function_a, test_function_a_task);
+        task_set = task_set.register_task(GooseTask::new(test_function_a_task));
         assert_eq!(task_set.tasks.len(), 1);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
@@ -1488,7 +1486,8 @@ mod tests {
         assert_eq!(task_set.host, None);
 
         // Different task can be registered.
-        task_set = task_set.register_task(GooseTask::new(test_task_function_b));
+        task!(test_function_b, test_function_b_task);
+        task_set = task_set.register_task(GooseTask::new(test_function_b_task));
         assert_eq!(task_set.tasks.len(), 2);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
@@ -1498,7 +1497,7 @@ mod tests {
         assert_eq!(task_set.host, None);
 
         // Same task can be registered again.
-        task_set = task_set.register_task(GooseTask::new(test_task_function_a));
+        task_set = task_set.register_task(GooseTask::new(test_function_a_task));
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
@@ -1554,13 +1553,13 @@ mod tests {
     #[test]
     fn goose_task() {
         // Simplistic test task functions.
-        #[macro_rules_attribute(dyn_async!)]
-        async fn test_task_function_a <'fut>(client: &'fut mut GooseClient) -> () {
+        async fn test_function_a <'fut>(client: &'fut mut GooseClient) -> () {
             let _response = client.get("/a/");
         }
 
         // Initialize task set.
-        let mut task = GooseTask::new(test_task_function_a);
+        task!(test_function_a, test_function_a_task);
+        let mut task = GooseTask::new(test_function_a_task);
         assert_eq!(task.tasks_index, usize::max_value());
         assert_eq!(task.name, "".to_string());
         assert_eq!(task.weight, 1);

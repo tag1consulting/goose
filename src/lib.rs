@@ -272,9 +272,6 @@
 
 #[macro_use]
 extern crate log;
-#[cfg(test)]
-#[macro_use]
-extern crate macro_rules_attribute;
 
 //#[macro_use]
 //extern crate goose_codegen;
