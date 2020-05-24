@@ -17,11 +17,9 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::boxed::Box;
-use std::pin::Pin;
-use std::future::Future;
+use std::{boxed::Box, pin::Pin, future::Future};
 
-use goose::GooseAttack;
+use goose::{GooseAttack, task};
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 fn main() {
@@ -31,10 +29,10 @@ fn main() {
             // After each task runs, sleep randomly from 5 to 15 seconds.
             .set_wait_time(5, 15)
             // This task only runs one time when the client first starts.
-            .register_task(GooseTask::new(website_task_login_async).set_on_start())
+            .register_task(GooseTask::new(website_login_task).set_on_start())
             // These next two tasks run repeatedly as long as the load test is running.
-            .register_task(GooseTask::new(website_task_index_async))
-            .register_task(GooseTask::new(website_task_about_async))
+            .register_task(GooseTask::new(website_index_task))
+            .register_task(GooseTask::new(website_about_task))
         )
         .execute();
 }
@@ -42,28 +40,22 @@ fn main() {
 /// Demonstrates how to log in when a client starts. We flag this task as an
 /// on_start task when registering it above. This means it only runs one time
 /// per client, when the client thread first starts.
-async fn website_task_login<'r>(client: &'r mut GooseClient) {
+async fn website_login<'r>(client: &'r mut GooseClient) {
     let request_builder = client.goose_post("/login");
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
     let _response = client.goose_send(request_builder.form(&params)).await;
 }
-fn website_task_login_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(website_task_login(client))
-}
+task!(website_login, website_login_task);
 
 /// A very simple task that simply loads the front page.
-async fn website_task_index<'r>(client: &'r mut GooseClient) {
-    let _response = client.get("/");
+async fn website_index<'r>(client: &'r mut GooseClient) {
+    let _response = client.get("/").await;
 }
-fn website_task_index_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(website_task_index(client))
-}
+task!(website_index, website_index_task);
 
 /// A very simple task that simply loads the about page.
-async fn website_task_about<'r>(client: &'r mut GooseClient) {
-    let _response = client.get("/about/");
+async fn website_about<'r>(client: &'r mut GooseClient) {
+    let _response = client.get("/about/").await;
 }
-fn website_task_about_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(website_task_about(client))
-}
+task!(website_about, website_about_task);

@@ -266,6 +266,15 @@ use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
+#[macro_export]
+macro_rules! task {
+    ($task_func:ident, $task_func_wrapped:ident) => {
+        fn $task_func_wrapped<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
+            Box::pin($task_func(client))
+        }
+    };
+}
+
 /// An individual task set.
 #[derive(Clone, Hash)]
 pub struct GooseTaskSet {

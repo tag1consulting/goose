@@ -22,52 +22,50 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::boxed::Box;
-use std::pin::Pin;
-use std::future::Future;
+use std::{boxed::Box, pin::Pin, future::Future};
 
 use rand::Rng;
 use regex::Regex;
 
-use goose::GooseAttack;
+use goose::{GooseAttack, task};
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 fn main() {
     GooseAttack::initialize()
         .register_taskset(GooseTaskSet::new("AnonBrowsingUser")
             .set_weight(4)
-            .register_task(GooseTask::new(drupal_loadtest_front_page_async)
+            .register_task(GooseTask::new(drupal_loadtest_front_page_task)
                 .set_weight(15)
                 .set_name("(Anon) front page")
             )
-            .register_task(GooseTask::new(drupal_loadtest_node_page_async)
+            .register_task(GooseTask::new(drupal_loadtest_node_page_task)
                 .set_weight(10)
                 .set_name("(Anon) node page")
             )
-            .register_task(GooseTask::new(drupal_loadtest_profile_page_async)
+            .register_task(GooseTask::new(drupal_loadtest_profile_page_task)
                 .set_weight(3)
                 .set_name("(Anon) user page")
             )
         )
         .register_taskset(GooseTaskSet::new("AuthBrowsingUser")
             .set_weight(1)
-            .register_task(GooseTask::new(drupal_loadtest_login_async)
+            .register_task(GooseTask::new(drupal_loadtest_login_task)
                 .set_on_start()
                 .set_name("(Auth) login")
             )
-            .register_task(GooseTask::new(drupal_loadtest_front_page_async)
+            .register_task(GooseTask::new(drupal_loadtest_front_page_task)
                 .set_weight(15)
                 .set_name("(Auth) front page")
             )
-            .register_task(GooseTask::new(drupal_loadtest_node_page_async)
+            .register_task(GooseTask::new(drupal_loadtest_node_page_task)
                 .set_weight(10)
                 .set_name("(Auth) node page")
             )
-            .register_task(GooseTask::new(drupal_loadtest_profile_page_async)
+            .register_task(GooseTask::new(drupal_loadtest_profile_page_task)
                 .set_weight(3)
                 .set_name("(Auth) user page")
             )
-            .register_task(GooseTask::new(drupal_loadtest_post_comment_async)
+            .register_task(GooseTask::new(drupal_loadtest_post_comment_task)
                 .set_weight(3)
                 .set_name("(Auth) comment form")
             )
@@ -103,27 +101,21 @@ async fn drupal_loadtest_front_page<'r>(client: &'r mut GooseClient) {
         },
     }
 }
-fn drupal_loadtest_front_page_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(drupal_loadtest_front_page(client))
-}
+task!(drupal_loadtest_front_page, drupal_loadtest_front_page_task);
 
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_loadtest_node_page<'r>(client: &'r mut GooseClient) {
     let nid = rand::thread_rng().gen_range(1, 10_000);
     let _response = client.get(format!("/node/{}", &nid).as_str()).await;
 }
-fn drupal_loadtest_node_page_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(drupal_loadtest_node_page(client))
-}
+task!(drupal_loadtest_node_page, drupal_loadtest_node_page_task);
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_loadtest_profile_page<'r>(client: &'r mut GooseClient) {
     let uid = rand::thread_rng().gen_range(2, 5_001);
     let _response = client.get(format!("/user/{}", &uid).as_str()).await;
 }
-fn drupal_loadtest_profile_page_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(drupal_loadtest_profile_page(client))
-}
+task!(drupal_loadtest_profile_page, drupal_loadtest_profile_page_task);
 
 /// Log in.
 async fn drupal_loadtest_login<'r>(client: &'r mut GooseClient) {
@@ -166,9 +158,7 @@ async fn drupal_loadtest_login<'r>(client: &'r mut GooseClient) {
         Err(_) => (),
     }
 }
-fn drupal_loadtest_login_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(drupal_loadtest_login(client))
-}
+task!(drupal_loadtest_login, drupal_loadtest_login_task);
 
 /// Post a comment.
 async fn drupal_loadtest_post_comment<'r>(client: &'r mut GooseClient) {
@@ -251,6 +241,4 @@ async fn drupal_loadtest_post_comment<'r>(client: &'r mut GooseClient) {
         Err(_) => (),
     }
 }
-fn drupal_loadtest_post_comment_async<'r>(client: &'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
-    Box::pin(drupal_loadtest_post_comment(client))
-}
+task!(drupal_loadtest_post_comment, drupal_loadtest_post_comment_task);
