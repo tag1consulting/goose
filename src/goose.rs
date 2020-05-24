@@ -266,6 +266,18 @@ use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
+/// All load tests require the following use definitions. It can be done
+/// manually, or using the boilerplate!() macro.
+#[macro_export]
+macro_rules! boilerplate {
+    () => {
+        use std::{boxed::Box, pin::Pin, future::Future};
+        use goose::{GooseAttack, task};
+        use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+    }
+}
+
+/// Async tasks must be boxed and pinned for Goose to store and invoke them.
 #[macro_export]
 macro_rules! task {
     ($task_func:ident, $task_func_wrapped:ident) => {

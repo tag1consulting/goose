@@ -17,10 +17,8 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::{boxed::Box, pin::Pin, future::Future};
-
-use goose::{GooseAttack, task};
-use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+use goose::boilerplate;
+boilerplate!();
 
 fn main() {
     GooseAttack::initialize()
@@ -45,17 +43,14 @@ async fn website_login<'r>(client: &'r mut GooseClient) {
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
     let _response = client.goose_send(request_builder.form(&params)).await;
-}
-task!(website_login, website_login_task);
+} task!(website_login, website_login_task);
 
 /// A very simple task that simply loads the front page.
 async fn website_index<'r>(client: &'r mut GooseClient) {
     let _response = client.get("/").await;
-}
-task!(website_index, website_index_task);
+} task!(website_index, website_index_task);
 
 /// A very simple task that simply loads the about page.
 async fn website_about<'r>(client: &'r mut GooseClient) {
     let _response = client.get("/about/").await;
-}
-task!(website_about, website_about_task);
+} task!(website_about, website_about_task);
