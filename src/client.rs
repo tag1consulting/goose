@@ -35,7 +35,7 @@ pub async fn client_main(
     thread_sender.send(thread_client.clone()).unwrap();
 
     // Client is starting, first invoke the weighted on_start tasks.
-    if thread_client.weighted_on_start_tasks.len() > 0 {
+    if !thread_client.weighted_on_start_tasks.is_empty() {
         for mut sequence in thread_client.weighted_on_start_tasks.clone() {
             if sequence.len() > 1 {
                 sequence.shuffle(&mut thread_rng());
@@ -95,13 +95,11 @@ pub async fn client_main(
         function(&mut thread_client).await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
-        let wait_time: usize;
-        if thread_client.max_wait > 0 {
-            wait_time =
-                rand::thread_rng().gen_range(thread_client.min_wait, thread_client.max_wait);
+        let wait_time = if thread_client.max_wait > 0 {
+            rand::thread_rng().gen_range(thread_client.min_wait, thread_client.max_wait)
         } else {
-            wait_time = 0;
-        }
+            0
+        };
         // Counter to track how long we've slept, waking regularly to check for messages.
         let mut slept: usize = 0;
 
@@ -150,7 +148,7 @@ pub async fn client_main(
     }
 
     // Client is exiting, first invoke the weighted on_stop tasks.
-    if thread_client.weighted_on_stop_tasks.len() > 0 {
+    if !thread_client.weighted_on_stop_tasks.is_empty() {
         for mut sequence in thread_client.weighted_on_stop_tasks.clone() {
             if sequence.len() > 1 {
                 sequence.shuffle(&mut thread_rng());

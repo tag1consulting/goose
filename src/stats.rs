@@ -35,7 +35,7 @@ fn calculate_response_time_percentile(
             }
         }
     }
-    return 0;
+    0
 }
 
 /// Display a table of requests and fails.
@@ -52,14 +52,13 @@ pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapse
     let mut aggregate_total_count = 0;
     for (request_key, request) in requests {
         let total_count = request.success_count + request.fail_count;
-        let fail_percent: f32;
-        if request.fail_count > 0 {
-            fail_percent = request.fail_count as f32 / total_count as f32 * 100.0;
+        let fail_percent = if request.fail_count > 0 {
+            request.fail_count as f32 / total_count as f32 * 100.0
         } else {
-            fail_percent = 0.0;
-        }
+            0.0
+        };
         // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-        if fail_percent == 100.0 || fail_percent == 0.0 {
+        if fail_percent as usize == 100 || fail_percent as usize == 0 {
             println!(
                 " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                 util::truncate_string(&request_key, 23),
@@ -90,16 +89,14 @@ pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapse
         aggregate_fail_count += request.fail_count;
     }
     if requests.len() > 1 {
-        let aggregate_fail_percent: f32;
-        if aggregate_fail_count > 0 {
-            aggregate_fail_percent =
-                aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0;
+        let aggregate_fail_percent = if aggregate_fail_count > 0 {
+            aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
         } else {
-            aggregate_fail_percent = 0.0;
-        }
+            0.0
+        };
         println!(" ------------------------+----------------+----------------+--------+--------- ");
         // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-        if aggregate_fail_percent == 100.0 || aggregate_fail_percent == 0.0 {
+        if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
             println!(
                 " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                 "Aggregated",
@@ -316,16 +313,16 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     for (request_key, request) in requests {
         let mut codes: String = "".to_string();
         for (status_code, count) in &request.status_code_counts {
-            if codes.len() > 0 {
+            if codes.is_empty() {
                 codes = format!(
-                    "{}, {} [{}]",
-                    codes.clone(),
+                    "{} [{}]",
                     count.to_formatted_string(&Locale::en),
                     status_code
                 );
             } else {
                 codes = format!(
-                    "{} [{}]",
+                    "{}, {} [{}]",
+                    codes.clone(),
                     count.to_formatted_string(&Locale::en),
                     status_code
                 );
@@ -349,16 +346,16 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     println!("-------------------------------------------------------------------------------");
     let mut codes: String = "".to_string();
     for (status_code, count) in &aggregated_status_code_counts {
-        if codes.len() > 0 {
+        if codes.is_empty() {
             codes = format!(
-                "{}, {} [{}]",
-                codes.clone(),
+                "{} [{}]",
                 count.to_formatted_string(&Locale::en),
                 status_code
             );
         } else {
             codes = format!(
-                "{} [{}]",
+                "{}, {} [{}]",
+                codes.clone(),
                 count.to_formatted_string(&Locale::en),
                 status_code
             );
@@ -383,7 +380,7 @@ pub fn print_final_stats(goose_attack: &GooseAttack, elapsed: usize) {
 }
 
 pub fn print_running_stats(goose_attack: &GooseAttack, elapsed: usize) {
-    if !goose_attack.configuration.worker && goose_attack.merged_requests.len() > 0 {
+    if !goose_attack.configuration.worker && !goose_attack.merged_requests.is_empty() {
         info!("printing running statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
         print_requests_and_fails(&goose_attack.merged_requests, elapsed);

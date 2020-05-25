@@ -82,21 +82,19 @@
 //! // Needed to wrap and store async functions.
 //! use std::boxed::Box;
 //!
-//! fn main() {
-//!     GooseAttack::initialize()
-//!         .register_taskset(taskset!("LoadtestTasks")
-//!             .set_wait_time(0, 3)
-//!             // Register the foo task, assigning it a weight of 10.
-//!             .register_task(task!(loadtest_foo).set_weight(10))
-//!             // Register the bar task, assigning it a weight of 2 (so it
-//!             // runs 1/5 as often as bar). Apply a task name which shows up
-//!             // in statistics.
-//!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2))
-//!         )
-//!         // You could also set a default host here, for example:
-//!         //.set_host("http://dev.local/")
-//!         .execute();
-//! }
+//! GooseAttack::initialize()
+//!     .register_taskset(taskset!("LoadtestTasks")
+//!         .set_wait_time(0, 3)
+//!         // Register the foo task, assigning it a weight of 10.
+//!         .register_task(task!(loadtest_foo).set_weight(10))
+//!         // Register the bar task, assigning it a weight of 2 (so it
+//!         // runs 1/5 as often as bar). Apply a task name which shows up
+//!         // in statistics.
+//!         .register_task(task!(loadtest_bar).set_name("bar").set_weight(2))
+//!     )
+//!     // You could also set a default host here, for example:
+//!     //.set_host("http://dev.local/")
+//!     .execute();
 //!
 //! async fn loadtest_foo(client: &mut GooseClient) {
 //!   let _response = client.get("/path/to/foo");
@@ -486,13 +484,11 @@ impl GooseAttack {
                 std::process::exit(1);
             }
             self.run_time = 0;
+        } else if self.configuration.run_time != "" {
+            self.run_time = util::parse_timespan(&self.configuration.run_time);
+            info!("run_time = {}", self.run_time);
         } else {
-            if self.configuration.run_time != "" {
-                self.run_time = util::parse_timespan(&self.configuration.run_time);
-                info!("run_time = {}", self.run_time);
-            } else {
-                self.run_time = 0;
-            }
+            self.run_time = 0;
         }
 
         // Configure number of client threads to launch, default to the number of CPU cores available.
@@ -676,7 +672,7 @@ impl GooseAttack {
     /// ```
     pub fn execute(mut self) {
         // At least one task set is required.
-        if self.task_sets.len() <= 0 {
+        if self.task_sets.is_empty() {
             error!("No task sets defined.");
             std::process::exit(1);
         }
@@ -764,11 +760,12 @@ impl GooseAttack {
             }
         }
 
-        if !self.configuration.manager && !self.configuration.worker {
-            if self.configuration.no_hash_check {
-                error!("The --no-hash-check option is only available when running in manager mode");
-                std::process::exit(1);
-            }
+        if !self.configuration.manager
+            && !self.configuration.worker
+            && self.configuration.no_hash_check
+        {
+            error!("The --no-hash-check option is only available when running in manager mode");
+            std::process::exit(1);
         }
 
         // Configure number of client threads to launch per second, defaults to 1.
@@ -784,7 +781,7 @@ impl GooseAttack {
         debug!("hatch_rate = {}", hatch_rate);
 
         // Confirm there's either a global host, or each task set has a host defined.
-        if self.configuration.host.len() == 0 {
+        if self.configuration.host.is_empty() {
             for task_set in &self.task_sets {
                 match &task_set.host {
                     Some(h) => {
@@ -807,10 +804,8 @@ impl GooseAttack {
                     },
                 }
             }
-        } else {
-            if is_valid_host(&self.configuration.host) {
-                info!("global host configured: {}", self.configuration.host);
-            }
+        } else if is_valid_host(&self.configuration.host) {
+            info!("global host configured: {}", self.configuration.host);
         }
 
         // Apply weights to tasks in each task set.
@@ -935,7 +930,7 @@ impl GooseAttack {
             client_channels.push(parent_sender);
 
             // We can only launch tasks if the task list is non-empty
-            if thread_client.weighted_tasks.len() > 0 {
+            if !thread_client.weighted_tasks.is_empty() {
                 // Copy the client-to-parent sender channel, used by all threads.
                 let thread_sender = all_threads_sender.clone();
 
