@@ -1,6 +1,6 @@
 [package]
 name = "goose"
-version = "0.7.0-dev"
+version = "0.7.0"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A load testing tool inspired by Locust."
@@ -12,7 +12,6 @@ keywords = ["loadtesting", "performance", "web", "framework", "tool"]
 license = "Apache-2.0"
 
 [dependencies]
-#goose_codegen = { path = "goose_codegen" }
 ctrlc = "3.1"
 futures = "0.3"
 http = "0.2"
