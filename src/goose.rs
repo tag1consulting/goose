@@ -13,8 +13,9 @@
 //! 
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
+//!     use goose::taskset;
 //!
-//!     let mut loadtest_tasks = GooseTaskSet::new("LoadtestTasks");
+//!     let mut loadtest_tasks = taskset!("LoadtestTasks");
 //! ```
 //! 
 //! ### Task Set Weight
@@ -27,9 +28,10 @@
 //! 
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
+//!     use goose::taskset;
 //!
-//!     let mut foo_tasks = GooseTaskSet::new("FooTasks").set_weight(10);
-//!     let mut bar_tasks = GooseTaskSet::new("BarTasks").set_weight(5);
+//!     let mut foo_tasks = taskset!("FooTasks").set_weight(10);
+//!     let mut bar_tasks = taskset!("BarTasks").set_weight(5);
 //! ```
 //! 
 //! ### Task Set Host
@@ -42,9 +44,10 @@
 //! 
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
+//!     use goose::taskset;
 //!
-//!     let mut foo_tasks = GooseTaskSet::new("FooTasks").set_host("http://www.local");
-//!     let mut bar_tasks = GooseTaskSet::new("BarTasks").set_host("http://www2.local");
+//!     let mut foo_tasks = taskset!("FooTasks").set_host("http://www.local");
+//!     let mut bar_tasks = taskset!("BarTasks").set_host("http://www2.local");
 //! ```
 //! 
 //! ### Task Set Wait Time
@@ -57,9 +60,10 @@
 //! 
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
+//!     use goose::taskset;
 //!
-//!     let mut foo_tasks = GooseTaskSet::new("FooTasks").set_wait_time(0, 3);
-//!     let mut bar_tasks = GooseTaskSet::new("BarTasks").set_wait_time(5, 10);
+//!     let mut foo_tasks = taskset!("FooTasks").set_wait_time(0, 3);
+//!     let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10);
 //! ```
 //! ## Creating Tasks
 //! 
@@ -300,6 +304,14 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 /// Async tasks must be boxed and pinned for Goose to store and invoke them.
 #[macro_export]
+macro_rules! taskset {
+    ($taskset_func:tt) => {
+        GooseTaskSet::new($taskset_func)
+    }
+}
+
+/// Async tasks must be boxed and pinned for Goose to store and invoke them.
+#[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
         GooseTask::new(
@@ -339,8 +351,9 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
+    ///     use goose::taskset;
     ///
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
+    ///     let mut example_tasks = taskset!("ExampleTasks");
     /// ```
     pub fn new(name: &str) -> Self {
         trace!("new taskset: name: {}", &name);
@@ -365,12 +378,12 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::{task, taskset};
     ///
     ///     // Needed to wrap and store async functions.
     ///     use std::boxed::Box;
     ///
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks");
+    ///     let mut example_tasks = taskset!("ExampleTasks");
     ///     example_tasks.register_task(task!(a_task_function));
     ///
     ///     /// A very simple task that simply loads the "a" page.
@@ -393,8 +406,9 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
+    ///     use goose::taskset;
     ///
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks").set_weight(3);
+    ///     let mut example_tasks = taskset!("ExampleTasks").set_weight(3);
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
         trace!("{} set_weight: {}", self.name, weight);
@@ -416,8 +430,9 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
+    ///     use goose::taskset;
     ///
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks").set_host("http://10.1.1.42");
+    ///     let mut example_tasks = taskset!("ExampleTasks").set_host("http://10.1.1.42");
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("{} set_host: {}", self.name, host);
@@ -433,8 +448,9 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
+    ///     use goose::taskset;
     ///
-    ///     let mut example_tasks = GooseTaskSet::new("ExampleTasks").set_wait_time(0, 1);
+    ///     let mut example_tasks = taskset!("ExampleTasks").set_wait_time(0, 1);
     /// ```
     pub fn set_wait_time(mut self, min_wait: usize, max_wait: usize) -> Self {
         trace!("{} set_wait time: min: {} max: {}", self.name, min_wait, max_wait);
@@ -1571,7 +1587,7 @@ mod tests {
             let _response = client.get("/b/").await;
         }
 
-        let mut task_set = GooseTaskSet::new("foo");
+        let mut task_set = taskset!("foo");
         assert_eq!(task_set.name, "foo");
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);

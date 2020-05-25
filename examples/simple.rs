@@ -17,7 +17,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use goose::{GooseAttack, task};
+use goose::{GooseAttack, task, taskset};
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 // Needed to wrap and store async functions.
@@ -27,7 +27,7 @@ use std::boxed::Box;
 fn main() {
     GooseAttack::initialize()
         // In this example, we only create a single taskset, named "WebsiteUser".
-        .register_taskset(GooseTaskSet::new("WebsiteUser")
+        .register_taskset(taskset!("WebsiteUser")
             // After each task runs, sleep randomly from 5 to 15 seconds.
             .set_wait_time(5, 15)
             // This task only runs one time when the client first starts.

@@ -22,7 +22,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use goose::{GooseAttack, task};
+use goose::{GooseAttack, task, taskset};
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 
 // Needed to wrap and store async functions.
@@ -34,7 +34,7 @@ use regex::Regex;
 
 fn main() {
     GooseAttack::initialize()
-        .register_taskset(GooseTaskSet::new("AnonBrowsingUser")
+        .register_taskset(taskset!("AnonBrowsingUser")
             .set_weight(4)
             .register_task(task!(drupal_loadtest_front_page)
                 .set_weight(15)
@@ -49,7 +49,7 @@ fn main() {
                 .set_name("(Anon) user page")
             )
         )
-        .register_taskset(GooseTaskSet::new("AuthBrowsingUser")
+        .register_taskset(taskset!("AuthBrowsingUser")
             .set_weight(1)
             .register_task(task!(drupal_loadtest_login)
                 .set_on_start()
