@@ -1,13 +1,13 @@
-use std::{thread, time};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+use std::{thread, time};
 
 use nng::*;
 
-use crate::{GooseAttack, GooseConfiguration, get_worker_id, WORKER_ID};
-use crate::goose::{GooseRequest, GooseClient, GooseClientCommand, GooseMethod};
+use crate::goose::{GooseClient, GooseClientCommand, GooseMethod, GooseRequest};
 use crate::manager::GooseClientInitializer;
 use crate::util;
+use crate::{get_worker_id, GooseAttack, GooseConfiguration, WORKER_ID};
 
 fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     if event == PipeEvent::RemovePost {
@@ -18,7 +18,10 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
 
 pub fn worker_main(goose_attack: &GooseAttack) {
     // Creates a TCP address.
-    let address = format!("tcp://{}:{}", goose_attack.configuration.manager_host, goose_attack.configuration.manager_port);
+    let address = format!(
+        "tcp://{}:{}",
+        goose_attack.configuration.manager_host, goose_attack.configuration.manager_port
+    );
     info!("worker connecting to manager at {}", &address);
 
     // Create a request socket.
@@ -51,7 +54,10 @@ pub fn worker_main(goose_attack: &GooseAttack) {
                 }
                 debug!("failed to communicate with manager at {}: {}.", &address, e);
                 let sleep_duration = time::Duration::from_millis(500);
-                debug!("sleeping {:?} milliseconds waiting for manager...", sleep_duration);
+                debug!(
+                    "sleeping {:?} milliseconds waiting for manager...",
+                    sleep_duration
+                );
                 thread::sleep(sleep_duration);
                 retries += 1;
             }
@@ -61,12 +67,14 @@ pub fn worker_main(goose_attack: &GooseAttack) {
     // Let manager know we're ready to work -- push empty HashMap.
     let mut requests: HashMap<String, GooseRequest> = HashMap::new();
     // "Fake" request for manager to validate this worker's load test hash.
-    requests.insert("load_test_hash".to_string(), GooseRequest::new(
-        "none",
-        GooseMethod::GET,
-        goose_attack.task_sets_hash,
-    ));
-    debug!("sending load test hash to manager: {}", goose_attack.task_sets_hash);
+    requests.insert(
+        "load_test_hash".to_string(),
+        GooseRequest::new("none", GooseMethod::GET, goose_attack.task_sets_hash),
+    );
+    debug!(
+        "sending load test hash to manager: {}",
+        goose_attack.task_sets_hash
+    );
     push_stats_to_manager(&manager, &requests, false);
 
     // Only send load_test_hash one time.
@@ -86,28 +94,30 @@ pub fn worker_main(goose_attack: &GooseAttack) {
                 std::process::exit(1);
             }
         };
-        let initializers: Vec<GooseClientInitializer> = match serde_cbor::from_reader(msg.as_slice()) {
-            Ok(i) => i,
-            Err(_) => {
-                let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice()) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!("invalid message received: {}", e);
-                        continue;
+        let initializers: Vec<GooseClientInitializer> =
+            match serde_cbor::from_reader(msg.as_slice()) {
+                Ok(i) => i,
+                Err(_) => {
+                    let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice())
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("invalid message received: {}", e);
+                            continue;
+                        }
+                    };
+                    match command {
+                        GooseClientCommand::EXIT => {
+                            warn!("received EXIT command from manager");
+                            std::process::exit(0);
+                        }
+                        other => {
+                            info!("received unknown command from manager: {:?}", other);
+                        }
                     }
-                };
-                match command {
-                    GooseClientCommand::EXIT => {
-                        warn!("received EXIT command from manager");
-                        std::process::exit(0);
-                    },
-                    other => {
-                        info!("received unknown command from manager: {:?}", other);
-                    }
+                    continue;
                 }
-                continue;
-            }
-        };
+            };
 
         let mut worker_id: usize = 0;
         // Allocate a state for each client that will be spawned.
@@ -127,13 +137,27 @@ pub fn worker_main(goose_attack: &GooseAttack) {
                 goose_attack.task_sets_hash,
             ));
             if hatch_rate == None {
-                hatch_rate = Some(1.0 / (initializer.config.hatch_rate as f32 / (initializer.config.expect_workers as f32)));
+                hatch_rate = Some(
+                    1.0 / (initializer.config.hatch_rate as f32
+                        / (initializer.config.expect_workers as f32)),
+                );
                 config = initializer.config;
-                info!("[{}] prepared to start 1 client every {:.2} seconds", worker_id, hatch_rate.unwrap());
+                info!(
+                    "[{}] prepared to start 1 client every {:.2} seconds",
+                    worker_id,
+                    hatch_rate.unwrap()
+                );
             }
         }
-        WORKER_ID.lock().unwrap().store(worker_id, Ordering::Relaxed);
-        info!("[{}] initialized {} client states", get_worker_id(), weighted_clients.len());
+        WORKER_ID
+            .lock()
+            .unwrap()
+            .store(worker_id, Ordering::Relaxed);
+        info!(
+            "[{}] initialized {} client states",
+            get_worker_id(),
+            weighted_clients.len()
+        );
         break;
     }
 
@@ -146,7 +170,11 @@ pub fn worker_main(goose_attack: &GooseAttack) {
         let msg = match manager.recv() {
             Ok(m) => m,
             Err(e) => {
-                error!("[{}] unexpected error receiving manager message: {}", get_worker_id(), e);
+                error!(
+                    "[{}] unexpected error receiving manager message: {}",
+                    get_worker_id(),
+                    e
+                );
                 std::process::exit(1);
             }
         };
@@ -165,11 +193,15 @@ pub fn worker_main(goose_attack: &GooseAttack) {
             GooseClientCommand::EXIT => {
                 warn!("[{}] received EXIT command from manager", get_worker_id());
                 std::process::exit(0);
-            },
+            }
             // Sleep and then loop again.
             _ => {
                 let sleep_duration = time::Duration::from_secs(1);
-                debug!("[{}] sleeping {:?} second waiting for manager...", get_worker_id(), sleep_duration);
+                debug!(
+                    "[{}] sleeping {:?} second waiting for manager...",
+                    get_worker_id(),
+                    sleep_duration
+                );
                 thread::sleep(sleep_duration);
             }
         }
@@ -177,16 +209,22 @@ pub fn worker_main(goose_attack: &GooseAttack) {
 
     // Worker is officially starting the load test.
     let started = time::Instant::now();
-    info!("[{}] entering gaggle mode, starting load test", get_worker_id());
+    info!(
+        "[{}] entering gaggle mode, starting load test",
+        get_worker_id()
+    );
     let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
 
     let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone());
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
     if config.run_time != "" {
         worker_goose_attack.run_time = util::parse_timespan(&config.run_time);
-        info!("[{}] run_time = {}", get_worker_id(), worker_goose_attack.run_time);
-    }
-    else {
+        info!(
+            "[{}] run_time = {}",
+            get_worker_id(),
+            worker_goose_attack.run_time
+        );
+    } else {
         worker_goose_attack.run_time = 0;
     }
     worker_goose_attack.weighted_clients = weighted_clients;
@@ -195,13 +233,25 @@ pub fn worker_main(goose_attack: &GooseAttack) {
     rt.block_on(worker_goose_attack.launch_clients(started, sleep_duration, Some(manager)));
 }
 
-pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>, get_response: bool) -> bool {
-    debug!("[{}] pushing stats to manager: {}", get_worker_id(), requests.len());
+pub fn push_stats_to_manager(
+    manager: &Socket,
+    requests: &HashMap<String, GooseRequest>,
+    get_response: bool,
+) -> bool {
+    debug!(
+        "[{}] pushing stats to manager: {}",
+        get_worker_id(),
+        requests.len()
+    );
     let mut buf: Vec<u8> = Vec::new();
     match serde_cbor::to_writer(&mut buf, requests) {
         Ok(_) => (),
         Err(e) => {
-            error!("[{}] failed to serialize empty Vec<GooseRequest>: {}", get_worker_id(), e);
+            error!(
+                "[{}] failed to serialize empty Vec<GooseRequest>: {}",
+                get_worker_id(),
+                e
+            );
             std::process::exit(1);
         }
     }
@@ -218,7 +268,11 @@ pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseR
         let msg = match manager.recv() {
             Ok(m) => m,
             Err(e) => {
-                error!("[{}] unexpected error receiving manager message: {}", get_worker_id(), e);
+                error!(
+                    "[{}] unexpected error receiving manager message: {}",
+                    get_worker_id(),
+                    e
+                );
                 std::process::exit(1);
             }
         };
@@ -234,7 +288,7 @@ pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseR
             GooseClientCommand::EXIT => {
                 warn!("[{}] received EXIT command from manager", get_worker_id());
                 return false;
-            },
+            }
             _ => (),
         }
     }

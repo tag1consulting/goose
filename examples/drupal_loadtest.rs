@@ -1,29 +1,29 @@
 //! Conversion of Locust load test used for the Drupal memcache module, from
 //! https://github.com/tag1consulting/drupal-loadtest/
-//! 
+//!
 //! To run, you must set up the load test environment as described in the above
 //! repository, and then run the example. You'll need to set --host and may want
 //! to set other command line options as well, starting with:
-//!      cargo run --release --example drupal_loadtest -- 
-//! 
+//!      cargo run --release --example drupal_loadtest --
+//!
 //! ## License
-//! 
+//!
 //! Copyright 2020 Jeremy Andrews
-//! 
+//!
 //! Licensed under the Apache License, Version 2.0 (the "License");
 //! you may not use this file except in compliance with the License.
 //! You may obtain a copy of the License at
-//! 
+//!
 //! http://www.apache.org/licenses/LICENSE-2.0
-//! 
+//!
 //! Unless required by applicable law or agreed to in writing, software
 //! distributed under the License is distributed on an "AS IS" BASIS,
 //! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use goose::{GooseAttack, task, taskset};
-use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+use goose::goose::{GooseClient, GooseTask, GooseTaskSet};
+use goose::{task, taskset, GooseAttack};
 
 // Needed to wrap and store async functions.
 use std::boxed::Box;
@@ -31,46 +31,55 @@ use std::boxed::Box;
 use rand::Rng;
 use regex::Regex;
 
-
 fn main() {
     GooseAttack::initialize()
-        .register_taskset(taskset!("AnonBrowsingUser")
-            .set_weight(4)
-            .register_task(task!(drupal_loadtest_front_page)
-                .set_weight(15)
-                .set_name("(Anon) front page")
-            )
-            .register_task(task!(drupal_loadtest_node_page)
-                .set_weight(10)
-                .set_name("(Anon) node page")
-            )
-            .register_task(task!(drupal_loadtest_profile_page)
-                .set_weight(3)
-                .set_name("(Anon) user page")
-            )
+        .register_taskset(
+            taskset!("AnonBrowsingUser")
+                .set_weight(4)
+                .register_task(
+                    task!(drupal_loadtest_front_page)
+                        .set_weight(15)
+                        .set_name("(Anon) front page"),
+                )
+                .register_task(
+                    task!(drupal_loadtest_node_page)
+                        .set_weight(10)
+                        .set_name("(Anon) node page"),
+                )
+                .register_task(
+                    task!(drupal_loadtest_profile_page)
+                        .set_weight(3)
+                        .set_name("(Anon) user page"),
+                ),
         )
-        .register_taskset(taskset!("AuthBrowsingUser")
-            .set_weight(1)
-            .register_task(task!(drupal_loadtest_login)
-                .set_on_start()
-                .set_name("(Auth) login")
-            )
-            .register_task(task!(drupal_loadtest_front_page)
-                .set_weight(15)
-                .set_name("(Auth) front page")
-            )
-            .register_task(task!(drupal_loadtest_node_page)
-                .set_weight(10)
-                .set_name("(Auth) node page")
-            )
-            .register_task(task!(drupal_loadtest_profile_page)
-                .set_weight(3)
-                .set_name("(Auth) user page")
-            )
-            .register_task(task!(drupal_loadtest_post_comment)
-                .set_weight(3)
-                .set_name("(Auth) comment form")
-            )
+        .register_taskset(
+            taskset!("AuthBrowsingUser")
+                .set_weight(1)
+                .register_task(
+                    task!(drupal_loadtest_login)
+                        .set_on_start()
+                        .set_name("(Auth) login"),
+                )
+                .register_task(
+                    task!(drupal_loadtest_front_page)
+                        .set_weight(15)
+                        .set_name("(Auth) front page"),
+                )
+                .register_task(
+                    task!(drupal_loadtest_node_page)
+                        .set_weight(10)
+                        .set_name("(Auth) node page"),
+                )
+                .register_task(
+                    task!(drupal_loadtest_profile_page)
+                        .set_weight(3)
+                        .set_name("(Auth) user page"),
+                )
+                .register_task(
+                    task!(drupal_loadtest_post_comment)
+                        .set_weight(3)
+                        .set_name("(Auth) comment form"),
+                ),
         )
         .execute();
 }
@@ -81,26 +90,24 @@ async fn drupal_loadtest_front_page(client: &mut GooseClient) {
 
     // Grab some static assets from the front page.
     match response {
-        Ok(r) => {
-            match r.text().await {
-                Ok(t) => {
-                    let re = Regex::new(r#"src="(.*?)""#).unwrap();
-                    for url in re.captures_iter(&t) {
-                        if url[1].contains("/misc") || url[1].contains("/themes") {
-                            let _response = client.set_request_name("static asset").get(&url[1]);
-                        }
+        Ok(r) => match r.text().await {
+            Ok(t) => {
+                let re = Regex::new(r#"src="(.*?)""#).unwrap();
+                for url in re.captures_iter(&t) {
+                    if url[1].contains("/misc") || url[1].contains("/themes") {
+                        let _response = client.set_request_name("static asset").get(&url[1]);
                     }
-                },
-                Err(e) => {
-                    eprintln!("failed to parse front page: {}", e);
-                    client.set_failure();
-                },
+                }
+            }
+            Err(e) => {
+                eprintln!("failed to parse front page: {}", e);
+                client.set_failure();
             }
         },
         Err(e) => {
             eprintln!("unexpected error when loading front page: {}", e);
             client.set_failure();
-        },
+        }
     }
 }
 
@@ -123,7 +130,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
         Ok(r) => {
             match r.text().await {
                 Ok(html) => {
-                    let re = Regex::new( r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
+                    let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
@@ -167,7 +174,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
             match r.text().await {
                 Ok(html) => {
                     // Extract the form_build_id from the user login form.
-                    let re = Regex::new( r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
+                    let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
@@ -177,7 +184,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         }
                     };
 
-                    let re = Regex::new( r#"name="form_token" value=['"](.*?)['"]"#).unwrap();
+                    let re = Regex::new(r#"name="form_token" value=['"](.*?)['"]"#).unwrap();
                     let form_token = match re.captures(&html) {
                         Some(f) => f,
                         None => {
@@ -187,7 +194,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         }
                     };
 
-                    let re = Regex::new( r#"name="form_id" value=['"](.*?)['"]"#).unwrap();
+                    let re = Regex::new(r#"name="form_id" value=['"](.*?)['"]"#).unwrap();
                     let form_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
@@ -208,7 +215,8 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
-                    let request_builder = client.goose_post(format!("/comment/reply/{}", &nid).as_str());
+                    let request_builder =
+                        client.goose_post(format!("/comment/reply/{}", &nid).as_str());
                     let response = client.goose_send(request_builder.form(&params)).await;
                     match response {
                         Ok(r) => {
@@ -220,7 +228,10 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("unexpected error when posting to comment/reply/{}: {}", &nid, e);
+                                    eprintln!(
+                                        "unexpected error when posting to comment/reply/{}: {}",
+                                        &nid, e
+                                    );
                                     client.set_failure();
                                 }
                             }

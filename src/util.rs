@@ -1,9 +1,9 @@
-use std::cmp::{min, max};
+use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use std::str::FromStr;
-use std::time;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time;
 
 use regex::Regex;
 
@@ -18,7 +18,8 @@ pub fn parse_timespan(time_str: &str) -> usize {
         }
         // Otherwise use a regex to extract hours, minutes and seconds from string.
         Err(_) => {
-            let re = Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?").unwrap();
+            let re = Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?")
+                .unwrap();
             let time_matches = re.captures(time_str).unwrap();
             let hours = match time_matches.name("hours") {
                 Some(_) => usize::from_str(&time_matches["hours"]).unwrap(),
@@ -33,7 +34,13 @@ pub fn parse_timespan(time_str: &str) -> usize {
                 None => 0,
             };
             let total = hours * 60 * 60 + minutes * 60 + seconds;
-            trace!("{} hours {} minutes {} seconds: {} seconds", hours, minutes, seconds, total);
+            trace!(
+                "{} hours {} minutes {} seconds: {} seconds",
+                hours,
+                minutes,
+                seconds,
+                total
+            );
             total
         }
     };
@@ -44,13 +51,14 @@ pub fn parse_timespan(time_str: &str) -> usize {
 /// More detail: https://en.wikipedia.org/wiki/Binary_GCD_algorithm
 pub fn gcd(u: usize, v: usize) -> usize {
     let gcd = match ((u, v), (u & 1, v & 1)) {
-        ((x, y), _) if x == y               => x,
+        ((x, y), _) if x == y => x,
         ((x, y), (0, 1)) | ((y, x), (1, 0)) => gcd(x >> 1, y),
-        ((x, y), (0, 0))                    => gcd(x >> 1, y >> 1) << 1,
-        ((x, y), (1, 1))                    => { let (x, y) = (min(x, y), max(x, y)); 
-                                                 gcd((y - x) >> 1, x) 
-                                               }
-        _                                   => unreachable!(),
+        ((x, y), (0, 0)) => gcd(x >> 1, y >> 1) << 1,
+        ((x, y), (1, 1)) => {
+            let (x, y) = (min(x, y), max(x, y));
+            gcd((y - x) >> 1, x)
+        }
+        _ => unreachable!(),
     };
     gcd
 }
@@ -72,11 +80,9 @@ pub fn median(
             // return the actual values;
             if *value > max {
                 return max;
-            }
-            else if *value < min {
+            } else if *value < min {
                 return min;
-            }
-            else {
+            } else {
                 return *value;
             }
         }
@@ -99,8 +105,7 @@ pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
 pub fn timer_expired(started: time::Instant, run_time: usize) -> bool {
     if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
         true
-    }
-    else {
+    } else {
         false
     }
 }
@@ -112,8 +117,7 @@ pub fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
         if caught_ctrlc.load(Ordering::SeqCst) {
             warn!("caught another ctrl-c, exiting immediately...");
             std::process::exit(1);
-        }
-        else {
+        } else {
             warn!("caught ctrl-c, stopping...");
             caught_ctrlc.store(true, Ordering::SeqCst);
         }
@@ -214,7 +218,7 @@ mod tests {
         btree.insert(100, 20);
         // 2: 1, 5: 3, 25: 20, 100: 5
         assert_eq!(median(&btree, 29, 2, 100), 100);
-        
+
         // We round response times, be sure we return min or max when appropriate.
         let mut btree: BTreeMap<usize, usize> = BTreeMap::new();
         btree.insert(100, 3);
@@ -231,7 +235,10 @@ mod tests {
 
     #[test]
     fn truncate() {
-        assert_eq!(truncate_string("the quick brown fox", 25), "the quick brown fox");
+        assert_eq!(
+            truncate_string("the quick brown fox", 25),
+            "the quick brown fox"
+        );
         assert_eq!(truncate_string("the quick brown fox", 10), "the quic..");
         assert_eq!(truncate_string("abcde", 5), "abcde");
         assert_eq!(truncate_string("abcde", 4), "ab..");
