@@ -20,3 +20,5 @@ jobs:
       run: cargo build --verbose --all-features
     - name: Run tests
       run: cargo test --verbose --all-features
+    - name: Verify code formatting
+      run: cargo fmt -- --check
