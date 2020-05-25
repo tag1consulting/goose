@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.7.0-dev
+## 0.7.1-dev
+ - no longer compile Reqwest blocking client
+
+## 0.7.0 May 25, 2020
  - initial async support
 
 ## 0.6.3-dev
@@ -10,7 +13,7 @@
  - cleanup gaggle logic and comments
 
 ## 0.6.2 May 18, 2020
- - replace `unsafe` code blocks with lazy_static singleton
+ - replace `unsafe` code blocks with `lazy_static` singleton
  - perform checksum to confirm workers are running same load test,
    `--no-hash-check` to ignore
  - code and documentation consistency

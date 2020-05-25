@@ -1,6 +1,6 @@
 [package]
 name = "goose"
-version = "0.7.0"
+version = "0.7.1-dev"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A load testing tool inspired by Locust."
@@ -21,7 +21,7 @@ num_cpus = "1.0"
 num-format = "0.4"
 rand = "0.7"
 regex = "1"
-reqwest = { version = "0.10", features = ["blocking", "cookies", "json"] }
+reqwest = { version = "0.10", features = ["cookies", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 simplelog = "0.7"
