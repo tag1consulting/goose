@@ -532,10 +532,10 @@ impl GooseAttack {
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(task!(example_task)))
+    ///             .register_task(task!(example_task))
     ///         )
     ///         .register_taskset(GooseTaskSet::new("OtherTasks")
-    ///             .register_task(GooseTask::new(task!(other_task)))
+    ///             .register_task(task!(other_task))
     ///         );
     ///
     ///     async fn example_task(client: &mut GooseClient) {
@@ -646,8 +646,8 @@ impl GooseAttack {
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(task!(example_task)).set_weight(2))
-    ///             .register_task(GooseTask::new(task!(another_example_task)).set_weight(3))
+    ///             .register_task(task!(example_task).set_weight(2))
+    ///             .register_task(task!(another_example_task).set_weight(3))
     ///         )
     ///         .execute();
     ///
