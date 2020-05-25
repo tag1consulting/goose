@@ -1247,7 +1247,7 @@ impl GooseClient {
         }
 
         // Consume self.request_name if it was set.
-        if let Some(_) = self.request_name {
+        if self.request_name.is_some() {
             self.request_name = None
         }
 

@@ -58,7 +58,7 @@ pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapse
             0.0
         };
         // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-        if fail_percent == 100.0 || fail_percent == 0.0 {
+        if fail_percent as usize == 100 || fail_percent as usize == 0 {
             println!(
                 " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                 util::truncate_string(&request_key, 23),
@@ -96,7 +96,7 @@ pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapse
         };
         println!(" ------------------------+----------------+----------------+--------+--------- ");
         // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-        if aggregate_fail_percent == 100.0 || aggregate_fail_percent == 0.0 {
+        if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
             println!(
                 " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                 "Aggregated",
