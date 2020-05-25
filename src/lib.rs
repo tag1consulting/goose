@@ -296,7 +296,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::{thread, time};
+use std::time;
 
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
@@ -916,7 +916,7 @@ impl GooseAttack {
                 clients.push(client);
                 self.active_clients += 1;
                 debug!("sleeping {:?} milliseconds...", sleep_duration);
-                thread::sleep(sleep_duration);
+                tokio::time::delay_for(sleep_duration).await;
             }
             else {
                 warn!("no tasks for thread {} to run", self.task_sets[thread_client.task_sets_index].name);
@@ -976,7 +976,7 @@ impl GooseAttack {
                         display_running_statistics = true;
                         // Give client threads time to send statstics.
                         let pause = time::Duration::from_millis(100);
-                        thread::sleep(pause);
+                        tokio::time::delay_for(pause).await;
                     }
                 }
 
@@ -1103,7 +1103,7 @@ impl GooseAttack {
             }
 
             let one_second = time::Duration::from_secs(1);
-            thread::sleep(one_second);
+            tokio::time::delay_for(one_second).await;
         }
         self
     }
