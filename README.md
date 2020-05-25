@@ -5,7 +5,7 @@ Have you ever been attacked by a goose?
 [![crates.io](https://img.shields.io/crates/v/goose.svg)](https://crates.io/crates/goose)
 [![Documentation](https://docs.rs/goose/badge.svg)](https://docs.rs/goose)
 [![Apache-2.0 licensed](https://img.shields.io/crates/l/goose.svg)](./LICENSE)
-[![CI](https://github.com/jeremyandrews/goose/workflows/CI/badge.svg)](https://github.com/jeremyandrews/goose/actions?query=workflow%3ACI)
+[![CI](https://github.com/tag1consulting/goose/workflows/CI/badge.svg)](https://github.com/tag1consulting/goose/actions?query=workflow%3ACI)
 
 ## Overview
 
@@ -38,7 +38,7 @@ heading:
 
 ```toml
 [dependencies]
-goose = "^0.6"
+goose = "^0.7"
 ```
 
 At this point it's possible to compile all dependencies, though the
@@ -47,10 +47,9 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.6.2
+  Downloaded goose v0.7.0
       ...
-   Compiling reqwest v0.10.4
-   Compiling goose v0.6.2
+   Compiling goose v0.7.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -61,22 +60,24 @@ To create an actual load test, you first have to add the following boilerplate
 to the top of `src/main.rs`:
 
 ```rust
-use goose::GooseAttack;
+use goose::{GooseAttack, task, taskset};
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+use std::boxed::Box;
 ```
 
 Then create a new load testing function. For our example we're simply going
 to load the front page of the website we're load-testing. Goose passes all
 load testing functions a mutable pointer to a GooseClient object, which is used
 to track statistics and make web requests. Thanks to the Reqwest library, the
-Goose client manages things like cookies, headers, and sessions for you.
+Goose client manages things like cookies, headers, and sessions for you. Load
+testing functions must be declared async.
 
 In load tests functions you typically do not set the host, and instead configure
 the host at run time, so you can easily run your load test against different
 environments without recompiling:
 
 ```rust
-fn loadtest_index(client: &mut GooseClient) {
+async fn loadtest_index(client: &mut GooseClient) {
     let _response = client.get("/");
 }
 ```
@@ -87,8 +88,8 @@ it as follows:
 ```rust
 fn main() {
     GooseAttack::initialize()
-        .register_taskset(GooseTaskSet::new("LoadtestTasks")
-            .register_task(GooseTask::new(loadtest_index))
+        .register_taskset(taskset!("LoadtestTasks")
+            .register_task(task!(loadtest_index))
         )
         .execute();
 }
@@ -148,7 +149,7 @@ split out in the statistics, along with a line showing all totaled together in
 aggregate.
 
 Refer to the
-[examples directory](https://github.com/jeremyandrews/goose/tree/master/examples)
+[examples directory](https://github.com/tag1consulting/goose/tree/master/examples)
 for more complicated and useful load test examples.
 
 ## Tips
@@ -163,10 +164,10 @@ optimized code. This can generate considerably more load test traffic.
 
 The `-h` flag will show all run-time configuration options available to Goose
 load tests. For example, pass the `-h` flag to the `simple` example,
-`cargo run --example simple -- --no-hash-check -h`:
+`cargo run --example simple -- -h`:
 
 ```
-client 0.6.2
+client 0.7.0
 CLI options available when launching a Goose loadtest
 
 USAGE:
@@ -305,7 +306,7 @@ feature in the `dependencies` section of your `Cargo.toml`, for example:
 
 ```toml
 [dependencies]
-goose = { version = "^0.6", features = ["gaggle"] }
+goose = { version = "^0.7", features = ["gaggle"] }
 ```
 
 ### Goose Manager
@@ -350,7 +351,8 @@ and the test will stop on all servers.
 ### Goose Run-time Flags
 
 * `--manager`: starts a Goose process in manager mode. There currently can only be one manager per Gaggle.
-* `--worker`: stars a Goose process in worker mode. How many workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
+* `--worker`: starts a Goose process in worker mode. How many workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
+* `--no-hash-check`: tells Goose to ignore if the load test applications don't match between worker(s) and manager. Not recommended.
 
 The `--no-stats`, `--only-summary`, `--reset-stats`, and `--status-codes` flags must be set on the manager. Workers inheret these flags from the manager
 
@@ -375,4 +377,4 @@ statistics up to the manager process.
 
 ## Roadmap
 
-The Goose project roadmap is documented in [TODO.md](https://github.com/jeremyandrews/goose/blob/master/TODO.md).
+The Goose project roadmap is documented in [TODO.md](https://github.com/tag1consulting/goose/blob/master/TODO.md).

@@ -8,9 +8,8 @@
 //! Goose load tests, called Goose Attacks, are built by creating an application
 //! with Cargo, and declaring a dependency on the Goose library.
 //!
-//! Goose uses the [`reqwest::blocking`](https://docs.rs/reqwest/*/reqwest/blocking/)
-//! API to provide a convenient HTTP client. (Async support is on the roadmap, also
-//! provided through the `reqwest` library.)
+//! Goose uses [`reqwest`](https://docs.rs/reqwest/) to provide a convenient HTTP
+//! client.
 //!
 //! ## Creating and running a Goose load test
 //!
@@ -28,20 +27,21 @@
 //!
 //! ```toml
 //! [dependencies]
-//! goose = "0.6"
+//! goose = "0.7"
 //! ```
 //!
 //! Add the following boilerplate use declarations at the top of your `src/main.rs`:
 //!
 //! ```rust
-//! use goose::GooseAttack;
+//! use goose::{GooseAttack, task, taskset};
 //! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+//! use std::boxed::Box;
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
 //! one or more load test functions. The names of these functions are arbitrary, but it is
-//! recommended you use self-documenting names. Each load test function must accept a mutable
-//! GooseClient pointer. For example:
+//! recommended you use self-documenting names. Load test functions must be async. Each load
+//! test function must accept a mutable GooseClient pointer. For example:
 //!
 //! ```rust
 //! use goose::goose::GooseClient;
@@ -64,12 +64,13 @@
 //!
 //! async fn loadtest_bar(client: &mut GooseClient) {
 //!   let request_builder = client.goose_get("/path/to/bar");
-//!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3)));
+//!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3))).await;
 //! }   
 //! ```
 //!
 //! We pass the `request_builder` object to `goose_send` which builds and executes it, also
-//! collecting useful statistics.
+//! collecting useful statistics. The `.await` at the end is necessary as `goose_send` is an
+//! async function.
 //!
 //! Once all our tasks are created, we edit the main function to initialize goose and register
 //! the tasks. In this very simple example we only have two tasks to register, while in a real
@@ -205,17 +206,17 @@
 //! ```bash
 //!  Name                    | Avg (ms)   | Min        | Max        | Mean      
 //!  -----------------------------------------------------------------------------
-//!  GET /path/to/foo        | 0.67       | 0.31       | 13.51      | 0.53      
-//!  GET bar                 | 0.60       | 0.33       | 13.42      | 0.53      
+//!  GET /path/to/foo        | 67         | 31         | 1351       | 53      
+//!  GET bar                 | 60         | 33         | 1342       | 53      
 //!  ------------------------+------------+------------+------------+-------------
-//!  Aggregated              | 0.66       | 0.31       | 13.51      | 0.56      
+//!  Aggregated              | 66         | 31         | 1351       | 56      
 //! ```
 //!
 //! The second table in running statistics provides details on response times. In our
 //! example (which is running over wifi from my development laptop), on average each
-//! page is returning within `0.66` milliseconds. The quickest page response was for
-//! `foo` within `0.31` milliseconds. The slowest page response was also for `foo` within
-//! `13.51` milliseconds.
+//! page is returning within `66` milliseconds. The quickest page response was for
+//! `foo` in `31` milliseconds. The slowest page response was also for `foo` in `1351`
+//! milliseconds.
 //!
 //!
 //! ```bash
@@ -239,32 +240,32 @@
 //! -------------------------------------------------------------------------------
 //!  Name                    | Avg (ms)   | Min        | Max        | Mean      
 //!  -----------------------------------------------------------------------------
-//!  GET bar                 | 0.66       | 0.32       | 108.87     | 0.53      
-//!  GET /path/to/foo        | 0.68       | 0.31       | 109.50     | 0.53      
+//!  GET bar                 | 66         | 32         | 1388       | 53      
+//!  GET /path/to/foo        | 68         | 31         | 1395       | 53      
 //!  ------------------------+------------+------------+------------+-------------
-//!  Aggregated              | 0.67       | 0.31       | 109.50     | 0.50      
+//!  Aggregated              | 67         | 31         | 1395       | 50      
 //! -------------------------------------------------------------------------------
 //! ```
 //!
 //! The ratio between `foo` and `bar` remained 5:2 as expected. As the test ran,
 //! however, we saw some slower page loads, with the slowest again `foo` this time
-//! at `109.50` milliseconds.
+//! at 1395 milliseconds.
 //!
 //! ```bash
 //! Slowest page load within specified percentile of requests (in ms):
 //! ------------------------------------------------------------------------------
 //! Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
 //! -----------------------------------------------------------------------------
-//! GET bar                 | 0.53   | 0.66   | 2.17   | 5.37   | 18.72  | 123.16
-//! GET /path/to/foo        | 0.53   | 0.66   | 2.65   | 10.60  | 18.00  | 107.32
-//! ------------------------+------------+------------+------------+-------------
-//! Aggregated              | 0.53   | 0.66   | 2.37   | 6.45   | 18.32  | 108.18
+//! GET bar                 | 53     | 66     | 217   | 537     | 1872   | 12316
+//! GET /path/to/foo        | 53     | 66     | 265   | 1060    | 1800   | 10732
+//! ------------------------+--------+--------+-------+---------+--------+-------
+//! Aggregated              | 53     | 66     | 237   | 645     | 1832   | 10818
 //! ```
 //!
 //! A new table shows additional information, breaking down response-time by
 //! percentile. This shows that the slowest page loads only happened in the
 //! slowest .001% of page loads, so were very much an edge case. 99.9% of the time
-//! page loads happened in less than 20 milliseconds.
+//! page loads happened in less than 2 seconds.
 //!
 //! ## License
 //!
@@ -284,9 +285,6 @@
 
 #[macro_use]
 extern crate log;
-
-//#[macro_use]
-//extern crate goose_codegen;
 
 extern crate structopt;
 
