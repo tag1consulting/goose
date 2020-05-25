@@ -25,9 +25,6 @@
 use goose::goose::{GooseClient, GooseTask, GooseTaskSet};
 use goose::{task, taskset, GooseAttack};
 
-// Needed to wrap and store async functions.
-use std::boxed::Box;
-
 use rand::Rng;
 use regex::Regex;
 

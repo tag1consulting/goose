@@ -35,7 +35,6 @@
 //! ```rust
 //! use goose::{GooseAttack, task, taskset};
 //! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
-//! use std::boxed::Box;
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
@@ -79,9 +78,6 @@
 //! ```rust,no_run
 //! use goose::{GooseAttack, task, taskset};
 //! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
-//!
-//! // Needed to wrap and store async functions.
-//! use std::boxed::Box;
 //!
 //! GooseAttack::initialize()
 //!     .register_taskset(taskset!("LoadtestTasks")
@@ -531,9 +527,6 @@ impl GooseAttack {
     ///     use goose::{GooseAttack, task, taskset};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task))
@@ -649,9 +642,6 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::{GooseAttack, task, taskset};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(taskset!("ExampleTasks")

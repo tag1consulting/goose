@@ -62,7 +62,6 @@ to the top of `src/main.rs`:
 ```rust
 use goose::{GooseAttack, task, taskset};
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
-use std::boxed::Box;
 ```
 
 Then create a new load testing function. For our example we're simply going

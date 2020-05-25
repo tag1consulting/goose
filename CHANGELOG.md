@@ -2,6 +2,7 @@
 
 ## 0.7.1-dev
  - no longer compile Reqwest blocking client
+ - remove need to declare `use std::boxed::Box` in load tests
 
 ## 0.7.0 May 25, 2020
  - initial async support
