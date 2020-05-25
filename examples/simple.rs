@@ -17,8 +17,12 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use goose::boilerplate;
-boilerplate!();
+use goose::{GooseAttack, task};
+use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+
+// Needed to wrap and store async functions.
+use std::boxed::Box;
+
 
 fn main() {
     GooseAttack::initialize()

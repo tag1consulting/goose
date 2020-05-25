@@ -524,8 +524,11 @@ impl GooseAttack {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseAttack, task;
+    ///     use goose::{GooseAttack, task};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///
+    ///     // Needed to wrap and store async functions.
+    ///     use std::boxed::Box;
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
@@ -535,11 +538,11 @@ impl GooseAttack {
     ///             .register_task(GooseTask::new(task!(other_task)))
     ///         );
     ///
-    ///     fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &mut GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     fn other_task(client: &mut GooseClient) {
+    ///     async fn other_task(client: &mut GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
@@ -635,21 +638,24 @@ impl GooseAttack {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseAttack;
+    ///     use goose::{GooseAttack, task};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///
+    ///     // Needed to wrap and store async functions.
+    ///     use std::boxed::Box;
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(example_task).set_weight(2))
-    ///             .register_task(GooseTask::new(another_example_task).set_weight(3))
+    ///             .register_task(GooseTask::new(task!(example_task)).set_weight(2))
+    ///             .register_task(GooseTask::new(task!(another_example_task)).set_weight(3))
     ///         )
     ///         .execute();
     ///
-    ///     fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &mut GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     fn another_example_task(client: &mut GooseClient) {
+    ///     async fn another_example_task(client: &mut GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
