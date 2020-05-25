@@ -355,7 +355,7 @@ impl GooseTaskSet {
     /// ```
     pub fn new(name: &str) -> Self {
         trace!("new taskset: name: {}", &name);
-        let task_set = GooseTaskSet {
+        GooseTaskSet {
             name: name.to_string(),
             task_sets_index: usize::max_value(),
             weight: 1,
@@ -366,8 +366,7 @@ impl GooseTaskSet {
             weighted_on_start_tasks: Vec::new(),
             weighted_on_stop_tasks: Vec::new(),
             host: None,
-        };
-        task_set
+        }
     }
 
     /// Registers a GooseTask with a GooseTaskSet, where it is stored in the GooseTaskSet.tasks vector. The
@@ -551,7 +550,7 @@ impl GooseRequest {
         trace!("new request");
         GooseRequest {
             path: path.to_string(),
-            method: method,
+            method,
             response_times: BTreeMap::new(),
             min_response_time: 0,
             max_response_time: 0,
@@ -560,7 +559,7 @@ impl GooseRequest {
             status_code_counts: HashMap::new(),
             success_count: 0,
             fail_count: 0,
-            load_test_hash: load_test_hash,
+            load_test_hash,
         }
     }
 
@@ -720,13 +719,13 @@ impl GooseClient {
             }
         };
         GooseClient {
-            task_sets_index: task_sets_index,
-            default_host: default_host,
-            task_set_host: task_set_host,
-            client: client,
+            task_sets_index,
+            default_host,
+            task_set_host,
+            client,
             config: configuration.clone(),
-            min_wait: min_wait,
-            max_wait: max_wait,
+            min_wait,
+            max_wait,
             // A value of max_value() indicates this client isn't fully initialized yet.
             weighted_clients_index: usize::max_value(),
             mode: GooseClientMode::INIT,
@@ -742,7 +741,7 @@ impl GooseClient {
             previous_request_name: None,
             was_success: false,
             requests: HashMap::new(),
-            load_test_hash: load_test_hash,
+            load_test_hash,
         }
     }
 
@@ -815,7 +814,7 @@ impl GooseClient {
     fn set_request(&mut self, path: &str, method: &GooseMethod, request: GooseRequest) {
         let key = format!("{:?} {}", method, path);
         trace!("set key: {}", &key);
-        self.requests.insert(key, request.clone());
+        self.requests.insert(key, request);
     }
 
     /// A helper that pre-pends a hostname to the path. For example, if you pass in `/foo`
@@ -838,18 +837,17 @@ impl GooseClient {
             }
         }
 
-        let base_url;
-        // If the `--host` CLI option is set, use it to build the URL
-        if self.config.host.len() > 0 {
-            base_url = Url::parse(&self.config.host).unwrap();
+        let base_url = if !self.config.host.is_empty() {
+            // If the `--host` CLI option is set, use it to build the URL
+            Url::parse(&self.config.host).unwrap()
         } else {
-            base_url = match &self.task_set_host {
+            match &self.task_set_host {
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
                 Some(host) => Url::parse(host).unwrap(),
                 // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
                 None => Url::parse(&self.default_host.clone().unwrap()).unwrap(),
-            };
-        }
+            }
+        };
         match base_url.join(path) {
             Ok(url) => url.to_string(),
             Err(e) => {
@@ -887,8 +885,7 @@ impl GooseClient {
     /// ```
     pub async fn get(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_get(path);
-        let response = self.goose_send(request_builder).await;
-        response
+        self.goose_send(request_builder).await
     }
 
     /// A helper to make a `POST` request of a path and collect relevant statistics.
@@ -916,8 +913,7 @@ impl GooseClient {
     /// ```
     pub async fn post(&mut self, path: &str, body: String) -> Result<Response, Error> {
         let request_builder = self.goose_post(path).body(body);
-        let response = self.goose_send(request_builder).await;
-        response
+        self.goose_send(request_builder).await
     }
 
     /// A helper to make a `HEAD` request of a path and collect relevant statistics.
@@ -945,8 +941,7 @@ impl GooseClient {
     /// ```
     pub async fn head(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_head(path);
-        let response = self.goose_send(request_builder).await;
-        response
+        self.goose_send(request_builder).await
     }
 
     /// A helper to make a `DELETE` request of a path and collect relevant statistics.
@@ -974,8 +969,7 @@ impl GooseClient {
     /// ```
     pub async fn delete(&mut self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_delete(path);
-        let response = self.goose_send(request_builder).await;
-        response
+        self.goose_send(request_builder).await
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1201,8 +1195,7 @@ impl GooseClient {
             let path = self
                 .previous_path
                 .clone()
-                .expect("failed to unwrap previous_path")
-                .to_string();
+                .expect("failed to unwrap previous_path");
             let method = self
                 .previous_method
                 .clone()
@@ -1254,10 +1247,9 @@ impl GooseClient {
         }
 
         // Consume self.request_name if it was set.
-        match self.request_name {
-            Some(_) => self.request_name = None,
-            None => (),
-        };
+        if let Some(_) = self.request_name {
+            self.request_name = None
+        }
 
         response
     }
@@ -1271,8 +1263,7 @@ impl GooseClient {
                 None => self
                     .previous_path
                     .clone()
-                    .expect("failed to unwrap previous_path")
-                    .to_string(),
+                    .expect("failed to unwrap previous_path"),
             },
         }
     }
@@ -1402,16 +1393,15 @@ impl GooseTask {
         function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
     ) -> Self {
         trace!("new task");
-        let task = GooseTask {
+        GooseTask {
             tasks_index: usize::max_value(),
             name: "".to_string(),
             weight: 1,
             sequence: 0,
             on_start: false,
             on_stop: false,
-            function: function,
-        };
-        task
+            function,
+        }
     }
 
     /// Set an optional name for the task, used when displaying statistics about

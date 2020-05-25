@@ -10,7 +10,7 @@ use regex::Regex;
 /// Parse a string representing a time span and return the number of seconds.
 /// Valid formats are: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
 pub fn parse_timespan(time_str: &str) -> usize {
-    let time = match usize::from_str(time_str) {
+    match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
         Ok(t) => {
             trace!("{} is integer: {} seconds", time_str, t);
@@ -43,14 +43,13 @@ pub fn parse_timespan(time_str: &str) -> usize {
             );
             total
         }
-    };
-    time
+    }
 }
 
 /// Calculate the greatest commond divisor using binary GCD (or Stein's) algorithm.
 /// More detail: https://en.wikipedia.org/wiki/Binary_GCD_algorithm
 pub fn gcd(u: usize, v: usize) -> usize {
-    let gcd = match ((u, v), (u & 1, v & 1)) {
+    match ((u, v), (u & 1, v & 1)) {
         ((x, y), _) if x == y => x,
         ((x, y), (0, 1)) | ((y, x), (1, 0)) => gcd(x >> 1, y),
         ((x, y), (0, 0)) => gcd(x >> 1, y >> 1) << 1,
@@ -59,8 +58,7 @@ pub fn gcd(u: usize, v: usize) -> usize {
             gcd((y - x) >> 1, x)
         }
         _ => unreachable!(),
-    };
-    gcd
+    }
 }
 
 /// Calculate median for a BTreeMap of usizes.
@@ -87,7 +85,7 @@ pub fn median(
             }
         }
     }
-    return 0;
+    0
 }
 
 /// Truncate strings when they're too long to display.
@@ -96,18 +94,14 @@ pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
     if string_to_truncate.len() as u64 > max_length {
         let truncated_length = max_length - 2;
         string_to_truncate.truncate(truncated_length as usize);
-        string_to_truncate = string_to_truncate + "..";
+        string_to_truncate += "..";
     }
     string_to_truncate
 }
 
 /// If run_time was specified, detect when it's time to shut down
 pub fn timer_expired(started: time::Instant, run_time: usize) -> bool {
-    if run_time > 0 && started.elapsed().as_secs() >= run_time as u64 {
-        true
-    } else {
-        false
-    }
+    run_time > 0 && started.elapsed().as_secs() >= run_time as u64
 }
 
 pub fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
