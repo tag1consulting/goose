@@ -304,19 +304,19 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 /// Async tasks must be boxed and pinned for Goose to store and invoke them.
 #[macro_export]
-macro_rules! taskset {
-    ($taskset_func:tt) => {
-        GooseTaskSet::new($taskset_func)
-    }
-}
-
-/// Async tasks must be boxed and pinned for Goose to store and invoke them.
-#[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
         GooseTask::new(
             move |s| Box::pin($task_func(s))
         )
+    }
+}
+
+/// For consistency, taskset!("foo") expands to GooseTaskSet::new("foo").
+#[macro_export]
+macro_rules! taskset {
+    ($taskset_func:tt) => {
+        GooseTaskSet::new($taskset_func)
     }
 }
 
