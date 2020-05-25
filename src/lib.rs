@@ -46,7 +46,7 @@
 //! ```rust
 //! use goose::goose::GooseClient;
 //!
-//! fn loadtest_foo(client: &mut GooseClient) {
+//! async fn loadtest_foo(client: &mut GooseClient) {
 //!   let _response = client.get("/path/to/foo");
 //! }   
 //! ```
@@ -62,7 +62,7 @@
 //!
 //! use goose::goose::GooseClient;
 //! 
-//! fn loadtest_bar(client: &mut GooseClient) {
+//! async fn loadtest_bar(client: &mut GooseClient) {
 //!   let request_builder = client.goose_get("/path/to/bar");
 //!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3)));
 //! }   
@@ -75,22 +75,36 @@
 //! the tasks. In this very simple example we only have two tasks to register, while in a real
 //! load test you can have any number of task sets with any number of individual tasks.
 //! 
-//! ```goose
+//! ```rust,no_run
+//! use goose::{GooseAttack, task, taskset};
+//! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+//! 
+//! // Needed to wrap and store async functions.
+//! use std::boxed::Box;
+//!
 //! fn main() {
 //!     GooseAttack::initialize()
-//!         .register_taskset(GooseTaskSet::new("LoadtestTasks")
+//!         .register_taskset(taskset!("LoadtestTasks")
 //!             .set_wait_time(0, 3)
 //!             // Register the foo task, assigning it a weight of 10.
-//!             .register_task(GooseTask::new(loadtest_foo).set_weight(10))
+//!             .register_task(task!(loadtest_foo).set_weight(10))
 //!             // Register the bar task, assigning it a weight of 2 (so it
 //!             // runs 1/5 as often as bar). Apply a task name which shows up
 //!             // in statistics.
-//!             .register_task(GooseTask::new(loadtest_bar).set_name("bar").set_weight(2))
+//!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2))
 //!         )
 //!         // You could also set a default host here, for example:
 //!         //.set_host("http://dev.local/")
 //!         .execute();
 //! }
+//!
+//! async fn loadtest_foo(client: &mut GooseClient) {
+//!   let _response = client.get("/path/to/foo");
+//! }   
+//!
+//! async fn loadtest_bar(client: &mut GooseClient) {
+//!   let _response = client.get("/path/to/bar");
+//! }   
 //! ```
 //! 
 //! Goose now spins up a configurable number of clients, each simulating a user on your
@@ -524,18 +538,18 @@ impl GooseAttack {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::{GooseAttack, task};
+    ///     use goose::{GooseAttack, task, taskset};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///
     ///     // Needed to wrap and store async functions.
     ///     use std::boxed::Box;
     ///
     ///     GooseAttack::initialize()
-    ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(task!(example_task)))
+    ///         .register_taskset(taskset!("ExampleTasks")
+    ///             .register_task(task!(example_task))
     ///         )
-    ///         .register_taskset(GooseTaskSet::new("OtherTasks")
-    ///             .register_task(GooseTask::new(task!(other_task)))
+    ///         .register_taskset(taskset!("OtherTasks")
+    ///             .register_task(task!(other_task))
     ///         );
     ///
     ///     async fn example_task(client: &mut GooseClient) {
@@ -638,16 +652,16 @@ impl GooseAttack {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::{GooseAttack, task};
+    ///     use goose::{GooseAttack, task, taskset};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///
     ///     // Needed to wrap and store async functions.
     ///     use std::boxed::Box;
     ///
     ///     GooseAttack::initialize()
-    ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(task!(example_task)).set_weight(2))
-    ///             .register_task(GooseTask::new(task!(another_example_task)).set_weight(3))
+    ///         .register_taskset(taskset!("ExampleTasks")
+    ///             .register_task(task!(example_task).set_weight(2))
+    ///             .register_task(task!(another_example_task).set_weight(3))
     ///         )
     ///         .execute();
     ///
