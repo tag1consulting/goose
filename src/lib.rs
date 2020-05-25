@@ -214,9 +214,9 @@
 //!
 //! The second table in running statistics provides details on response times. In our
 //! example (which is running over wifi from my development laptop), on average each
-//! page is returning within `0.66` milliseconds. The quickest page response was for
-//! `foo` within `0.31` milliseconds. The slowest page response was also for `foo` within
-//! `13.51` milliseconds.
+//! page is returning within `66` milliseconds. The quickest page response was for
+//! `foo` in `31` milliseconds. The slowest page response was also for `foo` in `1351`
+//! milliseconds.
 //!
 //!
 //! ```bash
@@ -249,7 +249,7 @@
 //!
 //! The ratio between `foo` and `bar` remained 5:2 as expected. As the test ran,
 //! however, we saw some slower page loads, with the slowest again `foo` this time
-//! at `109.50` milliseconds.
+//! at 1395 milliseconds.
 //!
 //! ```bash
 //! Slowest page load within specified percentile of requests (in ms):
