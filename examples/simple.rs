@@ -20,9 +20,6 @@
 use goose::goose::{GooseClient, GooseTask, GooseTaskSet};
 use goose::{task, taskset, GooseAttack};
 
-// Needed to wrap and store async functions.
-use std::boxed::Box;
-
 fn main() {
     GooseAttack::initialize()
         // In this example, we only create a single taskset, named "WebsiteUser".

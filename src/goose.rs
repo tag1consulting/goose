@@ -74,9 +74,6 @@
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
 //!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
-//!
 //!     let mut a_task = task!(task_function);
 //!
 //!     /// A very simple task that simply loads the front page.
@@ -93,9 +90,6 @@
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
-//!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
 //!
 //!     let mut a_task = task!(task_function).set_name("a");
 //!
@@ -114,9 +108,6 @@
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
-//!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
 //!
 //!     let mut a_task = task!(a_task_function).set_weight(9);
 //!     let mut b_task = task!(b_task_function).set_weight(3);
@@ -145,9 +136,6 @@
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
-//!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
 //!
 //!     let mut a_task = task!(a_task_function).set_sequence(1);
 //!     let mut b_task = task!(b_task_function).set_sequence(2);
@@ -181,9 +169,6 @@
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
 //!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
-//!
 //!     let mut a_task = task!(a_task_function).set_sequence(1).set_on_start();
 //!
 //!     /// A very simple task that simply loads the "a" page.
@@ -203,9 +188,6 @@
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
-//!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
 //!
 //!     let mut b_task = task!(b_task_function).set_sequence(2).set_on_stop();
 //!
@@ -236,9 +218,6 @@
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
 //!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
-//!
 //!     let mut task = task!(get_function);
 //!
 //!     /// A very simple task that makes a GET request.
@@ -260,9 +239,6 @@
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
-//!
-//!     // Needed to wrap and store async functions.
-//!     use std::boxed::Box;
 //!
 //!     let mut task = task!(post_function);
 //!
@@ -306,7 +282,7 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
-        GooseTask::new(move |s| Box::pin($task_func(s)))
+        GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
     };
 }
 
@@ -376,9 +352,6 @@ impl GooseTaskSet {
     /// ```rust
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
     ///     use goose::{task, taskset};
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut example_tasks = taskset!("ExampleTasks");
     ///     example_tasks.register_task(task!(a_task_function));
@@ -758,9 +731,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(get_function);
     ///
     ///     /// A very simple task that makes a GET request.
@@ -774,9 +744,6 @@ impl GooseClient {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -873,9 +840,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(get_function);
     ///
     ///     /// A very simple task that makes a GET request.
@@ -900,9 +864,6 @@ impl GooseClient {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut task = task!(post_function);
     ///
@@ -929,9 +890,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(head_function);
     ///
     ///     /// A very simple task that makes a HEAD request.
@@ -957,9 +915,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(delete_function);
     ///
     ///     /// A very simple task that makes a DELETE request.
@@ -982,9 +937,6 @@ impl GooseClient {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -1011,9 +963,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(post_function);
     ///
     ///     /// A simple task that makes a POST request, exposing the Reqwest
@@ -1038,9 +987,6 @@ impl GooseClient {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut task = task!(head_function);
     ///
@@ -1067,9 +1013,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(put_function);
     ///
     ///     /// A simple task that makes a PUT request, exposing the Reqwest
@@ -1095,9 +1038,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(patch_function);
     ///
     ///     /// A simple task that makes a PUT request, exposing the Reqwest
@@ -1122,9 +1062,6 @@ impl GooseClient {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut task = task!(delete_function);
     ///
@@ -1153,9 +1090,6 @@ impl GooseClient {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -1278,9 +1212,6 @@ impl GooseClient {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let mut task = task!(get_function);
     ///
     ///     /// A simple task that makes a GET request.
@@ -1322,9 +1253,6 @@ impl GooseClient {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let mut task = task!(loadtest_index_page);
     ///
@@ -1415,9 +1343,6 @@ impl GooseTask {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     task!(my_task_function).set_name("foo");
     ///
     ///     async fn my_task_function(client: &mut GooseClient) {
@@ -1444,9 +1369,6 @@ impl GooseTask {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     task!(my_on_start_function).set_on_start();
     ///
@@ -1475,9 +1397,6 @@ impl GooseTask {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     task!(my_on_stop_function).set_on_stop();
     ///
     ///     async fn my_on_stop_function(client: &mut GooseClient) {
@@ -1498,9 +1417,6 @@ impl GooseTask {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     task!(task_function).set_weight(3);
     ///
@@ -1538,9 +1454,6 @@ impl GooseTask {
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
     ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
-    ///
     ///     let runs_first = task!(first_task_function).set_sequence(3);
     ///     let runs_second = task!(second_task_function).set_sequence(5835);
     ///     let runs_last = task!(third_task_function);
@@ -1565,9 +1478,6 @@ impl GooseTask {
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
     ///     use goose::task;
-    ///
-    ///     // Needed to wrap and store async functions.
-    ///     use std::boxed::Box;
     ///
     ///     let runs_first = task!(first_task_function).set_sequence(1).set_weight(2);
     ///     let runs_second = task!(second_task_function_a).set_sequence(2);
