@@ -302,7 +302,7 @@ use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// Async tasks must be boxed and pinned for Goose to store and invoke them.
+/// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
@@ -310,11 +310,11 @@ macro_rules! task {
     };
 }
 
-/// For consistency, taskset!("foo") expands to GooseTaskSet::new("foo").
+/// taskset!("foo") expands to GooseTaskSet::new("foo").
 #[macro_export]
 macro_rules! taskset {
-    ($taskset_func:tt) => {
-        GooseTaskSet::new($taskset_func)
+    ($name:tt) => {
+        GooseTaskSet::new($name)
     };
 }
 
