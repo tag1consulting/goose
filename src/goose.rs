@@ -1,31 +1,31 @@
 //! Helpers and objects for building Goose load tests.
-//! 
+//!
 //! Goose manages load tests with a series of objects:
-//! 
+//!
 //! - [`GooseTaskSet`](./struct.GooseTaskSet.html) each client is assigned a task set, which is a collection of tasks.
 //! - [`GooseTask`](./struct.GooseTask.html) tasks define one or more web requests and are assigned to task sets.
 //! - [`GooseClient`](./struct.GooseClient.html) a client state responsible for repeatedly running all tasks in the assigned task set.
 //! - [`GooseRequest`](./struct.GooseRequest.html) optional statistics collected for each URL/method pair.
-//! 
+//!
 //! ## Creating Task Sets
-//! 
+//!
 //! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a `&str` name to the `new` function, for example:
-//! 
+//!
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
 //!     use goose::taskset;
 //!
 //!     let mut loadtest_tasks = taskset!("LoadtestTasks");
 //! ```
-//! 
+//!
 //! ### Task Set Weight
-//! 
+//!
 //! A weight can be assigned to a task set, controlling how often it is assigned to client
 //! threads. The larger the value of weight, the more it will be assigned to clients. In the
 //! following example, `FooTasks` will be assigned to clients twice as often as `Bar` tasks.
 //! We could have just added a weight of `2` to `FooTasks` and left the default weight of `1`
 //! assigned to `BarTasks` for the same weighting:
-//! 
+//!
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
 //!     use goose::taskset;
@@ -33,15 +33,15 @@
 //!     let mut foo_tasks = taskset!("FooTasks").set_weight(10);
 //!     let mut bar_tasks = taskset!("BarTasks").set_weight(5);
 //! ```
-//! 
+//!
 //! ### Task Set Host
-//! 
+//!
 //! A default host can be assigned to a task set, which will be used only if the `--host`
 //! CLI option is not set at run-time. For example, this can configure your load test to
 //! run against your local development environment by default, allowing the `--host` option
 //! to override host when you want to load test production. You can also assign different
 //! hosts to different task sets if this is desirable:
-//! 
+//!
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
 //!     use goose::taskset;
@@ -49,15 +49,15 @@
 //!     let mut foo_tasks = taskset!("FooTasks").set_host("http://www.local");
 //!     let mut bar_tasks = taskset!("BarTasks").set_host("http://www2.local");
 //! ```
-//! 
+//!
 //! ### Task Set Wait Time
-//! 
+//!
 //! Wait time is specified as a low-high integer range. Each time a task completes in
 //! the task set, the client will pause for a random number of seconds inclusively between
 //! the low and high wait times. In the following example, Clients loading `foo` tasks will
 //! sleep 0 to 3 seconds after each task completes, and Clients loading `bar` tasks will
 //! sleep 5 to 10 seconds after each task completes.
-//! 
+//!
 //! ```rust
 //!     use goose::goose::GooseTaskSet;
 //!     use goose::taskset;
@@ -66,10 +66,10 @@
 //!     let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10);
 //! ```
 //! ## Creating Tasks
-//! 
+//!
 //! A [`GooseTask`](./struct.GooseTask.html) must include a pointer to a function which
 //! will be executed each time the task is run.
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -84,12 +84,12 @@
 //!       let _response = client.get("/");
 //!     }
 //! ```
-//! 
+//!
 //! ### Task Name
-//! 
+//!
 //! A name can be assigned to a task, and will be displayed in statistics about all requests
 //! made by the task.
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -104,13 +104,13 @@
 //!       let _response = client.get("/");
 //!     }
 //! ```
-//! 
+//!
 //! ### Task Weight
-//! 
+//!
 //! Individual tasks can be assigned a weight, controlling how often the task runs. The
 //! larger the value of weight, the more it will run. In the following example, `a_task`
 //! runs 3 times as often as `b_task`:
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -131,9 +131,9 @@
 //!       let _response = client.get("/b/");
 //!     }
 //! ```
-//! 
+//!
 //! ### Task Sequence
-//! 
+//!
 //! Tasks can also be configured to run in a sequence. For example, a task with a sequence
 //! value of `1` will always run before a task with a sequence value of `2`. Weight can
 //! be applied to sequenced tasks, so for example a task with a weight of `2` and a sequence
@@ -141,7 +141,7 @@
 //! tasks with sequence values and without sequence values, and in this case all tasks with
 //! a sequence value will run before tasks without a sequence value. In the folllowing example,
 //! `a_task` runs before `b_task`, which runs before `c_task`:
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -168,15 +168,15 @@
 //!       let _response = client.get("/c/");
 //!     }
 //! ```
-//! 
+//!
 //! ### Task On Start
-//! 
+//!
 //! Tasks can be flagged to only run when a client first starts. This can be useful if you'd
 //! like your load test to use a logged-in user. It is possible to assign sequences and weights
 //! to `on_start` functions if you want to have multiple tasks run in a specific order at start
 //! time, and/or the tasks to run multiple times. A task can be flagged to run both on start
 //! and on stop.
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -191,15 +191,15 @@
 //!       let _response = client.get("/a/");
 //!     }
 //! ```
-//! 
+//!
 //! ### Task On Stop
-//! 
+//!
 //! Tasks can be flagged to only run when a client stops. This can be useful if you'd like your
 //! load test to simluate a user logging out when it finishes. It is possible to assign sequences
 //! and weights to `on_stop` functions if you want to have multiple tasks run in a specific order
 //! at stop time, and/or the tasks to run multiple times. A task can be flagged to run both on
 //! start and on stop.
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -214,24 +214,24 @@
 //!       let _response = client.get("/b/");
 //!     }
 //! ```
-//! 
+//!
 //! ## Controlling Clients
-//! 
+//!
 //! When Goose starts, it creates one or more [`GooseClient`](./struct.GooseClient.html)s,
 //! assigning a single [`GooseTaskSet`](./struct.GooseTaskSet.html) to each. This client is
 //! then used to generate load. Behind the scenes, Goose is leveraging the
 //! [`reqwest::blocking::client`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Client.html)
 //! to load web pages, and Goose can therefor do anything Reqwest can do.
-//! 
+//!
 //! The most common request types are [`GET`](./struct.GooseClient.html#method.get) and
 //! [`POST`](./struct.GooseClient.html#method.post), but [`HEAD`](./struct.GooseClient.html#method.head),
 //! PUT, PATCH and [`DELETE`](./struct.GooseClient.html#method.delete) are also supported.
-//! 
+//!
 //! ### GET
-//! 
+//!
 //! A helper to make a `GET` request of a path and collect relevant statistics.
 //! Automatically prepends the correct host.
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -246,17 +246,17 @@
 //!       let _response = client.get("/path/to/foo/");
 //!     }
 //! ```
-//! 
+//!
 //! The returned response is a [`reqwest::blocking::Response`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Response.html)
 //! struct. You can use it as you would any Reqwest Response.
-//! 
-//! 
+//!
+//!
 //! ### POST
-//! 
+//!
 //! A helper to make a `POST` request of a string value to the path and collect relevant
 //! statistics. Automatically prepends the correct host. The returned response is a
 //! [`reqwest::blocking::Response`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Response.html)
-//! 
+//!
 //! ```rust
 //!     use goose::goose::{GooseTask, GooseClient};
 //!     use goose::task;
@@ -271,31 +271,31 @@
 //!       let _response = client.post("/path/to/foo/", "string value to post".to_string());
 //!     }
 //! ```
-//! 
+//!
 //! ## License
-//! 
+//!
 //! Copyright 2020 Jeremy Andrews
-//! 
+//!
 //! Licensed under the Apache License, Version 2.0 (the "License");
 //! you may not use this file except in compliance with the License.
 //! You may obtain a copy of the License at
-//! 
+//!
 //! http://www.apache.org/licenses/LICENSE-2.0
-//! 
+//!
 //! Unless required by applicable law or agreed to in writing, software
 //! distributed under the License is distributed on an "AS IS" BASIS,
 //! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::collections::{HashMap, BTreeMap};
-use std::hash::{Hash, Hasher};
-use std::{time::Instant, future::Future, pin::Pin};
-use http::StatusCode;
 use http::method::Method;
-use reqwest::{Client, Response, RequestBuilder};
+use http::StatusCode;
 use reqwest::Error;
-use serde::{Serialize, Deserialize};
+use reqwest::{Client, RequestBuilder, Response};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
+use std::{future::Future, pin::Pin, time::Instant};
 use url::Url;
 
 use crate::GooseConfiguration;
@@ -306,10 +306,8 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
-        GooseTask::new(
-            move |s| Box::pin($task_func(s))
-        )
-    }
+        GooseTask::new(move |s| Box::pin($task_func(s)))
+    };
 }
 
 /// For consistency, taskset!("foo") expands to GooseTaskSet::new("foo").
@@ -317,7 +315,7 @@ macro_rules! task {
 macro_rules! taskset {
     ($taskset_func:tt) => {
         GooseTaskSet::new($taskset_func)
-    }
+    };
 }
 
 /// An individual task set.
@@ -347,7 +345,7 @@ pub struct GooseTaskSet {
 impl GooseTaskSet {
     /// Creates a new GooseTaskSet. Once created, GooseTasks must be assigned to it, and finally it must be
     /// registered with the GooseAttack object. The returned object must be stored in a mutable value.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
@@ -357,7 +355,7 @@ impl GooseTaskSet {
     /// ```
     pub fn new(name: &str) -> Self {
         trace!("new taskset: name: {}", &name);
-        let task_set = GooseTaskSet { 
+        let task_set = GooseTaskSet {
             name: name.to_string(),
             task_sets_index: usize::max_value(),
             weight: 1,
@@ -374,7 +372,7 @@ impl GooseTaskSet {
 
     /// Registers a GooseTask with a GooseTaskSet, where it is stored in the GooseTaskSet.tasks vector. The
     /// function associated with the task will be run during the load test.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
@@ -398,11 +396,11 @@ impl GooseTaskSet {
         self
     }
 
-    /// Sets a weight on a task set. The larger the value of weight, the more often the task set will 
+    /// Sets a weight on a task set. The larger the value of weight, the more often the task set will
     /// be assigned to clients. For example, if you have task set foo with a weight of 3, and task set
     /// bar with a weight of 1, and you spin up a load test with 8 clients, 6 of them will be running
     /// the foo task set, and 2 will be running the bar task set.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
@@ -415,8 +413,7 @@ impl GooseTaskSet {
         if weight < 1 {
             error!("{} weight of {} not allowed", self.name, weight);
             std::process::exit(1);
-        }
-        else {
+        } else {
             self.weight = weight;
         }
         self
@@ -426,7 +423,7 @@ impl GooseTaskSet {
     /// host will be pre-pended on all requests. For example, this can configure your load test to run
     /// against your local development environment by default, and the `--host` option could be used to
     /// override host when running the load test against production.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
@@ -444,7 +441,7 @@ impl GooseTaskSet {
     /// Configure a task_set to to pause after running each task. The length of the pause will be randomly
     /// selected from `min_weight` to `max_wait` inclusively.  For example, if `min_wait` is `0` and
     /// `max_weight` is `2`, the client will randomly sleep for 0, 1 or 2 seconds after each task completes.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::GooseTaskSet;
@@ -453,9 +450,17 @@ impl GooseTaskSet {
     ///     let mut example_tasks = taskset!("ExampleTasks").set_wait_time(0, 1);
     /// ```
     pub fn set_wait_time(mut self, min_wait: usize, max_wait: usize) -> Self {
-        trace!("{} set_wait time: min: {} max: {}", self.name, min_wait, max_wait);
+        trace!(
+            "{} set_wait time: min: {} max: {}",
+            self.name,
+            min_wait,
+            max_wait
+        );
         if min_wait > max_wait {
-            error!("min_wait({}) can't be larger than max_weight({})", min_wait, max_wait);
+            error!(
+                "min_wait({}) can't be larger than max_weight({})",
+                min_wait, max_wait
+            );
             std::process::exit(1);
         }
         self.min_wait = min_wait;
@@ -690,7 +695,16 @@ pub struct GooseClient {
 }
 impl GooseClient {
     /// Create a new client state.
-    pub fn new(counter: usize, task_sets_index: usize, default_host: Option<String>, task_set_host: Option<String>, min_wait: usize, max_wait: usize, configuration: &GooseConfiguration, load_test_hash: u64) -> Self {
+    pub fn new(
+        counter: usize,
+        task_sets_index: usize,
+        default_host: Option<String>,
+        task_set_host: Option<String>,
+        min_wait: usize,
+        max_wait: usize,
+        configuration: &GooseConfiguration,
+        load_test_hash: u64,
+    ) -> Self {
         trace!("new client");
         let builder = Client::builder()
             .user_agent(APP_USER_AGENT)
@@ -698,7 +712,10 @@ impl GooseClient {
         let client = match builder.build() {
             Ok(c) => c,
             Err(e) => {
-                error!("failed to build client {} for task {}: {}", counter, task_sets_index, e);
+                error!(
+                    "failed to build client {} for task {}: {}",
+                    counter, task_sets_index, e
+                );
                 std::process::exit(1);
             }
         };
@@ -730,13 +747,13 @@ impl GooseClient {
     }
 
     /// Sets a name for the next request made.
-    /// 
+    ///
     /// One example use case of this is to group together requests to different URLs in the
     /// statistics that don't need to be split out, perhaps because they're all the same type
     /// of page.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// In this example, the request will show up as "GET foo":
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -752,7 +769,7 @@ impl GooseClient {
     ///       let _response = client.set_request_name("foo").get("/path/to/foo");
     ///     }
     /// ```
-    /// 
+    ///
     /// In this example, the first request will show up in the statistics as "GET foo", and the
     /// second request will show up as "GET /path/to/foo".
     /// ```rust
@@ -773,8 +790,7 @@ impl GooseClient {
     pub fn set_request_name(&mut self, name: &str) -> &mut Self {
         if name != "" {
             self.request_name = Some(name.to_string());
-        }
-        else {
+        } else {
             self.request_name = None;
         }
         self
@@ -806,9 +822,9 @@ impl GooseClient {
     /// and `--host` is set to `http://127.0.0.1` it will return `http://127.0.0.1/foo`.
     /// Respects per-`GooseTaskSet` `host` configuration, global `GooseAttack` `host`
     /// configuration, and `--host` CLI configuration option.
-    /// 
+    ///
     /// If `path` is passed in with a hard-coded host, this will be used instead.
-    /// 
+    ///
     /// Host is defined in the following order:
     ///  - If `path` includes the host, use this
     ///  - Otherwise, if `--host` is defined, use this
@@ -818,7 +834,7 @@ impl GooseClient {
         // If URL includes a host, use it.
         if let Ok(parsed_path) = Url::parse(path) {
             if let Some(_uri) = parsed_path.host() {
-                return path.to_string()
+                return path.to_string();
             }
         }
 
@@ -826,8 +842,7 @@ impl GooseClient {
         // If the `--host` CLI option is set, use it to build the URL
         if self.config.host.len() > 0 {
             base_url = Url::parse(&self.config.host).unwrap();
-        }
-        else {
+        } else {
             base_url = match &self.task_set_host {
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
                 Some(host) => Url::parse(host).unwrap(),
@@ -838,7 +853,10 @@ impl GooseClient {
         match base_url.join(path) {
             Ok(url) => url.to_string(),
             Err(e) => {
-                error!("failed to build url from base {} and path {} for task {}: {}", &base_url, &path, self.task_sets_index, e);
+                error!(
+                    "failed to build url from base {} and path {} for task {}: {}",
+                    &base_url, &path, self.task_sets_index, e
+                );
                 std::process::exit(1);
             }
         }
@@ -846,12 +864,12 @@ impl GooseClient {
 
     /// A helper to make a `GET` request of a path and collect relevant statistics.
     /// Automatically prepends the correct host.
-    /// 
+    ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_get` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -875,12 +893,12 @@ impl GooseClient {
 
     /// A helper to make a `POST` request of a path and collect relevant statistics.
     /// Automatically prepends the correct host.
-    /// 
+    ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_post` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -904,12 +922,12 @@ impl GooseClient {
 
     /// A helper to make a `HEAD` request of a path and collect relevant statistics.
     /// Automatically prepends the correct host.
-    /// 
+    ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_head` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -933,12 +951,12 @@ impl GooseClient {
 
     /// A helper to make a `DELETE` request of a path and collect relevant statistics.
     /// Automatically prepends the correct host.
-    /// 
+    ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_delete` which returns a RequestBuilder,
     /// then call `goose_send` to invoke the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -963,9 +981,9 @@ impl GooseClient {
     /// Prepends the correct host on the path, then prepares a
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `GET` request.
-    /// 
+    ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -991,9 +1009,9 @@ impl GooseClient {
     /// Prepends the correct host on the path, then prepares a
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `POST` request.
-    /// 
+    ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1019,9 +1037,9 @@ impl GooseClient {
     /// Prepends the correct host on the path, then prepares a
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `HEAD` request.
-    /// 
+    ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1047,9 +1065,9 @@ impl GooseClient {
     /// Prepends the correct host on the path, then prepares a
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PUT` request.
-    /// 
+    ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1075,9 +1093,9 @@ impl GooseClient {
     /// Prepends the correct host on the path, then prepares a
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PATCH` request.
-    /// 
+    ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1103,9 +1121,9 @@ impl GooseClient {
     /// Prepends the correct host on the path, then prepares a
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `DELETE` request.
-    /// 
+    ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1132,11 +1150,11 @@ impl GooseClient {
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object and then executes the response. If statistics are being displayed, it
     /// also captures request statistics.
-    /// 
+    ///
     /// It is possible to build and execute a `RequestBuilder` object directly with
     /// Reqwest without using this helper function, but then Goose is unable to capture
-    /// statistics. 
-    /// 
+    /// statistics.
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1180,15 +1198,22 @@ impl GooseClient {
         let elapsed = started.elapsed();
 
         if !self.config.no_stats {
-            let path = self.previous_path.clone().expect("failed to unwrap previous_path").to_string();
-            let method = self.previous_method.clone().expect("failed to unwrap previous_method");
+            let path = self
+                .previous_path
+                .clone()
+                .expect("failed to unwrap previous_path")
+                .to_string();
+            let method = self
+                .previous_method
+                .clone()
+                .expect("failed to unwrap previous_method");
             // Requests are named per-request, per-task, or based on the path loaded.
             let request_name = match &self.request_name {
                 Some(rn) => rn.to_string(),
                 None => match &self.task_request_name {
                     Some(trn) => trn.to_string(),
                     None => path.to_string(),
-                }
+                },
             };
 
             let mut goose_request = self.get_request(&request_name, &method);
@@ -1243,16 +1268,20 @@ impl GooseClient {
             Some(prn) => prn.to_string(),
             None => match &self.task_request_name {
                 Some(trn) => trn.to_string(),
-                None => self.previous_path.clone().expect("failed to unwrap previous_path").to_string(),
-            }
+                None => self
+                    .previous_path
+                    .clone()
+                    .expect("failed to unwrap previous_path")
+                    .to_string(),
+            },
         }
     }
 
     /// Manually mark a request as a success.
-    /// 
+    ///
     /// By default, Goose will consider any response with a 2xx status code as a success. It may be
     /// valid in your test for a non-2xx HTTP status code to be returned.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1281,8 +1310,12 @@ impl GooseClient {
         // If the last request was a success, we don't need to change anything.
         if !self.was_success {
             let request_name = self.get_previous_request_name();
-            let previous_method = self.previous_method.clone().expect("failed to unwrap previous_method");
-            let mut goose_request = self.get_request(&request_name.to_string(), &previous_method.clone());
+            let previous_method = self
+                .previous_method
+                .clone()
+                .expect("failed to unwrap previous_method");
+            let mut goose_request =
+                self.get_request(&request_name.to_string(), &previous_method.clone());
             goose_request.success_count += 1;
             goose_request.fail_count -= 1;
             self.set_request(&request_name, &previous_method, goose_request);
@@ -1290,10 +1323,10 @@ impl GooseClient {
     }
 
     /// Manually mark a request as a failure.
-    /// 
+    ///
     /// By default, Goose will consider any response with a 2xx status code as a success. You may require
     /// more advanced logic, in which a 2xx status code is actually a failure.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1333,8 +1366,12 @@ impl GooseClient {
         // If the last request was a failure, we don't need to change anything.
         if self.was_success {
             let request_name = self.get_previous_request_name();
-            let previous_method = self.previous_method.clone().expect("failed to unwrap previous_method");
-            let mut goose_request = self.get_request(&request_name.to_string(), &previous_method.clone());
+            let previous_method = self
+                .previous_method
+                .clone()
+                .expect("failed to unwrap previous_method");
+            let mut goose_request =
+                self.get_request(&request_name.to_string(), &previous_method.clone());
             goose_request.success_count -= 1;
             goose_request.fail_count += 1;
             self.set_request(&request_name, &previous_method, goose_request);
@@ -1361,7 +1398,9 @@ pub struct GooseTask {
     pub function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
 }
 impl GooseTask {
-    pub fn new(function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>) -> Self {
+    pub fn new(
+        function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+    ) -> Self {
         trace!("new task");
         let task = GooseTask {
             tasks_index: usize::max_value(),
@@ -1376,11 +1415,11 @@ impl GooseTask {
     }
 
     /// Set an optional name for the task, used when displaying statistics about
-    /// requests made by the task. 
-    /// 
+    /// requests made by the task.
+    ///
     /// Individual requests can also be named withing your load test. See the
     /// documentation for `GooseClient`.[`set_request_name()`](./struct.GooseClient.html#method.set_request_name)
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1406,11 +1445,11 @@ impl GooseTask {
     /// so all subsequent tasks are done as a logged in user. A task with
     /// this flag set will only run at start time (and optionally at stop
     /// time as well, if that flag is also set).
-    /// 
+    ///
     /// On-start tasks can be sequenced and weighted. Sequences allow
     /// multiple on-start tasks to run in a controlled order. Weights allow
     /// on-start tasks to run multiple times when a client starts.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1436,11 +1475,11 @@ impl GooseTask {
     /// finishes its load test. A task with this flag set will only run at
     /// stop time (and optionally at start time as well, if that flag is
     /// also set).
-    /// 
+    ///
     /// On-stop tasks can be sequenced and weighted. Sequences allow
     /// multiple on-stop tasks to run in a controlled order. Weights allow
     /// on-stop tasks to run multiple times when a client stops.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1464,7 +1503,7 @@ impl GooseTask {
     /// Sets a weight on an individual task. The larger the value of weight, the more often it will be run
     /// in the TaskSet. For example, if one task has a weight of 3 and another task has a weight of 1, the
     /// first task will run 3 times as often.
-    /// 
+    ///
     /// # Example
     /// ```rust
     ///     use goose::goose::{GooseTask, GooseClient};
@@ -1480,12 +1519,16 @@ impl GooseTask {
     ///     }
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
-        trace!("{} [{}] set_weight: {}", self.name, self.tasks_index, weight);
+        trace!(
+            "{} [{}] set_weight: {}",
+            self.name,
+            self.tasks_index,
+            weight
+        );
         if weight < 1 {
             error!("{} weight of {} not allowed", self.name, weight);
             std::process::exit(1);
-        }
-        else {
+        } else {
             self.weight = weight;
         }
         self
@@ -1495,10 +1538,10 @@ impl GooseTask {
     /// so a task with a sequence value of 1 will run before a task with a sequence value of 2. Tasks with
     /// no sequence value (or a sequence value of 0) will run last, after all tasks with positive sequence
     /// values.
-    /// 
+    ///
     /// All tasks with the same sequence value will run in a random order. Tasks can be assigned both
     /// squence values and weights.
-    /// 
+    ///
     /// # Examples
     /// In this first example, the variable names indicate the order the tasks will be run in:
     /// ```rust
@@ -1524,7 +1567,7 @@ impl GooseTask {
     ///       let _response = client.get("/3");
     ///     }
     /// ```
-    /// 
+    ///
     /// In the following example, the `runs_first` task runs two times, then one instance of `runs_second`
     /// and two instances of `also_runs_second` are all three run. The client will do this over and over
     /// the entire time it runs, with `runs_first` always running first, then the other tasks being
@@ -1553,9 +1596,17 @@ impl GooseTask {
     ///     }
     /// ```
     pub fn set_sequence(mut self, sequence: usize) -> Self {
-        trace!("{} [{}] set_sequence: {}", self.name, self.tasks_index, sequence);
+        trace!(
+            "{} [{}] set_sequence: {}",
+            self.name,
+            self.tasks_index,
+            sequence
+        );
         if sequence < 1 {
-            info!("setting sequence to 0 for task {} is unnecessary, sequence disabled", self.name);
+            info!(
+                "setting sequence to 0 for task {} is unnecessary, sequence disabled",
+                self.name
+            );
         }
         self.sequence = sequence;
         self
@@ -1960,7 +2011,16 @@ mod tests {
     #[test]
     fn goose_client() {
         let configuration = GooseConfiguration::default();
-        let mut client = GooseClient::new(0, 0, Some("http://example.com/".to_string()), None, 0, 0, &configuration, 0);
+        let mut client = GooseClient::new(
+            0,
+            0,
+            Some("http://example.com/".to_string()),
+            None,
+            0,
+            0,
+            &configuration,
+            0,
+        );
         assert_eq!(client.task_sets_index, 0);
         assert_eq!(client.default_host, Some("http://example.com/".to_string()));
         assert_eq!(client.task_set_host, None);
@@ -2022,7 +2082,10 @@ mod tests {
         client.set_request("/", &GooseMethod::GET, request.clone());
         let restored_request = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET, 0));
+        assert_ne!(
+            restored_request,
+            GooseRequest::new("/", GooseMethod::GET, 0)
+        );
         // This is the request we stored.
         assert_eq!(&request, &restored_request);
 
@@ -2032,7 +2095,10 @@ mod tests {
         client.set_request("/", &GooseMethod::GET, request.clone());
         let restored_request_again = client.get_request("/", &GooseMethod::GET);
         // This is not an empty request object.
-        assert_ne!(restored_request, GooseRequest::new("/", GooseMethod::GET, 0));
+        assert_ne!(
+            restored_request,
+            GooseRequest::new("/", GooseMethod::GET, 0)
+        );
         // This is not first request we stored.
         assert_ne!(&request, &restored_request);
         // This is the new request we stored.
@@ -2053,9 +2119,24 @@ mod tests {
         assert_eq!(url, "https://www.example.com/path/to/resource");
 
         // Create a second client, this time setting a task_set_host.
-        let mut client2 = GooseClient::new(0, 0, Some("http://www.example.com/".to_string()), Some("http://www2.example.com/".to_string()), 1, 3, &configuration, 0);
-        assert_eq!(client2.default_host, Some("http://www.example.com/".to_string()));
-        assert_eq!(client2.task_set_host, Some("http://www2.example.com/".to_string()));
+        let mut client2 = GooseClient::new(
+            0,
+            0,
+            Some("http://www.example.com/".to_string()),
+            Some("http://www2.example.com/".to_string()),
+            1,
+            3,
+            &configuration,
+            0,
+        );
+        assert_eq!(
+            client2.default_host,
+            Some("http://www.example.com/".to_string())
+        );
+        assert_eq!(
+            client2.task_set_host,
+            Some("http://www2.example.com/".to_string())
+        );
         assert_eq!(client2.min_wait, 1);
         assert_eq!(client2.max_wait, 3);
 
@@ -2078,35 +2159,50 @@ mod tests {
         goose_request = client.goose_post("/path/to/post");
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::POST);
-        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/post");
+        assert_eq!(
+            built_request.url().as_str(),
+            "http://example.com/path/to/post"
+        );
         assert_eq!(built_request.timeout(), None);
 
         // Create a PUT request.
         goose_request = client.goose_put("/path/to/put");
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PUT);
-        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/put");
+        assert_eq!(
+            built_request.url().as_str(),
+            "http://example.com/path/to/put"
+        );
         assert_eq!(built_request.timeout(), None);
 
         // Create a PATCH request.
         goose_request = client.goose_patch("/path/to/patch");
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PATCH);
-        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/patch");
+        assert_eq!(
+            built_request.url().as_str(),
+            "http://example.com/path/to/patch"
+        );
         assert_eq!(built_request.timeout(), None);
 
         // Create a DELETE request.
         goose_request = client.goose_delete("/path/to/delete");
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::DELETE);
-        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/delete");
+        assert_eq!(
+            built_request.url().as_str(),
+            "http://example.com/path/to/delete"
+        );
         assert_eq!(built_request.timeout(), None);
 
         // Create a HEAD request.
         goose_request = client.goose_head("/path/to/head");
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::HEAD);
-        assert_eq!(built_request.url().as_str(), "http://example.com/path/to/head");
+        assert_eq!(
+            built_request.url().as_str(),
+            "http://example.com/path/to/head"
+        );
         assert_eq!(built_request.timeout(), None);
     }
 }
