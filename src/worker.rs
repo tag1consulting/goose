@@ -191,7 +191,8 @@ pub fn worker_main(goose_attack: &GooseAttack) {
     }
     worker_goose_attack.weighted_clients = weighted_clients;
     worker_goose_attack.configuration.worker = true;
-    worker_goose_attack.launch_clients(started, sleep_duration, Some(manager));
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(worker_goose_attack.launch_clients(started, sleep_duration, Some(manager)));
 }
 
 pub fn push_stats_to_manager(manager: &Socket, requests: &HashMap<String, GooseRequest>, get_response: bool) -> bool {

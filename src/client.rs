@@ -4,12 +4,12 @@ use std::sync::mpsc;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::{thread, time};
+use std::time;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskSet, GooseClient, GooseClientMode, GooseClientCommand};
 
-pub fn client_main(
+pub async fn client_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     mut thread_client: GooseClient,
@@ -36,13 +36,13 @@ pub fn client_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = thread_task_set.tasks[*task_index].function;
+                let function = &thread_task_set.tasks[*task_index].function;
                 debug!("launching on_start {} task from {}", thread_task_name, thread_task_set.name);
                 if thread_task_name != "" {
                     thread_client.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&mut thread_client);
+                function(&mut thread_client).await;
             }
         }
     }
@@ -66,14 +66,14 @@ pub fn client_main(
         // Determine which task we're going to run next.
         let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_bucket][thread_client.weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
-        let function = thread_task_set.tasks[thread_weighted_task].function;
+        let function = &thread_task_set.tasks[thread_weighted_task].function;
         debug!("launching {} task from {}", thread_task_name, thread_task_set.name);
         // If task name is set, it will be used for storing request statistics instead of the raw url.
         if thread_task_name != "" {
             thread_client.task_request_name = Some(thread_task_name.to_string());
         }
         // Invoke the task function.
-        function(&mut thread_client);
+        function(&mut thread_client).await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time: usize;
@@ -116,7 +116,7 @@ pub fn client_main(
             if thread_continue && thread_client.max_wait > 0 {
                 let sleep_duration = time::Duration::from_secs(1);
                 debug!("client {} from {} sleeping {:?} second...", thread_number, thread_task_set.name, sleep_duration);
-                thread::sleep(sleep_duration);
+                tokio::time::delay_for(sleep_duration).await;
                 slept += 1;
                 if slept > wait_time {
                     in_sleep_loop = false;
@@ -140,13 +140,13 @@ pub fn client_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = thread_task_set.tasks[*task_index].function;
+                let function = &thread_task_set.tasks[*task_index].function;
                 debug!("launching on_stop {} task from {}", thread_task_name, thread_task_set.name);
                 if thread_task_name != "" {
                     thread_client.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&mut thread_client);
+                function(&mut thread_client).await;
             }
         }
     }

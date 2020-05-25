@@ -1,6 +1,6 @@
 [package]
 name = "goose"
-version = "0.6.3-dev"
+version = "0.7.0-dev"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A load testing tool inspired by Locust."
@@ -14,6 +14,7 @@ license = "Apache-2.0"
 [dependencies]
 #goose_codegen = { path = "goose_codegen" }
 ctrlc = "3.1"
+futures = "0.3"
 http = "0.2"
 lazy_static = "1.4"
 log = "0.4"
@@ -26,6 +27,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 simplelog = "0.7"
 structopt = "0.3"
+tokio = { version = "0.2.20", features = ["rt-core", "time"] }
 url = "2.1"
 
 # optional dependencies

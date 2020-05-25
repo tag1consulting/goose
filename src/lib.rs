@@ -296,7 +296,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::{thread, time};
+use std::time;
 
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
@@ -524,22 +524,25 @@ impl GooseAttack {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseAttack;
+    ///     use goose::{GooseAttack, task};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///
+    ///     // Needed to wrap and store async functions.
+    ///     use std::boxed::Box;
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(example_task))
+    ///             .register_task(GooseTask::new(task!(example_task)))
     ///         )
     ///         .register_taskset(GooseTaskSet::new("OtherTasks")
-    ///             .register_task(GooseTask::new(other_task))
+    ///             .register_task(GooseTask::new(task!(other_task)))
     ///         );
     ///
-    ///     fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &mut GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     fn other_task(client: &mut GooseClient) {
+    ///     async fn other_task(client: &mut GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
@@ -635,21 +638,24 @@ impl GooseAttack {
     /// 
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseAttack;
+    ///     use goose::{GooseAttack, task};
     ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///
+    ///     // Needed to wrap and store async functions.
+    ///     use std::boxed::Box;
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(GooseTaskSet::new("ExampleTasks")
-    ///             .register_task(GooseTask::new(example_task).set_weight(2))
-    ///             .register_task(GooseTask::new(another_example_task).set_weight(3))
+    ///             .register_task(GooseTask::new(task!(example_task)).set_weight(2))
+    ///             .register_task(GooseTask::new(task!(another_example_task)).set_weight(3))
     ///         )
     ///         .execute();
     ///
-    ///     fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &mut GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     fn another_example_task(client: &mut GooseClient) {
+    ///     async fn another_example_task(client: &mut GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
@@ -848,7 +854,8 @@ impl GooseAttack {
         }
         // Start goose in single-process mode.
         else {
-            self = self.launch_clients(started, sleep_duration, None);
+            let mut rt = tokio::runtime::Runtime::new().unwrap();
+            self = rt.block_on(self.launch_clients(started, sleep_duration, None));
         }
 
         if !self.configuration.no_stats && !self.configuration.worker {
@@ -856,8 +863,8 @@ impl GooseAttack {
         }
     }
 
-    /// Called internally in single-process mode and distributed load test gaggle-mode.
-    pub fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
+    /// Called internally in local-mode and gaggle-mode.
+    async fn launch_clients(mut self, mut started: time::Instant, sleep_duration: time::Duration, socket: Option<Socket>) -> GooseAttack {
         trace!("launch clients: started({:?}) sleep_duration({:?}) socket({:?})", started, sleep_duration, socket);
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
@@ -902,14 +909,14 @@ impl GooseAttack {
                 let is_worker = self.configuration.worker;
 
                 // Launch a new client.
-                let client = thread::spawn(move || {
+                let client = tokio::spawn(
                     client::client_main(thread_number, thread_task_set, thread_client, thread_receiver, thread_sender, is_worker)
-                });
+                );
 
                 clients.push(client);
                 self.active_clients += 1;
                 debug!("sleeping {:?} milliseconds...", sleep_duration);
-                thread::sleep(sleep_duration);
+                tokio::time::delay_for(sleep_duration).await;
             }
             else {
                 warn!("no tasks for thread {} to run", self.task_sets[thread_client.task_sets_index].name);
@@ -969,7 +976,7 @@ impl GooseAttack {
                         display_running_statistics = true;
                         // Give client threads time to send statstics.
                         let pause = time::Duration::from_millis(100);
-                        thread::sleep(pause);
+                        tokio::time::delay_for(pause).await;
                     }
                 }
 
@@ -1048,9 +1055,7 @@ impl GooseAttack {
                 else {
                     info!("waiting for clients to exit");
                 }
-                for client in clients {
-                    let _ = client.join();
-                }
+                futures::future::join_all(clients).await;
                 debug!("all clients exited");
 
                 // If we're printing statistics, collect the final messages received from clients
@@ -1098,7 +1103,7 @@ impl GooseAttack {
             }
 
             let one_second = time::Duration::from_secs(1);
-            thread::sleep(one_second);
+            tokio::time::delay_for(one_second).await;
         }
         self
     }

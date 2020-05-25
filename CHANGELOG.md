@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.7.0-dev
+ - initial async support
+
 ## 0.6.3-dev
  - nng does not support udp as a transport protocol, and tcp overhead isn't
    problematic; remove to-do to add udp, hard-code tcp

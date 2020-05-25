@@ -17,8 +17,12 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use goose::GooseAttack;
+use goose::{GooseAttack, task};
 use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+
+// Needed to wrap and store async functions.
+use std::boxed::Box;
+
 
 fn main() {
     GooseAttack::initialize()
@@ -27,10 +31,10 @@ fn main() {
             // After each task runs, sleep randomly from 5 to 15 seconds.
             .set_wait_time(5, 15)
             // This task only runs one time when the client first starts.
-            .register_task(GooseTask::new(website_task_login).set_on_start())
+            .register_task(GooseTask::new(task!(website_login)).set_on_start())
             // These next two tasks run repeatedly as long as the load test is running.
-            .register_task(GooseTask::new(website_task_index))
-            .register_task(GooseTask::new(website_task_about))
+            .register_task(GooseTask::new(task!(website_index)))
+            .register_task(GooseTask::new(task!(website_about)))
         )
         .execute();
 }
@@ -38,19 +42,19 @@ fn main() {
 /// Demonstrates how to log in when a client starts. We flag this task as an
 /// on_start task when registering it above. This means it only runs one time
 /// per client, when the client thread first starts.
-fn website_task_login(client: &mut GooseClient) {
+async fn website_login(client: &mut GooseClient) {
     let request_builder = client.goose_post("/login");
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
-    let _response = client.goose_send(request_builder.form(&params));
+    let _response = client.goose_send(request_builder.form(&params)).await;
 }
 
 /// A very simple task that simply loads the front page.
-fn website_task_index(client: &mut GooseClient) {
-    let _response = client.get("/");
+async fn website_index(client: &mut GooseClient) {
+    let _response = client.get("/").await;
 }
 
 /// A very simple task that simply loads the about page.
-fn website_task_about(client: &mut GooseClient) {
-    let _response = client.get("/about/");
+async fn website_about(client: &mut GooseClient) {
+    let _response = client.get("/about/").await;
 }
