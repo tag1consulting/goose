@@ -760,7 +760,10 @@ impl GooseAttack {
             }
         }
 
-        if !self.configuration.manager && !self.configuration.worker && self.configuration.no_hash_check {
+        if !self.configuration.manager
+            && !self.configuration.worker
+            && self.configuration.no_hash_check
+        {
             error!("The --no-hash-check option is only available when running in manager mode");
             std::process::exit(1);
         }
