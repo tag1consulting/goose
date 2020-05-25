@@ -33,7 +33,7 @@
 //! Add the following boilerplate use declarations at the top of your `src/main.rs`:
 //!
 //! ```rust
-//! use goose::GooseAttack, task, taskset;
+//! use goose::{GooseAttack, task, taskset};
 //! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
 //! use std::boxed::Box;
 //! ```
