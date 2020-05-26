@@ -353,7 +353,7 @@ and the test will stop on all servers.
 * `--worker`: starts a Goose process in worker mode. How many workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
 * `--no-hash-check`: tells Goose to ignore if the load test applications don't match between worker(s) and manager. Not recommended.
 
-The `--no-stats`, `--only-summary`, `--reset-stats`, and `--status-codes` flags must be set on the manager. Workers inheret these flags from the manager
+The `--no-stats`, `--only-summary`, `--reset-stats`, `--status-codes`, and `--no-hash-check` flags must be set on the manager. Workers inheret these flags from the manager
 
 ### Goose Run-time Options
 
