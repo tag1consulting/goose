@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{thread, time};
 
 use lazy_static::lazy_static;
@@ -36,7 +36,7 @@ pub struct GooseClientInitializer {
 
 // Mutable singleton globally tracking how many workers are currently being managed.
 lazy_static! {
-    static ref ACTIVE_WORKERS: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
+    static ref ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 }
 
 fn distribute_clients(goose_attack: &GooseAttack) -> (usize, usize) {
@@ -59,16 +59,10 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     match event {
         PipeEvent::AddPost => {
             debug!("worker pipe added");
-            ACTIVE_WORKERS
-                .lock()
-                .unwrap()
-                .fetch_add(1, Ordering::SeqCst);
+            ACTIVE_WORKERS.fetch_add(1, Ordering::SeqCst);
         }
         PipeEvent::RemovePost => {
-            let active_workers = ACTIVE_WORKERS
-                .lock()
-                .unwrap()
-                .fetch_sub(1, Ordering::SeqCst);
+            let active_workers = ACTIVE_WORKERS.fetch_sub(1, Ordering::SeqCst);
             info!("worker {} exited", active_workers);
         }
         _ => {}
@@ -139,7 +133,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         // While running load test, check if any workers go away.
         if !load_test_finished {
             // If ACTIVE_WORKERS is less than the total workers seen, a worker went away.
-            if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) < workers.len() {
+            if ACTIVE_WORKERS.load(Ordering::SeqCst) < workers.len() {
                 // If worked goes away during load test, exit gracefully.
                 if load_test_running {
                     info!(
@@ -272,7 +266,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             match e {
                                 // A worker went away, this happens during shutdown.
                                 Error::TryAgain => {
-                                    if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                    if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
                                         info!("all workers have exited");
                                         break;
                                     }
@@ -305,7 +299,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             // Determine why our send failed.
                             Err((_, e)) => match e {
                                 Error::TryAgain => {
-                                    if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                    if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
                                         info!("all workers have exited");
                                         break;
                                     }
@@ -397,7 +391,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             Ok(_) => (),
                             Err((_, e)) => match e {
                                 Error::TryAgain => {
-                                    if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                                    if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
                                         info!("all workers have exited");
                                         break;
                                     }
@@ -422,7 +416,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
             Err(e) => {
                 if e == Error::TryAgain {
                     if workers.len() > 0 {
-                        if ACTIVE_WORKERS.lock().unwrap().load(Ordering::SeqCst) == 0 {
+                        if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
                             info!("all workers have exited");
                             break;
                         }

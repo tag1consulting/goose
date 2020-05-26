@@ -301,7 +301,7 @@ use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::time;
 
 use lazy_static::lazy_static;
@@ -326,12 +326,12 @@ const DEFAULT_PORT: &str = "5115";
 
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
-    static ref WORKER_ID: Mutex<AtomicUsize> = Mutex::new(AtomicUsize::new(0));
+    static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
 }
 
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
-    WORKER_ID.lock().unwrap().load(Ordering::Relaxed)
+    WORKER_ID.load(Ordering::Relaxed)
 }
 
 #[cfg(not(feature = "gaggle"))]

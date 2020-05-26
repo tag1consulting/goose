@@ -149,10 +149,7 @@ pub fn worker_main(goose_attack: &GooseAttack) {
                 );
             }
         }
-        WORKER_ID
-            .lock()
-            .unwrap()
-            .store(worker_id, Ordering::Relaxed);
+        WORKER_ID.store(worker_id, Ordering::Relaxed);
         info!(
             "[{}] initialized {} client states",
             get_worker_id(),
