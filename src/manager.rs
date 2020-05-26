@@ -59,12 +59,10 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     match event {
         PipeEvent::AddPost => {
             debug!("worker pipe added");
-            ACTIVE_WORKERS
-                .fetch_add(1, Ordering::SeqCst);
+            ACTIVE_WORKERS.fetch_add(1, Ordering::SeqCst);
         }
         PipeEvent::RemovePost => {
-            let active_workers = ACTIVE_WORKERS
-                .fetch_sub(1, Ordering::SeqCst);
+            let active_workers = ACTIVE_WORKERS.fetch_sub(1, Ordering::SeqCst);
             info!("worker {} exited", active_workers);
         }
         _ => {}
