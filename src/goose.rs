@@ -254,17 +254,24 @@
 
 use http::method::Method;
 use http::StatusCode;
+use lazy_static::lazy_static;
 use reqwest::Error;
 use reqwest::{Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
+use std::sync::Mutex;
 use std::{future::Future, pin::Pin, time::Instant};
 use url::Url;
 
 use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
+// Share CLIENT object globally.
+lazy_static! {
+    static ref CLIENT: Mutex<Client> = Mutex::new(Client::new());
+}
 
 /// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
@@ -605,8 +612,6 @@ impl GooseRequest {
 pub struct GooseClient {
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
-    /// A [`reqwest.blocking.client`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Client.html) instance (@TODO: async).
-    pub client: Client,
     /// Optional global host, can be overridden per-task-set or via the cli.
     pub default_host: Option<String>,
     /// Optional per-task-set .host.
@@ -661,6 +666,7 @@ impl GooseClient {
         load_test_hash: u64,
     ) -> Self {
         trace!("new client");
+        /*
         let builder = Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true);
@@ -674,11 +680,11 @@ impl GooseClient {
                 std::process::exit(1);
             }
         };
+        */
         GooseClient {
             task_sets_index,
             default_host,
             task_set_host,
-            client,
             config: configuration.clone(),
             min_wait,
             max_wait,
@@ -925,7 +931,7 @@ impl GooseClient {
     /// ```
     pub fn goose_get(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        self.client.get(&url)
+        CLIENT.lock().unwrap().get(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -949,7 +955,7 @@ impl GooseClient {
     /// ```
     pub fn goose_post(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        self.client.post(&url)
+        CLIENT.lock().unwrap().post(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -973,7 +979,7 @@ impl GooseClient {
     /// ```
     pub fn goose_head(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        self.client.head(&url)
+        CLIENT.lock().unwrap().head(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -997,7 +1003,7 @@ impl GooseClient {
     /// ```
     pub fn goose_put(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        self.client.put(&url)
+        CLIENT.lock().unwrap().put(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1021,7 +1027,7 @@ impl GooseClient {
     /// ```
     pub fn goose_patch(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        self.client.patch(&url)
+        CLIENT.lock().unwrap().patch(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1045,7 +1051,7 @@ impl GooseClient {
     /// ```
     pub fn goose_delete(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        self.client.delete(&url)
+        CLIENT.lock().unwrap().delete(&url)
     }
 
     /// Builds the provided
@@ -1092,7 +1098,7 @@ impl GooseClient {
         self.previous_request_name = self.request_name.clone();
 
         // Make the actual request.
-        let response = self.client.execute(request).await;
+        let response = CLIENT.lock().unwrap().execute(request).await;
         let elapsed = started.elapsed();
 
         if !self.config.no_stats {
