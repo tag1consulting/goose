@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.1-dev
+## 0.7.1 May 26, 2020
  - no longer compile Reqwest blocking client
  - remove need to declare `use std::boxed::Box` in load tests
  - remove unnecessary mutexes

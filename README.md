@@ -47,9 +47,9 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.7.0
+  Downloaded goose v0.7.1
       ...
-   Compiling goose v0.7.0
+   Compiling goose v0.7.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -165,7 +165,7 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 `cargo run --example simple -- -h`:
 
 ```
-client 0.7.0
+client 0.7.1
 CLI options available when launching a Goose loadtest
 
 USAGE:
