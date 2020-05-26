@@ -22,8 +22,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use goose::goose::{GooseClient, GooseTask, GooseTaskSet};
-use goose::{task, taskset, GooseAttack};
+use goose::prelude::*;
 
 use rand::Rng;
 use regex::Regex;

@@ -12,8 +12,7 @@
 //! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a `&str` name to the `new` function, for example:
 //!
 //! ```rust
-//!     use goose::goose::GooseTaskSet;
-//!     use goose::taskset;
+//!     use goose::prelude::*;
 //!
 //!     let mut loadtest_tasks = taskset!("LoadtestTasks");
 //! ```
@@ -27,8 +26,7 @@
 //! assigned to `BarTasks` for the same weighting:
 //!
 //! ```rust
-//!     use goose::goose::GooseTaskSet;
-//!     use goose::taskset;
+//!     use goose::prelude::*;
 //!
 //!     let mut foo_tasks = taskset!("FooTasks").set_weight(10);
 //!     let mut bar_tasks = taskset!("BarTasks").set_weight(5);
@@ -43,8 +41,7 @@
 //! hosts to different task sets if this is desirable:
 //!
 //! ```rust
-//!     use goose::goose::GooseTaskSet;
-//!     use goose::taskset;
+//!     use goose::prelude::*;
 //!
 //!     let mut foo_tasks = taskset!("FooTasks").set_host("http://www.local");
 //!     let mut bar_tasks = taskset!("BarTasks").set_host("http://www2.local");
@@ -59,8 +56,7 @@
 //! sleep 5 to 10 seconds after each task completes.
 //!
 //! ```rust
-//!     use goose::goose::GooseTaskSet;
-//!     use goose::taskset;
+//!     use goose::prelude::*;
 //!
 //!     let mut foo_tasks = taskset!("FooTasks").set_wait_time(0, 3);
 //!     let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10);
@@ -71,8 +67,7 @@
 //! will be executed each time the task is run.
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut a_task = task!(task_function);
 //!
@@ -88,8 +83,7 @@
 //! made by the task.
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut a_task = task!(task_function).set_name("a");
 //!
@@ -106,8 +100,7 @@
 //! runs 3 times as often as `b_task`:
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut a_task = task!(a_task_function).set_weight(9);
 //!     let mut b_task = task!(b_task_function).set_weight(3);
@@ -134,8 +127,7 @@
 //! `a_task` runs before `b_task`, which runs before `c_task`:
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut a_task = task!(a_task_function).set_sequence(1);
 //!     let mut b_task = task!(b_task_function).set_sequence(2);
@@ -166,8 +158,7 @@
 //! and on stop.
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut a_task = task!(a_task_function).set_sequence(1).set_on_start();
 //!
@@ -186,8 +177,7 @@
 //! start and on stop.
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut b_task = task!(b_task_function).set_sequence(2).set_on_stop();
 //!
@@ -215,8 +205,7 @@
 //! Automatically prepends the correct host.
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut task = task!(get_function);
 //!
@@ -237,8 +226,7 @@
 //! [`reqwest::blocking::Response`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Response.html)
 //!
 //! ```rust
-//!     use goose::goose::{GooseTask, GooseClient};
-//!     use goose::task;
+//!     use goose::prelude::*;
 //!
 //!     let mut task = task!(post_function);
 //!
@@ -324,8 +312,7 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::GooseTaskSet;
-    ///     use goose::taskset;
+    ///     use goose::prelude::*;
     ///
     ///     let mut example_tasks = taskset!("ExampleTasks");
     /// ```
@@ -350,8 +337,7 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
-    ///     use goose::{task, taskset};
+    ///     use goose::prelude::*;
     ///
     ///     let mut example_tasks = taskset!("ExampleTasks");
     ///     example_tasks.register_task(task!(a_task_function));
@@ -375,8 +361,7 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::GooseTaskSet;
-    ///     use goose::taskset;
+    ///     use goose::prelude::*;
     ///
     ///     let mut example_tasks = taskset!("ExampleTasks").set_weight(3);
     /// ```
@@ -398,8 +383,7 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::GooseTaskSet;
-    ///     use goose::taskset;
+    ///     use goose::prelude::*;
     ///
     ///     let mut example_tasks = taskset!("ExampleTasks").set_host("http://10.1.1.42");
     /// ```
@@ -416,8 +400,7 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::GooseTaskSet;
-    ///     use goose::taskset;
+    ///     use goose::prelude::*;
     ///
     ///     let mut example_tasks = taskset!("ExampleTasks").set_wait_time(0, 1);
     /// ```
@@ -728,8 +711,7 @@ impl GooseClient {
     ///
     /// In this example, the request will show up as "GET foo":
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -742,8 +724,7 @@ impl GooseClient {
     /// In this example, the first request will show up in the statistics as "GET foo", and the
     /// second request will show up as "GET /path/to/foo".
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -837,8 +818,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -862,8 +842,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(post_function);
     ///
@@ -887,8 +866,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(head_function);
     ///
@@ -912,8 +890,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(delete_function);
     ///
@@ -935,8 +912,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -960,8 +936,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(post_function);
     ///
@@ -985,8 +960,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(head_function);
     ///
@@ -1010,8 +984,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(put_function);
     ///
@@ -1035,8 +1008,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(patch_function);
     ///
@@ -1060,8 +1032,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(delete_function);
     ///
@@ -1088,8 +1059,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -1209,8 +1179,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(get_function);
     ///
@@ -1251,8 +1220,7 @@ impl GooseClient {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let mut task = task!(loadtest_index_page);
     ///
@@ -1340,8 +1308,7 @@ impl GooseTask {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     task!(my_task_function).set_name("foo");
     ///
@@ -1367,8 +1334,7 @@ impl GooseTask {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     task!(my_on_start_function).set_on_start();
     ///
@@ -1394,8 +1360,7 @@ impl GooseTask {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     task!(my_on_stop_function).set_on_stop();
     ///
@@ -1415,8 +1380,7 @@ impl GooseTask {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     task!(task_function).set_weight(3);
     ///
@@ -1451,8 +1415,7 @@ impl GooseTask {
     /// # Examples
     /// In this first example, the variable names indicate the order the tasks will be run in:
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let runs_first = task!(first_task_function).set_sequence(3);
     ///     let runs_second = task!(second_task_function).set_sequence(5835);
@@ -1476,8 +1439,7 @@ impl GooseTask {
     /// the entire time it runs, with `runs_first` always running first, then the other tasks being
     /// run in a random and weighted order:
     /// ```rust
-    ///     use goose::goose::{GooseTask, GooseClient};
-    ///     use goose::task;
+    ///     use goose::prelude::*;
     ///
     ///     let runs_first = task!(first_task_function).set_sequence(1).set_weight(2);
     ///     let runs_second = task!(second_task_function_a).set_sequence(2);

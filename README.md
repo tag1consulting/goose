@@ -60,8 +60,7 @@ To create an actual load test, you first have to add the following boilerplate
 to the top of `src/main.rs`:
 
 ```rust
-use goose::{GooseAttack, task, taskset};
-use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+use goose::prelude::*;
 ```
 
 Then create a new load testing function. For our example we're simply going

@@ -30,7 +30,14 @@
 //! goose = "0.7"
 //! ```
 //!
-//! Add the following boilerplate use declarations at the top of your `src/main.rs`:
+//! Add the following boilerplate `use` declaration at the top of your `src/main.rs`:
+//!
+//! ```rust
+//! use goose::prelude::*;
+//! ```
+//!
+//! Using the above prelude will automatically add the following `use` statements
+//! necessary for your load test, so you don't need to manually add them:
 //!
 //! ```rust
 //! use goose::{GooseAttack, task, taskset};
@@ -43,7 +50,7 @@
 //! test function must accept a mutable GooseClient pointer. For example:
 //!
 //! ```rust
-//! use goose::goose::GooseClient;
+//! use goose::prelude::*;
 //!
 //! async fn loadtest_foo(client: &mut GooseClient) {
 //!   let _response = client.get("/path/to/foo");
@@ -59,7 +66,7 @@
 //! ```rust
 //! use std::time;
 //!
-//! use goose::goose::GooseClient;
+//! use goose::prelude::*;
 //!
 //! async fn loadtest_bar(client: &mut GooseClient) {
 //!   let request_builder = client.goose_get("/path/to/bar");
@@ -76,8 +83,7 @@
 //! load test you can have any number of task sets with any number of individual tasks.
 //!
 //! ```rust,no_run
-//! use goose::{GooseAttack, task, taskset};
-//! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+//! use goose::prelude::*;
 //!
 //! GooseAttack::initialize()
 //!     .register_taskset(taskset!("LoadtestTasks")
@@ -289,6 +295,7 @@ pub mod goose;
 mod client;
 #[cfg(feature = "gaggle")]
 mod manager;
+pub mod prelude;
 mod stats;
 mod util;
 #[cfg(feature = "gaggle")]
@@ -369,7 +376,7 @@ impl GooseAttack {
     ///
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseAttack;
+    ///     use goose::prelude::*;
     ///
     ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
@@ -524,8 +531,7 @@ impl GooseAttack {
     ///
     /// # Example
     /// ```rust,no_run
-    ///     use goose::{GooseAttack, task, taskset};
-    ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///     use goose::prelude::*;
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(taskset!("ExampleTasks")
@@ -560,7 +566,7 @@ impl GooseAttack {
     ///
     /// # Example
     /// ```rust,no_run
-    ///     use goose::GooseAttack;
+    ///     use goose::prelude::*;
     ///
     ///     GooseAttack::initialize()
     ///         .set_host("local.dev");
@@ -640,8 +646,7 @@ impl GooseAttack {
     ///
     /// # Example
     /// ```rust,no_run
-    ///     use goose::{GooseAttack, task, taskset};
-    ///     use goose::goose::{GooseTaskSet, GooseTask, GooseClient};
+    ///     use goose::prelude::*;
     ///
     ///     GooseAttack::initialize()
     ///         .register_taskset(taskset!("ExampleTasks")
