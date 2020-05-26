@@ -4,6 +4,7 @@
  - no longer compile Reqwest blocking client
  - remove need to declare `use std::boxed::Box` in load tests
  - remove unnecessary mutexes
+ - introduce `use goose::prelude::*`
 
 ## 0.7.0 May 25, 2020
  - initial async support
