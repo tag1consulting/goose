@@ -477,8 +477,6 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
 }
 
 pub struct GooseRawRequest {
-    /// The path being requested.
-    pub path: String,
     /// The method being used (ie, GET, POST, etc).
     pub method: GooseMethod,
     /// The optional name of the request.
@@ -495,9 +493,8 @@ pub struct GooseRawRequest {
     pub load_test_hash: u64,
 }
 impl GooseRawRequest {
-    pub fn new(path: String, method: GooseMethod, name: String) -> Self {
+    pub fn new(method: GooseMethod, name: String) -> Self {
         GooseRawRequest {
-            path,
             method,
             name,
             response_time: 0,
@@ -1124,7 +1121,7 @@ impl GooseClient {
                     None => path.to_string(),
                 },
             };
-            let mut raw_request = GooseRawRequest::new(path.clone(), method, request_name.clone());
+            let mut raw_request = GooseRawRequest::new(method, request_name.clone());
             raw_request.set_response_time(elapsed.as_millis());
             match &response {
                 Ok(r) => {

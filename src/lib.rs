@@ -991,10 +991,10 @@ impl GooseAttack {
                 while message.is_ok() {
                     received_message = true;
                     let raw_request = message.unwrap();
-                    let key = format!("{:?} {}", raw_request.method, raw_request.path);
+                    let key = format!("{:?} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.merged_requests.get(&key) {
                         Some(m) => m.clone(),
-                        None => GooseRequest::new(&raw_request.path, raw_request.method, raw_request.load_test_hash),
+                        None => GooseRequest::new(&raw_request.name, raw_request.method, raw_request.load_test_hash),
                     };
                     merge_request.set_response_time(raw_request.response_time);
                     merge_request.set_status_code(raw_request.status_code);
@@ -1067,10 +1067,10 @@ impl GooseAttack {
                     let mut message = parent_receiver.try_recv();
                     while message.is_ok() {
                         let raw_request = message.unwrap();
-                        let key = format!("{:?} {}", raw_request.method, raw_request.path);
+                        let key = format!("{:?} {}", raw_request.method, raw_request.name);
                         let mut merge_request = match self.merged_requests.get(&key) {
                             Some(m) => m.clone(),
-                            None => GooseRequest::new(&raw_request.path, raw_request.method, raw_request.load_test_hash),
+                            None => GooseRequest::new(&raw_request.name, raw_request.method, raw_request.load_test_hash),
                         };
                         merge_request.set_response_time(raw_request.response_time);
                         merge_request.set_status_code(raw_request.status_code);
