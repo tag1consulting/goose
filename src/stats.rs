@@ -464,7 +464,6 @@ mod test {
         assert_eq!(&global_response_times, &local_response_times);
     }
 
-
     #[test]
     fn max_response_time_percentile() {
         let mut response_times: BTreeMap<usize, usize> = BTreeMap::new();
