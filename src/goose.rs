@@ -260,7 +260,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::{future::Future, pin::Pin, time::Instant};
-use std::sync::mpsc;
+use crossbeam::crossbeam_channel;
 use url::Url;
 
 use crate::GooseConfiguration;
@@ -662,7 +662,7 @@ pub struct GooseClient {
     /// A [`reqwest.client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html) instance
     pub client: Client,
     /// Channel
-    pub parent: Option<mpsc::Sender<GooseRawRequest>>,
+    pub parent: Option<crossbeam_channel::Sender<GooseRawRequest>>,
     /// Optional global host, can be overridden per-task-set or via the cli.
     pub default_host: Option<String>,
     /// Optional per-task-set .host.

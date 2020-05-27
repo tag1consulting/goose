@@ -307,10 +307,11 @@ use std::f32;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
 use std::time;
 
+use crossbeam::crossbeam_channel::unbounded;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
@@ -322,7 +323,7 @@ use structopt::StructOpt;
 use url::Url;
 
 use crate::goose::{
-    GooseClient, GooseClientCommand, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet,
+    GooseClient, GooseClientCommand, GooseRequest, GooseTask, GooseTaskSet,
 };
 
 /// Constant defining how often statistics should be displayed while load test is running.
@@ -889,10 +890,7 @@ impl GooseAttack {
         // Collect client thread channels in a vector so we can talk to the client threads.
         let mut client_channels = vec![];
         // Create a single channel allowing all Goose child threads to sync state back to parent
-        let (all_threads_sender, parent_receiver): (
-            mpsc::Sender<GooseRawRequest>,
-            mpsc::Receiver<GooseRawRequest>,
-        ) = mpsc::channel();
+        let (all_threads_sender, parent_receiver) = unbounded();
         // Spawn clients, each with their own weighted task_set.
         for mut thread_client in self.weighted_clients.clone() {
             // Stop launching threads if the run_timer has expired.
