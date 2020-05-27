@@ -1180,15 +1180,15 @@ impl GooseClient {
     ///             Ok(r) => {
     ///                 // We expect a 404 here.
     ///                 if r.status() == 404 {
-    ///                     client.set_success();
+    ///                     client.set_success(&GooseMethod::GET, "/404");
     ///                 }
     ///             },
     ///             Err(_) => (),
     ///         }
     ///     }
     /// ````
-    pub fn set_success(&mut self, method: &GooseMethod, path: String) {
-        let request_name = self.get_request_name(&path);
+    pub fn set_success(&mut self, method: &GooseMethod, path: &str) {
+        let request_name = self.get_request_name(path);
         let mut update_request = GooseRawRequest::new(method.clone(), request_name);
         update_request.success = true;
         // This is an updaate to a previously recorded statistic.
@@ -1222,11 +1222,12 @@ impl GooseClient {
     ///                             // If the expected string doesn't exist, this page load
     ///                             // was a failure.
     ///                             if !text.contains("this string must exist") {
-    ///                                 client.set_failure();
+    ///                                 // As this is a named request, pass in the name not the URL
+    ///                                 client.set_failure(&GooseMethod::GET, "index");
     ///                             }
     ///                         }
     ///                         // Empty page, this is a failure.
-    ///                         Err(_) => client.set_failure(),
+    ///                         Err(_) => client.set_failure(&GooseMethod::GET, "index"),
     ///                     }
     ///                 }
     ///             },
@@ -1900,39 +1901,6 @@ mod tests {
         // Can set request name multiple times.
         client.set_request_name("bar");
         assert_eq!(client.request_name, Some("bar".to_string()));
-
-        // Returns new GooseRequest if never set before.
-        let request = client.get_request("/foo", &GooseMethod::GET);
-        assert_eq!(request, GooseRequest::new("/foo", GooseMethod::GET, 0));
-
-        // Store a GooseRequest objet and confirm we can them retreive it.
-        let mut request = GooseRequest::new("/", GooseMethod::GET, 0);
-        request.set_response_time(55);
-        request.set_status_code(Some(StatusCode::OK));
-        client.set_request("/", &GooseMethod::GET, request.clone());
-        let restored_request = client.get_request("/", &GooseMethod::GET);
-        // This is not an empty request object.
-        assert_ne!(
-            restored_request,
-            GooseRequest::new("/", GooseMethod::GET, 0)
-        );
-        // This is the request we stored.
-        assert_eq!(&request, &restored_request);
-
-        // Make another change to the request and re-store.
-        request.set_response_time(951);
-        request.set_status_code(Some(StatusCode::OK));
-        client.set_request("/", &GooseMethod::GET, request.clone());
-        let restored_request_again = client.get_request("/", &GooseMethod::GET);
-        // This is not an empty request object.
-        assert_ne!(
-            restored_request,
-            GooseRequest::new("/", GooseMethod::GET, 0)
-        );
-        // This is not first request we stored.
-        assert_ne!(&request, &restored_request);
-        // This is the new request we stored.
-        assert_eq!(&request, &restored_request_again);
 
         // Confirm the URLs are correctly built using the default_host.
         let url = client.build_url("/foo");
