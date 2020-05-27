@@ -3,10 +3,44 @@ use std::collections::{BTreeMap, HashMap};
 use std::f32;
 
 use crate::goose::GooseRequest;
-use crate::manager::{
-    merge_response_times, update_max_response_time, update_min_response_time,
-};
 use crate::{util, GooseAttack};
+
+/// A helper function that merges together response times.
+///
+/// Used in `lib.rs` to merge together per-thread response times, and in `stats.rs`
+/// to aggregate all response times.
+pub fn merge_response_times(
+    mut global_response_times: BTreeMap<usize, usize>,
+    local_response_times: BTreeMap<usize, usize>,
+) -> BTreeMap<usize, usize> {
+    // Iterate over client response times, and merge into global response times.
+    for (response_time, count) in &local_response_times {
+        let counter = match global_response_times.get(&response_time) {
+            // We've seen this response_time before, increment counter.
+            Some(c) => *c + count,
+            // First time we've seen this response time, initialize counter.
+            None => *count,
+        };
+        global_response_times.insert(*response_time, counter);
+    }
+    global_response_times
+}
+
+// Update global minimum response time based on local resposne time.
+pub fn update_min_response_time(mut global_min: usize, min: usize) -> usize {
+    if global_min == 0 || (min > 0 && min < global_min) {
+        global_min = min;
+    }
+    global_min
+}
+
+// Update global maximum response time based on local resposne time.
+pub fn update_max_response_time(mut global_max: usize, max: usize) -> usize {
+    if global_max < max {
+        global_max = max;
+    }
+    global_max
+}
 
 /// Get the response time that a certain number of percent of the requests finished within.
 fn calculate_response_time_percentile(
@@ -397,6 +431,42 @@ mod test {
 
     #[test]
     fn max_response_time() {
+        let mut max_response_time = 99;
+        // Update max response time to a higher value.
+        max_response_time = update_max_response_time(max_response_time, 101);
+        assert_eq!(max_response_time, 101);
+        // Max response time doesn't update when updating with a lower value.
+        max_response_time = update_max_response_time(max_response_time, 1);
+        assert_eq!(max_response_time, 101);
+    }
+
+    #[test]
+    fn min_response_time() {
+        let mut min_response_time = 11;
+        // Update min response time to a lower value.
+        min_response_time = update_min_response_time(min_response_time, 9);
+        assert_eq!(min_response_time, 9);
+        // Min response time doesn't update when updating with a lower value.
+        min_response_time = update_min_response_time(min_response_time, 22);
+        assert_eq!(min_response_time, 9);
+        // Min response time doesn't update when updating with a 0 value.
+        min_response_time = update_min_response_time(min_response_time, 0);
+        assert_eq!(min_response_time, 9);
+    }
+
+    #[test]
+    fn response_time_merge() {
+        let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        global_response_times =
+            merge_response_times(global_response_times, local_response_times.clone());
+        // @TODO: how can we do useful testing of private method and objects?
+        assert_eq!(&global_response_times, &local_response_times);
+    }
+
+
+    #[test]
+    fn max_response_time_percentile() {
         let mut response_times: BTreeMap<usize, usize> = BTreeMap::new();
         response_times.insert(1, 1);
         response_times.insert(2, 1);
