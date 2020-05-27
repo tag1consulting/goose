@@ -348,9 +348,9 @@ pub struct Socket {}
 
 /// Internal global state for load test.
 #[derive(Clone)]
-pub struct GooseAttack {
+pub struct GooseAttack<'r> {
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
-    task_sets: Vec<GooseTaskSet>,
+    task_sets: Vec<GooseTaskSet<'r>>,
     /// A checksum of the task_sets vector to be sure all workers are running the same load test.
     task_sets_hash: u64,
     /// A weighted vector containing a GooseClient object for each client that will run during this load test.
@@ -371,7 +371,7 @@ pub struct GooseAttack {
     merged_requests: HashMap<String, GooseRequest>,
 }
 /// Goose's internal global state.
-impl GooseAttack {
+impl GooseAttack<'_> {
     /// Load configuration from command line and initialize a GooseAttack.
     ///
     /// # Example
@@ -380,7 +380,7 @@ impl GooseAttack {
     ///
     ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
-    pub fn initialize() -> GooseAttack {
+    pub fn initialize<'r>() -> GooseAttack<'r> {
         let goose_attack = GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
@@ -407,7 +407,7 @@ impl GooseAttack {
     ///     let configuration = GooseConfiguration::from_args();
     ///     let mut goose_attack = GooseAttack::initialize_with_config(configuration);
     /// ```
-    pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
+    pub fn initialize_with_config<'r>(config: GooseConfiguration) -> GooseAttack<'r> {
         GooseAttack {
             task_sets: Vec::new(),
             task_sets_hash: 0,
@@ -874,12 +874,12 @@ impl GooseAttack {
     }
 
     /// Called internally in local-mode and gaggle-mode.
-    async fn launch_clients(
+    async fn launch_clients<'r>(
         mut self,
         mut started: time::Instant,
         sleep_duration: time::Duration,
         socket: Option<Socket>,
-    ) -> GooseAttack {
+    ) -> GooseAttack<'r> {
         trace!(
             "launch clients: started({:?}) sleep_duration({:?}) socket({:?})",
             started,

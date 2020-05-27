@@ -17,9 +17,9 @@ lazy_static! {
     static ref WEIGHTED_BUCKET_POSITION: AtomicUsize = AtomicUsize::new(0);
 }
 
-pub async fn client_main(
+pub async fn client_main<'r>(
     thread_number: usize,
-    thread_task_set: GooseTaskSet,
+    thread_task_set: GooseTaskSet<'r>,
     thread_client: GooseClient,
     thread_receiver: mpsc::Receiver<GooseClientCommand>,
     thread_sender: mpsc::Sender<GooseClient>,

@@ -260,7 +260,7 @@ use reqwest::{Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::{future::Future, pin::Pin, time::Instant};
 use url::Url;
 
@@ -270,7 +270,7 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 // Share CLIENT object globally.
 lazy_static! {
-    static ref CLIENT: Mutex<Client> = Mutex::new(Client::new());
+    static ref CLIENT: Arc<Mutex<Client>> = Arc::new(Mutex::new(Client::new()));
 }
 
 /// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
@@ -280,8 +280,6 @@ macro_rules! task {
         GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
     };
 }
-        //GooseTask::new($task_func)
-        //GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
 
 /// taskset!("foo") expands to GooseTaskSet::new("foo").
 #[macro_export]
@@ -293,7 +291,7 @@ macro_rules! taskset {
 
 /// An individual task set.
 #[derive(Clone, Hash)]
-pub struct GooseTaskSet {
+pub struct GooseTaskSet<'r> {
     /// The name of the task set.
     pub name: String,
     /// An integer reflecting where this task set lives in the internal `GooseTest.task_sets` vector.
@@ -305,7 +303,7 @@ pub struct GooseTaskSet {
     /// An integer value indicating the maximum number of seconds a client will sleep after running a task.
     pub max_wait: usize,
     /// A vector containing one copy of each GooseTask that will run by clients running this task set.
-    pub tasks: Vec<GooseTask>,
+    pub tasks: Vec<GooseTask<&'r GooseClient>>,
     /// A vector of vectors of integers, controlling the sequence and order GooseTasks are run.
     pub weighted_tasks: Vec<Vec<usize>>,
     /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when the client first starts.
@@ -315,7 +313,7 @@ pub struct GooseTaskSet {
     /// An optional default host to run this TaskSet against.
     pub host: Option<String>,
 }
-impl GooseTaskSet {
+impl GooseTaskSet<'_> {
     /// Creates a new GooseTaskSet. Once created, GooseTasks must be assigned to it, and finally it must be
     /// registered with the GooseAttack object. The returned object must be stored in a mutable value.
     ///
@@ -356,7 +354,7 @@ impl GooseTaskSet {
     ///       let _response = client.get("/a/");
     ///     }
     /// ```
-    pub fn register_task(mut self, mut task: GooseTask) -> Self {
+    pub fn register_task(mut self, mut task: GooseTask<&GooseClient>) -> Self {
         trace!("{} register_task: {}", self.name, task.name);
         task.tasks_index = self.tasks.len();
         self.tasks.push(task);
@@ -905,7 +903,7 @@ impl GooseClient {
     /// ```
     pub fn goose_get(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().get(&url)
+        Arc::new(CLIENT.clone()).lock().unwrap().get(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -929,7 +927,7 @@ impl GooseClient {
     /// ```
     pub fn goose_post(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().post(&url)
+        Arc::new(CLIENT.clone()).lock().unwrap().post(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -953,7 +951,7 @@ impl GooseClient {
     /// ```
     pub fn goose_head(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().head(&url)
+        Arc::new(CLIENT.clone()).lock().unwrap().head(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -977,7 +975,7 @@ impl GooseClient {
     /// ```
     pub fn goose_put(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().put(&url)
+        Arc::new(CLIENT.clone()).lock().unwrap().put(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1001,7 +999,7 @@ impl GooseClient {
     /// ```
     pub fn goose_patch(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().patch(&url)
+        Arc::new(CLIENT.clone()).lock().unwrap().patch(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1025,7 +1023,7 @@ impl GooseClient {
     /// ```
     pub fn goose_delete(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().delete(&url)
+        Arc::new(CLIENT.clone()).lock().unwrap().delete(&url)
     }
 
     /// Builds the provided
@@ -1074,7 +1072,7 @@ impl GooseClient {
         */
 
         // Make the actual request.
-        let response = CLIENT.lock().unwrap().execute(request).await;
+        let response = Arc::new(CLIENT.clone()).lock().unwrap().execute(request).await;
         let elapsed = started.elapsed();
 
         if !self.config.no_stats {
@@ -1262,7 +1260,10 @@ impl GooseClient {
 
 /// An individual task within a `GooseTaskSet`.
 #[derive(Clone)]
-pub struct GooseTask {
+pub struct GooseTask<F>
+where
+    F: std::future::Future,
+{
     /// An index into GooseTaskSet.task, indicating which task this is.
     pub tasks_index: usize,
     /// An optional name for the task, used when displaying statistics about requests made.
@@ -1276,14 +1277,16 @@ pub struct GooseTask {
     /// A flag indicating that this task runs when the client stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    //pub function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
-    pub function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+    //pub function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+    pub function: fn(&GooseClient) -> F,
 }
-impl GooseTask {
+impl<F> GooseTask<F>
+    where
+    F: std::future::Future,
+{
     pub fn new(
-        function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
-        //function: fn(&GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send>>,
-        //function: fn(GooseClient),
+        //function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+        function: fn(&GooseClient) -> F,
     ) -> Self {
         trace!("new task");
         GooseTask {
@@ -1471,7 +1474,10 @@ impl GooseTask {
         self
     }
 }
-impl Hash for GooseTask {
+impl<F> Hash for GooseTask<F>
+    where
+    F: std::future::Future,
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.tasks_index.hash(state);
         self.name.hash(state);
@@ -1489,11 +1495,11 @@ mod tests {
     #[test]
     fn goose_task_set() {
         // Simplistic test task functions.
-        async fn test_function_a(client: &mut GooseClient) -> () {
+        async fn test_function_a(client: &GooseClient) -> () {
             let _response = client.get("/a/").await;
         }
 
-        async fn test_function_b(client: &mut GooseClient) -> () {
+        async fn test_function_b(client: &GooseClient) -> () {
             let _response = client.get("/b/").await;
         }
 
@@ -1586,7 +1592,7 @@ mod tests {
     #[test]
     fn goose_task() {
         // Simplistic test task functions.
-        async fn test_function_a(client: &mut GooseClient) -> () {
+        async fn test_function_a(client: &GooseClient) -> () {
             let _response = client.get("/a/");
         }
 
