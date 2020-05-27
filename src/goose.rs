@@ -1114,13 +1114,7 @@ impl GooseClient {
         // Create a raw request object if we're tracking statistics.
         if !self.config.no_stats {
             // Determine what to name current request.
-            let request_name = match &self.request_name {
-                Some(rn) => rn.to_string(),
-                None => match &self.task_request_name {
-                    Some(trn) => trn.to_string(),
-                    None => path.to_string(),
-                },
-            };
+            let request_name = self.get_request_name(&path);
             let mut raw_request = GooseRawRequest::new(method, request_name.clone());
             raw_request.set_response_time(elapsed.as_millis());
             match &response {
@@ -1149,10 +1143,25 @@ impl GooseClient {
             let _ = parent.send(raw_request);
         }
 
+        // @TODO: (improve comment) Consume request_name, if set.
+        if self.request_name != None {
+            self.request_name = None;
+        }
+
         response
     }
 
-    /*
+    /// @TODO
+    pub fn get_request_name(&mut self, path: &str) -> String {
+        match &self.request_name {
+            Some(rn) => rn.to_string(),
+            None => match &self.task_request_name {
+                Some(trn) => trn.to_string(),
+                None => path.to_string(),
+            },
+        }
+    }
+
     /// Manually mark a request as a success.
     ///
     /// By default, Goose will consider any response with a 2xx status code as a success. It may be
@@ -1178,24 +1187,18 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_success(&mut self) {
-        // If the last request was a success, we don't need to change anything.
-        if !self.was_success {
-            let request_name = self.get_previous_request_name();
-            let previous_method = self
-                .previous_method
-                .clone()
-                .expect("failed to unwrap previous_method");
-            let mut goose_request =
-                self.get_request(&request_name.to_string(), &previous_method.clone());
-            goose_request.success_count += 1;
-            goose_request.fail_count -= 1;
-            self.set_request(&request_name, &previous_method, goose_request);
-        }
-    }
-    */
+    pub fn set_success(&mut self, method: &GooseMethod, path: String) {
+        let request_name = self.get_request_name(&path);
+        let mut update_request = GooseRawRequest::new(method.clone(), request_name);
+        update_request.success = true;
+        // This is an updaate to a previously recorded statistic.
+        update_request.update = true;
 
-    /*
+        // @TODO: do this safely.
+        let parent = self.parent.clone().unwrap();
+        let _ = parent.send(update_request);
+    }
+
     /// Manually mark a request as a failure.
     ///
     /// By default, Goose will consider any response with a 2xx status code as a success. You may require
@@ -1232,22 +1235,17 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_failure(&mut self) {
-        // If the last request was a failure, we don't need to change anything.
-        if self.was_success {
-            let request_name = self.get_previous_request_name();
-            let previous_method = self
-                .previous_method
-                .clone()
-                .expect("failed to unwrap previous_method");
-            let mut goose_request =
-                self.get_request(&request_name.to_string(), &previous_method.clone());
-            goose_request.success_count -= 1;
-            goose_request.fail_count += 1;
-            self.set_request(&request_name, &previous_method, goose_request);
-        }
+    pub fn set_failure(&mut self, method: &GooseMethod, path: &str) {
+        let request_name = self.get_request_name(path);
+        let mut update_request = GooseRawRequest::new(method.clone(), request_name);
+        update_request.success = false;
+        // This is an updaate to a previously recorded statistic.
+        update_request.update = true;
+
+        // @TODO: do this safely.
+        let parent = self.parent.clone().unwrap();
+        let _ = parent.send(update_request);
     }
-    */
 }
 
 /// An individual task within a `GooseTaskSet`.
