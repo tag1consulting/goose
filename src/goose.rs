@@ -277,9 +277,10 @@ lazy_static! {
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
-        GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
+        GooseTask::new($task_func)
     };
 }
+        //GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
 
 /// taskset!("foo") expands to GooseTaskSet::new("foo").
 #[macro_export]
@@ -429,19 +430,6 @@ impl GooseTaskSet {
         self.max_wait = max_wait;
         self
     }
-}
-
-/// Tracks the current run-mode of a client.
-#[derive(Debug, Clone, PartialEq)]
-pub enum GooseClientMode {
-    /// Clients are briefly in the INIT mode when first allocated.
-    INIT,
-    /// Clients are briefly in the HATCHING mode when setting things up.
-    HATCHING,
-    /// Clients spend most of their time in the RUNNING mode, executing tasks.
-    RUNNING,
-    /// Clients are briefly in the EXITING mode when stopping.
-    EXITING,
 }
 
 /// Commands sent between the parent and client threads, and between manager and
@@ -624,22 +612,14 @@ pub struct GooseClient {
     pub config: GooseConfiguration,
     /// An index into the internal `GooseTest.weighted_clients, indicating which weighted GooseTaskSet is running.
     pub weighted_clients_index: usize,
-    /// The current run mode of this client, see `enum GooseClientMode`.
-    pub mode: GooseClientMode,
     /// A weighted list of all tasks that run when the client first starts.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
     /// A weighted list of all tasks that this client runs once started.
     pub weighted_tasks: Vec<Vec<usize>>,
-    /// A pointer into which sequenced bucket the client is currently running tasks from.
-    pub weighted_bucket: usize,
-    /// A pointer of which task within the current sequenced bucket is currently running.
-    pub weighted_bucket_position: usize,
     /// A weighted list of all tasks that run when the client stops.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
     /// Optional name of all requests made within the current task.
     pub task_request_name: Option<String>,
-    /// Optional name of all requests made within the current task.
-    pub request_name: Option<String>,
     /// Store the previous url.
     pub previous_path: Option<String>,
     /// Store the previous url.
@@ -690,14 +670,10 @@ impl GooseClient {
             max_wait,
             // A value of max_value() indicates this client isn't fully initialized yet.
             weighted_clients_index: usize::max_value(),
-            mode: GooseClientMode::INIT,
             weighted_on_start_tasks: Vec::new(),
             weighted_tasks: Vec::new(),
-            weighted_bucket: 0,
-            weighted_bucket_position: 0,
             weighted_on_stop_tasks: Vec::new(),
             task_request_name: None,
-            request_name: None,
             previous_path: None,
             previous_method: None,
             previous_request_name: None,
@@ -740,7 +716,8 @@ impl GooseClient {
     ///       let _response = client.get("/path/to/foo").await;
     ///     }
     /// ```
-    pub fn set_request_name(&mut self, name: &str) -> &mut Self {
+    /*
+    pub fn set_request_name(self, name: &str) -> Self {
         if name != "" {
             self.request_name = Some(name.to_string());
         } else {
@@ -748,14 +725,10 @@ impl GooseClient {
         }
         self
     }
-
-    /// Sets the current run mode of this client.
-    pub fn set_mode(&mut self, mode: GooseClientMode) {
-        self.mode = mode;
-    }
+    */
 
     /// Checks if the current path-method pair has been requested before.
-    fn get_request(&mut self, path: &str, method: &GooseMethod) -> GooseRequest {
+    fn get_request(self, path: &str, method: &GooseMethod) -> GooseRequest {
         let key = format!("{:?} {}", method, path);
         trace!("get key: {}", &key);
         match self.requests.get(&key) {
@@ -765,10 +738,10 @@ impl GooseClient {
     }
 
     /// Stores request statistics about the current path-method pair.
-    fn set_request(&mut self, path: &str, method: &GooseMethod, request: GooseRequest) {
+    fn set_request(self, path: &str, method: &GooseMethod, request: GooseRequest) {
         let key = format!("{:?} {}", method, path);
         trace!("set key: {}", &key);
-        self.requests.insert(key, request);
+        //self.requests.insert(key, request);
     }
 
     /// A helper that pre-pends a hostname to the path. For example, if you pass in `/foo`
@@ -783,7 +756,7 @@ impl GooseClient {
     ///  - Otherwise, if `--host` is defined, use this
     ///  - Otherwise, if `GooseTaskSet.host` is defined, use this
     ///  - Otherwise, use global `GooseAttack.host`.
-    pub fn build_url(&mut self, path: &str) -> String {
+    pub fn build_url(&self, path: &str) -> String {
         // If URL includes a host, use it.
         if let Ok(parsed_path) = Url::parse(path) {
             if let Some(_uri) = parsed_path.host() {
@@ -833,7 +806,7 @@ impl GooseClient {
     ///       let _response = client.get("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn get(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn get(&self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_get(path);
         self.goose_send(request_builder).await
     }
@@ -857,7 +830,7 @@ impl GooseClient {
     ///       let _response = client.post("/path/to/foo/", "BODY BEING POSTED".to_string());
     ///     }
     /// ```
-    pub async fn post(&mut self, path: &str, body: String) -> Result<Response, Error> {
+    pub async fn post(&self, path: &str, body: String) -> Result<Response, Error> {
         let request_builder = self.goose_post(path).body(body);
         self.goose_send(request_builder).await
     }
@@ -881,7 +854,7 @@ impl GooseClient {
     ///       let _response = client.head("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn head(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn head(&self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_head(path);
         self.goose_send(request_builder).await
     }
@@ -905,7 +878,7 @@ impl GooseClient {
     ///       let _response = client.delete("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn delete(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn delete(&self, path: &str) -> Result<Response, Error> {
         let request_builder = self.goose_delete(path);
         self.goose_send(request_builder).await
     }
@@ -929,7 +902,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder);
     ///     }
     /// ```
-    pub fn goose_get(&mut self, path: &str) -> RequestBuilder {
+    pub fn goose_get(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.lock().unwrap().get(&url)
     }
@@ -953,7 +926,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder);
     ///     }
     /// ```
-    pub fn goose_post(&mut self, path: &str) -> RequestBuilder {
+    pub fn goose_post(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.lock().unwrap().post(&url)
     }
@@ -977,7 +950,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder);
     ///     }
     /// ```
-    pub fn goose_head(&mut self, path: &str) -> RequestBuilder {
+    pub fn goose_head(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.lock().unwrap().head(&url)
     }
@@ -1001,7 +974,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder);
     ///     }
     /// ```
-    pub fn goose_put(&mut self, path: &str) -> RequestBuilder {
+    pub fn goose_put(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.lock().unwrap().put(&url)
     }
@@ -1025,7 +998,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder);
     ///     }
     /// ```
-    pub fn goose_patch(&mut self, path: &str) -> RequestBuilder {
+    pub fn goose_patch(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.lock().unwrap().patch(&url)
     }
@@ -1049,7 +1022,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder);
     ///     }
     /// ```
-    pub fn goose_delete(&mut self, path: &str) -> RequestBuilder {
+    pub fn goose_delete(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.lock().unwrap().delete(&url)
     }
@@ -1076,7 +1049,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder);
     ///     }
     /// ```
-    pub async fn goose_send(&mut self, request_builder: RequestBuilder) -> Result<Response, Error> {
+    pub async fn goose_send(&self, request_builder: RequestBuilder) -> Result<Response, Error> {
         let started = Instant::now();
         let request = match request_builder.build() {
             Ok(r) => r,
@@ -1087,6 +1060,7 @@ impl GooseClient {
         };
 
         // Allows introspection, and toggling success/failure.
+        /*
         self.previous_method = goose_method_from_method(request.method().clone());
         self.previous_path = match Url::parse(&request.url().to_string()) {
             Ok(u) => Some(u.path().to_string()),
@@ -1096,6 +1070,7 @@ impl GooseClient {
             }
         };
         self.previous_request_name = self.request_name.clone();
+        */
 
         // Make the actual request.
         let response = CLIENT.lock().unwrap().execute(request).await;
@@ -1111,6 +1086,7 @@ impl GooseClient {
                 .clone()
                 .expect("failed to unwrap previous_method");
             // Requests are named per-request, per-task, or based on the path loaded.
+            /*
             let request_name = match &self.request_name {
                 Some(rn) => rn.to_string(),
                 None => match &self.task_request_name {
@@ -1118,7 +1094,9 @@ impl GooseClient {
                     None => path.to_string(),
                 },
             };
+            */
 
+            /*
             let mut goose_request = self.get_request(&request_name, &method);
             goose_request.set_response_time(elapsed.as_millis());
             match &response {
@@ -1133,39 +1111,43 @@ impl GooseClient {
                     // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                     if status_code.is_success() {
                         goose_request.success_count += 1;
-                        self.was_success = true;
+                        //self.was_success = true;
                     }
                     // @TODO: properly track redirects and other code ranges
                     else {
                         // @TODO: handle this correctly
                         debug!("{:?}: non-success status_code: {:?}", &path, status_code);
                         goose_request.fail_count += 1;
-                        self.was_success = false;
+                        //self.was_success = false;
                     }
                 }
                 Err(e) => {
                     // @TODO: what can we learn from a reqwest error?
                     warn!("{:?}: {}", &path, e);
                     goose_request.fail_count += 1;
-                    self.was_success = false;
+                    //self.was_success = false;
                     if self.config.status_codes {
                         goose_request.set_status_code(None);
                     }
                 }
             };
             self.set_request(&request_name, &method, goose_request);
+            */
         }
 
         // Consume self.request_name if it was set.
+        /*
         if self.request_name.is_some() {
             self.request_name = None
         }
+        */
 
         response
     }
 
+    /*
     /// Helper to determine which request_name was used in the previous request.
-    fn get_previous_request_name(&mut self) -> String {
+    fn get_previous_request_name(self) -> String {
         match &self.previous_request_name {
             Some(prn) => prn.to_string(),
             None => match &self.task_request_name {
@@ -1177,7 +1159,9 @@ impl GooseClient {
             },
         }
     }
+    */
 
+    /*
     /// Manually mark a request as a success.
     ///
     /// By default, Goose will consider any response with a 2xx status code as a success. It may be
@@ -1203,10 +1187,10 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_success(&mut self) {
+    pub fn set_success(self) {
         // If the last request was a success, we don't need to change anything.
         if !self.was_success {
-            let request_name = self.get_previous_request_name();
+            //let request_name = self.get_previous_request_name();
             let previous_method = self
                 .previous_method
                 .clone()
@@ -1218,7 +1202,9 @@ impl GooseClient {
             self.set_request(&request_name, &previous_method, goose_request);
         }
     }
+    */
 
+    /*
     /// Manually mark a request as a failure.
     ///
     /// By default, Goose will consider any response with a 2xx status code as a success. You may require
@@ -1255,10 +1241,10 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_failure(&mut self) {
+    pub fn set_failure(self) {
         // If the last request was a failure, we don't need to change anything.
         if self.was_success {
-            let request_name = self.get_previous_request_name();
+            //let request_name = self.get_previous_request_name();
             let previous_method = self
                 .previous_method
                 .clone()
@@ -1270,6 +1256,7 @@ impl GooseClient {
             self.set_request(&request_name, &previous_method, goose_request);
         }
     }
+    */
 }
 
 /// An individual task within a `GooseTaskSet`.
@@ -1288,11 +1275,14 @@ pub struct GooseTask {
     /// A flag indicating that this task runs when the client stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    pub function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+    //pub function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+    pub function: fn(GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send>>,
+    //pub function: fn(GooseClient),
 }
 impl GooseTask {
     pub fn new(
-        function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+        function: fn(GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send>>,
+        //function: fn(GooseClient),
     ) -> Self {
         trace!("new task");
         GooseTask {
@@ -1895,7 +1885,6 @@ mod tests {
         assert_eq!(client.min_wait, 0);
         assert_eq!(client.max_wait, 0);
         assert_eq!(client.weighted_clients_index, usize::max_value());
-        assert_eq!(client.mode, GooseClientMode::INIT);
         assert_eq!(client.weighted_on_start_tasks.len(), 0);
         assert_eq!(client.weighted_tasks.len(), 0);
         assert_eq!(client.weighted_bucket, 0);
@@ -1918,7 +1907,6 @@ mod tests {
         assert_eq!(client.min_wait, 0);
         assert_eq!(client.max_wait, 0);
         assert_eq!(client.weighted_clients_index, usize::max_value());
-        assert_eq!(client.mode, GooseClientMode::INIT);
         assert_eq!(client.weighted_on_start_tasks.len(), 0);
         assert_eq!(client.weighted_tasks.len(), 0);
         assert_eq!(client.weighted_bucket, 0);
@@ -1934,10 +1922,6 @@ mod tests {
         // Can set request name multiple times.
         client.set_request_name("bar");
         assert_eq!(client.request_name, Some("bar".to_string()));
-
-        // Can change mode.
-        client.set_mode(GooseClientMode::HATCHING);
-        assert_eq!(client.mode, GooseClientMode::HATCHING);
 
         // Returns new GooseRequest if never set before.
         let request = client.get_request("/foo", &GooseMethod::GET);

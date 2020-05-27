@@ -322,7 +322,7 @@ use structopt::StructOpt;
 use url::Url;
 
 use crate::goose::{
-    GooseClient, GooseClientCommand, GooseClientMode, GooseRequest, GooseTask, GooseTaskSet,
+    GooseClient, GooseClientCommand, GooseRequest, GooseTask, GooseTaskSet,
 };
 
 /// Constant defining how often statistics should be displayed while load test is running.
@@ -927,11 +927,6 @@ impl GooseAttack {
                 // Copy the client-to-parent sender channel, used by all threads.
                 let thread_sender = all_threads_sender.clone();
 
-                // Hatching a new Goose client.
-                thread_client.set_mode(GooseClientMode::HATCHING);
-                // Notify parent that our run mode has changed to Hatching.
-                thread_sender.send(thread_client.clone()).unwrap();
-
                 // Copy the appropriate task_set into the thread.
                 let thread_task_set = self.task_sets[thread_client.task_sets_index].clone();
 
@@ -1030,7 +1025,6 @@ impl GooseAttack {
                     // Messages contain per-client statistics: merge them into the global statistics.
                     let unwrapped_message = message.unwrap();
                     let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                    self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                     // Syncronize client requests
                     for (request_key, request) in unwrapped_message.requests {
                         trace!("request_key: {}", request_key);
@@ -1113,7 +1107,6 @@ impl GooseAttack {
                     while message.is_ok() {
                         let unwrapped_message = message.unwrap();
                         let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                        self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
                         // Syncronize client requests
                         for (request_key, request) in unwrapped_message.requests {
                             trace!("request_key: {}", request_key);
