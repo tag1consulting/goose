@@ -1,20 +1,16 @@
-use std::collections::HashMap;
-use std::sync::mpsc;
-
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
-use std::time;
+use std::{sync::mpsc, time};
 
 use crate::get_worker_id;
-use crate::goose::{GooseClient, GooseClientCommand, GooseClientMode, GooseTaskSet};
+use crate::goose::{GooseClient, GooseClientCommand, GooseTaskSet};
 
 pub async fn client_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     mut thread_client: GooseClient,
     thread_receiver: mpsc::Receiver<GooseClientCommand>,
-    thread_sender: mpsc::Sender<GooseClient>,
     worker: bool,
 ) {
     if worker {
@@ -30,9 +26,6 @@ pub async fn client_main(
             thread_number, thread_task_set.name
         );
     }
-    // Notify parent that our run mode has changed to Running.
-    thread_client.set_mode(GooseClientMode::RUNNING);
-    thread_sender.send(thread_client.clone()).unwrap();
 
     // Client is starting, first invoke the weighted on_start tasks.
     if !thread_client.weighted_on_start_tasks.is_empty() {
@@ -109,15 +102,8 @@ pub async fn client_main(
             let mut message = thread_receiver.try_recv();
             while message.is_ok() {
                 match message.unwrap() {
-                    // Sync our state to the parent.
-                    GooseClientCommand::SYNC => {
-                        thread_sender.send(thread_client.clone()).unwrap();
-                        // Reset per-thread counters, as totals have been sent to the parent
-                        thread_client.requests = HashMap::new();
-                    }
-                    // Sync our state to the parent and then exit.
+                    // Time to exit.
                     GooseClientCommand::EXIT => {
-                        thread_client.set_mode(GooseClientMode::EXITING);
                         // No need to reset per-thread counters, we're exiting and memory will be freed
                         thread_continue = false;
                     }
@@ -170,8 +156,7 @@ pub async fn client_main(
         }
     }
 
-    // Do our final sync before we exit.
-    thread_sender.send(thread_client.clone()).unwrap();
+    // Optional debug output when exiting.
     if worker {
         info!(
             "[{}] exiting client {} from {}...",
