@@ -252,6 +252,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+use crossbeam::crossbeam_channel;
 use http::method::Method;
 use http::StatusCode;
 use reqwest::Error;
@@ -260,7 +261,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::{future::Future, pin::Pin, time::Instant};
-use crossbeam::crossbeam_channel;
 use url::Url;
 
 use crate::GooseConfiguration;
@@ -470,8 +470,8 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
         Method::POST => GooseMethod::POST,
         Method::PUT => GooseMethod::PUT,
         _ => {
-                error!("unsupported metehod: {}", method);
-                std::process::exit(1);
+            error!("unsupported metehod: {}", method);
+            std::process::exit(1);
         }
     }
 }

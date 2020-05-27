@@ -307,8 +307,8 @@ use std::f32;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time;
 
 use crossbeam::crossbeam_channel::unbounded;
@@ -322,9 +322,7 @@ use simplelog::*;
 use structopt::StructOpt;
 use url::Url;
 
-use crate::goose::{
-    GooseClient, GooseClientCommand, GooseRequest, GooseTask, GooseTaskSet,
-};
+use crate::goose::{GooseClient, GooseClientCommand, GooseRequest, GooseTask, GooseTaskSet};
 
 /// Constant defining how often statistics should be displayed while load test is running.
 const RUNNING_STATS_EVERY: usize = 15;
@@ -994,19 +992,21 @@ impl GooseAttack {
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.merged_requests.get(&key) {
                         Some(m) => m.clone(),
-                        None => GooseRequest::new(&raw_request.name, raw_request.method, raw_request.load_test_hash),
+                        None => GooseRequest::new(
+                            &raw_request.name,
+                            raw_request.method,
+                            raw_request.load_test_hash,
+                        ),
                     };
                     merge_request.set_response_time(raw_request.response_time);
                     merge_request.set_status_code(raw_request.status_code);
                     if raw_request.success {
                         merge_request.success_count += 1;
-                    }
-                    else {
+                    } else {
                         merge_request.fail_count += 1;
                     }
 
-                    self.merged_requests
-                        .insert(key.to_string(), merge_request);
+                    self.merged_requests.insert(key.to_string(), merge_request);
                     message = parent_receiver.try_recv();
                 }
 
@@ -1036,7 +1036,9 @@ impl GooseAttack {
                 }
             }
 
-            if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) { if self.configuration.worker { info!(
+            if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) {
+                if self.configuration.worker {
+                    info!(
                         "[{}] stopping after {} seconds...",
                         get_worker_id(),
                         started.elapsed().as_secs()
@@ -1070,19 +1072,21 @@ impl GooseAttack {
                         let key = format!("{:?} {}", raw_request.method, raw_request.name);
                         let mut merge_request = match self.merged_requests.get(&key) {
                             Some(m) => m.clone(),
-                            None => GooseRequest::new(&raw_request.name, raw_request.method, raw_request.load_test_hash),
+                            None => GooseRequest::new(
+                                &raw_request.name,
+                                raw_request.method,
+                                raw_request.load_test_hash,
+                            ),
                         };
                         merge_request.set_response_time(raw_request.response_time);
                         merge_request.set_status_code(raw_request.status_code);
                         if raw_request.success {
                             merge_request.success_count += 1;
-                        }
-                        else {
+                        } else {
                             merge_request.fail_count += 1;
                         }
 
-                        self.merged_requests
-                            .insert(key.to_string(), merge_request);
+                        self.merged_requests.insert(key.to_string(), merge_request);
                         message = parent_receiver.try_recv();
                     }
                 }

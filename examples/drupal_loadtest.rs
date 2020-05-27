@@ -213,27 +213,27 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
-                    let request_builder =
-                        client.goose_post(&comment_path);
+                    let request_builder = client.goose_post(&comment_path);
                     let response = client.goose_send(request_builder.form(&params)).await;
                     match response {
-                        Ok(r) => {
-                            match r.text().await {
-                                Ok(html) => {
-                                    if !html.contains(&comment_body) {
-                                        eprintln!("no comment showed up after posting to {}", &comment_path);
-                                        client.set_failure(&GooseMethod::POST, &comment_path);
-                                    }
-                                }
-                                Err(e) => {
+                        Ok(r) => match r.text().await {
+                            Ok(html) => {
+                                if !html.contains(&comment_body) {
                                     eprintln!(
-                                        "unexpected error when posting to {}: {}",
-                                        &comment_path, e
+                                        "no comment showed up after posting to {}",
+                                        &comment_path
                                     );
                                     client.set_failure(&GooseMethod::POST, &comment_path);
                                 }
                             }
-                        }
+                            Err(e) => {
+                                eprintln!(
+                                    "unexpected error when posting to {}: {}",
+                                    &comment_path, e
+                                );
+                                client.set_failure(&GooseMethod::POST, &comment_path);
+                            }
+                        },
                         // Goose will catch this error.
                         Err(_) => (),
                     }
