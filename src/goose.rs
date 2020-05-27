@@ -277,9 +277,10 @@ lazy_static! {
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
-        GooseTask::new($task_func)
+        GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
     };
 }
+        //GooseTask::new($task_func)
         //GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
 
 /// taskset!("foo") expands to GooseTaskSet::new("foo").
@@ -1276,12 +1277,12 @@ pub struct GooseTask {
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
     //pub function: for<'r> fn(&'r mut GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
-    pub function: fn(GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send>>,
-    //pub function: fn(GooseClient),
+    pub function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
 }
 impl GooseTask {
     pub fn new(
-        function: fn(GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send>>,
+        function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+        //function: fn(&GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send>>,
         //function: fn(GooseClient),
     ) -> Self {
         trace!("new task");

@@ -59,7 +59,7 @@ pub async fn client_main(
                 }
                 */
                 // Invoke the task function.
-                function(thread_client.clone()).await;
+                function(&thread_client).await;
             }
         }
     }
@@ -105,7 +105,7 @@ pub async fn client_main(
         }
         */
         // Invoke the task function.
-        function(thread_client.clone()).await;
+        function(&thread_client).await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time = if thread_client.max_wait > 0 {
@@ -179,7 +179,7 @@ pub async fn client_main(
                 }
                 */
                 // Invoke the task function.
-                function(thread_client.clone()).await;
+                function(&thread_client).await;
             }
         }
     }
