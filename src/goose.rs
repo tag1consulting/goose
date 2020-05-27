@@ -514,11 +514,6 @@ impl GooseRawRequest {
     }
 
     /*
-     * @TODO:
-    fn set_success(&mut self, success: bool) {
-        self.success = success;
-    }
-
     fn set_load_test_hash(&mut self, load_test_hash: u64) {
         self.load_test_hash = load_test_hash;
     }

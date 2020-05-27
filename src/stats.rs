@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::f32;
 
 use crate::goose::GooseRequest;
-use crate::{
-    merge_response_times, update_max_response_time, update_min_response_time, util, GooseAttack,
+use crate::manager::{
+    merge_response_times, update_max_response_time, update_min_response_time,
 };
+use crate::{util, GooseAttack};
 
 /// Get the response time that a certain number of percent of the requests finished within.
 fn calculate_response_time_percentile(

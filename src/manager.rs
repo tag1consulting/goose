@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
@@ -67,6 +67,96 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
         }
         _ => {}
     }
+}
+
+/// A helper function that merges together response times.
+///
+/// Used in `lib.rs` to merge together per-thread response times, and in `stats.rs`
+/// to aggregate all response times.
+pub fn merge_response_times(
+    mut global_response_times: BTreeMap<usize, usize>,
+    local_response_times: BTreeMap<usize, usize>,
+) -> BTreeMap<usize, usize> {
+    // Iterate over client response times, and merge into global response times.
+    for (response_time, count) in &local_response_times {
+        let counter = match global_response_times.get(&response_time) {
+            // We've seen this response_time before, increment counter.
+            Some(c) => *c + count,
+            // First time we've seen this response time, initialize counter.
+            None => *count,
+        };
+        global_response_times.insert(*response_time, counter);
+    }
+    global_response_times
+}
+
+// Update global minimum response time based on local resposne time.
+pub fn update_min_response_time(mut global_min: usize, min: usize) -> usize {
+    if global_min == 0 || (min > 0 && min < global_min) {
+        global_min = min;
+    }
+    global_min
+}
+
+// Update global maximum response time based on local resposne time.
+pub fn update_max_response_time(mut global_max: usize, max: usize) -> usize {
+    if global_max < max {
+        global_max = max;
+    }
+    global_max
+}
+
+/// Merge per-client-statistics from client thread into global parent statistics
+fn merge_from_worker(
+    parent_request: &GooseRequest,
+    client_request: &GooseRequest,
+    config: &GooseConfiguration,
+) -> GooseRequest {
+    // Make a mutable copy where we can merge things
+    let mut merged_request = parent_request.clone();
+    // Iterate over client response times, and merge into global response time
+    merged_request.response_times = merge_response_times(
+        merged_request.response_times,
+        client_request.response_times.clone(),
+    );
+    // Increment total response time counter.
+    merged_request.total_response_time += &client_request.total_response_time;
+    // Increment count of how many resposne counters we've seen.
+    merged_request.response_time_counter += &client_request.response_time_counter;
+    // If client had new fastest response time, update global fastest response time.
+    merged_request.min_response_time = update_min_response_time(
+        merged_request.min_response_time,
+        client_request.min_response_time,
+    );
+    // If client had new slowest response time, update global slowest resposne time.
+    merged_request.max_response_time = update_max_response_time(
+        merged_request.max_response_time,
+        client_request.max_response_time,
+    );
+    // Increment total success counter.
+    merged_request.success_count += &client_request.success_count;
+    // Increment total fail counter.
+    merged_request.fail_count += &client_request.fail_count;
+    // Only accrue overhead of merging status_code_counts if we're going to display the results
+    if config.status_codes {
+        for (status_code, count) in &client_request.status_code_counts {
+            let new_count;
+            // Add client count into global count
+            if let Some(existing_status_code_count) =
+                merged_request.status_code_counts.get(&status_code)
+            {
+                new_count = *existing_status_code_count + *count;
+            }
+            // No global count exists yet, so start with client count
+            else {
+                new_count = *count;
+            }
+            merged_request
+                .status_code_counts
+                .insert(*status_code, new_count);
+        }
+    }
+    merged_request
 }
 
 pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
@@ -212,7 +302,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 if let Some(parent_request) =
                                     goose_attack.merged_requests.get(&request_key)
                                 {
-                                    merged_request = crate::merge_from_client(
+                                    merged_request = merge_from_worker(
                                         parent_request,
                                         &request,
                                         &goose_attack.configuration,
