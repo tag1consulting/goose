@@ -315,8 +315,6 @@ use crossbeam::crossbeam_channel::unbounded;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use structopt::StructOpt;
