@@ -612,8 +612,6 @@ impl GooseAttack {
             let mut weighted_sets = vec![index; weight];
             weighted_task_sets.append(&mut weighted_sets);
         }
-        // Shuffle the weighted list of task sets
-        weighted_task_sets.shuffle(&mut thread_rng());
 
         // Allocate a state for each client that will be spawned.
         info!("initializing client states...");
