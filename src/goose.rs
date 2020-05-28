@@ -924,7 +924,7 @@ impl GooseClient {
     ///     /// request builder.
     ///     async fn get_function(client: &mut GooseClient) {
     ///       let request_builder = client.goose_get("/path/to/foo");
-    ///       let response = client.goose_send(request_builder);
+    ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
     pub fn goose_get(&mut self, path: &str) -> RequestBuilder {
@@ -948,7 +948,7 @@ impl GooseClient {
     ///     /// request builder.
     ///     async fn post_function(client: &mut GooseClient) {
     ///       let request_builder = client.goose_post("/path/to/foo");
-    ///       let response = client.goose_send(request_builder);
+    ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
     pub fn goose_post(&mut self, path: &str) -> RequestBuilder {
@@ -972,7 +972,7 @@ impl GooseClient {
     ///     /// request builder.
     ///     async fn head_function(client: &mut GooseClient) {
     ///       let request_builder = client.goose_head("/path/to/foo");
-    ///       let response = client.goose_send(request_builder);
+    ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
     pub fn goose_head(&mut self, path: &str) -> RequestBuilder {
@@ -996,7 +996,7 @@ impl GooseClient {
     ///     /// request builder.
     ///     async fn put_function(client: &mut GooseClient) {
     ///       let request_builder = client.goose_put("/path/to/foo");
-    ///       let response = client.goose_send(request_builder);
+    ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
     pub fn goose_put(&mut self, path: &str) -> RequestBuilder {
@@ -1020,7 +1020,7 @@ impl GooseClient {
     ///     /// request builder.
     ///     async fn patch_function(client: &mut GooseClient) {
     ///       let request_builder = client.goose_patch("/path/to/foo");
-    ///       let response = client.goose_send(request_builder);
+    ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
     pub fn goose_patch(&mut self, path: &str) -> RequestBuilder {
@@ -1044,7 +1044,7 @@ impl GooseClient {
     ///     /// request builder.
     ///     async fn delete_function(client: &mut GooseClient) {
     ///       let request_builder = client.goose_delete("/path/to/foo");
-    ///       let response = client.goose_send(request_builder);
+    ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
     pub fn goose_delete(&mut self, path: &str) -> RequestBuilder {
@@ -1071,7 +1071,7 @@ impl GooseClient {
     ///     /// request builder.
     ///     async fn get_function(client: &mut GooseClient) {
     ///       let request_builder = client.goose_get("/path/to/foo");
-    ///       let response = client.goose_send(request_builder);
+    ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
     pub async fn goose_send(&mut self, request_builder: RequestBuilder) -> Result<Response, Error> {
@@ -1125,9 +1125,7 @@ impl GooseClient {
                 }
             };
 
-            // @TODO: do this safely
-            let parent = self.parent.clone().unwrap();
-            let _ = parent.send(raw_request);
+            self.send_to_parent(raw_request);
         }
 
         // @TODO: (improve comment) Consume request_name, if set.
@@ -1138,8 +1136,26 @@ impl GooseClient {
         response
     }
 
-    /// @TODO
-    pub fn get_request_name(&mut self, path: &str) -> String {
+    fn send_to_parent(&mut self, raw_request: GooseRawRequest) {
+        let parent = match self.parent.clone() {
+            Some(p) => p,
+            None => {
+                error!("unable to communicate with parent thread, exiting");
+                std::process::exit(1);
+            }
+        };
+        match parent.send(raw_request) {
+            Ok(_) => (),
+            Err(e) => {
+                error!("unable to communicate with parent thread, exiting: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    /// If individual `request_name` is set, use this. Otherwise, if `task_request_name`
+    /// is set, use this. Otherwise, use path.
+    fn get_request_name(&mut self, path: &str) -> String {
         match &self.request_name {
             Some(rn) => rn.to_string(),
             None => match &self.task_request_name {
@@ -1181,9 +1197,7 @@ impl GooseClient {
         // This is an updaate to a previously recorded statistic.
         update_request.update = true;
 
-        // @TODO: do this safely.
-        let parent = self.parent.clone().unwrap();
-        let _ = parent.send(update_request);
+        self.send_to_parent(update_request);
     }
 
     /// Manually mark a request as a failure.
@@ -1230,9 +1244,7 @@ impl GooseClient {
         // This is an updaate to a previously recorded statistic.
         update_request.update = true;
 
-        // @TODO: do this safely.
-        let parent = self.parent.clone().unwrap();
-        let _ = parent.send(update_request);
+        self.send_to_parent(update_request);
     }
 }
 
