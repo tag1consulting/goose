@@ -489,8 +489,6 @@ pub struct GooseRawRequest {
     pub success: bool,
     /// Whether or not we're updating a previous request.
     pub update: bool,
-    /// Load test hash.
-    pub load_test_hash: u64,
 }
 impl GooseRawRequest {
     pub fn new(method: GooseMethod, name: String) -> Self {
@@ -501,7 +499,6 @@ impl GooseRawRequest {
             status_code: None,
             success: true,
             update: false,
-            load_test_hash: 0,
         }
     }
 
@@ -512,12 +509,6 @@ impl GooseRawRequest {
     fn set_status_code(&mut self, status_code: Option<StatusCode>) {
         self.status_code = status_code;
     }
-
-    /*
-    fn set_load_test_hash(&mut self, load_test_hash: u64) {
-        self.load_test_hash = load_test_hash;
-    }
-    */
 }
 
 /// Statistics collected about a path-method pair, (for example `/index`-`GET`).
