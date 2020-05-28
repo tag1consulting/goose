@@ -992,11 +992,7 @@ impl GooseAttack {
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.merged_requests.get(&key) {
                         Some(m) => m.clone(),
-                        None => GooseRequest::new(
-                            &raw_request.name,
-                            raw_request.method,
-                            raw_request.load_test_hash,
-                        ),
+                        None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
                     };
                     merge_request.set_response_time(raw_request.response_time);
                     merge_request.set_status_code(raw_request.status_code);
@@ -1072,11 +1068,7 @@ impl GooseAttack {
                         let key = format!("{:?} {}", raw_request.method, raw_request.name);
                         let mut merge_request = match self.merged_requests.get(&key) {
                             Some(m) => m.clone(),
-                            None => GooseRequest::new(
-                                &raw_request.name,
-                                raw_request.method,
-                                raw_request.load_test_hash,
-                            ),
+                            None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
                         };
                         merge_request.set_response_time(raw_request.response_time);
                         merge_request.set_status_code(raw_request.status_code);

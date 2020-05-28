@@ -491,10 +491,11 @@ pub struct GooseRawRequest {
     pub update: bool,
 }
 impl GooseRawRequest {
-    pub fn new(method: GooseMethod, name: String) -> Self {
+    pub fn new(method: GooseMethod, name: &str) -> Self {
+        let name_string = name.to_string();
         GooseRawRequest {
             method,
-            name,
+            name: name_string,
             response_time: 0,
             status_code: None,
             success: true,
@@ -1101,7 +1102,7 @@ impl GooseClient {
         if !self.config.no_stats {
             // Determine what to name current request.
             let request_name = self.get_request_name(&path);
-            let mut raw_request = GooseRawRequest::new(method, request_name.clone());
+            let mut raw_request = GooseRawRequest::new(method, &request_name);
             raw_request.set_response_time(elapsed.as_millis());
             match &response {
                 Ok(r) => {
@@ -1175,7 +1176,7 @@ impl GooseClient {
     /// ````
     pub fn set_success(&mut self, method: &GooseMethod, path: &str) {
         let request_name = self.get_request_name(path);
-        let mut update_request = GooseRawRequest::new(method.clone(), request_name);
+        let mut update_request = GooseRawRequest::new(method.clone(), &request_name);
         update_request.success = true;
         // This is an updaate to a previously recorded statistic.
         update_request.update = true;
@@ -1224,7 +1225,7 @@ impl GooseClient {
     /// ````
     pub fn set_failure(&mut self, method: &GooseMethod, path: &str) {
         let request_name = self.get_request_name(path);
-        let mut update_request = GooseRawRequest::new(method.clone(), request_name);
+        let mut update_request = GooseRawRequest::new(method.clone(), &request_name);
         update_request.success = false;
         // This is an updaate to a previously recorded statistic.
         update_request.update = true;
@@ -1631,6 +1632,35 @@ mod tests {
         // Sequence field can be changed multiple times.
         task = task.set_sequence(8);
         assert_eq!(task.sequence, 8);
+    }
+
+    #[test]
+    fn goose_raw_request() {
+        let mut raw_request = GooseRawRequest::new(GooseMethod::GET, "/");
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.response_time, 0);
+        assert_eq!(raw_request.status_code, None);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+
+        let response_time = 123;
+        raw_request.set_response_time(response_time);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.response_time, response_time);
+        assert_eq!(raw_request.status_code, None);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+
+        let status_code = http::StatusCode::OK;
+        raw_request.set_status_code(Some(status_code));
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.response_time, response_time);
+        assert_eq!(raw_request.status_code, Some(status_code));
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
     }
 
     #[test]
