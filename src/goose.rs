@@ -425,19 +425,6 @@ impl GooseTaskSet {
     }
 }
 
-/// Tracks the current run-mode of a client.
-#[derive(Debug, Clone, PartialEq)]
-pub enum GooseClientMode {
-    /// Clients are briefly in the INIT mode when first allocated.
-    INIT,
-    /// Clients are briefly in the HATCHING mode when setting things up.
-    HATCHING,
-    /// Clients spend most of their time in the RUNNING mode, executing tasks.
-    RUNNING,
-    /// Clients are briefly in the EXITING mode when stopping.
-    EXITING,
-}
-
 /// Commands sent between the parent and client threads, and between manager and
 /// worker processes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -659,8 +646,6 @@ pub struct GooseClient {
     pub config: GooseConfiguration,
     /// An index into the internal `GooseTest.weighted_clients, indicating which weighted GooseTaskSet is running.
     pub weighted_clients_index: usize,
-    /// The current run mode of this client, see `enum GooseClientMode`.
-    pub mode: GooseClientMode,
     /// A weighted list of all tasks that run when the client first starts.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
     /// A weighted list of all tasks that this client runs once started.
@@ -715,7 +700,6 @@ impl GooseClient {
             max_wait,
             // A value of max_value() indicates this client isn't fully initialized yet.
             weighted_clients_index: usize::max_value(),
-            mode: GooseClientMode::INIT,
             weighted_on_start_tasks: Vec::new(),
             weighted_tasks: Vec::new(),
             weighted_bucket: 0,
@@ -1900,7 +1884,6 @@ mod tests {
         assert_eq!(client.min_wait, 0);
         assert_eq!(client.max_wait, 0);
         assert_eq!(client.weighted_clients_index, usize::max_value());
-        assert_eq!(client.mode, GooseClientMode::INIT);
         assert_eq!(client.weighted_on_start_tasks.len(), 0);
         assert_eq!(client.weighted_tasks.len(), 0);
         assert_eq!(client.weighted_bucket, 0);
@@ -1918,7 +1901,6 @@ mod tests {
         assert_eq!(client.min_wait, 0);
         assert_eq!(client.max_wait, 0);
         assert_eq!(client.weighted_clients_index, usize::max_value());
-        assert_eq!(client.mode, GooseClientMode::INIT);
         assert_eq!(client.weighted_on_start_tasks.len(), 0);
         assert_eq!(client.weighted_tasks.len(), 0);
         assert_eq!(client.weighted_bucket, 0);
