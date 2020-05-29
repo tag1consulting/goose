@@ -463,6 +463,7 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct GooseRawRequest {
     /// The method being used (ie, GET, POST, etc).
     pub method: GooseMethod,
@@ -622,6 +623,21 @@ impl GooseRequest {
         };
         self.status_code_counts.insert(status_code_u16, counter);
         debug!("incremented {} counter: {}", status_code_u16, counter);
+    }
+}
+
+/// The response to a GooseRequest
+#[derive(Debug)]
+pub struct GooseResponse {
+    pub request: GooseRawRequest,
+    pub response: Result<Response, Error>,
+}
+impl GooseResponse {
+    pub fn new(request: GooseRawRequest, response: Result<Response, Error>) -> Self {
+        GooseResponse {
+            request,
+            response,
+        }
     }
 }
 
@@ -815,7 +831,7 @@ impl GooseClient {
     ///       let _response = client.get("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn get(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn get(&mut self, path: &str) -> GooseResponse {
         let request_builder = self.goose_get(path);
         self.goose_send(request_builder).await
     }
@@ -839,7 +855,7 @@ impl GooseClient {
     ///       let _response = client.post("/path/to/foo/", "BODY BEING POSTED".to_string());
     ///     }
     /// ```
-    pub async fn post(&mut self, path: &str, body: String) -> Result<Response, Error> {
+    pub async fn post(&mut self, path: &str, body: String) -> GooseResponse {
         let request_builder = self.goose_post(path).body(body);
         self.goose_send(request_builder).await
     }
@@ -863,7 +879,7 @@ impl GooseClient {
     ///       let _response = client.head("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn head(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn head(&mut self, path: &str) -> GooseResponse {
         let request_builder = self.goose_head(path);
         self.goose_send(request_builder).await
     }
@@ -887,7 +903,7 @@ impl GooseClient {
     ///       let _response = client.delete("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn delete(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn delete(&mut self, path: &str) -> GooseResponse {
         let request_builder = self.goose_delete(path);
         self.goose_send(request_builder).await
     }
@@ -1058,7 +1074,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub async fn goose_send(&mut self, request_builder: RequestBuilder) -> Result<Response, Error> {
+    pub async fn goose_send(&mut self, request_builder: RequestBuilder) -> GooseResponse {
         let started = Instant::now();
         let request = match request_builder.build() {
             Ok(r) => r,
@@ -1077,6 +1093,8 @@ impl GooseClient {
             }
         };
         let method = goose_method_from_method(request.method().clone());
+        let request_name = self.get_request_name(&path);
+        let mut raw_request = GooseRawRequest::new(method, &request_name);
 
         // Make the actual request.
         let response = self.client.execute(request).await;
@@ -1084,9 +1102,6 @@ impl GooseClient {
 
         // Create a raw request object if we're tracking statistics.
         if !self.config.no_stats {
-            // Determine what to name current request.
-            let request_name = self.get_request_name(&path);
-            let mut raw_request = GooseRawRequest::new(method, &request_name);
             raw_request.set_response_time(elapsed.as_millis());
             match &response {
                 Ok(r) => {
@@ -1109,18 +1124,18 @@ impl GooseClient {
                 }
             };
 
-            self.send_to_parent(raw_request);
+            self.send_to_parent(&raw_request);
         }
 
-        // @TODO: (improve comment) Consume request_name, if set.
+        // Consume request_name if set.
         if self.request_name != None {
             self.request_name = None;
         }
 
-        response
+        GooseResponse::new(raw_request, response)
     }
 
-    fn send_to_parent(&mut self, raw_request: GooseRawRequest) {
+    fn send_to_parent(&mut self, raw_request: &GooseRawRequest) {
         let parent = match self.parent.clone() {
             Some(p) => p,
             None => {
@@ -1128,7 +1143,7 @@ impl GooseClient {
                 std::process::exit(1);
             }
         };
-        match parent.send(raw_request) {
+        match parent.send(raw_request.clone()) {
             Ok(_) => (),
             Err(e) => {
                 error!("unable to communicate with parent thread, exiting: {}", e);
@@ -1163,25 +1178,25 @@ impl GooseClient {
     ///     /// A simple task that makes a GET request.
     ///     async fn get_function(client: &mut GooseClient) {
     ///         let response = client.get("/404").await;
-    ///         match &response {
+    ///         match &response.response {
     ///             Ok(r) => {
     ///                 // We expect a 404 here.
     ///                 if r.status() == 404 {
-    ///                     client.set_success(&GooseMethod::GET, "/404");
+    ///                     client.set_success(response);
     ///                 }
     ///             },
     ///             Err(_) => (),
     ///         }
     ///     }
     /// ````
-    pub fn set_success(&mut self, method: &GooseMethod, path: &str) {
-        let request_name = self.get_request_name(path);
-        let mut update_request = GooseRawRequest::new(method.clone(), &request_name);
-        update_request.success = true;
-        // This is an updaate to a previously recorded statistic.
-        update_request.update = true;
-
-        self.send_to_parent(update_request);
+    pub fn set_success(&mut self, response: &GooseResponse) {
+        // Only send update if this was previously not a success.
+        if !response.request.success {
+            let mut update_request = response.request.clone();
+            update_request.success = true;
+            update_request.update = true;
+            self.send_to_parent(&update_request);
+        }
     }
 
     /// Manually mark a request as a failure.
@@ -1198,7 +1213,7 @@ impl GooseClient {
     ///     async fn loadtest_index_page(client: &mut GooseClient) {
     ///         let response = client.set_request_name("index").get("/").await;
     ///         // Extract the response Result.
-    ///         match response {
+    ///         match response.response {
     ///             Ok(r) => {
     ///                 // We only need to check pages that returned a success status code.
     ///                 if r.status().is_success() {
@@ -1208,11 +1223,11 @@ impl GooseClient {
     ///                             // was a failure.
     ///                             if !text.contains("this string must exist") {
     ///                                 // As this is a named request, pass in the name not the URL
-    ///                                 client.set_failure(&GooseMethod::GET, "index");
+    ///                                 client.set_failure(response);
     ///                             }
     ///                         }
     ///                         // Empty page, this is a failure.
-    ///                         Err(_) => client.set_failure(&GooseMethod::GET, "index"),
+    ///                         Err(_) => client.set_failure(response),
     ///                     }
     ///                 }
     ///             },
@@ -1221,14 +1236,14 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_failure(&mut self, method: &GooseMethod, path: &str) {
-        let request_name = self.get_request_name(path);
-        let mut update_request = GooseRawRequest::new(method.clone(), &request_name);
-        update_request.success = false;
-        // This is an updaate to a previously recorded statistic.
-        update_request.update = true;
-
-        self.send_to_parent(update_request);
+    pub fn set_failure(&mut self, response: &GooseResponse) {
+        // Only send update if this was previously a success.
+        if response.request.success {
+            let mut update_request = response.request.clone();
+            update_request.success = false;
+            update_request.update = true;
+            self.send_to_parent(&update_request);
+        }
     }
 }
 
