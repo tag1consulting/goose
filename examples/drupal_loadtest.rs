@@ -97,12 +97,12 @@ async fn drupal_loadtest_front_page(client: &mut GooseClient) {
             }
             Err(e) => {
                 eprintln!("failed to parse front page: {}", e);
-                client.set_failure();
+                client.set_failure(&GooseMethod::GET, "/");
             }
         },
         Err(e) => {
             eprintln!("unexpected error when loading front page: {}", e);
-            client.set_failure();
+            client.set_failure(&GooseMethod::GET, "/");
         }
     }
 }
@@ -131,7 +131,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_build_id on page: /user page");
-                            client.set_failure();
+                            client.set_failure(&GooseMethod::GET, "/user");
                             return;
                         }
                     };
@@ -152,7 +152,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
                 }
                 Err(e) => {
                     eprintln!("unexpected error when loading /user page: {}", e);
-                    client.set_failure();
+                    client.set_failure(&GooseMethod::GET, "/user");
                 }
             }
         }
@@ -164,7 +164,9 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
 /// Post a comment.
 async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
-    let response = client.get(format!("/node/{}", &nid).as_str()).await;
+    let node_path = format!("node/{}", &nid);
+    let comment_path = format!("/comment/reply/{}", &nid);
+    let response = client.get(&node_path).await;
     match response {
         Ok(r) => {
             match r.text().await {
@@ -174,8 +176,8 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            eprintln!("no form_build_id found on node/{}", &nid);
-                            client.set_failure();
+                            eprintln!("no form_build_id found on {}", &node_path);
+                            client.set_failure(&GooseMethod::GET, &node_path);
                             return;
                         }
                     };
@@ -184,8 +186,8 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                     let form_token = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            eprintln!("no form_token found on node/{}", &nid);
-                            client.set_failure();
+                            eprintln!("no form_token found on {}", &node_path);
+                            client.set_failure(&GooseMethod::GET, &node_path);
                             return;
                         }
                     };
@@ -194,8 +196,8 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                     let form_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            eprintln!("no form_id found on node/{}", &nid);
-                            client.set_failure();
+                            eprintln!("no form_id found on {}", &node_path);
+                            client.set_failure(&GooseMethod::GET, &node_path);
                             return;
                         }
                     };
@@ -211,34 +213,34 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
-                    let request_builder =
-                        client.goose_post(format!("/comment/reply/{}", &nid).as_str());
+                    let request_builder = client.goose_post(&comment_path);
                     let response = client.goose_send(request_builder.form(&params)).await;
                     match response {
-                        Ok(r) => {
-                            match r.text().await {
-                                Ok(html) => {
-                                    if !html.contains(&comment_body) {
-                                        eprintln!("no comment showed up after posting to comment/reply/{}", &nid);
-                                        client.set_failure();
-                                    }
-                                }
-                                Err(e) => {
+                        Ok(r) => match r.text().await {
+                            Ok(html) => {
+                                if !html.contains(&comment_body) {
                                     eprintln!(
-                                        "unexpected error when posting to comment/reply/{}: {}",
-                                        &nid, e
+                                        "no comment showed up after posting to {}",
+                                        &comment_path
                                     );
-                                    client.set_failure();
+                                    client.set_failure(&GooseMethod::POST, &comment_path);
                                 }
                             }
-                        }
+                            Err(e) => {
+                                eprintln!(
+                                    "unexpected error when posting to {}: {}",
+                                    &comment_path, e
+                                );
+                                client.set_failure(&GooseMethod::POST, &comment_path);
+                            }
+                        },
                         // Goose will catch this error.
                         Err(_) => (),
                     }
                 }
                 Err(e) => {
-                    eprintln!("unexpected error when loading node/{} page: {}", &nid, e);
-                    client.set_failure();
+                    eprintln!("unexpected error when loading {} page: {}", &node_path, e);
+                    client.set_failure(&GooseMethod::GET, &node_path);
                 }
             }
         }

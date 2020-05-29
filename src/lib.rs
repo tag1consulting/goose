@@ -307,22 +307,23 @@ use std::f32;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 use std::time;
 
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use structopt::StructOpt;
+use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
-    GooseClient, GooseClientCommand, GooseClientMode, GooseRequest, GooseTask, GooseTaskSet,
+    GooseClient, GooseClientCommand, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet,
 };
 
 /// Constant defining how often statistics should be displayed while load test is running.
@@ -889,10 +890,10 @@ impl GooseAttack {
         // Collect client thread channels in a vector so we can talk to the client threads.
         let mut client_channels = vec![];
         // Create a single channel allowing all Goose child threads to sync state back to parent
-        let (all_threads_sender, parent_receiver): (
-            mpsc::Sender<GooseClient>,
-            mpsc::Receiver<GooseClient>,
-        ) = mpsc::channel();
+        let (all_threads_sender, mut parent_receiver): (
+            mpsc::UnboundedSender<GooseRawRequest>,
+            mpsc::UnboundedReceiver<GooseRawRequest>,
+        ) = mpsc::unbounded_channel();
         // Spawn clients, each with their own weighted task_set.
         for mut thread_client in self.weighted_clients.clone() {
             // Stop launching threads if the run_timer has expired.
@@ -915,20 +916,15 @@ impl GooseAttack {
 
             // Create a per-thread channel allowing parent thread to control child threads.
             let (parent_sender, thread_receiver): (
-                mpsc::Sender<GooseClientCommand>,
-                mpsc::Receiver<GooseClientCommand>,
-            ) = mpsc::channel();
+                mpsc::UnboundedSender<GooseClientCommand>,
+                mpsc::UnboundedReceiver<GooseClientCommand>,
+            ) = mpsc::unbounded_channel();
             client_channels.push(parent_sender);
 
             // We can only launch tasks if the task list is non-empty
             if !thread_client.weighted_tasks.is_empty() {
                 // Copy the client-to-parent sender channel, used by all threads.
-                let thread_sender = all_threads_sender.clone();
-
-                // Hatching a new Goose client.
-                thread_client.set_mode(GooseClientMode::HATCHING);
-                // Notify parent that our run mode has changed to Hatching.
-                thread_sender.send(thread_client.clone()).unwrap();
+                thread_client.parent = Some(all_threads_sender.clone());
 
                 // Copy the appropriate task_set into the thread.
                 let thread_task_set = self.task_sets[thread_client.task_sets_index].clone();
@@ -944,7 +940,6 @@ impl GooseAttack {
                     thread_task_set,
                     thread_client,
                     thread_receiver,
-                    thread_sender,
                     is_worker,
                 ));
 
@@ -971,20 +966,6 @@ impl GooseAttack {
             info!("launched {} clients...", self.active_clients);
         }
 
-        // Ensure we have request statistics when we're displaying running statistics.
-        if !self.configuration.no_stats && !self.configuration.only_summary {
-            for (index, send_to_client) in client_channels.iter().enumerate() {
-                match send_to_client.send(GooseClientCommand::SYNC) {
-                    Ok(_) => {
-                        debug!("telling client {} to sync stats", index);
-                    }
-                    Err(e) => {
-                        warn!("failed to tell client {} to sync stats: {}", index, e);
-                    }
-                }
-            }
-        }
-
         // Track whether or not we've (optionally) reset the statistics after all clients started.
         let mut statistics_reset: bool = false;
 
@@ -1002,21 +983,8 @@ impl GooseAttack {
                 // Synchronize statistics from client threads into parent.
                 if util::timer_expired(statistics_timer, RUNNING_STATS_EVERY) {
                     statistics_timer = time::Instant::now();
-                    for (index, send_to_client) in client_channels.iter().enumerate() {
-                        match send_to_client.send(GooseClientCommand::SYNC) {
-                            Ok(_) => {
-                                debug!("telling client {} to sync stats", index);
-                            }
-                            Err(e) => {
-                                warn!("failed to tell client {} to sync stats: {}", index, e);
-                            }
-                        }
-                    }
                     if !self.configuration.only_summary {
                         display_running_statistics = true;
-                        // Give client threads time to send statstics.
-                        let pause = time::Duration::from_millis(100);
-                        tokio::time::delay_for(pause).await;
                     }
                 }
 
@@ -1025,24 +993,21 @@ impl GooseAttack {
                 let mut message = parent_receiver.try_recv();
                 while message.is_ok() {
                     received_message = true;
-                    // Messages contain per-client statistics: merge them into the global statistics.
-                    let unwrapped_message = message.unwrap();
-                    let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                    self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
-                    // Syncronize client requests
-                    for (request_key, request) in unwrapped_message.requests {
-                        trace!("request_key: {}", request_key);
-                        let merged_request;
-                        if let Some(parent_request) = self.merged_requests.get(&request_key) {
-                            merged_request =
-                                merge_from_client(parent_request, &request, &self.configuration);
-                        } else {
-                            // First time seeing this request, simply insert it.
-                            merged_request = request.clone();
-                        }
-                        self.merged_requests
-                            .insert(request_key.to_string(), merged_request);
+                    let raw_request = message.unwrap();
+                    let key = format!("{:?} {}", raw_request.method, raw_request.name);
+                    let mut merge_request = match self.merged_requests.get(&key) {
+                        Some(m) => m.clone(),
+                        None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
+                    };
+                    merge_request.set_response_time(raw_request.response_time);
+                    merge_request.set_status_code(raw_request.status_code);
+                    if raw_request.success {
+                        merge_request.success_count += 1;
+                    } else {
+                        merge_request.fail_count += 1;
                     }
+
+                    self.merged_requests.insert(key.to_string(), merge_request);
                     message = parent_receiver.try_recv();
                 }
 
@@ -1067,12 +1032,7 @@ impl GooseAttack {
                 // Flush statistics collected prior to all client threads running
                 if self.configuration.reset_stats && !statistics_reset {
                     info!("statistics reset...");
-                    for (client_index, client) in self.weighted_clients.clone().iter().enumerate() {
-                        let mut reset_client = client.clone();
-                        // Start again with an empty requests hashmap.
-                        reset_client.requests = HashMap::new();
-                        self.weighted_clients[client_index] = reset_client;
-                    }
+                    self.merged_requests = HashMap::new();
                     statistics_reset = true;
                 }
             }
@@ -1109,26 +1069,21 @@ impl GooseAttack {
                 if !self.configuration.no_stats {
                     let mut message = parent_receiver.try_recv();
                     while message.is_ok() {
-                        let unwrapped_message = message.unwrap();
-                        let weighted_clients_index = unwrapped_message.weighted_clients_index;
-                        self.weighted_clients[weighted_clients_index].mode = unwrapped_message.mode;
-                        // Syncronize client requests
-                        for (request_key, request) in unwrapped_message.requests {
-                            trace!("request_key: {}", request_key);
-                            let merged_request;
-                            if let Some(parent_request) = self.merged_requests.get(&request_key) {
-                                merged_request = merge_from_client(
-                                    parent_request,
-                                    &request,
-                                    &self.configuration,
-                                );
-                            } else {
-                                // First time seeing this request, simply insert it.
-                                merged_request = request.clone();
-                            }
-                            self.merged_requests
-                                .insert(request_key.to_string(), merged_request);
+                        let raw_request = message.unwrap();
+                        let key = format!("{:?} {}", raw_request.method, raw_request.name);
+                        let mut merge_request = match self.merged_requests.get(&key) {
+                            Some(m) => m.clone(),
+                            None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
+                        };
+                        merge_request.set_response_time(raw_request.response_time);
+                        merge_request.set_status_code(raw_request.status_code);
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                        } else {
+                            merge_request.fail_count += 1;
                         }
+
+                        self.merged_requests.insert(key.to_string(), merge_request);
                         message = parent_receiver.try_recv();
                     }
                 }
@@ -1449,136 +1404,9 @@ fn is_valid_host(host: &str) -> bool {
         }
     }
 }
-
-/// A helper function that merges together response times.
-///
-/// Used in `lib.rs` to merge together per-thread response times, and in `stats.rs`
-/// to aggregate all response times.
-pub fn merge_response_times(
-    mut global_response_times: BTreeMap<usize, usize>,
-    local_response_times: BTreeMap<usize, usize>,
-) -> BTreeMap<usize, usize> {
-    // Iterate over client response times, and merge into global response times.
-    for (response_time, count) in &local_response_times {
-        let counter = match global_response_times.get(&response_time) {
-            // We've seen this response_time before, increment counter.
-            Some(c) => *c + count,
-            // First time we've seen this response time, initialize counter.
-            None => *count,
-        };
-        global_response_times.insert(*response_time, counter);
-    }
-    global_response_times
-}
-
-// Update global minimum response time based on local resposne time.
-fn update_min_response_time(mut global_min: usize, min: usize) -> usize {
-    if global_min == 0 || (min > 0 && min < global_min) {
-        global_min = min;
-    }
-    global_min
-}
-
-// Update global maximum response time based on local resposne time.
-fn update_max_response_time(mut global_max: usize, max: usize) -> usize {
-    if global_max < max {
-        global_max = max;
-    }
-    global_max
-}
-
-/// Merge per-client-statistics from client thread into global parent statistics
-fn merge_from_client(
-    parent_request: &GooseRequest,
-    client_request: &GooseRequest,
-    config: &GooseConfiguration,
-) -> GooseRequest {
-    // Make a mutable copy where we can merge things
-    let mut merged_request = parent_request.clone();
-
-    // Iterate over client response times, and merge into global response times.
-    merged_request.response_times = merge_response_times(
-        merged_request.response_times,
-        client_request.response_times.clone(),
-    );
-    // Increment total response time counter.
-    merged_request.total_response_time += &client_request.total_response_time;
-    // Increment count of how many resposne counters we've seen.
-    merged_request.response_time_counter += &client_request.response_time_counter;
-    // If client had new fastest response time, update global fastest response time.
-    merged_request.min_response_time = update_min_response_time(
-        merged_request.min_response_time,
-        client_request.min_response_time,
-    );
-    // If client had new slowest response time, update global slowest resposne time.
-    merged_request.max_response_time = update_max_response_time(
-        merged_request.max_response_time,
-        client_request.max_response_time,
-    );
-    // Increment total success counter.
-    merged_request.success_count += &client_request.success_count;
-    // Increment total fail counter.
-    merged_request.fail_count += &client_request.fail_count;
-    // Only accrue overhead of merging status_code_counts if we're going to display the results
-    if config.status_codes {
-        for (status_code, count) in &client_request.status_code_counts {
-            let new_count;
-            // Add client count into global count
-            if let Some(existing_status_code_count) =
-                merged_request.status_code_counts.get(&status_code)
-            {
-                new_count = *existing_status_code_count + *count;
-            }
-            // No global count exists yet, so start with client count
-            else {
-                new_count = *count;
-            }
-            merged_request
-                .status_code_counts
-                .insert(*status_code, new_count);
-        }
-    }
-    merged_request
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
-
-    #[test]
-    fn max_response_time() {
-        let mut max_response_time = 99;
-        // Update max response time to a higher value.
-        max_response_time = update_max_response_time(max_response_time, 101);
-        assert_eq!(max_response_time, 101);
-        // Max response time doesn't update when updating with a lower value.
-        max_response_time = update_max_response_time(max_response_time, 1);
-        assert_eq!(max_response_time, 101);
-    }
-
-    #[test]
-    fn min_response_time() {
-        let mut min_response_time = 11;
-        // Update min response time to a lower value.
-        min_response_time = update_min_response_time(min_response_time, 9);
-        assert_eq!(min_response_time, 9);
-        // Min response time doesn't update when updating with a lower value.
-        min_response_time = update_min_response_time(min_response_time, 22);
-        assert_eq!(min_response_time, 9);
-        // Min response time doesn't update when updating with a 0 value.
-        min_response_time = update_min_response_time(min_response_time, 0);
-        assert_eq!(min_response_time, 9);
-    }
-
-    #[test]
-    fn response_time_merge() {
-        let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        global_response_times =
-            merge_response_times(global_response_times, local_response_times.clone());
-        // @TODO: how can we do useful testing of private method and objects?
-        assert_eq!(&global_response_times, &local_response_times);
-    }
 
     #[test]
     fn valid_host() {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2-dev
+ - don't shuffle order of weighted task sets when launching clients
+ - remove GooseClientMode as it serves no useful purpose
+ - push statistics from client threads to parent in real-time
+
 ## 0.7.1 May 26, 2020
  - no longer compile Reqwest blocking client
  - remove need to declare `use std::boxed::Box` in load tests
