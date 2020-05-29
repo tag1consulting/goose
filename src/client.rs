@@ -1,7 +1,8 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
-use std::{sync::mpsc, time};
+use std::time;
+use tokio::sync::mpsc;
 
 use crate::get_worker_id;
 use crate::goose::{GooseClient, GooseClientCommand, GooseTaskSet};
@@ -10,7 +11,7 @@ pub async fn client_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     mut thread_client: GooseClient,
-    thread_receiver: mpsc::Receiver<GooseClientCommand>,
+    mut thread_receiver: mpsc::UnboundedReceiver<GooseClientCommand>,
     worker: bool,
 ) {
     if worker {

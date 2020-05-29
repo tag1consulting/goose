@@ -307,20 +307,24 @@ use std::f32;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 use std::time;
 
-use crossbeam::crossbeam_channel::unbounded;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use structopt::StructOpt;
+use tokio::sync::mpsc;
 use url::Url;
 
-use crate::goose::{GooseClient, GooseClientCommand, GooseRequest, GooseTask, GooseTaskSet};
+use crate::goose::{
+    GooseClient, GooseClientCommand, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet,
+};
 
 /// Constant defining how often statistics should be displayed while load test is running.
 const RUNNING_STATS_EVERY: usize = 15;
@@ -886,7 +890,10 @@ impl GooseAttack {
         // Collect client thread channels in a vector so we can talk to the client threads.
         let mut client_channels = vec![];
         // Create a single channel allowing all Goose child threads to sync state back to parent
-        let (all_threads_sender, parent_receiver) = unbounded();
+        let (all_threads_sender, mut parent_receiver): (
+            mpsc::UnboundedSender<GooseRawRequest>,
+            mpsc::UnboundedReceiver<GooseRawRequest>,
+        ) = mpsc::unbounded_channel();
         // Spawn clients, each with their own weighted task_set.
         for mut thread_client in self.weighted_clients.clone() {
             // Stop launching threads if the run_timer has expired.
@@ -909,9 +916,9 @@ impl GooseAttack {
 
             // Create a per-thread channel allowing parent thread to control child threads.
             let (parent_sender, thread_receiver): (
-                mpsc::Sender<GooseClientCommand>,
-                mpsc::Receiver<GooseClientCommand>,
-            ) = mpsc::channel();
+                mpsc::UnboundedSender<GooseClientCommand>,
+                mpsc::UnboundedReceiver<GooseClientCommand>,
+            ) = mpsc::unbounded_channel();
             client_channels.push(parent_sender);
 
             // We can only launch tasks if the task list is non-empty
