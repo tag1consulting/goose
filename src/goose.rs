@@ -457,7 +457,7 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
         Method::POST => GooseMethod::POST,
         Method::PUT => GooseMethod::PUT,
         _ => {
-            error!("unsupported metehod: {}", method);
+            error!("unsupported method: {}", method);
             std::process::exit(1);
         }
     }
