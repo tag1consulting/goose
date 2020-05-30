@@ -634,10 +634,7 @@ pub struct GooseResponse {
 }
 impl GooseResponse {
     pub fn new(request: GooseRawRequest, response: Result<Response, Error>) -> Self {
-        GooseResponse {
-            request,
-            response,
-        }
+        GooseResponse { request, response }
     }
 }
 
@@ -1182,17 +1179,17 @@ impl GooseClient {
     ///             Ok(r) => {
     ///                 // We expect a 404 here.
     ///                 if r.status() == 404 {
-    ///                     client.set_success(response);
+    ///                     client.set_success(&response.request);
     ///                 }
     ///             },
     ///             Err(_) => (),
     ///         }
     ///     }
     /// ````
-    pub fn set_success(&mut self, response: &GooseResponse) {
+    pub fn set_success(&mut self, request: &GooseRawRequest) {
         // Only send update if this was previously not a success.
-        if !response.request.success {
-            let mut update_request = response.request.clone();
+        if !request.success {
+            let mut update_request = request.clone();
             update_request.success = true;
             update_request.update = true;
             self.send_to_parent(&update_request);
@@ -1223,11 +1220,11 @@ impl GooseClient {
     ///                             // was a failure.
     ///                             if !text.contains("this string must exist") {
     ///                                 // As this is a named request, pass in the name not the URL
-    ///                                 client.set_failure(response);
+    ///                                 client.set_failure(&response.request);
     ///                             }
     ///                         }
     ///                         // Empty page, this is a failure.
-    ///                         Err(_) => client.set_failure(response),
+    ///                         Err(_) => client.set_failure(&response.request),
     ///                     }
     ///                 }
     ///             },
@@ -1236,10 +1233,10 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_failure(&mut self, response: &GooseResponse) {
+    pub fn set_failure(&mut self, request: &GooseRawRequest) {
         // Only send update if this was previously a success.
-        if response.request.success {
-            let mut update_request = response.request.clone();
+        if request.success {
+            let mut update_request = request.clone();
             update_request.success = false;
             update_request.update = true;
             self.send_to_parent(&update_request);

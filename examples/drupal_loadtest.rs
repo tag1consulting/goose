@@ -97,12 +97,12 @@ async fn drupal_loadtest_front_page(client: &mut GooseClient) {
             }
             Err(e) => {
                 eprintln!("failed to parse front page: {}", e);
-                client.set_failure(&response);
+                client.set_failure(&response.request);
             }
         },
         Err(e) => {
             eprintln!("unexpected error when loading front page: {}", e);
-            client.set_failure(&response);
+            client.set_failure(&response.request);
         }
     }
 }
@@ -131,7 +131,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_build_id on page: /user page");
-                            client.set_failure(&response);
+                            client.set_failure(&response.request);
                             return;
                         }
                     };
@@ -152,7 +152,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
                 }
                 Err(e) => {
                     eprintln!("unexpected error when loading /user page: {}", e);
-                    client.set_failure(&response);
+                    client.set_failure(&response.request);
                 }
             }
         }
@@ -177,7 +177,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_build_id found on {}", &node_path);
-                            client.set_failure(&response);
+                            client.set_failure(&response.request);
                             return;
                         }
                     };
@@ -187,7 +187,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_token found on {}", &node_path);
-                            client.set_failure(&response);
+                            client.set_failure(&response.request);
                             return;
                         }
                     };
@@ -197,7 +197,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_id found on {}", &node_path);
-                            client.set_failure(&response);
+                            client.set_failure(&response.request);
                             return;
                         }
                     };
@@ -223,7 +223,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                                         "no comment showed up after posting to {}",
                                         &comment_path
                                     );
-                                    client.set_failure(&response);
+                                    client.set_failure(&response.request);
                                 }
                             }
                             Err(e) => {
@@ -231,7 +231,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                                     "unexpected error when posting to {}: {}",
                                     &comment_path, e
                                 );
-                                client.set_failure(&response);
+                                client.set_failure(&response.request);
                             }
                         },
                         // Goose will catch this error.
@@ -240,7 +240,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                 }
                 Err(e) => {
                     eprintln!("unexpected error when loading {} page: {}", &node_path, e);
-                    client.set_failure(&response);
+                    client.set_failure(&response.request);
                 }
             }
         }
