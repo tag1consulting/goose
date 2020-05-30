@@ -463,6 +463,12 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
     }
 }
 
+/// The request that Goose is making. Client threads send this data to the parent thread
+/// when statistics are enabled. This request object must be provided to calls to
+/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseClient.html#method.set_success)
+/// or
+/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseClient.html#method.set_failure)
+/// so Goose knows which request is being updated.
 #[derive(Debug, Clone)]
 pub struct GooseRawRequest {
     /// The method being used (ie, GET, POST, etc).
@@ -471,11 +477,11 @@ pub struct GooseRawRequest {
     pub name: String,
     /// How many milliseconds the request took.
     pub response_time: u128,
-    /// The HTTP response code.
+    /// The HTTP response code (optional).
     pub status_code: Option<StatusCode>,
-    /// Whether or not request was successful.
+    /// Whether or not the request was successful.
     pub success: bool,
-    /// Whether or not we're updating a previous request.
+    /// Whether or not we're updating a previous request, modifies how the parent thread records it.
     pub update: bool,
 }
 impl GooseRawRequest {
@@ -817,6 +823,11 @@ impl GooseClient {
     /// object, you can instead call `goose_get` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
+    /// Calls to `client.get` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -840,6 +851,11 @@ impl GooseClient {
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_post` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
+    ///
+    /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -865,6 +881,11 @@ impl GooseClient {
     /// object, you can instead call `goose_head` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
+    /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -888,6 +909,11 @@ impl GooseClient {
     /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_delete` which returns a RequestBuilder,
     /// then call `goose_send` to invoke the request.)
+    ///
+    /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1058,6 +1084,11 @@ impl GooseClient {
     /// Reqwest without using this helper function, but then Goose is unable to capture
     /// statistics.
     ///
+    /// Calls to `client.goose_send` return a `GooseResponse` object which contains a
+    /// copy of the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -1164,7 +1195,9 @@ impl GooseClient {
     /// Manually mark a request as a success.
     ///
     /// By default, Goose will consider any response with a 2xx status code as a success. It may be
-    /// valid in your test for a non-2xx HTTP status code to be returned.
+    /// valid in your test for a non-2xx HTTP status code to be returned. A copy of your original
+    /// request is returned with the response, and must be included when setting a request as a
+    /// success.
     ///
     /// # Example
     /// ```rust
@@ -1199,7 +1232,8 @@ impl GooseClient {
     /// Manually mark a request as a failure.
     ///
     /// By default, Goose will consider any response with a 2xx status code as a success. You may require
-    /// more advanced logic, in which a 2xx status code is actually a failure.
+    /// more advanced logic, in which a 2xx status code is actually a failure. A copy of your original
+    /// request is returned with the response, and must be included when setting a request as a failure.
     ///
     /// # Example
     /// ```rust
