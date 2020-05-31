@@ -463,6 +463,13 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
     }
 }
 
+/// The request that Goose is making. Client threads send this data to the parent thread
+/// when statistics are enabled. This request object must be provided to calls to
+/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseClient.html#method.set_success)
+/// or
+/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseClient.html#method.set_failure)
+/// so Goose knows which request is being updated.
+#[derive(Debug, Clone)]
 pub struct GooseRawRequest {
     /// The method being used (ie, GET, POST, etc).
     pub method: GooseMethod,
@@ -470,11 +477,11 @@ pub struct GooseRawRequest {
     pub name: String,
     /// How many milliseconds the request took.
     pub response_time: u128,
-    /// The HTTP response code.
+    /// The HTTP response code (optional).
     pub status_code: Option<StatusCode>,
-    /// Whether or not request was successful.
+    /// Whether or not the request was successful.
     pub success: bool,
-    /// Whether or not we're updating a previous request.
+    /// Whether or not we're updating a previous request, modifies how the parent thread records it.
     pub update: bool,
 }
 impl GooseRawRequest {
@@ -622,6 +629,18 @@ impl GooseRequest {
         };
         self.status_code_counts.insert(status_code_u16, counter);
         debug!("incremented {} counter: {}", status_code_u16, counter);
+    }
+}
+
+/// The response to a GooseRequest
+#[derive(Debug)]
+pub struct GooseResponse {
+    pub request: GooseRawRequest,
+    pub response: Result<Response, Error>,
+}
+impl GooseResponse {
+    pub fn new(request: GooseRawRequest, response: Result<Response, Error>) -> Self {
+        GooseResponse { request, response }
     }
 }
 
@@ -804,6 +823,11 @@ impl GooseClient {
     /// object, you can instead call `goose_get` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
+    /// Calls to `client.get` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -815,7 +839,7 @@ impl GooseClient {
     ///       let _response = client.get("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn get(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn get(&mut self, path: &str) -> GooseResponse {
         let request_builder = self.goose_get(path);
         self.goose_send(request_builder).await
     }
@@ -828,6 +852,11 @@ impl GooseClient {
     /// object, you can instead call `goose_post` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
+    /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -839,7 +868,7 @@ impl GooseClient {
     ///       let _response = client.post("/path/to/foo/", "BODY BEING POSTED".to_string());
     ///     }
     /// ```
-    pub async fn post(&mut self, path: &str, body: String) -> Result<Response, Error> {
+    pub async fn post(&mut self, path: &str, body: String) -> GooseResponse {
         let request_builder = self.goose_post(path).body(body);
         self.goose_send(request_builder).await
     }
@@ -852,6 +881,11 @@ impl GooseClient {
     /// object, you can instead call `goose_head` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
+    /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -863,7 +897,7 @@ impl GooseClient {
     ///       let _response = client.head("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn head(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn head(&mut self, path: &str) -> GooseResponse {
         let request_builder = self.goose_head(path);
         self.goose_send(request_builder).await
     }
@@ -876,6 +910,11 @@ impl GooseClient {
     /// object, you can instead call `goose_delete` which returns a RequestBuilder,
     /// then call `goose_send` to invoke the request.)
     ///
+    /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -887,7 +926,7 @@ impl GooseClient {
     ///       let _response = client.delete("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn delete(&mut self, path: &str) -> Result<Response, Error> {
+    pub async fn delete(&mut self, path: &str) -> GooseResponse {
         let request_builder = self.goose_delete(path);
         self.goose_send(request_builder).await
     }
@@ -1045,6 +1084,11 @@ impl GooseClient {
     /// Reqwest without using this helper function, but then Goose is unable to capture
     /// statistics.
     ///
+    /// Calls to `client.goose_send` return a `GooseResponse` object which contains a
+    /// copy of the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -1058,7 +1102,7 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub async fn goose_send(&mut self, request_builder: RequestBuilder) -> Result<Response, Error> {
+    pub async fn goose_send(&mut self, request_builder: RequestBuilder) -> GooseResponse {
         let started = Instant::now();
         let request = match request_builder.build() {
             Ok(r) => r,
@@ -1077,6 +1121,8 @@ impl GooseClient {
             }
         };
         let method = goose_method_from_method(request.method().clone());
+        let request_name = self.get_request_name(&path);
+        let mut raw_request = GooseRawRequest::new(method, &request_name);
 
         // Make the actual request.
         let response = self.client.execute(request).await;
@@ -1084,9 +1130,6 @@ impl GooseClient {
 
         // Create a raw request object if we're tracking statistics.
         if !self.config.no_stats {
-            // Determine what to name current request.
-            let request_name = self.get_request_name(&path);
-            let mut raw_request = GooseRawRequest::new(method, &request_name);
             raw_request.set_response_time(elapsed.as_millis());
             match &response {
                 Ok(r) => {
@@ -1109,18 +1152,18 @@ impl GooseClient {
                 }
             };
 
-            self.send_to_parent(raw_request);
+            self.send_to_parent(&raw_request);
         }
 
-        // @TODO: (improve comment) Consume request_name, if set.
+        // Consume request_name if set.
         if self.request_name != None {
             self.request_name = None;
         }
 
-        response
+        GooseResponse::new(raw_request, response)
     }
 
-    fn send_to_parent(&mut self, raw_request: GooseRawRequest) {
+    fn send_to_parent(&mut self, raw_request: &GooseRawRequest) {
         let parent = match self.parent.clone() {
             Some(p) => p,
             None => {
@@ -1128,7 +1171,7 @@ impl GooseClient {
                 std::process::exit(1);
             }
         };
-        match parent.send(raw_request) {
+        match parent.send(raw_request.clone()) {
             Ok(_) => (),
             Err(e) => {
                 error!("unable to communicate with parent thread, exiting: {}", e);
@@ -1151,8 +1194,10 @@ impl GooseClient {
 
     /// Manually mark a request as a success.
     ///
-    /// By default, Goose will consider any response with a 2xx status code as a success. It may be
-    /// valid in your test for a non-2xx HTTP status code to be returned.
+    /// By default, Goose will consider any response with a 2xx status code as a success.
+    /// It may be valid in your test for a non-2xx HTTP status code to be returned. A copy
+    /// of your original request is returned with the response, and a mutable copy must be
+    /// included when setting a request as a success.
     ///
     /// # Example
     /// ```rust
@@ -1162,32 +1207,33 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a GET request.
     ///     async fn get_function(client: &mut GooseClient) {
-    ///         let response = client.get("/404").await;
-    ///         match &response {
+    ///         let mut response = client.get("/404").await;
+    ///         match &response.response {
     ///             Ok(r) => {
     ///                 // We expect a 404 here.
     ///                 if r.status() == 404 {
-    ///                     client.set_success(&GooseMethod::GET, "/404");
+    ///                     client.set_success(&mut response.request);
     ///                 }
     ///             },
     ///             Err(_) => (),
     ///         }
     ///     }
     /// ````
-    pub fn set_success(&mut self, method: &GooseMethod, path: &str) {
-        let request_name = self.get_request_name(path);
-        let mut update_request = GooseRawRequest::new(method.clone(), &request_name);
-        update_request.success = true;
-        // This is an updaate to a previously recorded statistic.
-        update_request.update = true;
-
-        self.send_to_parent(update_request);
+    pub fn set_success(&mut self, request: &mut GooseRawRequest) {
+        // Only send update if this was previously not a success.
+        if !request.success {
+            request.success = true;
+            request.update = true;
+            self.send_to_parent(&request);
+        }
     }
 
     /// Manually mark a request as a failure.
     ///
-    /// By default, Goose will consider any response with a 2xx status code as a success. You may require
-    /// more advanced logic, in which a 2xx status code is actually a failure.
+    /// By default, Goose will consider any response with a 2xx status code as a success.
+    /// You may require more advanced logic, in which a 2xx status code is actually a
+    /// failure. A copy of your original request is returned with the response, and a
+    /// mutable copy must be included when setting a request as a failure.
     ///
     /// # Example
     /// ```rust
@@ -1196,9 +1242,9 @@ impl GooseClient {
     ///     let mut task = task!(loadtest_index_page);
     ///
     ///     async fn loadtest_index_page(client: &mut GooseClient) {
-    ///         let response = client.set_request_name("index").get("/").await;
+    ///         let mut response = client.set_request_name("index").get("/").await;
     ///         // Extract the response Result.
-    ///         match response {
+    ///         match response.response {
     ///             Ok(r) => {
     ///                 // We only need to check pages that returned a success status code.
     ///                 if r.status().is_success() {
@@ -1208,11 +1254,11 @@ impl GooseClient {
     ///                             // was a failure.
     ///                             if !text.contains("this string must exist") {
     ///                                 // As this is a named request, pass in the name not the URL
-    ///                                 client.set_failure(&GooseMethod::GET, "index");
+    ///                                 client.set_failure(&mut response.request);
     ///                             }
     ///                         }
     ///                         // Empty page, this is a failure.
-    ///                         Err(_) => client.set_failure(&GooseMethod::GET, "index"),
+    ///                         Err(_) => client.set_failure(&mut response.request),
     ///                     }
     ///                 }
     ///             },
@@ -1221,14 +1267,13 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_failure(&mut self, method: &GooseMethod, path: &str) {
-        let request_name = self.get_request_name(path);
-        let mut update_request = GooseRawRequest::new(method.clone(), &request_name);
-        update_request.success = false;
-        // This is an updaate to a previously recorded statistic.
-        update_request.update = true;
-
-        self.send_to_parent(update_request);
+    pub fn set_failure(&mut self, request: &mut GooseRawRequest) {
+        // Only send update if this was previously a success.
+        if request.success {
+            request.success = false;
+            request.update = true;
+            self.send_to_parent(&request);
+        }
     }
 }
 

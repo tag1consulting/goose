@@ -4,6 +4,7 @@
  - don't shuffle order of weighted task sets when launching clients
  - remove GooseClientMode as it serves no useful purpose
  - push statistics from client threads to parent in real-time
+ - simplify `set_failure` and `set_success` to pass in request
 
 ## 0.7.1 May 26, 2020
  - no longer compile Reqwest blocking client
