@@ -1194,10 +1194,10 @@ impl GooseClient {
 
     /// Manually mark a request as a success.
     ///
-    /// By default, Goose will consider any response with a 2xx status code as a success. It may be
-    /// valid in your test for a non-2xx HTTP status code to be returned. A copy of your original
-    /// request is returned with the response, and must be included when setting a request as a
-    /// success.
+    /// By default, Goose will consider any response with a 2xx status code as a success.
+    /// It may be valid in your test for a non-2xx HTTP status code to be returned. A copy
+    /// of your original request is returned with the response, and a mutable copy must be
+    /// included when setting a request as a success.
     ///
     /// # Example
     /// ```rust
@@ -1207,33 +1207,33 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a GET request.
     ///     async fn get_function(client: &mut GooseClient) {
-    ///         let response = client.get("/404").await;
+    ///         let mut response = client.get("/404").await;
     ///         match &response.response {
     ///             Ok(r) => {
     ///                 // We expect a 404 here.
     ///                 if r.status() == 404 {
-    ///                     client.set_success(&response.request);
+    ///                     client.set_success(&mut response.request);
     ///                 }
     ///             },
     ///             Err(_) => (),
     ///         }
     ///     }
     /// ````
-    pub fn set_success(&mut self, request: &GooseRawRequest) {
+    pub fn set_success(&mut self, request: &mut GooseRawRequest) {
         // Only send update if this was previously not a success.
         if !request.success {
-            let mut update_request = request.clone();
-            update_request.success = true;
-            update_request.update = true;
-            self.send_to_parent(&update_request);
+            request.success = true;
+            request.update = true;
+            self.send_to_parent(&request);
         }
     }
 
     /// Manually mark a request as a failure.
     ///
-    /// By default, Goose will consider any response with a 2xx status code as a success. You may require
-    /// more advanced logic, in which a 2xx status code is actually a failure. A copy of your original
-    /// request is returned with the response, and must be included when setting a request as a failure.
+    /// By default, Goose will consider any response with a 2xx status code as a success.
+    /// You may require more advanced logic, in which a 2xx status code is actually a
+    /// failure. A copy of your original request is returned with the response, and a
+    /// mutable copy must be included when setting a request as a failure.
     ///
     /// # Example
     /// ```rust
@@ -1242,7 +1242,7 @@ impl GooseClient {
     ///     let mut task = task!(loadtest_index_page);
     ///
     ///     async fn loadtest_index_page(client: &mut GooseClient) {
-    ///         let response = client.set_request_name("index").get("/").await;
+    ///         let mut response = client.set_request_name("index").get("/").await;
     ///         // Extract the response Result.
     ///         match response.response {
     ///             Ok(r) => {
@@ -1254,11 +1254,11 @@ impl GooseClient {
     ///                             // was a failure.
     ///                             if !text.contains("this string must exist") {
     ///                                 // As this is a named request, pass in the name not the URL
-    ///                                 client.set_failure(&response.request);
+    ///                                 client.set_failure(&mut response.request);
     ///                             }
     ///                         }
     ///                         // Empty page, this is a failure.
-    ///                         Err(_) => client.set_failure(&response.request),
+    ///                         Err(_) => client.set_failure(&mut response.request),
     ///                     }
     ///                 }
     ///             },
@@ -1267,13 +1267,12 @@ impl GooseClient {
     ///         }
     ///     }
     /// ````
-    pub fn set_failure(&mut self, request: &GooseRawRequest) {
+    pub fn set_failure(&mut self, request: &mut GooseRawRequest) {
         // Only send update if this was previously a success.
         if request.success {
-            let mut update_request = request.clone();
-            update_request.success = false;
-            update_request.update = true;
-            self.send_to_parent(&update_request);
+            request.success = false;
+            request.update = true;
+            self.send_to_parent(&request);
         }
     }
 }
