@@ -623,7 +623,6 @@ impl GooseAttack {
             for task_sets_index in &weighted_task_sets {
                 let task_set_host = self.task_sets[*task_sets_index].host.clone();
                 weighted_clients.push(GooseClient::new(
-                    client_count,
                     self.task_sets[*task_sets_index].task_sets_index,
                     self.host.clone(),
                     task_set_host,

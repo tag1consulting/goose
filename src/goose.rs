@@ -270,7 +270,18 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 // Share CLIENT object globally.
 lazy_static! {
-    static ref CLIENT: Mutex<Client> = Mutex::new(Client::new());
+    static ref CLIENT: Mutex<Client> = {
+        let builder = Client::builder()
+            .user_agent(APP_USER_AGENT)
+            .cookie_store(true);
+        match builder.build() {
+            Ok(c) => Mutex::new(c),
+            Err(e) => {
+                error!("failed to build client: {}", e);
+                std::process::exit(1);
+            }
+        }
+    };
 }
 
 /// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
@@ -689,7 +700,6 @@ pub struct GooseClient {
 impl GooseClient {
     /// Create a new client state.
     pub fn new(
-        counter: usize,
         task_sets_index: usize,
         default_host: Option<String>,
         task_set_host: Option<String>,
@@ -699,21 +709,6 @@ impl GooseClient {
         load_test_hash: u64,
     ) -> Self {
         trace!("new client");
-        /*
-        let builder = Client::builder()
-            .user_agent(APP_USER_AGENT)
-            .cookie_store(true);
-        let client = match builder.build() {
-            Ok(c) => c,
-            Err(e) => {
-                error!(
-                    "failed to build client {} for task {}: {}",
-                    counter, task_sets_index, e
-                );
-                std::process::exit(1);
-            }
-        };
-        */
         GooseClient {
             task_sets_index,
             default_host,
