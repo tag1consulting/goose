@@ -260,9 +260,8 @@ use reqwest::{Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
 use std::{future::Future, pin::Pin, time::Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use url::Url;
 
 use crate::GooseConfiguration;
@@ -846,7 +845,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn get(&mut self, path: &str) -> GooseResponse {
-        let request_builder = self.goose_get(path);
+        let request_builder = self.goose_get(path).await;
         self.goose_send(request_builder).await
     }
 
@@ -875,7 +874,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn post(&mut self, path: &str, body: String) -> GooseResponse {
-        let request_builder = self.goose_post(path).body(body);
+        let request_builder = self.goose_post(path).await.body(body);
         self.goose_send(request_builder).await
     }
 
@@ -904,7 +903,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn head(&mut self, path: &str) -> GooseResponse {
-        let request_builder = self.goose_head(path);
+        let request_builder = self.goose_head(path).await;
         self.goose_send(request_builder).await
     }
 
@@ -933,7 +932,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn delete(&mut self, path: &str) -> GooseResponse {
-        let request_builder = self.goose_delete(path);
+        let request_builder = self.goose_delete(path).await;
         self.goose_send(request_builder).await
     }
 
@@ -952,13 +951,13 @@ impl GooseClient {
     ///     /// A simple task that makes a GET request, exposing the Reqwest
     ///     /// request builder.
     ///     async fn get_function(client: &mut GooseClient) {
-    ///       let request_builder = client.goose_get("/path/to/foo");
+    ///       let request_builder = client.goose_get("/path/to/foo").await;
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub fn goose_get(&mut self, path: &str) -> RequestBuilder {
+    pub async fn goose_get(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().get(&url)
+        CLIENT.lock().await.get(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -976,13 +975,13 @@ impl GooseClient {
     ///     /// A simple task that makes a POST request, exposing the Reqwest
     ///     /// request builder.
     ///     async fn post_function(client: &mut GooseClient) {
-    ///       let request_builder = client.goose_post("/path/to/foo");
+    ///       let request_builder = client.goose_post("/path/to/foo").await;
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub fn goose_post(&mut self, path: &str) -> RequestBuilder {
+    pub async fn goose_post(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().post(&url)
+        CLIENT.lock().await.post(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1000,13 +999,13 @@ impl GooseClient {
     ///     /// A simple task that makes a HEAD request, exposing the Reqwest
     ///     /// request builder.
     ///     async fn head_function(client: &mut GooseClient) {
-    ///       let request_builder = client.goose_head("/path/to/foo");
+    ///       let request_builder = client.goose_head("/path/to/foo").await;
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub fn goose_head(&mut self, path: &str) -> RequestBuilder {
+    pub async fn goose_head(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().head(&url)
+        CLIENT.lock().await.head(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1024,13 +1023,13 @@ impl GooseClient {
     ///     /// A simple task that makes a PUT request, exposing the Reqwest
     ///     /// request builder.
     ///     async fn put_function(client: &mut GooseClient) {
-    ///       let request_builder = client.goose_put("/path/to/foo");
+    ///       let request_builder = client.goose_put("/path/to/foo").await;
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub fn goose_put(&mut self, path: &str) -> RequestBuilder {
+    pub async fn goose_put(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().put(&url)
+        CLIENT.lock().await.put(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1052,9 +1051,9 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub fn goose_patch(&mut self, path: &str) -> RequestBuilder {
+    pub async fn goose_patch(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().patch(&url)
+        CLIENT.lock().await.patch(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1076,9 +1075,9 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
-    pub fn goose_delete(&mut self, path: &str) -> RequestBuilder {
+    pub async fn goose_delete(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().unwrap().delete(&url)
+        CLIENT.lock().await.delete(&url)
     }
 
     /// Builds the provided
@@ -1104,7 +1103,7 @@ impl GooseClient {
     ///     /// A simple task that makes a GET request, exposing the Reqwest
     ///     /// request builder.
     ///     async fn get_function(client: &mut GooseClient) {
-    ///       let request_builder = client.goose_get("/path/to/foo");
+    ///       let request_builder = client.goose_get("/path/to/foo").await;
     ///       let response = client.goose_send(request_builder).await;
     ///     }
     /// ```
@@ -1131,7 +1130,7 @@ impl GooseClient {
         let mut raw_request = GooseRawRequest::new(method, &request_name);
 
         // Make the actual request.
-        let response = CLIENT.lock().unwrap().execute(request).await;
+        let response = CLIENT.lock().await.execute(request).await;
         let elapsed = started.elapsed();
 
         // Create a raw request object if we're tracking statistics.

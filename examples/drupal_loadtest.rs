@@ -146,7 +146,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let request_builder = client.goose_post("/user");
+                    let request_builder = client.goose_post("/user").await;
                     let _response = client.goose_send(request_builder.form(&params)).await;
                     // @TODO: verify that we actually logged in.
                 }
@@ -213,7 +213,7 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
-                    let request_builder = client.goose_post(&comment_path);
+                    let request_builder = client.goose_post(&comment_path).await;
                     let mut response = client.goose_send(request_builder.form(&params)).await;
                     match response.response {
                         Ok(r) => match r.text().await {

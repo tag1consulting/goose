@@ -39,7 +39,7 @@ fn main() {
 /// on_start task when registering it above. This means it only runs one time
 /// per client, when the client thread first starts.
 async fn website_login(client: &mut GooseClient) {
-    let request_builder = client.goose_post("/login");
+    let request_builder = client.goose_post("/login").await;
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
     let _response = client.goose_send(request_builder.form(&params)).await;
