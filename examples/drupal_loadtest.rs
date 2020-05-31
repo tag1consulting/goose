@@ -137,7 +137,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
                     };
 
                     // Log the user in.
-                    let uid: usize = rand::thread_rng().gen_range(3, 5_002);
+                    let uid = rand::thread_rng().gen_range(3, 5_002);
                     let username = format!("user{}", uid);
                     let params = [
                         ("name", username.as_str()),
