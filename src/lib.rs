@@ -337,23 +337,44 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 // Share CLIENT object globally.
 lazy_static! {
-    static ref CLIENT: RwLock<Vec<Mutex<Client>>> = RwLock::new(Vec::new());
+    static ref CLIENT: RwLock<Vec<GooseClientState>> = RwLock::new(Vec::new());
 }
 
-// Initialize one client per thread.
-pub async fn initialize_clients(clients: usize) {
-    let mut client = CLIENT.write().await;
-    for _ in 0..clients {
-        let builder = Client::builder()
-            .user_agent(APP_USER_AGENT)
-            .cookie_store(true);
-        client.push(match builder.build() {
-            Ok(c) => Mutex::new(c),
-            Err(e) => {
-                error!("failed to build client: {}", e);
-                std::process::exit(1);
-            }
-        });
+struct GooseClientState {
+    /// A Reqwest client, wrapped in a Mutex as a read-write copy is always needed to
+    /// manage things like sessions and cookies.
+    client: Mutex<Client>,
+    /// Integer value indicating which sequenced bucket the client is currently running
+    /// tasks from.
+    weighted_bucket: AtomicUsize,
+    /// Integer value indicating which task within the current sequenced bucket is currently
+    /// running.
+    weighted_bucket_position: AtomicUsize,
+}
+impl GooseClientState {
+    // Initialize one client per thread.
+    async fn initialize(clients: usize) {
+        // Grab a write lock to initialize state for each client.
+        let mut goose_client_state = CLIENT.write().await;
+        for _ in 0..clients {
+            // Build a new client, setting the USER_AGENT and enabling cookie storage.
+            let builder = Client::builder()
+                .user_agent(APP_USER_AGENT)
+                .cookie_store(true);
+            let client = match builder.build() {
+                Ok(c) => Mutex::new(c),
+                Err(e) => {
+                    error!("failed to build client: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            // Push the new client into the global client vector.
+            goose_client_state.push(GooseClientState {
+                client,
+                weighted_bucket: AtomicUsize::new(0),
+                weighted_bucket_position: AtomicUsize::new(0),
+            });
+        }
     }
 }
 
@@ -909,8 +930,9 @@ impl GooseAttack {
             sleep_duration,
             socket
         );
+        // Initilize per-client states.
         if !self.configuration.worker {
-            initialize_clients(self.weighted_clients.len()).await;
+            GooseClientState::initialize(self.weighted_clients.len()).await;
         }
 
         // Collect client threads in a vector for when we want to stop them later.

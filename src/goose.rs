@@ -665,10 +665,6 @@ pub struct GooseClient {
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
     /// A weighted list of all tasks that this client runs once started.
     pub weighted_tasks: Vec<Vec<usize>>,
-    /// A pointer into which sequenced bucket the client is currently running tasks from.
-    pub weighted_bucket: usize,
-    /// A pointer of which task within the current sequenced bucket is currently running.
-    pub weighted_bucket_position: usize,
     /// A weighted list of all tasks that run when the client stops.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
     /// Optional name of all requests made within the current task.
@@ -702,8 +698,6 @@ impl GooseClient {
             weighted_clients_index: usize::max_value(),
             weighted_on_start_tasks: Vec::new(),
             weighted_tasks: Vec::new(),
-            weighted_bucket: 0,
-            weighted_bucket_position: 0,
             weighted_on_stop_tasks: Vec::new(),
             task_request_name: None,
             request_name: None,
@@ -934,6 +928,7 @@ impl GooseClient {
     pub async fn goose_get(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.read().await[self.weighted_clients_index]
+            .client
             .lock()
             .await
             .get(&url)
@@ -961,6 +956,7 @@ impl GooseClient {
     pub async fn goose_post(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.read().await[self.weighted_clients_index]
+            .client
             .lock()
             .await
             .post(&url)
@@ -988,6 +984,7 @@ impl GooseClient {
     pub async fn goose_head(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.read().await[self.weighted_clients_index]
+            .client
             .lock()
             .await
             .head(&url)
@@ -1015,6 +1012,7 @@ impl GooseClient {
     pub async fn goose_put(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.read().await[self.weighted_clients_index]
+            .client
             .lock()
             .await
             .put(&url)
@@ -1042,6 +1040,7 @@ impl GooseClient {
     pub async fn goose_patch(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.read().await[self.weighted_clients_index]
+            .client
             .lock()
             .await
             .patch(&url)
@@ -1069,6 +1068,7 @@ impl GooseClient {
     pub async fn goose_delete(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
         CLIENT.read().await[self.weighted_clients_index]
+            .client
             .lock()
             .await
             .delete(&url)
@@ -1125,6 +1125,7 @@ impl GooseClient {
 
         // Make the actual request.
         let response = CLIENT.read().await[self.weighted_clients_index]
+            .client
             .lock()
             .await
             .execute(request)

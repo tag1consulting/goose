@@ -2,9 +2,10 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
 use std::time;
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
-use crate::get_worker_id;
+use crate::{get_worker_id, CLIENT};
 use crate::goose::{GooseClient, GooseClientCommand, GooseTaskSet};
 
 pub async fn client_main(
@@ -53,28 +54,33 @@ pub async fn client_main(
 
     // Repeatedly loop through all available tasks in a random order.
     let mut thread_continue: bool = true;
+    let mut weighted_bucket = CLIENT.read().await[thread_client.weighted_clients_index].weighted_bucket.load(Ordering::SeqCst);
+    let mut weighted_bucket_position = CLIENT.read().await[thread_client.weighted_clients_index].weighted_bucket_position.fetch_add(1, Ordering::SeqCst);
     while thread_continue {
         // Weighted_tasks is divided into buckets of tasks sorted by sequence, and then all non-sequenced tasks.
-        if thread_client.weighted_tasks[thread_client.weighted_bucket].len()
-            <= thread_client.weighted_bucket_position
+        if thread_client.weighted_tasks[weighted_bucket].len()
+            <= weighted_bucket_position
         {
             // This bucket is exhausted, move on to position 0 of the next bucket.
-            thread_client.weighted_bucket_position = 0;
-            thread_client.weighted_bucket += 1;
-            if thread_client.weighted_tasks.len() <= thread_client.weighted_bucket {
-                thread_client.weighted_bucket = 0;
+            weighted_bucket_position = 0;
+            CLIENT.read().await[thread_client.weighted_clients_index].weighted_bucket_position.store(weighted_bucket_position, Ordering::SeqCst);
+
+            weighted_bucket += 1;
+            if thread_client.weighted_tasks.len() <= weighted_bucket {
+                weighted_bucket = 0;
             }
+            CLIENT.read().await[thread_client.weighted_clients_index].weighted_bucket_position.store(weighted_bucket, Ordering::SeqCst);
             // Shuffle new bucket before we walk through the tasks.
-            thread_client.weighted_tasks[thread_client.weighted_bucket].shuffle(&mut thread_rng());
+            thread_client.weighted_tasks[weighted_bucket].shuffle(&mut thread_rng());
             debug!(
                 "re-shuffled {} tasks: {:?}",
-                &thread_task_set.name, thread_client.weighted_tasks[thread_client.weighted_bucket]
+                &thread_task_set.name, thread_client.weighted_tasks[weighted_bucket]
             );
         }
 
         // Determine which task we're going to run next.
-        let thread_weighted_task = thread_client.weighted_tasks[thread_client.weighted_bucket]
-            [thread_client.weighted_bucket_position];
+        let thread_weighted_task = thread_client.weighted_tasks[weighted_bucket]
+            [weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
         let function = &thread_task_set.tasks[thread_weighted_task].function;
         debug!(
@@ -131,7 +137,8 @@ pub async fn client_main(
         }
 
         // Move to the next task in thread_client.weighted_tasks.
-        thread_client.weighted_bucket_position += 1;
+        weighted_bucket_position += 1;
+        CLIENT.read().await[thread_client.weighted_clients_index].weighted_bucket_position.store(weighted_bucket_position, Ordering::SeqCst);
     }
 
     // Client is exiting, first invoke the weighted on_stop tasks.
