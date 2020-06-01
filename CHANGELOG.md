@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.2-dev
+## 0.7.2 June 1, 2020
  - don't shuffle order of weighted task sets when launching clients
  - remove GooseClientMode as it serves no useful purpose
  - push statistics from client threads to parent in real-time

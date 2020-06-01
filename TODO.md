@@ -1,6 +1,6 @@
 # Project Goose
 
-Goose is a Rust load testing tool, based on Locust.
+Goose is a Rust load testing tool, inspired by Locust.
 
 ### In progress
 
