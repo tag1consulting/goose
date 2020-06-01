@@ -254,35 +254,16 @@
 
 use http::method::Method;
 use http::StatusCode;
-use lazy_static::lazy_static;
 use reqwest::Error;
-use reqwest::{Client, RequestBuilder, Response};
+use reqwest::{RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::{future::Future, pin::Pin, time::Instant};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use url::Url;
 
-use crate::GooseConfiguration;
-
-static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-
-// Share CLIENT object globally.
-lazy_static! {
-    static ref CLIENT: Mutex<Client> = {
-        let builder = Client::builder()
-            .user_agent(APP_USER_AGENT)
-            .cookie_store(true);
-        match builder.build() {
-            Ok(c) => Mutex::new(c),
-            Err(e) => {
-                error!("failed to build client: {}", e);
-                std::process::exit(1);
-            }
-        }
-    };
-}
+use crate::{GooseConfiguration, CLIENT};
 
 /// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
@@ -952,7 +933,10 @@ impl GooseClient {
     /// ```
     pub async fn goose_get(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().await.get(&url)
+        CLIENT.read().await[self.weighted_clients_index]
+            .lock()
+            .await
+            .get(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -976,7 +960,10 @@ impl GooseClient {
     /// ```
     pub async fn goose_post(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().await.post(&url)
+        CLIENT.read().await[self.weighted_clients_index]
+            .lock()
+            .await
+            .post(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1000,7 +987,10 @@ impl GooseClient {
     /// ```
     pub async fn goose_head(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().await.head(&url)
+        CLIENT.read().await[self.weighted_clients_index]
+            .lock()
+            .await
+            .head(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1024,7 +1014,10 @@ impl GooseClient {
     /// ```
     pub async fn goose_put(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().await.put(&url)
+        CLIENT.read().await[self.weighted_clients_index]
+            .lock()
+            .await
+            .put(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1048,7 +1041,10 @@ impl GooseClient {
     /// ```
     pub async fn goose_patch(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().await.patch(&url)
+        CLIENT.read().await[self.weighted_clients_index]
+            .lock()
+            .await
+            .patch(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1072,7 +1068,10 @@ impl GooseClient {
     /// ```
     pub async fn goose_delete(&mut self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.lock().await.delete(&url)
+        CLIENT.read().await[self.weighted_clients_index]
+            .lock()
+            .await
+            .delete(&url)
     }
 
     /// Builds the provided
@@ -1125,7 +1124,11 @@ impl GooseClient {
         let mut raw_request = GooseRawRequest::new(method, &request_name);
 
         // Make the actual request.
-        let response = CLIENT.lock().await.execute(request).await;
+        let response = CLIENT.read().await[self.weighted_clients_index]
+            .lock()
+            .await
+            .execute(request)
+            .await;
         let elapsed = started.elapsed();
 
         // Create a raw request object if we're tracking statistics.

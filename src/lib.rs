@@ -316,10 +316,11 @@ use std::time;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use structopt::StructOpt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
 use crate::goose::{
@@ -331,6 +332,30 @@ const RUNNING_STATS_EVERY: usize = 15;
 
 /// Constant defining Goose's default port when running a Gaggle.
 const DEFAULT_PORT: &str = "5115";
+
+static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
+// Share CLIENT object globally.
+lazy_static! {
+    static ref CLIENT: RwLock<Vec<Mutex<Client>>> = RwLock::new(Vec::new());
+}
+
+// Initialize one client per thread.
+pub async fn initialize_clients(clients: usize) {
+    let mut client = CLIENT.write().await;
+    for _ in 0..clients {
+        let builder = Client::builder()
+            .user_agent(APP_USER_AGENT)
+            .cookie_store(true);
+        client.push(match builder.build() {
+            Ok(c) => Mutex::new(c),
+            Err(e) => {
+                error!("failed to build client: {}", e);
+                std::process::exit(1);
+            }
+        });
+    }
+}
 
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
@@ -884,6 +909,10 @@ impl GooseAttack {
             sleep_duration,
             socket
         );
+        if !self.configuration.worker {
+            initialize_clients(self.weighted_clients.len()).await;
+        }
+
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
         // Collect client thread channels in a vector so we can talk to the client threads.
