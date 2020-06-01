@@ -52,7 +52,7 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_foo(client: &mut GooseClient) {
+//! async fn loadtest_foo(client: &GooseClient) {
 //!   let _response = client.get("/path/to/foo");
 //! }   
 //! ```
@@ -68,8 +68,8 @@
 //!
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_bar(client: &mut GooseClient) {
-//!   let request_builder = client.goose_get("/path/to/bar");
+//! async fn loadtest_bar(client: &GooseClient) {
+//!   let request_builder = client.goose_get("/path/to/bar").await;
 //!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3))).await;
 //! }   
 //! ```
@@ -99,11 +99,11 @@
 //!     //.set_host("http://dev.local/")
 //!     .execute();
 //!
-//! async fn loadtest_foo(client: &mut GooseClient) {
+//! async fn loadtest_foo(client: &GooseClient) {
 //!   let _response = client.get("/path/to/foo");
 //! }   
 //!
-//! async fn loadtest_bar(client: &mut GooseClient) {
+//! async fn loadtest_bar(client: &GooseClient) {
 //!   let _response = client.get("/path/to/bar");
 //! }   
 //! ```
@@ -588,11 +588,11 @@ impl GooseAttack {
     ///             .register_task(task!(other_task))
     ///         );
     ///
-    ///     async fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     async fn other_task(client: &mut GooseClient) {
+    ///     async fn other_task(client: &GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
@@ -699,11 +699,11 @@ impl GooseAttack {
     ///         )
     ///         .execute();
     ///
-    ///     async fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     async fn another_example_task(client: &mut GooseClient) {
+    ///     async fn another_example_task(client: &GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```

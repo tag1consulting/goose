@@ -26,7 +26,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 simplelog = "0.7"
 structopt = "0.3"
-tokio = { version = "0.2.20", features = ["rt-core", "time", "sync"] }
+tokio = { version = "0.2.20", features = ["macros", "rt-core", "time", "sync"] }
 url = "2.1"
 
 # optional dependencies
