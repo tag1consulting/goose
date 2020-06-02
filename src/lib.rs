@@ -53,7 +53,7 @@
 //! use goose::prelude::*;
 //!
 //! async fn loadtest_foo(client: &GooseClient) {
-//!   let _response = client.get("/path/to/foo");
+//!   let _response = client.get("/path/to/foo", None);
 //! }   
 //! ```
 //!
@@ -70,7 +70,7 @@
 //!
 //! async fn loadtest_bar(client: &GooseClient) {
 //!   let request_builder = client.goose_get("/path/to/bar").await;
-//!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3))).await;
+//!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
 //! }   
 //! ```
 //!
@@ -100,11 +100,11 @@
 //!     .execute();
 //!
 //! async fn loadtest_foo(client: &GooseClient) {
-//!   let _response = client.get("/path/to/foo");
+//!   let _response = client.get("/path/to/foo", None);
 //! }   
 //!
 //! async fn loadtest_bar(client: &GooseClient) {
-//!   let _response = client.get("/path/to/bar");
+//!   let _response = client.get("/path/to/bar", None);
 //! }   
 //! ```
 //!
@@ -589,11 +589,11 @@ impl GooseAttack {
     ///         );
     ///
     ///     async fn example_task(client: &GooseClient) {
-    ///       let _response = client.get("/foo");
+    ///       let _response = client.get("/foo", None);
     ///     }
     ///
     ///     async fn other_task(client: &GooseClient) {
-    ///       let _response = client.get("/bar");
+    ///       let _response = client.get("/bar", None);
     ///     }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
@@ -700,11 +700,11 @@ impl GooseAttack {
     ///         .execute();
     ///
     ///     async fn example_task(client: &GooseClient) {
-    ///       let _response = client.get("/foo");
+    ///       let _response = client.get("/foo", None);
     ///     }
     ///
     ///     async fn another_example_task(client: &GooseClient) {
-    ///       let _response = client.get("/bar");
+    ///       let _response = client.get("/bar", None);
     ///     }
     /// ```
     pub fn execute(mut self) {

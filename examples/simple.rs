@@ -42,15 +42,15 @@ async fn website_login(client: &GooseClient) {
     let request_builder = client.goose_post("/login").await;
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
-    let _response = client.goose_send(request_builder.form(&params)).await;
+    let _response = client.goose_send(request_builder.form(&params), None).await;
 }
 
 /// A very simple task that simply loads the front page.
 async fn website_index(client: &GooseClient) {
-    let _response = client.get("/").await;
+    let _response = client.get("/", None).await;
 }
 
 /// A very simple task that simply loads the about page.
 async fn website_about(client: &GooseClient) {
-    let _response = client.get("/about/").await;
+    let _response = client.get("/about/", None).await;
 }
