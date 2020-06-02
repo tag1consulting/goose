@@ -1059,7 +1059,11 @@ impl GooseClient {
     ///       let response = client.goose_send(request_builder, None).await;
     ///     }
     /// ```
-    pub async fn goose_send(&self, request_builder: RequestBuilder, request_name: Option<&str>) -> GooseResponse {
+    pub async fn goose_send(
+        &self,
+        request_builder: RequestBuilder,
+        request_name: Option<&str>,
+    ) -> GooseResponse {
         let started = Instant::now();
         let request = match request_builder.build() {
             Ok(r) => r,
