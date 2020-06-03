@@ -320,7 +320,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use structopt::StructOpt;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
@@ -339,9 +339,8 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 static mut CLIENT: Vec<GooseClientState> = Vec::new();
 
 struct GooseClientState {
-    /// A Reqwest client, wrapped in a Mutex as a read-write copy is always needed to
-    /// manage things like sessions and cookies.
-    client: Mutex<Client>,
+    /// A Reqwest client used to manage things like sessions and cookies.
+    client: Client,
     /// Integer value indicating which sequenced bucket the client is currently running
     /// tasks from.
     weighted_bucket: AtomicUsize,
@@ -360,7 +359,7 @@ impl GooseClientState {
                     .user_agent(APP_USER_AGENT)
                     .cookie_store(true);
                 let client = match builder.build() {
-                    Ok(c) => Mutex::new(c),
+                    Ok(c) => c,
                     Err(e) => {
                         error!("failed to build client: {}", e);
                         std::process::exit(1);

@@ -988,8 +988,6 @@ impl GooseClient {
         unsafe {
             CLIENT[self.weighted_clients_index]
                 .client
-                .lock()
-                .await
                 .get(&url)
         }
     }
@@ -1018,8 +1016,6 @@ impl GooseClient {
         unsafe {
             CLIENT[self.weighted_clients_index]
                 .client
-                .lock()
-                .await
                 .post(&url)
         }
     }
@@ -1048,8 +1044,6 @@ impl GooseClient {
         unsafe {
             CLIENT[self.weighted_clients_index]
                 .client
-                .lock()
-                .await
                 .head(&url)
         }
     }
@@ -1078,8 +1072,6 @@ impl GooseClient {
         unsafe {
             CLIENT[self.weighted_clients_index]
                 .client
-                .lock()
-                .await
                 .put(&url)
         }
     }
@@ -1108,8 +1100,6 @@ impl GooseClient {
         unsafe {
             CLIENT[self.weighted_clients_index]
                 .client
-                .lock()
-                .await
                 .patch(&url)
         }
     }
@@ -1138,8 +1128,6 @@ impl GooseClient {
         unsafe {
             CLIENT[self.weighted_clients_index]
                 .client
-                .lock()
-                .await
                 .delete(&url)
         }
     }
@@ -1202,8 +1190,6 @@ impl GooseClient {
         unsafe {
             response = CLIENT[self.weighted_clients_index]
                 .client
-                .lock()
-                .await
                 .execute(request)
                 .await;
         }
