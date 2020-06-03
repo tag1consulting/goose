@@ -74,7 +74,7 @@ pub async fn client_main(
                 weighted_bucket = 0;
             }
             CLIENT.read().await[thread_client.weighted_clients_index]
-                .weighted_bucket_position
+                .weighted_bucket
                 .store(weighted_bucket, Ordering::SeqCst);
             // Shuffle new bucket before we walk through the tasks.
             thread_client.weighted_tasks[weighted_bucket].shuffle(&mut thread_rng());
