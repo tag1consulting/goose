@@ -320,7 +320,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use structopt::StructOpt;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex};
 use url::Url;
 
 use crate::goose::{
@@ -336,9 +336,7 @@ const DEFAULT_PORT: &str = "5115";
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 // Share CLIENT object globally.
-lazy_static! {
-    static ref CLIENT: RwLock<Vec<GooseClientState>> = RwLock::new(Vec::new());
-}
+static mut CLIENT: Vec<GooseClientState> = Vec::new();
 
 struct GooseClientState {
     /// A Reqwest client, wrapped in a Mutex as a read-write copy is always needed to
@@ -354,26 +352,27 @@ struct GooseClientState {
 impl GooseClientState {
     // Initialize one client per thread.
     async fn initialize(clients: usize) {
-        // Grab a write lock to initialize state for each client.
-        let mut goose_client_state = CLIENT.write().await;
-        for _ in 0..clients {
-            // Build a new client, setting the USER_AGENT and enabling cookie storage.
-            let builder = Client::builder()
-                .user_agent(APP_USER_AGENT)
-                .cookie_store(true);
-            let client = match builder.build() {
-                Ok(c) => Mutex::new(c),
-                Err(e) => {
-                    error!("failed to build client: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            // Push the new client into the global client vector.
-            goose_client_state.push(GooseClientState {
-                client,
-                weighted_bucket: AtomicUsize::new(0),
-                weighted_bucket_position: AtomicUsize::new(0),
-            });
+        unsafe {
+            // Grab a write lock to initialize state for each client.
+            for _ in 0..clients {
+                // Build a new client, setting the USER_AGENT and enabling cookie storage.
+                let builder = Client::builder()
+                    .user_agent(APP_USER_AGENT)
+                    .cookie_store(true);
+                let client = match builder.build() {
+                    Ok(c) => Mutex::new(c),
+                    Err(e) => {
+                        error!("failed to build client: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                // Push the new client into the global client vector.
+                CLIENT.push(GooseClientState {
+                    client,
+                    weighted_bucket: AtomicUsize::new(0),
+                    weighted_bucket_position: AtomicUsize::new(0),
+                });
+            }
         }
     }
 }

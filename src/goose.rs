@@ -985,11 +985,13 @@ impl GooseClient {
     /// ```
     pub async fn goose_get(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .get(&url)
+        unsafe {
+            CLIENT[self.weighted_clients_index]
+                .client
+                .lock()
+                .await
+                .get(&url)
+        }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1013,11 +1015,13 @@ impl GooseClient {
     /// ```
     pub async fn goose_post(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .post(&url)
+        unsafe {
+            CLIENT[self.weighted_clients_index]
+                .client
+                .lock()
+                .await
+                .post(&url)
+        }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1041,11 +1045,13 @@ impl GooseClient {
     /// ```
     pub async fn goose_head(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .head(&url)
+        unsafe {
+            CLIENT[self.weighted_clients_index]
+                .client
+                .lock()
+                .await
+                .head(&url)
+        }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1069,11 +1075,13 @@ impl GooseClient {
     /// ```
     pub async fn goose_put(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .put(&url)
+        unsafe {
+            CLIENT[self.weighted_clients_index]
+                .client
+                .lock()
+                .await
+                .put(&url)
+        }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1097,11 +1105,13 @@ impl GooseClient {
     /// ```
     pub async fn goose_patch(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .patch(&url)
+        unsafe {
+            CLIENT[self.weighted_clients_index]
+                .client
+                .lock()
+                .await
+                .patch(&url)
+        }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1125,11 +1135,13 @@ impl GooseClient {
     /// ```
     pub async fn goose_delete(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .delete(&url)
+        unsafe {
+            CLIENT[self.weighted_clients_index]
+                .client
+                .lock()
+                .await
+                .delete(&url)
+        }
     }
 
     /// Builds the provided
@@ -1186,12 +1198,15 @@ impl GooseClient {
         let mut raw_request = GooseRawRequest::new(method, &request_name);
 
         // Make the actual request.
-        let response = CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .execute(request)
-            .await;
+        let response;
+        unsafe {
+            response = CLIENT[self.weighted_clients_index]
+                .client
+                .lock()
+                .await
+                .execute(request)
+                .await;
+        }
         let elapsed = started.elapsed();
 
         // Create a raw request object if we're tracking statistics.
