@@ -985,11 +985,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_get(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        unsafe {
-            CLIENT[self.weighted_clients_index]
-                .client
-                .get(&url)
-        }
+        unsafe { CLIENT[self.weighted_clients_index].client.get(&url) }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1013,11 +1009,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_post(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        unsafe {
-            CLIENT[self.weighted_clients_index]
-                .client
-                .post(&url)
-        }
+        unsafe { CLIENT[self.weighted_clients_index].client.post(&url) }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1041,11 +1033,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_head(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        unsafe {
-            CLIENT[self.weighted_clients_index]
-                .client
-                .head(&url)
-        }
+        unsafe { CLIENT[self.weighted_clients_index].client.head(&url) }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1069,11 +1057,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_put(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        unsafe {
-            CLIENT[self.weighted_clients_index]
-                .client
-                .put(&url)
-        }
+        unsafe { CLIENT[self.weighted_clients_index].client.put(&url) }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1097,11 +1081,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_patch(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        unsafe {
-            CLIENT[self.weighted_clients_index]
-                .client
-                .patch(&url)
-        }
+        unsafe { CLIENT[self.weighted_clients_index].client.patch(&url) }
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1125,11 +1105,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_delete(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path);
-        unsafe {
-            CLIENT[self.weighted_clients_index]
-                .client
-                .delete(&url)
-        }
+        unsafe { CLIENT[self.weighted_clients_index].client.delete(&url) }
     }
 
     /// Builds the provided

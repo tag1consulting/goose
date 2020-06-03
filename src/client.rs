@@ -56,10 +56,9 @@ pub async fn client_main(
     let mut weighted_bucket: usize;
     let mut weighted_bucket_position: usize;
     unsafe {
-        weighted_bucket = CLIENT[thread_client.weighted_clients_index]
-            .weighted_bucket;
-        weighted_bucket_position = CLIENT[thread_client.weighted_clients_index]
-            .weighted_bucket_position;
+        weighted_bucket = CLIENT[thread_client.weighted_clients_index].weighted_bucket;
+        weighted_bucket_position =
+            CLIENT[thread_client.weighted_clients_index].weighted_bucket_position;
     }
     while thread_continue {
         // Weighted_tasks is divided into buckets of tasks sorted by sequence, and then all non-sequenced tasks.
@@ -67,8 +66,8 @@ pub async fn client_main(
             // This bucket is exhausted, move on to position 0 of the next bucket.
             weighted_bucket_position = 0;
             unsafe {
-                CLIENT[thread_client.weighted_clients_index]
-                    .weighted_bucket_position = weighted_bucket_position;
+                CLIENT[thread_client.weighted_clients_index].weighted_bucket_position =
+                    weighted_bucket_position;
             }
 
             weighted_bucket += 1;
@@ -76,8 +75,7 @@ pub async fn client_main(
                 weighted_bucket = 0;
             }
             unsafe {
-                CLIENT[thread_client.weighted_clients_index]
-                    .weighted_bucket = weighted_bucket;
+                CLIENT[thread_client.weighted_clients_index].weighted_bucket = weighted_bucket;
             }
             // Shuffle new bucket before we walk through the tasks.
             thread_client.weighted_tasks[weighted_bucket].shuffle(&mut thread_rng());
@@ -148,8 +146,8 @@ pub async fn client_main(
         // Move to the next task in thread_client.weighted_tasks.
         weighted_bucket_position += 1;
         unsafe {
-            CLIENT[thread_client.weighted_clients_index]
-                .weighted_bucket_position = weighted_bucket_position;
+            CLIENT[thread_client.weighted_clients_index].weighted_bucket_position =
+                weighted_bucket_position;
         }
     }
 
