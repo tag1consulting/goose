@@ -343,10 +343,10 @@ struct GooseClientState {
     client: Client,
     /// Integer value indicating which sequenced bucket the client is currently running
     /// tasks from.
-    weighted_bucket: AtomicUsize,
+    weighted_bucket: usize,
     /// Integer value indicating which task within the current sequenced bucket is currently
     /// running.
-    weighted_bucket_position: AtomicUsize,
+    weighted_bucket_position: usize,
 }
 impl GooseClientState {
     // Initialize one client per thread.
@@ -368,8 +368,8 @@ impl GooseClientState {
                 // Push the new client into the global client vector.
                 CLIENT.push(GooseClientState {
                     client,
-                    weighted_bucket: AtomicUsize::new(0),
-                    weighted_bucket_position: AtomicUsize::new(0),
+                    weighted_bucket: 0,
+                    weighted_bucket_position: 0,
                 });
             }
         }

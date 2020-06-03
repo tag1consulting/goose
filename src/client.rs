@@ -1,7 +1,6 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
-use std::sync::atomic::Ordering;
 use std::time;
 use tokio::sync::mpsc;
 
@@ -58,11 +57,9 @@ pub async fn client_main(
     let mut weighted_bucket_position: usize;
     unsafe {
         weighted_bucket = CLIENT[thread_client.weighted_clients_index]
-            .weighted_bucket
-            .load(Ordering::SeqCst);
+            .weighted_bucket;
         weighted_bucket_position = CLIENT[thread_client.weighted_clients_index]
-            .weighted_bucket_position
-            .load(Ordering::SeqCst);
+            .weighted_bucket_position;
     }
     while thread_continue {
         // Weighted_tasks is divided into buckets of tasks sorted by sequence, and then all non-sequenced tasks.
@@ -71,8 +68,7 @@ pub async fn client_main(
             weighted_bucket_position = 0;
             unsafe {
                 CLIENT[thread_client.weighted_clients_index]
-                    .weighted_bucket_position
-                    .store(weighted_bucket_position, Ordering::SeqCst);
+                    .weighted_bucket_position = weighted_bucket_position;
             }
 
             weighted_bucket += 1;
@@ -81,8 +77,7 @@ pub async fn client_main(
             }
             unsafe {
                 CLIENT[thread_client.weighted_clients_index]
-                    .weighted_bucket_position
-                    .store(weighted_bucket, Ordering::SeqCst);
+                    .weighted_bucket = weighted_bucket;
             }
             // Shuffle new bucket before we walk through the tasks.
             thread_client.weighted_tasks[weighted_bucket].shuffle(&mut thread_rng());
@@ -154,8 +149,7 @@ pub async fn client_main(
         weighted_bucket_position += 1;
         unsafe {
             CLIENT[thread_client.weighted_clients_index]
-                .weighted_bucket_position
-                .store(weighted_bucket_position, Ordering::SeqCst);
+                .weighted_bucket_position = weighted_bucket_position;
         }
     }
 
