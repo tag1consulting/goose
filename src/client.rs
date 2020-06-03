@@ -60,6 +60,10 @@ pub async fn client_main(
     let mut weighted_bucket_position = CLIENT.read().await[thread_client.weighted_clients_index]
         .weighted_bucket_position
         .load(Ordering::SeqCst);
+    if thread_client.weighted_tasks.is_empty() {
+        // Handle the edge case where a load test doesn't define any normal tasks.
+        thread_continue = false;
+    }
     while thread_continue {
         // Weighted_tasks is divided into buckets of tasks sorted by sequence, and then all non-sequenced tasks.
         if thread_client.weighted_tasks[weighted_bucket].len() <= weighted_bucket_position {

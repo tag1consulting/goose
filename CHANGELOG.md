@@ -3,6 +3,7 @@
 ## 0.7.3-dev
  - move client out of GooseClient into global GooseClientState
  - introduce `test_start_task` and `test_stop_task` allowing global setup and teardown
+ - don't panic if a load test doesn't define any normal tasks
 
 ## 0.7.2 June 1, 2020
  - don't shuffle order of weighted task sets when launching clients
