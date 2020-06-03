@@ -52,7 +52,7 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_foo(client: &mut GooseClient) {
+//! async fn loadtest_foo(client: &GooseClient) {
 //!   let _response = client.get("/path/to/foo");
 //! }   
 //! ```
@@ -68,9 +68,9 @@
 //!
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_bar(client: &mut GooseClient) {
-//!   let request_builder = client.goose_get("/path/to/bar");
-//!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3))).await;
+//! async fn loadtest_bar(client: &GooseClient) {
+//!   let request_builder = client.goose_get("/path/to/bar").await;
+//!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
 //! }   
 //! ```
 //!
@@ -99,11 +99,11 @@
 //!     //.set_host("http://dev.local/")
 //!     .execute();
 //!
-//! async fn loadtest_foo(client: &mut GooseClient) {
+//! async fn loadtest_foo(client: &GooseClient) {
 //!   let _response = client.get("/path/to/foo");
 //! }   
 //!
-//! async fn loadtest_bar(client: &mut GooseClient) {
+//! async fn loadtest_bar(client: &GooseClient) {
 //!   let _response = client.get("/path/to/bar");
 //! }   
 //! ```
@@ -316,10 +316,11 @@ use std::time;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use structopt::StructOpt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
 use crate::goose::{
@@ -331,6 +332,51 @@ const RUNNING_STATS_EVERY: usize = 15;
 
 /// Constant defining Goose's default port when running a Gaggle.
 const DEFAULT_PORT: &str = "5115";
+
+static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
+// Share CLIENT object globally.
+lazy_static! {
+    static ref CLIENT: RwLock<Vec<GooseClientState>> = RwLock::new(Vec::new());
+}
+
+struct GooseClientState {
+    /// A Reqwest client, wrapped in a Mutex as a read-write copy is always needed to
+    /// manage things like sessions and cookies.
+    client: Mutex<Client>,
+    /// Integer value indicating which sequenced bucket the client is currently running
+    /// tasks from.
+    weighted_bucket: AtomicUsize,
+    /// Integer value indicating which task within the current sequenced bucket is currently
+    /// running.
+    weighted_bucket_position: AtomicUsize,
+}
+impl GooseClientState {
+    // Initialize one client per thread.
+    async fn initialize(clients: usize) {
+        // Grab a write lock to initialize state for each client.
+        let mut goose_client_state = CLIENT.write().await;
+        for _ in 0..clients {
+            // Build a new client, setting the USER_AGENT and enabling cookie storage.
+            let builder = Client::builder()
+                .user_agent(APP_USER_AGENT)
+                .cookie_store(true);
+            let client = match builder.build() {
+                Ok(c) => Mutex::new(c),
+                Err(e) => {
+                    error!("failed to build client: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            // Push the new client into the global client vector.
+            goose_client_state.push(GooseClientState {
+                client,
+                weighted_bucket: AtomicUsize::new(0),
+                weighted_bucket_position: AtomicUsize::new(0),
+            });
+        }
+    }
+}
 
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
@@ -542,11 +588,11 @@ impl GooseAttack {
     ///             .register_task(task!(other_task))
     ///         );
     ///
-    ///     async fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     async fn other_task(client: &mut GooseClient) {
+    ///     async fn other_task(client: &GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
@@ -623,7 +669,6 @@ impl GooseAttack {
             for task_sets_index in &weighted_task_sets {
                 let task_set_host = self.task_sets[*task_sets_index].host.clone();
                 weighted_clients.push(GooseClient::new(
-                    client_count,
                     self.task_sets[*task_sets_index].task_sets_index,
                     self.host.clone(),
                     task_set_host,
@@ -654,11 +699,11 @@ impl GooseAttack {
     ///         )
     ///         .execute();
     ///
-    ///     async fn example_task(client: &mut GooseClient) {
+    ///     async fn example_task(client: &GooseClient) {
     ///       let _response = client.get("/foo");
     ///     }
     ///
-    ///     async fn another_example_task(client: &mut GooseClient) {
+    ///     async fn another_example_task(client: &GooseClient) {
     ///       let _response = client.get("/bar");
     ///     }
     /// ```
@@ -885,6 +930,11 @@ impl GooseAttack {
             sleep_duration,
             socket
         );
+        // Initilize per-client states.
+        if !self.configuration.worker {
+            GooseClientState::initialize(self.weighted_clients.len()).await;
+        }
+
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
         // Collect client thread channels in a vector so we can talk to the client threads.

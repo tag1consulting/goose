@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.7.3-dev
+ - move client out of GooseClient into global GooseClientState
+
 ## 0.7.2 June 1, 2020
  - don't shuffle order of weighted task sets when launching clients
  - remove GooseClientMode as it serves no useful purpose

@@ -127,7 +127,6 @@ pub fn worker_main(goose_attack: &GooseAttack) {
                 worker_id = initializer.worker_id;
             }
             weighted_clients.push(GooseClient::new(
-                weighted_clients.len(),
                 initializer.task_sets_index,
                 initializer.default_host.clone(),
                 initializer.task_set_host.clone(),

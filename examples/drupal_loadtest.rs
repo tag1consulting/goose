@@ -81,7 +81,7 @@ fn main() {
 }
 
 /// View the front page.
-async fn drupal_loadtest_front_page(client: &mut GooseClient) {
+async fn drupal_loadtest_front_page(client: &GooseClient) {
     let mut response = client.get("/").await;
 
     // Grab some static assets from the front page.
@@ -89,10 +89,15 @@ async fn drupal_loadtest_front_page(client: &mut GooseClient) {
         Ok(r) => match r.text().await {
             Ok(t) => {
                 let re = Regex::new(r#"src="(.*?)""#).unwrap();
+                // Collect copy of URLs to run them async
+                let mut urls = Vec::new();
                 for url in re.captures_iter(&t) {
                     if url[1].contains("/misc") || url[1].contains("/themes") {
-                        let _response = client.set_request_name("static asset").get(&url[1]);
+                        urls.push(url[1].to_string());
                     }
+                }
+                for index in 0..urls.len() {
+                    client.get_named(&urls[index], "static asset").await;
                 }
             }
             Err(e) => {
@@ -108,19 +113,19 @@ async fn drupal_loadtest_front_page(client: &mut GooseClient) {
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
-async fn drupal_loadtest_node_page(client: &mut GooseClient) {
+async fn drupal_loadtest_node_page(client: &GooseClient) {
     let nid = rand::thread_rng().gen_range(1, 10_000);
     let _response = client.get(format!("/node/{}", &nid).as_str()).await;
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
-async fn drupal_loadtest_profile_page(client: &mut GooseClient) {
+async fn drupal_loadtest_profile_page(client: &GooseClient) {
     let uid = rand::thread_rng().gen_range(2, 5_001);
     let _response = client.get(format!("/user/{}", &uid).as_str()).await;
 }
 
 /// Log in.
-async fn drupal_loadtest_login(client: &mut GooseClient) {
+async fn drupal_loadtest_login(client: &GooseClient) {
     let mut response = client.get("/user").await;
     match response.response {
         Ok(r) => {
@@ -146,8 +151,8 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let request_builder = client.goose_post("/user");
-                    let _response = client.goose_send(request_builder.form(&params)).await;
+                    let request_builder = client.goose_post("/user").await;
+                    let _response = client.goose_send(request_builder.form(&params), None).await;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
@@ -162,7 +167,7 @@ async fn drupal_loadtest_login(client: &mut GooseClient) {
 }
 
 /// Post a comment.
-async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
+async fn drupal_loadtest_post_comment(client: &GooseClient) {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
@@ -213,8 +218,8 @@ async fn drupal_loadtest_post_comment(client: &mut GooseClient) {
                         ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
-                    let request_builder = client.goose_post(&comment_path);
-                    let mut response = client.goose_send(request_builder.form(&params)).await;
+                    let request_builder = client.goose_post(&comment_path).await;
+                    let mut response = client.goose_send(request_builder.form(&params), None).await;
                     match response.response {
                         Ok(r) => match r.text().await {
                             Ok(html) => {
