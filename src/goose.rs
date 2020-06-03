@@ -73,7 +73,7 @@
 //!
 //!     /// A very simple task that simply loads the front page.
 //!     async fn task_function(client: &GooseClient) {
-//!       let _response = client.get("/", None);
+//!       let _response = client.get("/");
 //!     }
 //! ```
 //!
@@ -89,7 +89,7 @@
 //!
 //!     /// A very simple task that simply loads the front page.
 //!     async fn task_function(client: &GooseClient) {
-//!       let _response = client.get("/", None);
+//!       let _response = client.get("/");
 //!     }
 //! ```
 //!
@@ -107,12 +107,12 @@
 //!
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(client: &GooseClient) {
-//!       let _response = client.get("/a/", None);
+//!       let _response = client.get("/a/");
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(client: &GooseClient) {
-//!       let _response = client.get("/b/", None);
+//!       let _response = client.get("/b/");
 //!     }
 //! ```
 //!
@@ -135,17 +135,17 @@
 //!
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(client: &GooseClient) {
-//!       let _response = client.get("/a/", None);
+//!       let _response = client.get("/a/");
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(client: &GooseClient) {
-//!       let _response = client.get("/b/", None);
+//!       let _response = client.get("/b/");
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "c" page.
 //!     async fn c_task_function(client: &GooseClient) {
-//!       let _response = client.get("/c/", None);
+//!       let _response = client.get("/c/");
 //!     }
 //! ```
 //!
@@ -164,7 +164,7 @@
 //!
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(client: &GooseClient) {
-//!       let _response = client.get("/a/", None);
+//!       let _response = client.get("/a/");
 //!     }
 //! ```
 //!
@@ -183,7 +183,7 @@
 //!
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(client: &GooseClient) {
-//!       let _response = client.get("/b/", None);
+//!       let _response = client.get("/b/");
 //!     }
 //! ```
 //!
@@ -211,7 +211,7 @@
 //!
 //!     /// A very simple task that makes a GET request.
 //!     async  fn get_function(client: &GooseClient) {
-//!       let _response = client.get("/path/to/foo/", None);
+//!       let _response = client.get("/path/to/foo/");
 //!     }
 //! ```
 //!
@@ -232,7 +232,7 @@
 //!
 //!     /// A very simple task that makes a POST request.
 //!     async fn post_function(client: &GooseClient) {
-//!       let _response = client.post("/path/to/foo/", None, "string value to post");
+//!       let _response = client.post("/path/to/foo/", "string value to post");
 //!     }
 //! ```
 //!
@@ -343,7 +343,7 @@ impl GooseTaskSet {
     ///
     ///     /// A very simple task that simply loads the "a" page.
     ///     async fn a_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/a/", None);
+    ///       let _response = client.get("/a/");
     ///     }
     /// ```
     pub fn register_task(mut self, mut task: GooseTask) -> Self {
@@ -769,12 +769,37 @@ impl GooseClient {
     ///
     ///     /// A very simple task that makes a GET request.
     ///     async fn get_function(client: &GooseClient) {
-    ///       let _response = client.get("/path/to/foo/", None);
+    ///       let _response = client.get("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn get(&self, path: &str, request_name: Option<&str>) -> GooseResponse {
+    pub async fn get(&self, path: &str) -> GooseResponse {
         let request_builder = self.goose_get(path).await;
-        self.goose_send(request_builder, request_name).await
+        self.goose_send(request_builder, None).await
+    }
+
+    /// A helper to make a named `GET` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host. Naming a request only affects collected
+    /// statistics.
+    ///
+    /// Calls to `client.get_named` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// # Example
+    /// ```rust
+    ///     use goose::prelude::*;
+    ///
+    ///     let mut task = task!(get_function);
+    ///
+    ///     /// A very simple task that makes a GET request.
+    ///     async fn get_function(client: &GooseClient) {
+    ///       let _response = client.get_named("/path/to/foo/", "foo");
+    ///     }
+    /// ```
+    pub async fn get_named(&self, path: &str, request_name: &str) -> GooseResponse {
+        let request_builder = self.goose_get(path).await;
+        self.goose_send(request_builder, Some(request_name)).await
     }
 
     /// A helper to make a `POST` request of a path and collect relevant statistics.
@@ -798,12 +823,37 @@ impl GooseClient {
     ///
     ///     /// A very simple task that makes a POST request.
     ///     async fn post_function(client: &GooseClient) {
-    ///       let _response = client.post("/path/to/foo/", None, "BODY BEING POSTED");
+    ///       let _response = client.post("/path/to/foo/", "BODY BEING POSTED");
     ///     }
     /// ```
-    pub async fn post(&self, path: &str, request_name: Option<&str>, body: &str) -> GooseResponse {
+    pub async fn post(&self, path: &str, body: &str) -> GooseResponse {
         let request_builder = self.goose_post(path).await.body(body.to_string());
-        self.goose_send(request_builder, request_name).await
+        self.goose_send(request_builder, None).await
+    }
+
+    /// A helper to make a named `POST` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host. Naming a request only affects collected
+    /// statistics.
+    ///
+    /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// # Example
+    /// ```rust
+    ///     use goose::prelude::*;
+    ///
+    ///     let mut task = task!(post_function);
+    ///
+    ///     /// A very simple task that makes a POST request.
+    ///     async fn post_function(client: &GooseClient) {
+    ///       let _response = client.post_named("/path/to/foo/", "foo", "BODY BEING POSTED");
+    ///     }
+    /// ```
+    pub async fn post_named(&self, path: &str, request_name: &str, body: &str) -> GooseResponse {
+        let request_builder = self.goose_post(path).await.body(body.to_string());
+        self.goose_send(request_builder, Some(request_name)).await
     }
 
     /// A helper to make a `HEAD` request of a path and collect relevant statistics.
@@ -827,12 +877,37 @@ impl GooseClient {
     ///
     ///     /// A very simple task that makes a HEAD request.
     ///     async fn head_function(client: &GooseClient) {
-    ///       let _response = client.head("/path/to/foo/", None);
+    ///       let _response = client.head("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn head(&self, path: &str, request_name: Option<&str>) -> GooseResponse {
+    pub async fn head(&self, path: &str) -> GooseResponse {
         let request_builder = self.goose_head(path).await;
-        self.goose_send(request_builder, request_name).await
+        self.goose_send(request_builder, None).await
+    }
+
+    /// A helper to make a named `HEAD` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host. Naming a request only affects collected
+    /// statistics.
+    ///
+    /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// # Example
+    /// ```rust
+    ///     use goose::prelude::*;
+    ///
+    ///     let mut task = task!(head_function);
+    ///
+    ///     /// A very simple task that makes a HEAD request.
+    ///     async fn head_function(client: &GooseClient) {
+    ///       let _response = client.head_named("/path/to/foo/", "foo");
+    ///     }
+    /// ```
+    pub async fn head_named(&self, path: &str, request_name: &str) -> GooseResponse {
+        let request_builder = self.goose_head(path).await;
+        self.goose_send(request_builder, Some(request_name)).await
     }
 
     /// A helper to make a `DELETE` request of a path and collect relevant statistics.
@@ -856,12 +931,37 @@ impl GooseClient {
     ///
     ///     /// A very simple task that makes a DELETE request.
     ///     async fn delete_function(client: &GooseClient) {
-    ///       let _response = client.delete("/path/to/foo/", None);
+    ///       let _response = client.delete("/path/to/foo/");
     ///     }
     /// ```
-    pub async fn delete(&self, path: &str, request_name: Option<&str>) -> GooseResponse {
+    pub async fn delete(&self, path: &str) -> GooseResponse {
         let request_builder = self.goose_delete(path).await;
-        self.goose_send(request_builder, request_name).await
+        self.goose_send(request_builder, None).await
+    }
+
+    /// A helper to make a named `DELETE` request of a path and collect relevant statistics.
+    /// Automatically prepends the correct host. Naming a request only affects collected
+    /// statistics.
+    ///
+    /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
+    /// the request you made
+    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// # Example
+    /// ```rust
+    ///     use goose::prelude::*;
+    ///
+    ///     let mut task = task!(delete_function);
+    ///
+    ///     /// A very simple task that makes a DELETE request.
+    ///     async fn delete_function(client: &GooseClient) {
+    ///       let _response = client.delete_named("/path/to/foo/", "foo");
+    ///     }
+    /// ```
+    pub async fn delete_named(&self, path: &str, request_name: &str) -> GooseResponse {
+        let request_builder = self.goose_delete(path).await;
+        self.goose_send(request_builder, Some(request_name)).await
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1168,7 +1268,7 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a GET request.
     ///     async fn get_function(client: &GooseClient) {
-    ///         let mut response = client.get("/404", None).await;
+    ///         let mut response = client.get("/404").await;
     ///         match &response.response {
     ///             Ok(r) => {
     ///                 // We expect a 404 here.
@@ -1203,7 +1303,7 @@ impl GooseClient {
     ///     let mut task = task!(loadtest_index_page);
     ///
     ///     async fn loadtest_index_page(client: &GooseClient) {
-    ///         let mut response = client.get("/", Some("index")).await;
+    ///         let mut response = client.get_named("/", "index").await;
     ///         // Extract the response Result.
     ///         match response.response {
     ///             Ok(r) => {
@@ -1286,7 +1386,7 @@ impl GooseTask {
     ///     task!(my_task_function).set_name("foo");
     ///
     ///     async fn my_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/", None);
+    ///       let _response = client.get("/");
     ///     }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
@@ -1312,7 +1412,7 @@ impl GooseTask {
     ///     task!(my_on_start_function).set_on_start();
     ///
     ///     async fn my_on_start_function(client: &GooseClient) {
-    ///       let _response = client.get("/", None);
+    ///       let _response = client.get("/");
     ///     }
     /// ```
     pub fn set_on_start(mut self) -> Self {
@@ -1338,7 +1438,7 @@ impl GooseTask {
     ///     task!(my_on_stop_function).set_on_stop();
     ///
     ///     async fn my_on_stop_function(client: &GooseClient) {
-    ///       let _response = client.get("/", None);
+    ///       let _response = client.get("/");
     ///     }
     /// ```
     pub fn set_on_stop(mut self) -> Self {
@@ -1358,7 +1458,7 @@ impl GooseTask {
     ///     task!(task_function).set_weight(3);
     ///
     ///     async fn task_function(client: &GooseClient) {
-    ///       let _response = client.get("/", None);
+    ///       let _response = client.get("/");
     ///     }
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
@@ -1395,15 +1495,15 @@ impl GooseTask {
     ///     let runs_last = task!(third_task_function);
     ///
     ///     async fn first_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/1", None);
+    ///       let _response = client.get("/1");
     ///     }
     ///
     ///     async fn second_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/2", None);
+    ///       let _response = client.get("/2");
     ///     }
     ///
     ///     async fn third_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/3", None);
+    ///       let _response = client.get("/3");
     ///     }
     /// ```
     ///
@@ -1419,15 +1519,15 @@ impl GooseTask {
     ///     let also_runs_second = task!(second_task_function_b).set_sequence(2).set_weight(2);
     ///
     ///     async fn first_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/1", None);
+    ///       let _response = client.get("/1");
     ///     }
     ///
     ///     async fn second_task_function_a(client: &GooseClient) {
-    ///       let _response = client.get("/2a", None);
+    ///       let _response = client.get("/2a");
     ///     }
     ///
     ///     async fn second_task_function_b(client: &GooseClient) {
-    ///       let _response = client.get("/2b", None);
+    ///       let _response = client.get("/2b");
     ///     }
     /// ```
     pub fn set_sequence(mut self, sequence: usize) -> Self {
@@ -1466,11 +1566,11 @@ mod tests {
     fn goose_task_set() {
         // Simplistic test task functions.
         async fn test_function_a(client: &GooseClient) -> () {
-            let _response = client.get("/a/", None).await;
+            let _response = client.get("/a/").await;
         }
 
         async fn test_function_b(client: &GooseClient) -> () {
-            let _response = client.get("/b/", None).await;
+            let _response = client.get("/b/").await;
         }
 
         let mut task_set = taskset!("foo");
@@ -1563,7 +1663,7 @@ mod tests {
     fn goose_task() {
         // Simplistic test task functions.
         async fn test_function_a(client: &GooseClient) -> () {
-            let _response = client.get("/a/", None);
+            let _response = client.get("/a/");
         }
 
         // Initialize task set.

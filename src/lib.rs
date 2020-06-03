@@ -53,7 +53,7 @@
 //! use goose::prelude::*;
 //!
 //! async fn loadtest_foo(client: &GooseClient) {
-//!   let _response = client.get("/path/to/foo", None);
+//!   let _response = client.get("/path/to/foo");
 //! }   
 //! ```
 //!
@@ -100,11 +100,11 @@
 //!     .execute();
 //!
 //! async fn loadtest_foo(client: &GooseClient) {
-//!   let _response = client.get("/path/to/foo", None);
+//!   let _response = client.get("/path/to/foo");
 //! }   
 //!
 //! async fn loadtest_bar(client: &GooseClient) {
-//!   let _response = client.get("/path/to/bar", None);
+//!   let _response = client.get("/path/to/bar");
 //! }   
 //! ```
 //!
@@ -589,11 +589,11 @@ impl GooseAttack {
     ///         );
     ///
     ///     async fn example_task(client: &GooseClient) {
-    ///       let _response = client.get("/foo", None);
+    ///       let _response = client.get("/foo");
     ///     }
     ///
     ///     async fn other_task(client: &GooseClient) {
-    ///       let _response = client.get("/bar", None);
+    ///       let _response = client.get("/bar");
     ///     }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
@@ -700,11 +700,11 @@ impl GooseAttack {
     ///         .execute();
     ///
     ///     async fn example_task(client: &GooseClient) {
-    ///       let _response = client.get("/foo", None);
+    ///       let _response = client.get("/foo");
     ///     }
     ///
     ///     async fn another_example_task(client: &GooseClient) {
-    ///       let _response = client.get("/bar", None);
+    ///       let _response = client.get("/bar");
     ///     }
     /// ```
     pub fn execute(mut self) {

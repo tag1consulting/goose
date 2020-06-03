@@ -82,7 +82,7 @@ fn main() {
 
 /// View the front page.
 async fn drupal_loadtest_front_page(client: &GooseClient) {
-    let mut response = client.get("/", None).await;
+    let mut response = client.get("/").await;
 
     // Grab some static assets from the front page.
     match response.response {
@@ -97,7 +97,7 @@ async fn drupal_loadtest_front_page(client: &GooseClient) {
                     }
                 }
                 for index in 0..urls.len() {
-                    client.get(&urls[index], Some("static asset")).await;
+                    client.get_named(&urls[index], "static asset").await;
                 }
             }
             Err(e) => {
@@ -115,18 +115,18 @@ async fn drupal_loadtest_front_page(client: &GooseClient) {
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_loadtest_node_page(client: &GooseClient) {
     let nid = rand::thread_rng().gen_range(1, 10_000);
-    let _response = client.get(format!("/node/{}", &nid).as_str(), None).await;
+    let _response = client.get(format!("/node/{}", &nid).as_str()).await;
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_loadtest_profile_page(client: &GooseClient) {
     let uid = rand::thread_rng().gen_range(2, 5_001);
-    let _response = client.get(format!("/user/{}", &uid).as_str(), None).await;
+    let _response = client.get(format!("/user/{}", &uid).as_str()).await;
 }
 
 /// Log in.
 async fn drupal_loadtest_login(client: &GooseClient) {
-    let mut response = client.get("/user", None).await;
+    let mut response = client.get("/user").await;
     match response.response {
         Ok(r) => {
             match r.text().await {
@@ -171,7 +171,7 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
-    let mut response = client.get(&node_path, None).await;
+    let mut response = client.get(&node_path).await;
     match response.response {
         Ok(r) => {
             match r.text().await {

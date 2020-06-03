@@ -47,10 +47,10 @@ async fn website_login(client: &GooseClient) {
 
 /// A very simple task that simply loads the front page.
 async fn website_index(client: &GooseClient) {
-    let _response = client.get("/", None).await;
+    let _response = client.get("/").await;
 }
 
 /// A very simple task that simply loads the about page.
 async fn website_about(client: &GooseClient) {
-    let _response = client.get("/about/", None).await;
+    let _response = client.get("/about/").await;
 }
