@@ -91,17 +91,14 @@ async fn drupal_loadtest_front_page(client: &GooseClient) {
                 let re = Regex::new(r#"src="(.*?)""#).unwrap();
                 // Collect copy of URLs to run them async
                 let mut urls = Vec::new();
-                let mut futures = Vec::new();
                 for url in re.captures_iter(&t) {
                     if url[1].contains("/misc") || url[1].contains("/themes") {
                         urls.push(url[1].to_string());
                     }
                 }
                 for index in 0..urls.len() {
-                    futures.push(client.get(&urls[index], Some("static asset")));
+                    client.get(&urls[index], Some("static asset")).await;
                 }
-                // Asynchronously load all static assets together.
-                futures::future::join_all(futures).await;
             }
             Err(e) => {
                 eprintln!("failed to parse front page: {}", e);
