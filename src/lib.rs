@@ -396,6 +396,10 @@ pub struct Socket {}
 /// Internal global state for load test.
 #[derive(Clone)]
 pub struct GooseAttack {
+    /// An optional task to run one time before starting clients and running task sets.
+    test_start_task: Option<GooseTask>,
+    /// An optional task to run one time after clients have finished running task sets.
+    test_stop_task: Option<GooseTask>,
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
     task_sets: Vec<GooseTaskSet>,
     /// A checksum of the task_sets vector to be sure all workers are running the same load test.
@@ -429,6 +433,8 @@ impl GooseAttack {
     /// ```
     pub fn initialize() -> GooseAttack {
         let goose_attack = GooseAttack {
+            test_start_task: None,
+            test_stop_task: None,
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
@@ -456,6 +462,8 @@ impl GooseAttack {
     /// ```
     pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
         GooseAttack {
+            test_start_task: None,
+            test_stop_task: None,
             task_sets: Vec::new(),
             task_sets_hash: 0,
             weighted_clients: Vec::new(),
@@ -599,6 +607,52 @@ impl GooseAttack {
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
         taskset.task_sets_index = self.task_sets.len();
         self.task_sets.push(taskset);
+        self
+    }
+
+    /// Optionally define a task to run before clients are started and all task sets
+    /// start running. This is would generally be used to set up anything required
+    /// for the load test.
+    ///
+    /// When running in a distributed Gaggle, this task is only run one time by the
+    /// Manager.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::prelude::*;
+    ///
+    ///     GooseAttack::initialize()
+    ///         .test_start(task!(setup));
+    ///
+    ///     async fn setup(client: &GooseClient) {
+    ///         // do stuff to set up load test ...
+    ///     }
+    /// ```
+    pub fn test_start(mut self, task: GooseTask) -> Self {
+        self.test_start_task = Some(task);
+        self
+    }
+
+    /// Optionally define a task to run after all clients have finished running
+    /// all defined task sets. This would generally be used to clean up anything
+    /// that was specifically set up for the load test.
+    ///
+    /// When running in a distributed Gaggle, this task is only run one time by the
+    /// Manager.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::prelude::*;
+    ///
+    ///     GooseAttack::initialize()
+    ///         .test_stop(task!(teardown));
+    ///
+    ///     async fn teardown(client: &GooseClient) {
+    ///         // do stuff to tear down the load test ...
+    ///     }
+    /// ```
+    pub fn test_stop(mut self, task: GooseTask) -> Self {
+        self.test_stop_task = Some(task);
         self
     }
 
@@ -930,8 +984,23 @@ impl GooseAttack {
             sleep_duration,
             socket
         );
+
         // Initilize per-client states.
         if !self.configuration.worker {
+            // First run global test_start_task, if defined.
+            match &self.test_start_task {
+                Some(t) => {
+                    info!("running test_start_task");
+                    // Create a one-time-use Client to run the test_start_task.
+                    let client =
+                        GooseClient::new(0, self.host.clone(), None, 0, 0, &self.configuration, 0);
+                    let function = t.function;
+                    function(&client).await;
+                }
+                // No test_start_task defined, nothing to do.
+                None => (),
+            }
+
             GooseClientState::initialize(self.weighted_clients.len()).await;
         }
 
@@ -1165,6 +1234,23 @@ impl GooseAttack {
             let one_second = time::Duration::from_secs(1);
             tokio::time::delay_for(one_second).await;
         }
+
+        if !self.configuration.worker {
+            // Run global test_stop_task, if defined.
+            match &self.test_stop_task {
+                Some(t) => {
+                    info!("running test_stop_task");
+                    // Create a one-time-use Client to run the test_stop_task.
+                    let client =
+                        GooseClient::new(0, self.host.clone(), None, 0, 0, &self.configuration, 0);
+                    let function = t.function;
+                    function(&client).await;
+                }
+                // No test_stop_task defined, nothing to do.
+                None => (),
+            }
+        }
+
         self
     }
 }
