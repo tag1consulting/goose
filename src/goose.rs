@@ -1994,15 +1994,7 @@ mod tests {
     async fn goose_client() {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::default();
-        let client = GooseClient::new(
-            0,
-            Some(HOST.to_string()),
-            None,
-            0,
-            0,
-            &configuration,
-            0,
-        );
+        let client = GooseClient::new(0, Some(HOST.to_string()), None, 0, 0, &configuration, 0);
         assert_eq!(client.task_sets_index, 0);
         assert_eq!(client.default_host, Some(HOST.to_string()));
         assert_eq!(client.task_set_host, None);
