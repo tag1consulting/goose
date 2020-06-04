@@ -1561,7 +1561,7 @@ impl Hash for GooseTask {
 mod tests {
     use super::*;
 
-    use httpmock::Method::GET;
+    use httpmock::Method::{GET, POST};
     use httpmock::{mock, with_mock_server};
 
     async fn setup_client() -> GooseClient {
@@ -2115,14 +2115,14 @@ mod tests {
     #[tokio::test]
     #[with_mock_server]
     async fn manual_requests() {
+        let client = setup_client().await;
+
         // Set up a mock http server endpoint.
         let mock_index = mock(GET, "/")
             .return_status(200)
             .create();
-        
-        let client = setup_client().await;
 
-        // Make a request to the mock http server and confirm we get a 200 response.
+        // Make a GET request to the mock http server and confirm we get a 200 response.
         assert_eq!(mock_index.times_called(), 0);
         let response = client.get("/").await;
         let status = response.response.unwrap().status();
@@ -2138,7 +2138,7 @@ mod tests {
             .return_status(404)
             .create();
 
-        // Make a request to the mock http server and confirm we get a 404 response.
+        // Make an invalid GET request to the mock http server and confirm we get a 404 response.
         assert_eq!(mock_404.times_called(), 0);
         let response = client.get("/no/such/path").await;
         let status = response.response.unwrap().status();
@@ -2149,5 +2149,23 @@ mod tests {
         assert_eq!(response.request.success, false);
         assert_eq!(response.request.update, false);
         assert_eq!(response.request.status_code, Some(http::StatusCode::NOT_FOUND));
+
+        // Set up a mock http server endpoint.
+        let mock_comment = mock(POST, "/comment")
+            .return_status(200)
+            .expect_body("foo")
+            .create();
+
+        // Make a POST request to the mock http server and confirm we get a 200 OK response.
+        assert_eq!(mock_comment.times_called(), 0);
+        let response = client.post("/comment", "foo").await;
+        let status = response.response.unwrap().status();
+        assert_eq!(status, 200);
+        assert_eq!(mock_comment.times_called(), 1);
+        assert_eq!(response.request.method, GooseMethod::POST);
+        assert_eq!(response.request.name, "/comment");
+        assert_eq!(response.request.success, true);
+        assert_eq!(response.request.update, false);
+        assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
     }
 }
