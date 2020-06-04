@@ -5,21 +5,24 @@ mod common;
 
 use goose::prelude::*;
 
+const LOGIN_PATH: &str = "/login";
+const LOGOUT_PATH: &str = "/logout";
+
 pub async fn login(client: &GooseClient) -> () {
-    let request_builder = client.goose_post("/login").await;
+    let request_builder = client.goose_post(LOGIN_PATH).await;
     let params = [("username", "me"), ("password", "s3crET!")];
     let _response = client.goose_send(request_builder.form(&params), None).await;
 }
 
 pub async fn logout(client: &GooseClient) -> () {
-    let _response = client.get("/logout").await;
+    let _response = client.get(LOGOUT_PATH).await;
 }
 
 #[test]
 #[with_mock_server]
 fn test_no_normal_tasks() {
-    let mock_login = mock(POST, "/login").return_status(200).create();
-    let mock_logout = mock(GET, "/logout").return_status(200).create();
+    let mock_login = mock(POST, LOGIN_PATH).return_status(200).create();
+    let mock_logout = mock(GET, LOGOUT_PATH).return_status(200).create();
 
     crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()

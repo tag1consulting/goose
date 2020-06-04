@@ -5,19 +5,22 @@ mod common;
 
 use goose::prelude::*;
 
+const INDEX_PATH: &str = "/";
+const ABOUT_PATH: &str = "/about.html";
+
 pub async fn get_index(client: &GooseClient) -> () {
-    let _response = client.get("/").await;
+    let _response = client.get(INDEX_PATH).await;
 }
 
 pub async fn get_about(client: &GooseClient) -> () {
-    let _response = client.get("/about.html").await;
+    let _response = client.get(ABOUT_PATH).await;
 }
 
 #[test]
 #[with_mock_server]
 fn test_single_taskset() {
-    let mock_index = mock(GET, "/").return_status(200).create();
-    let mock_about = mock(GET, "/about.html")
+    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
+    let mock_about = mock(GET, ABOUT_PATH)
         .return_status(200)
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create();
