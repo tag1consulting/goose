@@ -1256,85 +1256,85 @@ impl GooseAttack {
 pub struct GooseConfiguration {
     /// Host to load test, for example: http://10.21.32.33
     #[structopt(short = "H", long, required = false, default_value = "")]
-    host: String,
+    pub host: String,
 
     /// Number of concurrent Goose users (defaults to available CPUs).
     #[structopt(short, long)]
-    clients: Option<usize>,
+    pub clients: Option<usize>,
 
     /// How many users to spawn per second.
     #[structopt(short = "r", long, required = false, default_value = "1")]
-    hatch_rate: usize,
+    pub hatch_rate: usize,
 
     /// Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.).
     #[structopt(short = "t", long, required = false, default_value = "")]
-    run_time: String,
+    pub run_time: String,
 
     /// Don't print stats in the console
     #[structopt(long)]
-    no_stats: bool,
+    pub no_stats: bool,
 
     /// Includes status code counts in console stats
     #[structopt(long)]
-    status_codes: bool,
+    pub status_codes: bool,
 
     /// Only prints summary stats
     #[structopt(long)]
-    only_summary: bool,
+    pub only_summary: bool,
 
     /// Resets statistics once hatching has been completed
     #[structopt(long)]
-    reset_stats: bool,
+    pub reset_stats: bool,
 
     /// Shows list of all possible Goose tasks and exits
     #[structopt(short, long)]
-    list: bool,
+    pub list: bool,
 
     // The number of occurrences of the `v/verbose` flag
     /// Debug level (-v, -vv, -vvv, etc.)
     #[structopt(short = "v", long, parse(from_occurrences))]
-    verbose: u8,
+    pub verbose: u8,
 
     // The number of occurrences of the `g/log-level` flag
     /// Log level (-g, -gg, -ggg, etc.)
     #[structopt(short = "g", long, parse(from_occurrences))]
-    log_level: u8,
+    pub log_level: u8,
 
     /// Log file name
     #[structopt(long, default_value = "goose.log")]
-    log_file: String,
+    pub log_file: String,
 
     /// Enables manager mode
     #[structopt(long)]
-    manager: bool,
+    pub manager: bool,
 
     /// Ignore worker load test checksum
     #[structopt(long)]
-    no_hash_check: bool,
+    pub no_hash_check: bool,
 
     /// Required when in manager mode, how many workers to expect
     #[structopt(long, required = false, default_value = "0")]
-    expect_workers: u16,
+    pub expect_workers: u16,
 
     /// Define host manager listens on, formatted x.x.x.x
     #[structopt(long, default_value = "0.0.0.0")]
-    manager_bind_host: String,
+    pub manager_bind_host: String,
 
     /// Define port manager listens on
     #[structopt(long, default_value=DEFAULT_PORT)]
-    manager_bind_port: u16,
+    pub manager_bind_port: u16,
 
     /// Enables worker mode
     #[structopt(long)]
-    worker: bool,
+    pub worker: bool,
 
     /// Host manager is running on
     #[structopt(long, default_value = "127.0.0.1")]
-    manager_host: String,
+    pub manager_host: String,
 
     /// Port manager is listening on
     #[structopt(long, default_value=DEFAULT_PORT)]
-    manager_port: u16,
+    pub manager_port: u16,
 }
 
 /// Returns a sequenced bucket of weighted usize pointers to Goose Tasks

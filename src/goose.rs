@@ -1560,6 +1560,26 @@ impl Hash for GooseTask {
 mod tests {
     use super::*;
 
+    use httpmock::Method::{GET, POST};
+    use httpmock::{mock, with_mock_server};
+
+    async fn setup_client() -> GooseClient {
+        // Set up global client state.
+        crate::GooseClientState::initialize(1).await;
+        let configuration = GooseConfiguration::default();
+        let mut client = GooseClient::new(
+            0,
+            Some("http://127.0.0.1:5000".to_string()),
+            None,
+            0,
+            0,
+            &configuration,
+            0,
+        );
+        client.weighted_clients_index = 0;
+        client
+    }
+
     #[test]
     fn goose_task_set() {
         // Simplistic test task functions.
@@ -1972,18 +1992,11 @@ mod tests {
 
     #[tokio::test]
     async fn goose_client() {
+        const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::default();
-        let client = GooseClient::new(
-            0,
-            Some("http://example.com/".to_string()),
-            None,
-            0,
-            0,
-            &configuration,
-            0,
-        );
+        let client = GooseClient::new(0, Some(HOST.to_string()), None, 0, 0, &configuration, 0);
         assert_eq!(client.task_sets_index, 0);
-        assert_eq!(client.default_host, Some("http://example.com/".to_string()));
+        assert_eq!(client.default_host, Some(HOST.to_string()));
         assert_eq!(client.task_set_host, None);
         assert_eq!(client.min_wait, 0);
         assert_eq!(client.max_wait, 0);
@@ -1996,11 +2009,11 @@ mod tests {
 
         // Confirm the URLs are correctly built using the default_host.
         let url = client.build_url("/foo");
-        assert_eq!(url, "http://example.com/foo");
+        assert_eq!(&url, &[HOST, "foo"].concat());
         let url = client.build_url("bar/");
-        assert_eq!(url, "http://example.com/bar/");
+        assert_eq!(&url, &[HOST, "bar/"].concat());
         let url = client.build_url("/foo/bar");
-        assert_eq!(url, "http://example.com/foo/bar");
+        assert_eq!(&url, &[HOST, "foo/bar"].concat());
 
         // Confirm the URLs are built with their own specified host.
         let url = client.build_url("https://example.com/foo");
@@ -2037,13 +2050,15 @@ mod tests {
         let url = client.build_url("https://example.com/foo");
         assert_eq!(url, "https://example.com/foo");
 
-        /*
-         * @TODO: fixme
+        // Recreate client.
+        let client = setup_client().await;
+        const MOCKHOST: &str = "http://127.0.0.1:5000/";
+
         // Create a GET request.
         let mut goose_request = client.goose_get("/foo").await;
         let mut built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::GET);
-        assert_eq!(built_request.url().as_str(), "http://example.com/foo");
+        assert_eq!(built_request.url().as_str(), &[MOCKHOST, "foo"].concat());
         assert_eq!(built_request.timeout(), None);
 
         // Create a POST request.
@@ -2052,7 +2067,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::POST);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/post"
+            &[MOCKHOST, "path/to/post"].concat()
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2062,7 +2077,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::PUT);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/put"
+            &[MOCKHOST, "path/to/put"].concat()
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2072,7 +2087,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::PATCH);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/patch"
+            &[MOCKHOST, "path/to/patch"].concat()
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2082,7 +2097,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::DELETE);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/delete"
+            &[MOCKHOST, "path/to/delete"].concat()
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2092,9 +2107,70 @@ mod tests {
         assert_eq!(built_request.method(), &Method::HEAD);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/head"
+            &[MOCKHOST, "path/to/head"].concat()
         );
         assert_eq!(built_request.timeout(), None);
-        */
+    }
+
+    #[tokio::test]
+    #[with_mock_server]
+    async fn manual_requests() {
+        let client = setup_client().await;
+
+        // Set up a mock http server endpoint.
+        let mock_index = mock(GET, "/").return_status(200).create();
+
+        // Make a GET request to the mock http server and confirm we get a 200 response.
+        assert_eq!(mock_index.times_called(), 0);
+        let response = client.get("/").await;
+        let status = response.response.unwrap().status();
+        assert_eq!(status, 200);
+        assert_eq!(mock_index.times_called(), 1);
+        assert_eq!(response.request.method, GooseMethod::GET);
+        assert_eq!(response.request.name, "/");
+        assert_eq!(response.request.success, true);
+        assert_eq!(response.request.update, false);
+        assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
+
+        const NO_SUCH_PATH: &str = "/no/such/path";
+        let mock_404 = mock(GET, NO_SUCH_PATH).return_status(404).create();
+
+        // Make an invalid GET request to the mock http server and confirm we get a 404 response.
+        assert_eq!(mock_404.times_called(), 0);
+        let response = client.get(NO_SUCH_PATH).await;
+        let status = response.response.unwrap().status();
+        assert_eq!(status, 404);
+        assert_eq!(mock_404.times_called(), 1);
+        assert_eq!(response.request.method, GooseMethod::GET);
+        assert_eq!(response.request.name, NO_SUCH_PATH);
+        assert_eq!(response.request.success, false);
+        assert_eq!(response.request.update, false);
+        assert_eq!(
+            response.request.status_code,
+            Some(http::StatusCode::NOT_FOUND)
+        );
+
+        // Set up a mock http server endpoint.
+        const COMMENT_PATH: &str = "/comment";
+        let mock_comment = mock(POST, COMMENT_PATH)
+            .return_status(200)
+            .expect_body("foo")
+            .return_body("foo")
+            .create();
+
+        // Make a POST request to the mock http server and confirm we get a 200 OK response.
+        assert_eq!(mock_comment.times_called(), 0);
+        let response = client.post(COMMENT_PATH, "foo").await;
+        let unwrapped_response = response.response.unwrap();
+        let status = unwrapped_response.status();
+        assert_eq!(status, 200);
+        let body = unwrapped_response.text().await.unwrap();
+        assert_eq!(body, "foo");
+        assert_eq!(mock_comment.times_called(), 1);
+        assert_eq!(response.request.method, GooseMethod::POST);
+        assert_eq!(response.request.name, COMMENT_PATH);
+        assert_eq!(response.request.success, true);
+        assert_eq!(response.request.update, false);
+        assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
     }
 }
