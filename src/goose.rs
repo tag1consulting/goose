@@ -1200,15 +1200,12 @@ impl GooseClient {
             match &response {
                 Ok(r) => {
                     let status_code = r.status();
-                    // Only increment status_code_counts if we're displaying the results
-                    if self.config.status_codes {
-                        raw_request.set_status_code(Some(status_code));
-                    }
                     debug!("{:?}: status_code {}", &path, status_code);
                     // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                     if !status_code.is_success() {
                         raw_request.success = false;
                     }
+                    raw_request.set_status_code(Some(status_code));
                 }
                 Err(e) => {
                     // @TODO: what can we learn from a reqwest error?
