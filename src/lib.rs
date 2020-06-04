@@ -502,7 +502,8 @@ impl GooseAttack {
             match TermLogger::new(debug_level, Config::default(), TerminalMode::Mixed) {
                 Some(t) => t,
                 None => {
-                    error!("failed to initialize TermLogger");
+                    // Print this message, we don't have a logger yet.
+                    eprintln!("failed to initialize TermLogger");
                     std::process::exit(1);
                 }
             },
