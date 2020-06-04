@@ -514,7 +514,7 @@ impl GooseAttack {
         ]) {
             Ok(_) => (),
             Err(e) => {
-                error!("failed to initialize CombinedLogger: {}", e);
+                info!("failed to initialize CombinedLogger: {}", e);
             }
         }
         info!("Output verbosity level: {}", debug_level);
@@ -1164,7 +1164,7 @@ impl GooseAttack {
                             debug!("telling client {} to exit", index);
                         }
                         Err(e) => {
-                            warn!("failed to tell client {} to exit: {}", index, e);
+                            info!("failed to tell client {} to exit: {}", index, e);
                         }
                     }
                 }
