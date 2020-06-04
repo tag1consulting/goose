@@ -477,7 +477,7 @@ impl GooseAttack {
         }
     }
 
-    pub fn setup(mut self) -> Self {
+    pub fn initialize_logger(&self) {
         // Allow optionally controlling debug output level
         let debug_level;
         match self.configuration.verbose {
@@ -497,13 +497,12 @@ impl GooseAttack {
 
         let log_file = PathBuf::from(&self.configuration.log_file);
 
-        // @TODO: get rid of unwrap(), TermLogger fails if there's no terminal.
         match CombinedLogger::init(vec![
             match TermLogger::new(debug_level, Config::default(), TerminalMode::Mixed) {
                 Some(t) => t,
                 None => {
-                    error!("failed to initialize TermLogger");
-                    std::process::exit(1);
+                    eprintln!("failed to initialize TermLogger");
+                    return;
                 }
             },
             WriteLogger::new(
@@ -514,12 +513,16 @@ impl GooseAttack {
         ]) {
             Ok(_) => (),
             Err(e) => {
-                error!("failed to initialize CombinedLogger: {}", e);
+                info!("failed to initialize CombinedLogger: {}", e);
             }
         }
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
         info!("Writing to log file: {}", log_file.display());
+    }
+
+    pub fn setup(mut self) -> Self {
+        self.initialize_logger();
 
         // Don't allow overhead of collecting status codes unless we're printing statistics.
         if self.configuration.status_codes && self.configuration.no_stats {
@@ -1040,38 +1043,30 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             client_channels.push(parent_sender);
 
-            // We can only launch tasks if the task list is non-empty
-            if !thread_client.weighted_tasks.is_empty() {
-                // Copy the client-to-parent sender channel, used by all threads.
-                thread_client.parent = Some(all_threads_sender.clone());
+            // Copy the client-to-parent sender channel, used by all threads.
+            thread_client.parent = Some(all_threads_sender.clone());
 
-                // Copy the appropriate task_set into the thread.
-                let thread_task_set = self.task_sets[thread_client.task_sets_index].clone();
+            // Copy the appropriate task_set into the thread.
+            let thread_task_set = self.task_sets[thread_client.task_sets_index].clone();
 
-                // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
-                let thread_number = self.active_clients + 1;
+            // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
+            let thread_number = self.active_clients + 1;
 
-                let is_worker = self.configuration.worker;
+            let is_worker = self.configuration.worker;
 
-                // Launch a new client.
-                let client = tokio::spawn(client::client_main(
-                    thread_number,
-                    thread_task_set,
-                    thread_client,
-                    thread_receiver,
-                    is_worker,
-                ));
+            // Launch a new client.
+            let client = tokio::spawn(client::client_main(
+                thread_number,
+                thread_task_set,
+                thread_client,
+                thread_receiver,
+                is_worker,
+            ));
 
-                clients.push(client);
-                self.active_clients += 1;
-                debug!("sleeping {:?} milliseconds...", sleep_duration);
-                tokio::time::delay_for(sleep_duration).await;
-            } else {
-                warn!(
-                    "no tasks for thread {} to run",
-                    self.task_sets[thread_client.task_sets_index].name
-                );
-            }
+            clients.push(client);
+            self.active_clients += 1;
+            debug!("sleeping {:?} milliseconds...", sleep_duration);
+            tokio::time::delay_for(sleep_duration).await;
         }
         // Restart the timer now that all threads are launched.
         started = time::Instant::now();
@@ -1172,7 +1167,7 @@ impl GooseAttack {
                             debug!("telling client {} to exit", index);
                         }
                         Err(e) => {
-                            warn!("failed to tell client {} to exit: {}", index, e);
+                            info!("failed to tell client {} to exit: {}", index, e);
                         }
                     }
                 }
@@ -1445,8 +1440,10 @@ fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, V
         let mut tasks = vec![task.tasks_index; weight];
         weighted_unsequenced_tasks.append(&mut tasks);
     }
-    // Unsequenced tasks come lost.
-    weighted_tasks.push(weighted_unsequenced_tasks);
+    // Unsequenced tasks come last.
+    if !weighted_unsequenced_tasks.is_empty() {
+        weighted_tasks.push(weighted_unsequenced_tasks);
+    }
 
     // Apply weight to on_start sequenced tasks.
     let mut weighted_on_start_tasks: Vec<Vec<usize>> = Vec::new();

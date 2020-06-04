@@ -118,7 +118,7 @@ pub fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
     }) {
         Ok(_) => (),
         Err(e) => {
-            warn!("failed to set ctrl-c handler: {}", e);
+            info!("failed to set ctrl-c handler: {}", e);
         }
     }
 }
