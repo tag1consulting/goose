@@ -1200,10 +1200,7 @@ impl GooseClient {
             match &response {
                 Ok(r) => {
                     let status_code = r.status();
-                    // Only increment status_code_counts if we're displaying the results
-                    if self.config.status_codes {
-                        raw_request.set_status_code(Some(status_code));
-                    }
+                    raw_request.set_status_code(Some(status_code));
                     debug!("{:?}: status_code {}", &path, status_code);
                     // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                     if !status_code.is_success() {
@@ -1224,20 +1221,22 @@ impl GooseClient {
         GooseResponse::new(raw_request, response)
     }
 
+    /// Helper that pushes statistics to parent thread, when defined.
     fn send_to_parent(&self, raw_request: &GooseRawRequest) {
-        let parent = match self.parent.clone() {
-            Some(p) => p,
-            None => {
-                error!("unable to communicate with parent thread, exiting");
-                std::process::exit(1);
-            }
-        };
-        match parent.send(raw_request.clone()) {
-            Ok(_) => (),
-            Err(e) => {
-                error!("unable to communicate with parent thread, exiting: {}", e);
-                std::process::exit(1);
-            }
+        match self.parent.clone() {
+            Some(p) => {
+                let parent = p;
+                match parent.send(raw_request.clone()) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        info!("unable to communicate with parent thread, exiting: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            },
+            // No parent thread is defined when running test_start_task,
+            // test_stop_task, and during testing.
+            None => (),
         }
     }
 
@@ -1561,6 +1560,19 @@ impl Hash for GooseTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use httpmock::Method::GET;
+    use httpmock::{mock, with_mock_server};
+
+    async fn setup_client() -> GooseClient {
+        // Set up global client state.
+        crate::GooseClientState::initialize(1).await;
+        let configuration = GooseConfiguration::default();
+        let mut client =
+            GooseClient::new(0, Some("http://127.0.0.1:5000".to_string()), None, 0, 0, &configuration, 0);
+        client.weighted_clients_index = 0;
+        client
+    }
 
     #[test]
     fn goose_task_set() {
@@ -2039,13 +2051,14 @@ mod tests {
         let url = client.build_url("https://example.com/foo");
         assert_eq!(url, "https://example.com/foo");
 
-        /*
-         * @TODO: fixme
+        // Recreate client.
+        let client = setup_client().await;
+
         // Create a GET request.
         let mut goose_request = client.goose_get("/foo").await;
         let mut built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::GET);
-        assert_eq!(built_request.url().as_str(), "http://example.com/foo");
+        assert_eq!(built_request.url().as_str(), "http://127.0.0.1:5000/foo");
         assert_eq!(built_request.timeout(), None);
 
         // Create a POST request.
@@ -2054,7 +2067,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::POST);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/post"
+            "http://127.0.0.1:5000/path/to/post"
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2064,7 +2077,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::PUT);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/put"
+            "http://127.0.0.1:5000/path/to/put"
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2074,7 +2087,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::PATCH);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/patch"
+            "http://127.0.0.1:5000/path/to/patch"
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2084,7 +2097,7 @@ mod tests {
         assert_eq!(built_request.method(), &Method::DELETE);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/delete"
+            "http://127.0.0.1:5000/path/to/delete"
         );
         assert_eq!(built_request.timeout(), None);
 
@@ -2094,9 +2107,47 @@ mod tests {
         assert_eq!(built_request.method(), &Method::HEAD);
         assert_eq!(
             built_request.url().as_str(),
-            "http://example.com/path/to/head"
+            "http://127.0.0.1:5000/path/to/head"
         );
         assert_eq!(built_request.timeout(), None);
-        */
+    }
+
+    #[tokio::test]
+    #[with_mock_server]
+    async fn manual_requests() {
+        // Set up a mock http server endpoint.
+        let mock_index = mock(GET, "/")
+            .return_status(200)
+            .create();
+        
+        let client = setup_client().await;
+
+        // Make a request to the mock http server and confirm we get a 200 response.
+        assert_eq!(mock_index.times_called(), 0);
+        let response = client.get("/").await;
+        let status = response.response.unwrap().status();
+        assert_eq!(status, 200);
+        assert_eq!(mock_index.times_called(), 1);
+        assert_eq!(response.request.method, GooseMethod::GET);
+        assert_eq!(response.request.name, "/");
+        assert_eq!(response.request.success, true);
+        assert_eq!(response.request.update, false);
+        assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
+
+        let mock_404 = mock(GET, "/no/such/path")
+            .return_status(404)
+            .create();
+
+        // Make a request to the mock http server and confirm we get a 404 response.
+        assert_eq!(mock_404.times_called(), 0);
+        let response = client.get("/no/such/path").await;
+        let status = response.response.unwrap().status();
+        assert_eq!(status, 404);
+        assert_eq!(mock_404.times_called(), 1);
+        assert_eq!(response.request.method, GooseMethod::GET);
+        assert_eq!(response.request.name, "/no/such/path");
+        assert_eq!(response.request.success, false);
+        assert_eq!(response.request.update, false);
+        assert_eq!(response.request.status_code, Some(http::StatusCode::NOT_FOUND));
     }
 }
