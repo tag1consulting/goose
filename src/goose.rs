@@ -1233,7 +1233,7 @@ impl GooseClient {
                         std::process::exit(1);
                     }
                 }
-            },
+            }
             // No parent thread is defined when running test_start_task,
             // test_stop_task, and during testing.
             None => (),
@@ -1568,8 +1568,15 @@ mod tests {
         // Set up global client state.
         crate::GooseClientState::initialize(1).await;
         let configuration = GooseConfiguration::default();
-        let mut client =
-            GooseClient::new(0, Some("http://127.0.0.1:5000".to_string()), None, 0, 0, &configuration, 0);
+        let mut client = GooseClient::new(
+            0,
+            Some("http://127.0.0.1:5000".to_string()),
+            None,
+            0,
+            0,
+            &configuration,
+            0,
+        );
         client.weighted_clients_index = 0;
         client
     }
@@ -2118,9 +2125,7 @@ mod tests {
         let client = setup_client().await;
 
         // Set up a mock http server endpoint.
-        let mock_index = mock(GET, "/")
-            .return_status(200)
-            .create();
+        let mock_index = mock(GET, "/").return_status(200).create();
 
         // Make a GET request to the mock http server and confirm we get a 200 response.
         assert_eq!(mock_index.times_called(), 0);
@@ -2134,9 +2139,7 @@ mod tests {
         assert_eq!(response.request.update, false);
         assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
 
-        let mock_404 = mock(GET, "/no/such/path")
-            .return_status(404)
-            .create();
+        let mock_404 = mock(GET, "/no/such/path").return_status(404).create();
 
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
         assert_eq!(mock_404.times_called(), 0);
@@ -2148,7 +2151,10 @@ mod tests {
         assert_eq!(response.request.name, "/no/such/path");
         assert_eq!(response.request.success, false);
         assert_eq!(response.request.update, false);
-        assert_eq!(response.request.status_code, Some(http::StatusCode::NOT_FOUND));
+        assert_eq!(
+            response.request.status_code,
+            Some(http::StatusCode::NOT_FOUND)
+        );
 
         // Set up a mock http server endpoint.
         let mock_comment = mock(POST, "/comment")
@@ -2208,9 +2214,7 @@ mod tests {
             manager_port: 5115,
         };
 
-        let mock_index = mock(GET, "/")
-            .return_status(200)
-            .create();
+        let mock_index = mock(GET, "/").return_status(200).create();
         let mock_about = mock(GET, "/about.html")
             .return_status(200)
             .return_body("<HTML><BODY>about page</BODY></HTML>")
@@ -2218,9 +2222,10 @@ mod tests {
 
         crate::GooseAttack::initialize_with_config(configuration)
             .setup()
-            .register_taskset(taskset!("LoadTest")
-                .register_task(task!(task_a).set_weight(9))
-                .register_task(task!(task_b).set_weight(3))
+            .register_taskset(
+                taskset!("LoadTest")
+                    .register_task(task!(task_a).set_weight(9))
+                    .register_task(task!(task_b).set_weight(3)),
             )
             .execute();
 
