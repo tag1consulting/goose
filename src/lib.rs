@@ -1167,7 +1167,7 @@ impl GooseAttack {
                             debug!("telling client {} to exit", index);
                         }
                         Err(e) => {
-                            warn!("failed to tell client {} to exit: {}", index, e);
+                            info!("failed to tell client {} to exit: {}", index, e);
                         }
                     }
                 }
