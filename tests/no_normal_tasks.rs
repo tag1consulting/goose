@@ -1,0 +1,39 @@
+use httpmock::Method::{GET, POST};
+use httpmock::{mock, with_mock_server};
+
+mod common;
+
+use goose::prelude::*;
+
+pub async fn login(client: &GooseClient) -> () {
+    let request_builder = client.goose_post("/login").await;
+    let params = [("username", "me"), ("password", "s3crET!")];
+    let _response = client.goose_send(request_builder.form(&params), None).await;
+}
+
+pub async fn logout(client: &GooseClient) -> () {
+    let _response = client.get("/logout").await;
+}
+
+#[test]
+#[with_mock_server]
+fn test_no_normal_tasks() {
+    let mock_login = mock(POST, "/login").return_status(200).create();
+    let mock_logout = mock(GET, "/logout").return_status(200).create();
+
+    crate::GooseAttack::initialize_with_config(common::build_configuration())
+        .setup()
+        .register_taskset(
+            taskset!("LoadTest")
+                .register_task(task!(login).set_on_start())
+                .register_task(task!(logout).set_on_stop()),
+        )
+        .execute();
+
+    let called_login = mock_login.times_called();
+    let called_logout = mock_logout.times_called();
+
+    // Confirm that the on_start and on_exit tasks actually ran.
+    assert_eq!(called_login, 1);
+    assert_eq!(called_logout, 1);
+}
