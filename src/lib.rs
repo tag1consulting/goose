@@ -477,7 +477,7 @@ impl GooseAttack {
         }
     }
 
-    pub fn setup(mut self) -> Self {
+    pub fn initialize_logger(&self) {
         // Allow optionally controlling debug output level
         let debug_level;
         match self.configuration.verbose {
@@ -497,14 +497,13 @@ impl GooseAttack {
 
         let log_file = PathBuf::from(&self.configuration.log_file);
 
-        // @TODO: get rid of unwrap(), TermLogger fails if there's no terminal.
         match CombinedLogger::init(vec![
             match TermLogger::new(debug_level, Config::default(), TerminalMode::Mixed) {
                 Some(t) => t,
                 None => {
                     // Print this message, we don't have a logger yet.
                     eprintln!("failed to initialize TermLogger");
-                    std::process::exit(1);
+                    return;
                 }
             },
             WriteLogger::new(
@@ -521,6 +520,10 @@ impl GooseAttack {
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
         info!("Writing to log file: {}", log_file.display());
+    }
+
+    pub fn setup(mut self) -> Self {
+        self.initialize_logger();
 
         // Don't allow overhead of collecting status codes unless we're printing statistics.
         if self.configuration.status_codes && self.configuration.no_stats {
