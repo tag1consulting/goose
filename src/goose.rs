@@ -2179,7 +2179,6 @@ mod tests {
         assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
     }
 
-    //#[tokio::test]
     #[test]
     #[with_mock_server]
     fn load_test_one_taskset() {
@@ -2196,7 +2195,7 @@ mod tests {
             clients: Some(1),
             hatch_rate: 1,
             run_time: "1".to_string(),
-            no_stats: false,
+            no_stats: true,
             status_codes: false,
             only_summary: false,
             reset_stats: false,
@@ -2240,5 +2239,62 @@ mod tests {
         let one_third_index = called_index / 3;
         let difference = called_about as i32 - one_third_index as i32;
         assert!(difference >= -2 && difference <= 2);
+    }
+
+    #[test]
+    #[with_mock_server]
+    fn load_test_no_normal_tasks() {
+        async fn task_a(client: &GooseClient) -> () {
+            let _response = client.get("/").await;
+        }
+
+        async fn task_b(client: &GooseClient) -> () {
+            let _response = client.get("/about.html").await;
+        }
+
+        let configuration = GooseConfiguration {
+            host: "http://127.0.0.1:5000".to_string(),
+            clients: Some(1),
+            hatch_rate: 1,
+            run_time: "2".to_string(),
+            no_stats: true,
+            status_codes: false,
+            only_summary: false,
+            reset_stats: false,
+            list: false,
+            verbose: 0,
+            log_level: 0,
+            log_file: "goose.log".to_string(),
+            manager: false,
+            no_hash_check: false,
+            expect_workers: 0,
+            manager_bind_host: "0.0.0.0".to_string(),
+            manager_bind_port: 5115,
+            worker: false,
+            manager_host: "127.0.0.1".to_string(),
+            manager_port: 5115,
+        };
+
+        let mock_index = mock(GET, "/").return_status(200).create();
+        let mock_about = mock(GET, "/about.html")
+            .return_status(200)
+            .return_body("<HTML><BODY>about page</BODY></HTML>")
+            .create();
+
+        crate::GooseAttack::initialize_with_config(configuration)
+            .setup()
+            .register_taskset(
+                taskset!("LoadTest")
+                    .register_task(task!(task_a).set_on_start())
+                    .register_task(task!(task_b).set_on_stop()),
+            )
+            .execute();
+
+        let called_index = mock_index.times_called();
+        let called_about = mock_about.times_called();
+
+        // Confirm that the on_start and on_exit tasks actually ran.
+        assert_eq!(called_index, 1);
+        assert_eq!(called_about, 1);
     }
 }
