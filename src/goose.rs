@@ -1225,19 +1225,20 @@ impl GooseClient {
     }
 
     fn send_to_parent(&self, raw_request: &GooseRawRequest) {
-        let parent = match self.parent.clone() {
-            Some(p) => p,
-            None => {
-                error!("unable to communicate with parent thread, exiting");
-                std::process::exit(1);
+        match self.parent.clone() {
+            Some(p) => {
+                let parent = p;
+                match parent.send(raw_request.clone()) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        info!("unable to communicate with parent thread, exiting: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
-        };
-        match parent.send(raw_request.clone()) {
-            Ok(_) => (),
-            Err(e) => {
-                error!("unable to communicate with parent thread, exiting: {}", e);
-                std::process::exit(1);
-            }
+            // Parent is not defined when running test_start_task, test_stop_task,
+            // and during testing.
+            None => (),
         }
     }
 
