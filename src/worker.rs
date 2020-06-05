@@ -246,8 +246,8 @@ pub fn push_stats_to_manager(
         get_worker_id(),
         requests.len()
     );
-    let mut buf: Vec<u8> = Vec::new();
-    match serde_cbor::to_writer(&mut buf, requests) {
+    let mut message = Message::new().unwrap();
+    match serde_cbor::to_writer(&mut message, requests) {
         Ok(_) => (),
         Err(e) => {
             error!(
@@ -258,7 +258,7 @@ pub fn push_stats_to_manager(
             std::process::exit(1);
         }
     }
-    match manager.try_send(&buf) {
+    match manager.try_send(message) {
         Ok(m) => m,
         Err(e) => {
             error!("[{}] communication failure: {:?}.", get_worker_id(), e);
