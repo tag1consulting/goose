@@ -752,13 +752,13 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_get` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
     /// Calls to `client.get` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -783,7 +783,7 @@ impl GooseClient {
     ///
     /// Calls to `client.get_named` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -806,13 +806,13 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_post` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
     /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -837,7 +837,7 @@ impl GooseClient {
     ///
     /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -860,13 +860,13 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_head` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
     /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -891,7 +891,7 @@ impl GooseClient {
     ///
     /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -914,13 +914,13 @@ impl GooseClient {
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object, you can instead call `goose_delete` which returns a RequestBuilder,
     /// then call `goose_send` to invoke the request.)
     ///
     /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -945,7 +945,7 @@ impl GooseClient {
     ///
     /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -965,7 +965,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `GET` request.
     ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -993,7 +993,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `POST` request.
     ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -1021,7 +1021,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `HEAD` request.
     ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -1049,7 +1049,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PUT` request.
     ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -1077,7 +1077,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PATCH` request.
     ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -1105,7 +1105,7 @@ impl GooseClient {
     }
 
     /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `DELETE` request.
     ///
     /// (You must then call `goose_send` on this object to actually execute the request.)
@@ -1133,7 +1133,7 @@ impl GooseClient {
     }
 
     /// Builds the provided
-    /// [`reqwest::RequestBuilder`](reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object and then executes the response. If statistics are being displayed, it
     /// also captures request statistics.
     ///
@@ -1143,7 +1143,7 @@ impl GooseClient {
     ///
     /// Calls to `client.goose_send` return a `GooseResponse` object which contains a
     /// copy of the request you made
-    /// ([`response.request`](goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](/goose/*/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
