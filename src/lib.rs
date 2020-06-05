@@ -1010,9 +1010,10 @@ impl GooseAttack {
                 // No test_start_task defined, nothing to do.
                 None => (),
             }
-
-            GooseClientState::initialize(self.weighted_clients.len()).await;
         }
+
+        // Initial globa client state.
+        GooseClientState::initialize(self.weighted_clients.len()).await;
 
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];

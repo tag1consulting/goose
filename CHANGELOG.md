@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.7.4-dev
- -
+ - fix gaggles to not panic
 
 ## 0.7.3 June 5, 2020
  - move client out of GooseClient into global GooseClientState
