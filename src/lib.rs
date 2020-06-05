@@ -356,6 +356,10 @@ impl GooseClientState {
     async fn initialize(clients: usize) {
         // Grab a write lock to initialize state for each client.
         let mut goose_client_state = CLIENT.write().await;
+        // State can be reinitialized for `test_start` or `test_stop`.
+        if !goose_client_state.is_empty() {
+            goose_client_state.clear();
+        }
         for _ in 0..clients {
             // Build a new client, setting the USER_AGENT and enabling cookie storage.
             let builder = Client::builder()
@@ -994,9 +998,12 @@ impl GooseAttack {
             match &self.test_start_task {
                 Some(t) => {
                     info!("running test_start_task");
+                    // Setup temporary state for our single client.
+                    GooseClientState::initialize(1).await;
                     // Create a one-time-use Client to run the test_start_task.
-                    let client =
+                    let mut client =
                         GooseClient::new(0, self.host.clone(), None, 0, 0, &self.configuration, 0);
+                    client.weighted_clients_index = 0;
                     let function = t.function;
                     function(&client).await;
                 }
@@ -1235,9 +1242,12 @@ impl GooseAttack {
             match &self.test_stop_task {
                 Some(t) => {
                     info!("running test_stop_task");
+                    // Setup temporary state for our single client.
+                    GooseClientState::initialize(1).await;
                     // Create a one-time-use Client to run the test_stop_task.
-                    let client =
+                    let mut client =
                         GooseClient::new(0, self.host.clone(), None, 0, 0, &self.configuration, 0);
+                    client.weighted_clients_index = 0;
                     let function = t.function;
                     function(&client).await;
                 }
