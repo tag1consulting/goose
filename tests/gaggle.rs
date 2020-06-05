@@ -24,82 +24,45 @@ fn test_gaggle() {
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
     let mock_about = mock(GET, ABOUT_PATH).return_status(200).create();
 
-    let configuration = common::build_configuration();
+    let mut configuration = common::build_configuration();
 
-    // Start a manager instance of the load test.
+    // Start manager instance of the load test.
     let mut master_configuration = configuration.clone();
     let master_handle = thread::spawn(move || {
         master_configuration.clients = Some(2);
         master_configuration.hatch_rate = 4;
         master_configuration.manager = true;
-        master_configuration.expect_workers = 2;
+        master_configuration.expect_workers = 1;
         master_configuration.run_time = "3".to_string();
         crate::GooseAttack::initialize_with_config(master_configuration)
             .setup()
-            .register_taskset(
-                taskset!("User1")
-                    .register_task(task!(get_index))
-            )
-            .register_taskset(
-                taskset!("User2")
-                    .register_task(task!(get_about))
-            )
+            .register_taskset(taskset!("User1").register_task(task!(get_index)))
+            .register_taskset(taskset!("User2").register_task(task!(get_about)))
             .execute();
     });
 
-    // Start a manager instance of the load test.
-    let mut worker1_configuration = configuration.clone();
-    let worker1_handle = thread::spawn(move || {
-        worker1_configuration.worker = true;
-        worker1_configuration.host = "".to_string();
-        worker1_configuration.clients = None;
-        worker1_configuration.no_stats = false;
-        worker1_configuration.run_time = "".to_string();
-        crate::GooseAttack::initialize_with_config(worker1_configuration)
+    // Start worker instance of the load test.
+    let worker_handle = thread::spawn(move || {
+        configuration.worker = true;
+        configuration.host = "".to_string();
+        configuration.clients = None;
+        configuration.no_stats = false;
+        configuration.run_time = "".to_string();
+        crate::GooseAttack::initialize_with_config(configuration)
             .setup()
-            .register_taskset(
-                taskset!("User1")
-                    .register_task(task!(get_index))
-            )
-            .register_taskset(
-                taskset!("User2")
-                    .register_task(task!(get_about))
-            )
-            .execute();
-    });
-
-    // Start a manager instance of the load test.
-    let mut worker2_configuration = configuration.clone();
-    let worker2_handle = thread::spawn(move || {
-        worker2_configuration.worker = true;
-        worker2_configuration.host = "".to_string();
-        worker2_configuration.clients = None;
-        worker2_configuration.no_stats = false;
-        worker2_configuration.run_time = "".to_string();
-        crate::GooseAttack::initialize_with_config(worker2_configuration)
-            .setup()
-            .register_taskset(
-                taskset!("User1")
-                    .register_task(task!(get_index))
-            )
-            .register_taskset(
-                taskset!("User2")
-                    .register_task(task!(get_about))
-            )
+            .register_taskset(taskset!("User1").register_task(task!(get_index)))
+            .register_taskset(taskset!("User2").register_task(task!(get_about)))
             .execute();
     });
 
     // Wait for the load test to finish.
-    let _ = worker2_handle.join();
-    let _ = worker1_handle.join();
+    let _ = worker_handle.join();
     let _ = master_handle.join();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();
 
-    eprintln!("index: {}, about: {}", called_index, called_about);
-
-    // Confirm the load test ran both users.
+    // Confirm the load test ran both tasksets.
     assert_ne!(called_index, 0);
     assert_ne!(called_about, 0);
 }
