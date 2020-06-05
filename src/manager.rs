@@ -253,7 +253,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
                 // If workers already contains this pipe, we've seen this worker before.
                 if workers.contains(&pipe) {
-                    let mut buf: Vec<u8> = Vec::new();
+                    let mut message = Message::new().unwrap();
                     // All workers are running load test, sending statistics.
                     if workers.len() == goose_attack.configuration.expect_workers as usize {
                         // Requests statistics received, merge them into our local copy.
@@ -282,7 +282,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         // Notify the worker that the load test is over and to exit.
                         if load_test_finished {
                             debug!("telling worker to exit");
-                            match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
+                            match serde_cbor::to_writer(&mut message, &GooseClientCommand::EXIT) {
                                 Ok(_) => (),
                                 Err(e) => {
                                     error!("failed to serialize client command: {}", e);
@@ -292,7 +292,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         }
                         // Notify the worker that the load test is still running.
                         else {
-                            match serde_cbor::to_writer(&mut buf, &GooseClientCommand::RUN) {
+                            match serde_cbor::to_writer(&mut message, &GooseClientCommand::RUN) {
                                 Ok(_) => (),
                                 Err(e) => {
                                     error!("failed to serialize client command: {}", e);
@@ -303,7 +303,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     }
                     // All workers are not yet running, tell worker to wait.
                     else {
-                        match serde_cbor::to_writer(&mut buf, &GooseClientCommand::WAIT) {
+                        match serde_cbor::to_writer(&mut message, &GooseClientCommand::WAIT) {
                             Ok(_) => (),
                             Err(e) => {
                                 error!("failed to serialize client command: {}", e);
@@ -311,7 +311,6 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             }
                         }
                     }
-                    let message: Message = buf.as_slice().into();
                     match server.try_send(message) {
                         Ok(_) => (),
                         // Determine why there was an error.
@@ -338,15 +337,14 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // Make sure we're not already connected to all of our workers.
                     if workers.len() >= goose_attack.configuration.expect_workers as usize {
                         // We already have enough workers, tell this extra one to EXIT.
-                        let mut buf: Vec<u8> = Vec::new();
-                        match serde_cbor::to_writer(&mut buf, &GooseClientCommand::EXIT) {
+                        let mut message = Message::new().unwrap();
+                        match serde_cbor::to_writer(&mut message, &GooseClientCommand::EXIT) {
                             Ok(_) => (),
                             Err(e) => {
                                 error!("failed to serialize client command: {}", e);
                                 std::process::exit(1);
                             }
                         }
-                        let message: Message = buf.as_slice().into();
                         match server.try_send(message) {
                             Ok(_) => (),
                             // Determine why our send failed.
@@ -426,8 +424,8 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         }
 
                         // Send vector of client initializers to worker.
-                        let mut buf: Vec<u8> = Vec::new();
-                        match serde_cbor::to_writer(&mut buf, &clients) {
+                        let mut message = Message::new().unwrap();
+                        match serde_cbor::to_writer(&mut message, &clients) {
                             Ok(_) => (),
                             Err(e) => {
                                 error!("failed to serialize client initializers: {}", e);
@@ -439,7 +437,6 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             clients.len(),
                             workers.len()
                         );
-                        let message: Message = buf.as_slice().into();
                         match server.try_send(message) {
                             Ok(_) => (),
                             Err((_, e)) => match e {
