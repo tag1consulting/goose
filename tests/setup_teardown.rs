@@ -14,7 +14,9 @@ pub async fn setup(client: &GooseClient) {
 }
 
 pub async fn teardown(client: &GooseClient) {
-    let _response = client.post(TEARDOWN_PATH, "cleaning up after load test").await;
+    let _response = client
+        .post(TEARDOWN_PATH, "cleaning up after load test")
+        .await;
 }
 
 pub async fn get_index(client: &GooseClient) {
@@ -32,10 +34,7 @@ fn test_start() {
     crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .test_start(task!(setup))
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9))
-        )
+        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
         .execute();
 
     let called_setup = mock_setup.times_called();
@@ -63,10 +62,7 @@ fn test_stop() {
     crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .test_stop(task!(teardown))
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9))
-        )
+        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
         .execute();
 
     let called_setup = mock_setup.times_called();
@@ -98,10 +94,7 @@ fn test_setup_teardown() {
     crate::GooseAttack::initialize_with_config(configuration)
         .setup()
         .test_start(task!(setup))
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9))
-        )
+        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
         .test_stop(task!(teardown))
         .execute();
 
