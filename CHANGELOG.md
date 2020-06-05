@@ -1,7 +1,10 @@
 # Changelog
 
-## 0.7.4-dev
- - fix gaggles to not panic
+## 0.7.4 June 5, 2020
+ - fix gaggles to not panic, add test
+ - fix test_start and test_stop to not panic, add tests
+ - optimize NNG usage, write directly to Message instead of first to buffer
+ - fix documentation links
 
 ## 0.7.3 June 5, 2020
  - move client out of GooseClient into global GooseClientState
