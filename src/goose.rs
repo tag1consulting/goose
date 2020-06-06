@@ -473,6 +473,8 @@ pub struct GooseRawRequest {
     pub method: GooseMethod,
     /// The optional name of the request.
     pub name: String,
+    /// The full URL that was requested.
+    pub url: String,
     /// How many milliseconds the request took.
     pub response_time: u128,
     /// The HTTP response code (optional).
@@ -483,11 +485,11 @@ pub struct GooseRawRequest {
     pub update: bool,
 }
 impl GooseRawRequest {
-    pub fn new(method: GooseMethod, name: &str) -> Self {
-        let name_string = name.to_string();
+    pub fn new(method: GooseMethod, name: &str, url: &str) -> Self {
         GooseRawRequest {
             method,
-            name: name_string,
+            name: name.to_string(),
+            url: url.to_string(),
             response_time: 0,
             status_code: None,
             success: true,
@@ -1183,7 +1185,8 @@ impl GooseClient {
         };
         let method = goose_method_from_method(request.method().clone());
         let request_name = self.get_request_name(&path, request_name);
-        let mut raw_request = GooseRawRequest::new(method, &request_name);
+        let mut raw_request =
+            GooseRawRequest::new(method, &request_name, &request.url().to_string());
 
         // Make the actual request.
         let response = CLIENT.read().await[self.weighted_clients_index]
@@ -1757,9 +1760,11 @@ mod tests {
 
     #[test]
     fn goose_raw_request() {
-        let mut raw_request = GooseRawRequest::new(GooseMethod::GET, "/");
-        assert_eq!(raw_request.name, "/".to_string());
+        const PATH: &str = "http://127.0.0.1/";
+        let mut raw_request = GooseRawRequest::new(GooseMethod::GET, "/", PATH);
         assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, 0);
         assert_eq!(raw_request.status_code, None);
         assert_eq!(raw_request.success, true);
@@ -1767,8 +1772,9 @@ mod tests {
 
         let response_time = 123;
         raw_request.set_response_time(response_time);
-        assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time);
         assert_eq!(raw_request.status_code, None);
         assert_eq!(raw_request.success, true);
@@ -1776,8 +1782,9 @@ mod tests {
 
         let status_code = http::StatusCode::OK;
         raw_request.set_status_code(Some(status_code));
-        assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time);
         assert_eq!(raw_request.status_code, Some(status_code));
         assert_eq!(raw_request.success, true);
