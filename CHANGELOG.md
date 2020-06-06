@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.7.5-dev
- -
+ - store actual URL requested in GooseRawRequest
 
 ## 0.7.4 June 5, 2020
  - fix gaggles to not panic, add test
