@@ -254,13 +254,13 @@
 
 use http::method::Method;
 use http::StatusCode;
-use reqwest::Error;
+use reqwest::{ClientBuilder, Error};
 use reqwest::{RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::{future::Future, pin::Pin, time::Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use url::Url;
 
 use crate::{GooseConfiguration, CLIENT};
@@ -1333,6 +1333,81 @@ impl GooseClient {
             request.update = true;
             self.send_to_parent(&request);
         }
+    }
+
+    /// Manually build a Reqwest client.
+    ///
+    /// By default, Goose configures two options when building a Reqwest client. The first
+    /// configures Goose to report itself as the user agent requesting web pages (ie
+    /// `goose/0.7.5`). The second option configures Reqwest to store cookies, which is
+    /// generally necessary if you aim to simulate logged in users.
+    ///
+    /// # Default configuration:
+    ///
+    /// ```rust
+    /// use reqwest::Client;
+    ///
+    /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+    ///
+    /// let builder = Client::builder()
+    ///   .user_agent(APP_USER_AGENT)
+    ///   .cookie_store(true);
+    /// ```
+    ///
+    /// Alternatively, you can use this function to manually build a Reqwest client with custom
+    /// configuration. Available options are found in the
+    /// [Reqwest `ClientBuilder`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html)
+    /// documentation.
+    ///
+    /// When manually building a Reqwest client, there are a few things to be aware of:
+    ///  - Manually building a client in `test_start` will only affect requests made during
+    ///    test setup;
+    ///  - Manually building a client in `test_stop` will only affect requests made during
+    ///    test teardown;
+    ///  - A manually built client is specific to a single Goose thread -- if you are
+    ///    generating a large load test with many clients, each will need to manually build their
+    ///    own client (typically you'd do this in a Task that is registered with `set_on_start()`
+    ///    in each Task Set requiring a custom client;
+    ///  - Manually building a client will completely replace the automatically built client
+    ///    with a brand new one, so any configuration, cookies or headers set in the previously
+    ///    built client will be gone;
+    ///  - You must include all desired configuration, as you are completely replacing Goose
+    ///    defaults. For example, if you want Goose clients to store cookies, you will have to
+    ///    include `.cookie_store(true)`.
+    ///
+    /// In the following example, the Goose client is configured with a different user agent,
+    /// sets a default header on every request, and stores cookies.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// task!(setup_custom_client).set_on_start();
+    ///
+    /// async fn setup_custom_client(client: &GooseClient) {
+    ///   use reqwest::{Client, header};
+    ///
+    ///   // Build a custom HeaderMap to include with all requests made by this client.
+    ///   let mut headers = header::HeaderMap::new();
+    ///   headers.insert("X-Custom-Header", header::HeaderValue::from_str("custom value").unwrap());
+    ///
+    ///   let builder = Client::builder()
+    ///     .default_headers(headers)
+    ///     .user_agent("custom user agent")
+    ///     .cookie_store(true);
+    ///
+    ///   client.set_client_builder(builder);
+    /// }
+    /// ```
+    pub async fn set_client_builder(&self, builder: ClientBuilder) {
+        let client = match builder.build() {
+            Ok(c) => Mutex::new(c),
+            Err(e) => {
+                error!("failed to build client: {}", e);
+                std::process::exit(1);
+            }
+        };
+        CLIENT.write().await[self.weighted_clients_index].client = client;
     }
 }
 
