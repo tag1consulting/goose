@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.7.5-dev
+## 0.7.5 June 10, 2020
  - store actual URL requested in GooseRawRequest
- - add `set_client_builder`, allow load test to build a Reqwest client with custom options
+ - add `set_client_builder`, allow load test to build Reqwest clients with custom options
+ - properly fix documentation links
 
 ## 0.7.4 June 5, 2020
  - fix gaggles to not panic, add test

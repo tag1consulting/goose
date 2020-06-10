@@ -4,9 +4,7 @@ Goose is a Rust load testing tool, inspired by Locust.
 
 ### In progress
 
-- [x] async clients
-   - [x] use Reqwest async client
-   - [ ] audit code for additional places to use async
+- [ ] request logging
 
 ### Future
 
@@ -78,3 +76,6 @@ Goose is a Rust load testing tool, inspired by Locust.
   - [x] load test checksum, warn/err if workers are running different tests
   - [x] code cleanup, better code re-use
 - [x] metaprogramming, implement goose_codegen macros to simplify goosefile creation
+- [x] async clients
+   - [x] use Reqwest async client
+   - [x] audit code for additional places to use async
