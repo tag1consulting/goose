@@ -254,8 +254,7 @@
 
 use http::method::Method;
 use http::StatusCode;
-use reqwest::{ClientBuilder, Error};
-use reqwest::{RequestBuilder, Response};
+use reqwest::{ClientBuilder, Error, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
@@ -475,6 +474,10 @@ pub struct GooseRawRequest {
     pub name: String,
     /// The full URL that was requested.
     pub url: String,
+    /// The final full URL that was requested, after redirects.
+    pub final_url: String,
+    /// How many milliseconds the request took.
+    pub redirected: bool,
     /// How many milliseconds the request took.
     pub response_time: u128,
     /// The HTTP response code (optional).
@@ -490,10 +493,20 @@ impl GooseRawRequest {
             method,
             name: name.to_string(),
             url: url.to_string(),
+            final_url: "".to_string(),
+            redirected: false,
             response_time: 0,
             status_code: None,
             success: true,
             update: false,
+        }
+    }
+
+    // Record the final URL returned.
+    fn set_final_url(&mut self, final_url: &str) {
+        self.final_url = final_url.to_string();
+        if self.final_url != self.url {
+            self.redirected = true;
         }
     }
 
@@ -505,7 +518,6 @@ impl GooseRawRequest {
         self.status_code = status_code;
     }
 }
-
 /// Statistics collected about a path-method pair, (for example `/index`-`GET`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequest {
@@ -1209,6 +1221,7 @@ impl GooseClient {
                         raw_request.success = false;
                     }
                     raw_request.set_status_code(Some(status_code));
+                    raw_request.set_final_url(r.url().as_str());
                 }
                 Err(e) => {
                     // @TODO: what can we learn from a reqwest error?
