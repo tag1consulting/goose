@@ -760,7 +760,7 @@ impl GooseClient {
     ///
     /// Calls to `client.get` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -785,7 +785,7 @@ impl GooseClient {
     ///
     /// Calls to `client.get_named` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -814,7 +814,7 @@ impl GooseClient {
     ///
     /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -839,7 +839,7 @@ impl GooseClient {
     ///
     /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -868,7 +868,7 @@ impl GooseClient {
     ///
     /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -893,7 +893,7 @@ impl GooseClient {
     ///
     /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -922,7 +922,7 @@ impl GooseClient {
     ///
     /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -947,7 +947,7 @@ impl GooseClient {
     ///
     /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
     /// the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1145,7 +1145,7 @@ impl GooseClient {
     ///
     /// Calls to `client.goose_send` return a `GooseResponse` object which contains a
     /// copy of the request you made
-    /// ([`response.request`](https://docs.rs/goose/*/goose/struct.GooseRawRequest)), and the response
+    /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
