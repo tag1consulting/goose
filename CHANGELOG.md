@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.7.6-dev
+ - properly subtract previous statistic when handling `set_failure()` and `set_success()`
 
 ## 0.7.5 June 10, 2020
  - store actual URL requested in GooseRawRequest

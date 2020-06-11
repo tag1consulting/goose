@@ -1121,12 +1121,25 @@ impl GooseAttack {
                         Some(m) => m.clone(),
                         None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
                     };
-                    merge_request.set_response_time(raw_request.response_time);
-                    merge_request.set_status_code(raw_request.status_code);
-                    if raw_request.success {
-                        merge_request.success_count += 1;
-                    } else {
-                        merge_request.fail_count += 1;
+                    // Handle a statistics update.
+                    if raw_request.update {
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                            merge_request.fail_count -= 1;
+                        } else {
+                            merge_request.success_count -= 1;
+                            merge_request.fail_count += 1;
+                        }
+                    }
+                    // Store a new statistic.
+                    else {
+                        merge_request.set_response_time(raw_request.response_time);
+                        merge_request.set_status_code(raw_request.status_code);
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                        } else {
+                            merge_request.fail_count += 1;
+                        }
                     }
 
                     self.merged_requests.insert(key.to_string(), merge_request);
