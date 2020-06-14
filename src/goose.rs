@@ -1524,7 +1524,7 @@ impl GooseClient {
     /// Determine if the load test has been redirected, and if so return the redirected
     /// host against which all relative URLs should be loaded.
     pub async fn get_redirected_host(&self) -> Option<String> {
-        let redirected_host = self.redirected_host.write().await;
+        let redirected_host = self.redirected_host.read().await;
         if redirected_host.is_empty() {
             None
         } else {
