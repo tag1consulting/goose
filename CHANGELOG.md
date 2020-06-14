@@ -3,6 +3,7 @@
 ## 0.7.6-dev
  - properly subtract previous statistic when handling `set_failure()` and `set_success()`
  - detect and track redirects in `GooseRawRequest`
+ - redirect of test base_url are sticky and affect subsequent requests
 
 ## 0.7.5 June 10, 2020
  - store actual URL requested in GooseRawRequest
