@@ -2,6 +2,7 @@ use nng::*;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::{thread, time};
+use url::Url;
 
 use crate::goose::{GooseClient, GooseClientCommand, GooseMethod, GooseRequest};
 use crate::manager::GooseClientInitializer;
@@ -23,7 +24,7 @@ fn pipe_closed_during_shutdown(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-pub fn worker_main(goose_attack: &GooseAttack) {
+pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // Creates a TCP address.
     let address = format!(
         "tcp://{}:{}",
@@ -135,8 +136,7 @@ pub fn worker_main(goose_attack: &GooseAttack) {
             }
             weighted_clients.push(GooseClient::new(
                 initializer.task_sets_index,
-                initializer.default_host.clone(),
-                initializer.task_set_host.clone(),
+                Url::parse(&initializer.base_url).unwrap(),
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
@@ -232,8 +232,9 @@ pub fn worker_main(goose_attack: &GooseAttack) {
     }
     worker_goose_attack.weighted_clients = weighted_clients;
     worker_goose_attack.configuration.worker = true;
-    let mut rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(worker_goose_attack.launch_clients(started, sleep_duration, Some(manager)));
+    worker_goose_attack
+        .launch_clients(started, sleep_duration, Some(manager))
+        .await
 }
 
 pub fn push_stats_to_manager(

@@ -301,6 +301,12 @@ mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
+use lazy_static::lazy_static;
+#[cfg(feature = "gaggle")]
+use nng::Socket;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
@@ -312,13 +318,6 @@ use std::sync::{
     Arc,
 };
 use std::time;
-
-use lazy_static::lazy_static;
-#[cfg(feature = "gaggle")]
-use nng::Socket;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use simplelog::*;
 use structopt::StructOpt;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
@@ -728,11 +727,13 @@ impl GooseAttack {
         let config = self.configuration.clone();
         loop {
             for task_sets_index in &weighted_task_sets {
-                let task_set_host = self.task_sets[*task_sets_index].host.clone();
                 weighted_clients.push(GooseClient::new(
                     self.task_sets[*task_sets_index].task_sets_index,
-                    self.host.clone(),
-                    task_set_host,
+                    goose::get_base_url(
+                        Some(config.host.to_string()),
+                        self.task_sets[*task_sets_index].host.clone(),
+                        self.host.clone(),
+                    ),
                     self.task_sets[*task_sets_index].min_wait,
                     self.task_sets[*task_sets_index].max_wait,
                     &config,
@@ -943,7 +944,8 @@ impl GooseAttack {
         if self.configuration.manager {
             #[cfg(feature = "gaggle")]
             {
-                self = manager::manager_main(self);
+                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                self = rt.block_on(manager::manager_main(self));
             }
 
             #[cfg(not(feature = "gaggle"))]
@@ -958,7 +960,8 @@ impl GooseAttack {
         else if self.configuration.worker {
             #[cfg(feature = "gaggle")]
             {
-                worker::worker_main(&self);
+                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                self = rt.block_on(worker::worker_main(&self));
             }
 
             #[cfg(not(feature = "gaggle"))]
@@ -975,6 +978,15 @@ impl GooseAttack {
 
         if !self.configuration.no_stats && !self.configuration.worker {
             stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
+        }
+    }
+
+    /// Helper to wrap configured host in Option<> if set.
+    fn get_configuration_host(&self) -> Option<String> {
+        if self.configuration.host.is_empty() {
+            None
+        } else {
+            Some(self.configuration.host.to_string())
         }
     }
 
@@ -1001,8 +1013,10 @@ impl GooseAttack {
                     // Setup temporary state for our single client.
                     GooseClientState::initialize(1).await;
                     // Create a one-time-use Client to run the test_start_task.
-                    let mut client =
-                        GooseClient::new(0, self.host.clone(), None, 0, 0, &self.configuration, 0);
+                    let base_url =
+                        goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
+                    let mut client = GooseClient::new(0, base_url, 0, 0, &self.configuration, 0);
+                    //goose::get_base_url(config.host, self.task_sets[*task_sets_index].host.clone(), self.host),
                     client.weighted_clients_index = 0;
                     let function = t.function;
                     function(&client).await;
@@ -1258,9 +1272,10 @@ impl GooseAttack {
                     info!("running test_stop_task");
                     // Setup temporary state for our single client.
                     GooseClientState::initialize(1).await;
+                    let base_url =
+                        goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
                     // Create a one-time-use Client to run the test_stop_task.
-                    let mut client =
-                        GooseClient::new(0, self.host.clone(), None, 0, 0, &self.configuration, 0);
+                    let mut client = GooseClient::new(0, base_url, 0, 0, &self.configuration, 0);
                     client.weighted_clients_index = 0;
                     let function = t.function;
                     function(&client).await;
