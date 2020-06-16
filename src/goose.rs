@@ -1207,24 +1207,22 @@ impl GooseClient {
 
                     // Load test client was redirected.
                     if raw_request.url != raw_request.final_url {
-                        // Extract the base_url of the request made.
-                        let request_base_url = match Url::parse(&raw_request.url) {
-                            Ok(base_url) => base_url.to_string(),
-                            Err(e) => {
-                                error!("goose_send failed to parse requested URL: {}", e);
-                                std::process::exit(1);
-                            }
-                        };
-                        // If a request for the base_url was redirected, change base_url.
-                        if request_base_url == self.base_url.read().await.to_string() {
+                        let base_url = self.base_url.read().await.to_string();
+                        // Check if the URL redirected started with the load test base_url.
+                        if !raw_request.final_url.starts_with(&base_url) {
                             let redirected_base_url = match Url::parse(&raw_request.final_url) {
-                                Ok(base_url) => base_url,
+                                // Use URL to grab base_url, which is everything up to the path.
+                                Ok(base_url) => base_url[..url::Position::BeforePath].to_string(),
                                 Err(e) => {
                                     error!("goose_send failed to parse redirected URL: {}", e);
                                     std::process::exit(1);
                                 }
                             };
-                            self.set_base_url(redirected_base_url).await;
+                            info!(
+                                "base_url for client {} redirected from {} to {}",
+                                self.weighted_clients_index + 1, &base_url, &redirected_base_url
+                            );
+                            self.set_base_url(&redirected_base_url).await;
                         }
                     }
                 }
@@ -1458,7 +1456,6 @@ impl GooseClient {
     /// # Example
     /// ```rust,no_run
     /// use goose::prelude::*;
-    /// use url::Url;
     ///
     /// GooseAttack::initialize()
     ///     .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
@@ -1474,14 +1471,20 @@ impl GooseClient {
     ///
     ///     async fn task_bar(client: &GooseClient) {
     ///       // Before this task runs, all requests are being made against
-    ///       // http://foo.exampe.com, after this task runs all subsequent
+    ///       // http://foo.example.com, after this task runs all subsequent
     ///       // requests are made against http://bar.example.com/.
-    ///       client.set_base_url(Url::parse("http://bar.example.com/").unwrap());
+    ///       client.set_base_url("http://bar.example.com/");
     ///       let _response = client.get("/");
     ///     }
     /// ```
-    pub async fn set_base_url(&self, host: Url) {
-        *self.base_url.write().await = host;
+    pub async fn set_base_url(&self, host: &str) {
+        match Url::parse(host) {
+            Ok(url) => *self.base_url.write().await = url,
+            Err(e) => {
+                error!("failed to set_base_url({}): {}", host, e);
+                return;
+            }
+        }
     }
 }
 
