@@ -3,7 +3,7 @@
 ## 0.7.6-dev
  - properly subtract previous statistic when handling `set_failure()` and `set_success()`
  - detect and track redirects in `GooseRawRequest`
- - redirect of GooseClient base_url is sticky and affects subsequent requests
+ - redirect of GooseClient base_url is sticky and affects subsequent requests (disable with `--no-sticky-follow`)
 
 ## 0.7.5 June 10, 2020
  - store actual URL requested in GooseRawRequest
