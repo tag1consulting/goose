@@ -1343,9 +1343,9 @@ pub struct GooseConfiguration {
     #[structopt(long, default_value = "goose.log")]
     pub log_file: String,
 
-    /// Prevent load test client from following redirect of base_url with subsequent requests
+    /// Client follows redirect of base_url with subsequent requests
     #[structopt(long)]
-    pub no_sticky_follow: bool,
+    pub sticky_follow: bool,
 
     /// Enables manager mode
     #[structopt(long)]

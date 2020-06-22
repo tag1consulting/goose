@@ -1206,7 +1206,7 @@ impl GooseClient {
                     raw_request.set_final_url(r.url().as_str());
 
                     // Load test client was redirected.
-                    if !self.config.no_sticky_follow && raw_request.url != raw_request.final_url {
+                    if self.config.sticky_follow && raw_request.url != raw_request.final_url {
                         let base_url = self.base_url.read().await.to_string();
                         // Check if the URL redirected started with the load test base_url.
                         if !raw_request.final_url.starts_with(&base_url) {
