@@ -75,8 +75,8 @@ the host at run time, so you can easily run your load test against different
 environments without recompiling:
 
 ```rust
-async fn loadtest_index(client: &mut GooseClient) {
-    let _response = client.get("/");
+async fn loadtest_index(client: &GooseClient) {
+    let _response = client.get("/").await;
 }
 ```
 
