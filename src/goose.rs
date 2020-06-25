@@ -1191,51 +1191,51 @@ impl GooseClient {
             .await;
         let elapsed = started.elapsed();
 
-        // Create a raw request object if we're tracking statistics.
+        match &response {
+            Ok(r) => {
+                let status_code = r.status();
+                debug!("{:?}: status_code {}", &path, status_code);
+                // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
+                if !status_code.is_success() {
+                    raw_request.success = false;
+                }
+                raw_request.set_status_code(Some(status_code));
+                raw_request.set_final_url(r.url().as_str());
+
+                // Load test client was redirected.
+                if self.config.sticky_follow && raw_request.url != raw_request.final_url {
+                    let base_url = self.base_url.read().await.to_string();
+                    // Check if the URL redirected started with the load test base_url.
+                    if !raw_request.final_url.starts_with(&base_url) {
+                        let redirected_base_url = match Url::parse(&raw_request.final_url) {
+                            // Use URL to grab base_url, which is everything up to the path.
+                            Ok(base_url) => base_url[..url::Position::BeforePath].to_string(),
+                            Err(e) => {
+                                error!("goose_send failed to parse redirected URL: {}", e);
+                                std::process::exit(1);
+                            }
+                        };
+                        info!(
+                            "base_url for client {} redirected from {} to {}",
+                            self.weighted_clients_index + 1,
+                            &base_url,
+                            &redirected_base_url
+                        );
+                        self.set_base_url(&redirected_base_url).await;
+                    }
+                }
+            }
+            Err(e) => {
+                // @TODO: what can we learn from a reqwest error?
+                warn!("{:?}: {}", &path, e);
+                raw_request.success = false;
+                raw_request.set_status_code(None);
+            }
+        };
+
+        // Send raw request object to parent if we're tracking statistics.
         if !self.config.no_stats {
             raw_request.set_response_time(elapsed.as_millis());
-            match &response {
-                Ok(r) => {
-                    let status_code = r.status();
-                    debug!("{:?}: status_code {}", &path, status_code);
-                    // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
-                    if !status_code.is_success() {
-                        raw_request.success = false;
-                    }
-                    raw_request.set_status_code(Some(status_code));
-                    raw_request.set_final_url(r.url().as_str());
-
-                    // Load test client was redirected.
-                    if self.config.sticky_follow && raw_request.url != raw_request.final_url {
-                        let base_url = self.base_url.read().await.to_string();
-                        // Check if the URL redirected started with the load test base_url.
-                        if !raw_request.final_url.starts_with(&base_url) {
-                            let redirected_base_url = match Url::parse(&raw_request.final_url) {
-                                // Use URL to grab base_url, which is everything up to the path.
-                                Ok(base_url) => base_url[..url::Position::BeforePath].to_string(),
-                                Err(e) => {
-                                    error!("goose_send failed to parse redirected URL: {}", e);
-                                    std::process::exit(1);
-                                }
-                            };
-                            info!(
-                                "base_url for client {} redirected from {} to {}",
-                                self.weighted_clients_index + 1,
-                                &base_url,
-                                &redirected_base_url
-                            );
-                            self.set_base_url(&redirected_base_url).await;
-                        }
-                    }
-                }
-                Err(e) => {
-                    // @TODO: what can we learn from a reqwest error?
-                    warn!("{:?}: {}", &path, e);
-                    raw_request.success = false;
-                    raw_request.set_status_code(None);
-                }
-            };
-
             self.send_to_parent(&raw_request);
         }
 
