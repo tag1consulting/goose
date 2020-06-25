@@ -166,7 +166,7 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 
 ```
 client 0.7.5
-CLI options available when launching a Goose loadtest
+CLI options available when launching a Goose load test
 
 USAGE:
     simple [FLAGS] [OPTIONS]
@@ -181,6 +181,7 @@ FLAGS:
         --only-summary     Only prints summary stats
         --reset-stats      Resets statistics once hatching has been completed
         --status-codes     Includes status code counts in console stats
+        --sticky-follow    Client follows redirect of base_url with subsequent requests
     -V, --version          Prints version information
     -v, --verbose          Debug level (-v, -vv, -vvv, etc.)
         --worker           Enables worker mode

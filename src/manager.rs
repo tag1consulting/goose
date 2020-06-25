@@ -1,11 +1,10 @@
+use lazy_static::lazy_static;
+use nng::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
-
-use lazy_static::lazy_static;
-use nng::*;
-use serde::{Deserialize, Serialize};
 
 use crate::goose::GooseRequest;
 use crate::stats;
@@ -20,10 +19,8 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: usize = 30;
 pub struct GooseClientInitializer {
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
-    /// The global GooseAttack host.
-    pub default_host: Option<String>,
-    /// The GooseTaskSet.host.
-    pub task_set_host: Option<String>,
+    /// The base_url for this Goose Client thread.
+    pub base_url: String,
     /// Minimum amount of time to sleep after running a task.
     pub min_wait: usize,
     /// Maximum amount of time to sleep after running a task.
@@ -122,7 +119,7 @@ fn merge_from_worker(
     merged_request
 }
 
-pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
+pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     // Creates a TCP address.
     let address = format!(
         "tcp://{}:{}",
@@ -414,8 +411,7 @@ pub fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             // Build a vector of GooseClient initializers for next worker.
                             clients.push(GooseClientInitializer {
                                 task_sets_index: client.task_sets_index,
-                                default_host: client.default_host.clone(),
-                                task_set_host: client.task_set_host.clone(),
+                                base_url: client.base_url.read().await.to_string(),
                                 min_wait: client.min_wait,
                                 max_wait: client.max_wait,
                                 config: client.config.clone(),

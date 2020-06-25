@@ -258,8 +258,9 @@ use reqwest::{ClientBuilder, Error, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use std::{future::Future, pin::Pin, time::Instant};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
 use crate::{GooseConfiguration, CLIENT};
@@ -661,18 +662,16 @@ impl GooseResponse {
 pub struct GooseClient {
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
-    /// Channel
-    pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
-    /// Optional global host, can be overridden per-task-set or via the cli.
-    pub default_host: Option<String>,
-    /// Optional per-task-set .host.
-    pub task_set_host: Option<String>,
+    /// The base URL to prepend to all relative paths.
+    pub base_url: Arc<RwLock<Url>>,
     /// Minimum amount of time to sleep after running a task.
     pub min_wait: usize,
     /// Maximum amount of time to sleep after running a task.
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
+    /// Channel
+    pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
     /// An index into the internal `GooseTest.weighted_clients, indicating which weighted GooseTaskSet is running.
     pub weighted_clients_index: usize,
     /// A weighted list of all tasks that run when the client first starts.
@@ -692,8 +691,7 @@ impl GooseClient {
     /// Create a new client state.
     pub fn new(
         task_sets_index: usize,
-        default_host: Option<String>,
-        task_set_host: Option<String>,
+        base_url: Url,
         min_wait: usize,
         max_wait: usize,
         configuration: &GooseConfiguration,
@@ -702,12 +700,11 @@ impl GooseClient {
         trace!("new client");
         GooseClient {
             task_sets_index,
-            default_host,
-            task_set_host,
-            parent: None,
-            config: configuration.clone(),
+            base_url: Arc::new(RwLock::new(base_url)),
             min_wait,
             max_wait,
+            config: configuration.clone(),
+            parent: None,
             // A value of max_value() indicates this client isn't fully initialized yet.
             weighted_clients_index: usize::max_value(),
             weighted_on_start_tasks: Vec::new(),
@@ -719,42 +716,27 @@ impl GooseClient {
         }
     }
 
-    /// A helper that pre-pends a hostname to the path. For example, if you pass in `/foo`
-    /// and `--host` is set to `http://127.0.0.1` it will return `http://127.0.0.1/foo`.
-    /// Respects per-`GooseTaskSet` `host` configuration, global `GooseAttack` `host`
-    /// configuration, and `--host` CLI configuration option.
+    /// A helper that prepends a base_url to all relative paths.
     ///
-    /// If `path` is passed in with a hard-coded host, this will be used instead.
-    ///
-    /// Host is defined in the following order:
-    ///  - If `path` includes the host, use this
-    ///  - Otherwise, if `--host` is defined, use this
-    ///  - Otherwise, if `GooseTaskSet.host` is defined, use this
-    ///  - Otherwise, use global `GooseAttack.host`.
-    pub fn build_url(&self, path: &str) -> String {
-        // If URL includes a host, use it.
+    /// A base_url is determined per Goose Client thread, using the following order
+    /// of precedence:
+    ///  1. `--host` (host specified on the command line when running load test)
+    ///  2. `GooseTaskSet.host` (default host defined for the current task set)
+    ///  3. `GooseAttack.host` (default host defined for the current load test)
+    pub async fn build_url(&self, path: &str) -> String {
+        // If URL includes a host, simply use it.
         if let Ok(parsed_path) = Url::parse(path) {
-            if let Some(_uri) = parsed_path.host() {
+            if let Some(_host) = parsed_path.host() {
                 return path.to_string();
             }
         }
-
-        let base_url = if !self.config.host.is_empty() {
-            // If the `--host` CLI option is set, use it to build the URL
-            Url::parse(&self.config.host).unwrap()
-        } else {
-            match &self.task_set_host {
-                // Otherwise, if `GooseTaskSet.host` is defined, usee this
-                Some(host) => Url::parse(host).unwrap(),
-                // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
-                None => Url::parse(&self.default_host.clone().unwrap()).unwrap(),
-            }
-        };
+        // Otherwise use the base_url.
+        let base_url = self.base_url.read().await;
         match base_url.join(path) {
             Ok(url) => url.to_string(),
             Err(e) => {
                 error!(
-                    "failed to build url from base {} and path {} for task {}: {}",
+                    "failed to build url from base {:?} and path {} for task {}: {}",
                     &base_url, &path, self.task_sets_index, e
                 );
                 std::process::exit(1);
@@ -998,7 +980,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn goose_get(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path);
+        let url = self.build_url(path).await;
         CLIENT.read().await[self.weighted_clients_index]
             .client
             .lock()
@@ -1026,7 +1008,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn goose_post(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path);
+        let url = self.build_url(path).await;
         CLIENT.read().await[self.weighted_clients_index]
             .client
             .lock()
@@ -1054,7 +1036,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn goose_head(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path);
+        let url = self.build_url(path).await;
         CLIENT.read().await[self.weighted_clients_index]
             .client
             .lock()
@@ -1082,7 +1064,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn goose_put(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path);
+        let url = self.build_url(path).await;
         CLIENT.read().await[self.weighted_clients_index]
             .client
             .lock()
@@ -1110,7 +1092,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn goose_patch(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path);
+        let url = self.build_url(path).await;
         CLIENT.read().await[self.weighted_clients_index]
             .client
             .lock()
@@ -1138,7 +1120,7 @@ impl GooseClient {
     ///     }
     /// ```
     pub async fn goose_delete(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path);
+        let url = self.build_url(path).await;
         CLIENT.read().await[self.weighted_clients_index]
             .client
             .lock()
@@ -1209,28 +1191,51 @@ impl GooseClient {
             .await;
         let elapsed = started.elapsed();
 
-        // Create a raw request object if we're tracking statistics.
+        match &response {
+            Ok(r) => {
+                let status_code = r.status();
+                debug!("{:?}: status_code {}", &path, status_code);
+                // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
+                if !status_code.is_success() {
+                    raw_request.success = false;
+                }
+                raw_request.set_status_code(Some(status_code));
+                raw_request.set_final_url(r.url().as_str());
+
+                // Load test client was redirected.
+                if self.config.sticky_follow && raw_request.url != raw_request.final_url {
+                    let base_url = self.base_url.read().await.to_string();
+                    // Check if the URL redirected started with the load test base_url.
+                    if !raw_request.final_url.starts_with(&base_url) {
+                        let redirected_base_url = match Url::parse(&raw_request.final_url) {
+                            // Use URL to grab base_url, which is everything up to the path.
+                            Ok(base_url) => base_url[..url::Position::BeforePath].to_string(),
+                            Err(e) => {
+                                error!("goose_send failed to parse redirected URL: {}", e);
+                                std::process::exit(1);
+                            }
+                        };
+                        info!(
+                            "base_url for client {} redirected from {} to {}",
+                            self.weighted_clients_index + 1,
+                            &base_url,
+                            &redirected_base_url
+                        );
+                        self.set_base_url(&redirected_base_url).await;
+                    }
+                }
+            }
+            Err(e) => {
+                // @TODO: what can we learn from a reqwest error?
+                warn!("{:?}: {}", &path, e);
+                raw_request.success = false;
+                raw_request.set_status_code(None);
+            }
+        };
+
+        // Send raw request object to parent if we're tracking statistics.
         if !self.config.no_stats {
             raw_request.set_response_time(elapsed.as_millis());
-            match &response {
-                Ok(r) => {
-                    let status_code = r.status();
-                    debug!("{:?}: status_code {}", &path, status_code);
-                    // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
-                    if !status_code.is_success() {
-                        raw_request.success = false;
-                    }
-                    raw_request.set_status_code(Some(status_code));
-                    raw_request.set_final_url(r.url().as_str());
-                }
-                Err(e) => {
-                    // @TODO: what can we learn from a reqwest error?
-                    warn!("{:?}: {}", &path, e);
-                    raw_request.success = false;
-                    raw_request.set_status_code(None);
-                }
-            };
-
             self.send_to_parent(&raw_request);
         }
 
@@ -1424,6 +1429,90 @@ impl GooseClient {
             }
         };
         CLIENT.write().await[self.weighted_clients_index].client = client;
+    }
+
+    /// Some websites use multiple domains to serve traffic, redirecting depending on
+    /// the user's roll. For this reason, Goose needs to respect a redirect of the
+    /// base_url and subsequent paths should be built from the redirect domain.
+    ///
+    /// For example, if the base_url (ie --host) is set to foo.example.com and the
+    /// load test requests /login, thereby loading http://foo.example.com/login and
+    /// this request gets redirected by the server to http://foo-secure.example.com/,
+    /// subsequent requests made by this client need to be against the new
+    /// foo-secure.example.com domain. (Further, if the base_url is again redirected,
+    /// such as when loading http://foo-secure.example.com/logout, the client should
+    /// again follow for subsequent requests, perhaps in this case back to
+    /// foo.example.com.)
+    ///
+    /// Load tests can also request absolute URLs, and if these URLs are redirected
+    /// it does not affect the base_url of the load test. For example, if
+    /// foo.example.com is the base url, and the load test requests
+    /// http://bar.example.com (a different domain) and this request gets redirected
+    /// to http://other.example.com, subsequent relative requests would still be made
+    /// against foo.example.com.
+    ///
+    /// This functionality is used internally by Goose to follow redirects of the
+    /// base_url, but it is also available to be manually invoked from a load test
+    /// such as in the following example.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use goose::prelude::*;
+    ///
+    /// GooseAttack::initialize()
+    ///     .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
+    ///         .set_wait_time(0, 3)
+    ///         .register_task(task!(task_foo).set_weight(10))
+    ///         .register_task(task!(task_bar))
+    ///     )
+    ///     .execute();
+    ///
+    ///     async fn task_foo(client: &GooseClient) {
+    ///       let _response = client.get("/");
+    ///     }
+    ///
+    ///     async fn task_bar(client: &GooseClient) {
+    ///       // Before this task runs, all requests are being made against
+    ///       // http://foo.example.com, after this task runs all subsequent
+    ///       // requests are made against http://bar.example.com/.
+    ///       client.set_base_url("http://bar.example.com/");
+    ///       let _response = client.get("/");
+    ///     }
+    /// ```
+    pub async fn set_base_url(&self, host: &str) {
+        match Url::parse(host) {
+            Ok(url) => *self.base_url.write().await = url,
+            Err(e) => {
+                error!("failed to set_base_url({}): {}", host, e);
+                return;
+            }
+        }
+    }
+}
+
+/// A helper to determine which host should be prepended to relative load test
+/// paths in this TaskSet.
+///
+/// The first of these defined will be returned as the prepended host:
+///  1. `--host` (host specified on the command line when running load test)
+///  2. `GooseTaskSet.host` (default host defined for the current task set)
+///  3. `GooseAttack.host` (default host defined for the current load test)
+pub fn get_base_url(
+    config_host: Option<String>,
+    task_set_host: Option<String>,
+    default_host: Option<String>,
+) -> Url {
+    // If the `--host` CLI option is set, build the URL with it.
+    match config_host {
+        Some(host) => Url::parse(&host).unwrap(),
+        None => {
+            match task_set_host {
+                // Otherwise, if `GooseTaskSet.host` is defined, usee this
+                Some(host) => Url::parse(&host).unwrap(),
+                // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
+                None => Url::parse(&default_host.clone().unwrap()).unwrap(),
+            }
+        }
     }
 }
 
@@ -1658,15 +1747,8 @@ mod tests {
         // Set up global client state.
         crate::GooseClientState::initialize(1).await;
         let configuration = GooseConfiguration::default();
-        let mut client = GooseClient::new(
-            0,
-            Some("http://127.0.0.1:5000".to_string()),
-            None,
-            0,
-            0,
-            &configuration,
-            0,
-        );
+        let base_url = get_base_url(Some("http://127.0.0.1:5000".to_string()), None, None);
+        let mut client = GooseClient::new(0, base_url, 0, 0, &configuration, 0);
         client.weighted_clients_index = 0;
         client
     }
@@ -2089,10 +2171,9 @@ mod tests {
     async fn goose_client() {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::default();
-        let client = GooseClient::new(0, Some(HOST.to_string()), None, 0, 0, &configuration, 0);
+        let base_url = get_base_url(Some(HOST.to_string()), None, None);
+        let client = GooseClient::new(0, base_url, 0, 0, &configuration, 0);
         assert_eq!(client.task_sets_index, 0);
-        assert_eq!(client.default_host, Some(HOST.to_string()));
-        assert_eq!(client.task_set_host, None);
         assert_eq!(client.min_wait, 0);
         assert_eq!(client.max_wait, 0);
         assert_eq!(client.weighted_clients_index, usize::max_value());
@@ -2103,46 +2184,38 @@ mod tests {
         assert_eq!(client.request_name, None);
 
         // Confirm the URLs are correctly built using the default_host.
-        let url = client.build_url("/foo");
+        let url = client.build_url("/foo").await;
+        eprintln!("url: {}", url);
         assert_eq!(&url, &[HOST, "foo"].concat());
-        let url = client.build_url("bar/");
+        let url = client.build_url("bar/").await;
         assert_eq!(&url, &[HOST, "bar/"].concat());
-        let url = client.build_url("/foo/bar");
+        let url = client.build_url("/foo/bar").await;
         assert_eq!(&url, &[HOST, "foo/bar"].concat());
 
         // Confirm the URLs are built with their own specified host.
-        let url = client.build_url("https://example.com/foo");
+        let url = client.build_url("https://example.com/foo").await;
         assert_eq!(url, "https://example.com/foo");
-        let url = client.build_url("https://www.example.com/path/to/resource");
+        let url = client
+            .build_url("https://www.example.com/path/to/resource")
+            .await;
         assert_eq!(url, "https://www.example.com/path/to/resource");
 
         // Create a second client, this time setting a task_set_host.
-        let client2 = GooseClient::new(
-            0,
-            Some("http://www.example.com/".to_string()),
+        let base_url = get_base_url(
+            None,
             Some("http://www2.example.com/".to_string()),
-            1,
-            3,
-            &configuration,
-            0,
+            Some("http://www.example.com/".to_string()),
         );
-        assert_eq!(
-            client2.default_host,
-            Some("http://www.example.com/".to_string())
-        );
-        assert_eq!(
-            client2.task_set_host,
-            Some("http://www2.example.com/".to_string())
-        );
+        let client2 = GooseClient::new(0, base_url, 1, 3, &configuration, 0);
         assert_eq!(client2.min_wait, 1);
         assert_eq!(client2.max_wait, 3);
 
         // Confirm the URLs are correctly built using the task_set_host.
-        let url = client2.build_url("/foo");
+        let url = client2.build_url("/foo").await;
         assert_eq!(url, "http://www2.example.com/foo");
 
         // Confirm URLs are still built with their own specified host.
-        let url = client.build_url("https://example.com/foo");
+        let url = client.build_url("https://example.com/foo").await;
         assert_eq!(url, "https://example.com/foo");
 
         // Recreate client.
