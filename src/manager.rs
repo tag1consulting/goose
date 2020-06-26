@@ -9,17 +9,17 @@ use std::{thread, time};
 use crate::goose::GooseRequest;
 use crate::stats;
 use crate::util;
-use crate::{GooseAttack, GooseClientCommand, GooseConfiguration};
+use crate::{GooseAttack, GooseConfiguration, GooseUserCommand};
 
 /// How long the manager will wait for all workers to stop after the load test ends.
 const GRACEFUL_SHUTDOWN_TIMEOUT: usize = 30;
 
-/// All elements required to initialize a client in a worker process.
+/// All elements required to initialize a user in a worker process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GooseClientInitializer {
+pub struct GooseUserInitializer {
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
-    /// The base_url for this Goose Client thread.
+    /// The base_url for this user thread.
     pub base_url: String,
     /// Minimum amount of time to sleep after running a task.
     pub min_wait: usize,
@@ -36,20 +36,19 @@ lazy_static! {
     static ref ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 }
 
-fn distribute_clients(goose_attack: &GooseAttack) -> (usize, usize) {
-    let clients_per_worker =
-        goose_attack.clients / (goose_attack.configuration.expect_workers as usize);
-    let clients_remainder =
-        goose_attack.clients % (goose_attack.configuration.expect_workers as usize);
-    if clients_remainder > 0 {
+fn distribute_users(goose_attack: &GooseAttack) -> (usize, usize) {
+    let users_per_worker =
+        goose_attack.users / (goose_attack.configuration.expect_workers as usize);
+    let users_remainder = goose_attack.users % (goose_attack.configuration.expect_workers as usize);
+    if users_remainder > 0 {
         info!(
-            "each worker to start {} clients, assigning 1 extra to {} workers",
-            clients_per_worker, clients_remainder
+            "each worker to start {} users, assigning 1 extra to {} workers",
+            users_per_worker, users_remainder
         );
     } else {
-        info!("each worker to start {} clients", clients_per_worker);
+        info!("each worker to start {} users", users_per_worker);
     }
-    (clients_per_worker, clients_remainder)
+    (users_per_worker, users_remainder)
 }
 
 fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
@@ -66,48 +65,48 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-/// Merge per-client-statistics from client thread into global parent statistics
+/// Merge per-user-statistics from user thread into global parent statistics
 fn merge_from_worker(
     parent_request: &GooseRequest,
-    client_request: &GooseRequest,
+    user_request: &GooseRequest,
     config: &GooseConfiguration,
 ) -> GooseRequest {
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
-    // Iterate over client response times, and merge into global response time
+    // Iterate over user response times, and merge into global response time
     merged_request.response_times = stats::merge_response_times(
         merged_request.response_times,
-        client_request.response_times.clone(),
+        user_request.response_times.clone(),
     );
     // Increment total response time counter.
-    merged_request.total_response_time += &client_request.total_response_time;
-    // Increment count of how many resposne counters we've seen.
-    merged_request.response_time_counter += &client_request.response_time_counter;
-    // If client had new fastest response time, update global fastest response time.
+    merged_request.total_response_time += &user_request.total_response_time;
+    // Increment count of how many response counters we've seen.
+    merged_request.response_time_counter += &user_request.response_time_counter;
+    // If user had new fastest response time, update global fastest response time.
     merged_request.min_response_time = stats::update_min_response_time(
         merged_request.min_response_time,
-        client_request.min_response_time,
+        user_request.min_response_time,
     );
-    // If client had new slowest response time, update global slowest resposne time.
+    // If user had new slowest response time, update global slowest resposne time.
     merged_request.max_response_time = stats::update_max_response_time(
         merged_request.max_response_time,
-        client_request.max_response_time,
+        user_request.max_response_time,
     );
     // Increment total success counter.
-    merged_request.success_count += &client_request.success_count;
+    merged_request.success_count += &user_request.success_count;
     // Increment total fail counter.
-    merged_request.fail_count += &client_request.fail_count;
+    merged_request.fail_count += &user_request.fail_count;
     // Only accrue overhead of merging status_code_counts if we're going to display the results
     if config.status_codes {
-        for (status_code, count) in &client_request.status_code_counts {
+        for (status_code, count) in &user_request.status_code_counts {
             let new_count;
-            // Add client count into global count
+            // Add user count into global count
             if let Some(existing_status_code_count) =
                 merged_request.status_code_counts.get(&status_code)
             {
                 new_count = *existing_status_code_count + *count;
             }
-            // No global count exists yet, so start with client count
+            // No global count exists yet, so start with user count
             else {
                 new_count = *count;
             }
@@ -158,11 +157,11 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         &address, goose_attack.configuration.expect_workers
     );
 
-    // Calculate how many clients each worker will be responsible for.
-    let (clients_per_worker, mut clients_remainder) = distribute_clients(&goose_attack);
+    // Calculate how many users each worker will be responsible for.
+    let (users_per_worker, mut users_remainder) = distribute_users(&goose_attack);
 
-    // A mutable bucket of clients to be assigned to workers.
-    let mut available_clients = goose_attack.weighted_clients.clone();
+    // A mutable bucket of users to be assigned to workers.
+    let mut available_users = goose_attack.weighted_users.clone();
 
     // Track how many workers we've seen.
     let mut workers: HashSet<Pipe> = HashSet::new();
@@ -218,7 +217,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 break;
             }
 
-            // When displaying running statistics, sync data from client threads first.
+            // When displaying running statistics, sync data from user threads first.
             if !goose_attack.configuration.only_summary
                 && util::timer_expired(running_statistics_timer, crate::RUNNING_STATS_EVERY)
             {
@@ -279,20 +278,20 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         // Notify the worker that the load test is over and to exit.
                         if load_test_finished {
                             debug!("telling worker to exit");
-                            match serde_cbor::to_writer(&mut message, &GooseClientCommand::EXIT) {
+                            match serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT) {
                                 Ok(_) => (),
                                 Err(e) => {
-                                    error!("failed to serialize client command: {}", e);
+                                    error!("failed to serialize user command: {}", e);
                                     std::process::exit(1);
                                 }
                             }
                         }
                         // Notify the worker that the load test is still running.
                         else {
-                            match serde_cbor::to_writer(&mut message, &GooseClientCommand::RUN) {
+                            match serde_cbor::to_writer(&mut message, &GooseUserCommand::RUN) {
                                 Ok(_) => (),
                                 Err(e) => {
-                                    error!("failed to serialize client command: {}", e);
+                                    error!("failed to serialize user command: {}", e);
                                     std::process::exit(1);
                                 }
                             }
@@ -300,10 +299,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     }
                     // All workers are not yet running, tell worker to wait.
                     else {
-                        match serde_cbor::to_writer(&mut message, &GooseClientCommand::WAIT) {
+                        match serde_cbor::to_writer(&mut message, &GooseUserCommand::WAIT) {
                             Ok(_) => (),
                             Err(e) => {
-                                error!("failed to serialize client command: {}", e);
+                                error!("failed to serialize user command: {}", e);
                                 std::process::exit(1);
                             }
                         }
@@ -335,10 +334,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     if workers.len() >= goose_attack.configuration.expect_workers as usize {
                         // We already have enough workers, tell this extra one to EXIT.
                         let mut message = Message::new().unwrap();
-                        match serde_cbor::to_writer(&mut message, &GooseClientCommand::EXIT) {
+                        match serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT) {
                             Ok(_) => (),
                             Err(e) => {
-                                error!("failed to serialize client command: {}", e);
+                                error!("failed to serialize user command: {}", e);
                                 std::process::exit(1);
                             }
                         }
@@ -390,49 +389,45 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             goose_attack.configuration.expect_workers
                         );
 
-                        // Send new worker a batch of clients.
-                        let mut client_batch = clients_per_worker;
-                        // If remainder, put extra client in this batch.
-                        if clients_remainder > 0 {
-                            clients_remainder -= 1;
-                            client_batch += 1;
+                        // Send new worker a batch of users.
+                        let mut user_batch = users_per_worker;
+                        // If remainder, put extra user in this batch.
+                        if users_remainder > 0 {
+                            users_remainder -= 1;
+                            user_batch += 1;
                         }
-                        let mut clients = Vec::new();
+                        let mut users = Vec::new();
 
-                        // Pop clients from available_clients vector and build worker initializer.
-                        for _ in 1..=client_batch {
-                            let client = match available_clients.pop() {
-                                Some(c) => c,
+                        // Pop users from available_users vector and build worker initializer.
+                        for _ in 1..=user_batch {
+                            let user = match available_users.pop() {
+                                Some(u) => u,
                                 None => {
-                                    error!("not enough available clients!?");
+                                    error!("not enough available users!?");
                                     std::process::exit(1);
                                 }
                             };
-                            // Build a vector of GooseClient initializers for next worker.
-                            clients.push(GooseClientInitializer {
-                                task_sets_index: client.task_sets_index,
-                                base_url: client.base_url.read().await.to_string(),
-                                min_wait: client.min_wait,
-                                max_wait: client.max_wait,
-                                config: client.config.clone(),
+                            // Build a vector of GooseUser initializers for next worker.
+                            users.push(GooseUserInitializer {
+                                task_sets_index: user.task_sets_index,
+                                base_url: user.base_url.read().await.to_string(),
+                                min_wait: user.min_wait,
+                                max_wait: user.max_wait,
+                                config: user.config.clone(),
                                 worker_id: workers.len(),
                             });
                         }
 
-                        // Send vector of client initializers to worker.
+                        // Send vector of user initializers to worker.
                         let mut message = Message::new().unwrap();
-                        match serde_cbor::to_writer(&mut message, &clients) {
+                        match serde_cbor::to_writer(&mut message, &users) {
                             Ok(_) => (),
                             Err(e) => {
-                                error!("failed to serialize client initializers: {}", e);
+                                error!("failed to serialize user initializers: {}", e);
                                 std::process::exit(1);
                             }
                         }
-                        info!(
-                            "sending {} clients to worker {}",
-                            clients.len(),
-                            workers.len()
-                        );
+                        info!("sending {} users to worker {}", users.len(), workers.len());
                         match server.try_send(message) {
                             Ok(_) => (),
                             Err((_, e)) => match e {
@@ -472,7 +467,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         thread::sleep(time::Duration::from_millis(500));
                     }
                 } else {
-                    error!("unexpected error receiving client message: {}", e);
+                    error!("unexpected error receiving user message: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -486,26 +481,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_distribute_clients() {
+    fn test_distribute_users() {
         let config = GooseConfiguration::default();
         let mut goose_attack = GooseAttack::initialize_with_config(config);
 
-        goose_attack.clients = 10;
+        goose_attack.users = 10;
         goose_attack.configuration.expect_workers = 2;
-        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
-        assert_eq!(clients_per_process, 5);
-        assert_eq!(clients_remainder, 0);
+        let (users_per_process, users_remainder) = distribute_users(&goose_attack);
+        assert_eq!(users_per_process, 5);
+        assert_eq!(users_remainder, 0);
 
-        goose_attack.clients = 1;
+        goose_attack.users = 1;
         goose_attack.configuration.expect_workers = 1;
-        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
-        assert_eq!(clients_per_process, 1);
-        assert_eq!(clients_remainder, 0);
+        let (users_per_process, users_remainder) = distribute_users(&goose_attack);
+        assert_eq!(users_per_process, 1);
+        assert_eq!(users_remainder, 0);
 
-        goose_attack.clients = 100;
+        goose_attack.users = 100;
         goose_attack.configuration.expect_workers = 21;
-        let (clients_per_process, clients_remainder) = distribute_clients(&goose_attack);
-        assert_eq!(clients_per_process, 4);
-        assert_eq!(clients_remainder, 16);
+        let (users_per_process, users_remainder) = distribute_users(&goose_attack);
+        assert_eq!(users_per_process, 4);
+        assert_eq!(users_remainder, 16);
     }
 }

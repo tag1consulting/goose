@@ -13,7 +13,7 @@ pub fn merge_response_times(
     mut global_response_times: BTreeMap<usize, usize>,
     local_response_times: BTreeMap<usize, usize>,
 ) -> BTreeMap<usize, usize> {
-    // Iterate over client response times, and merge into global response times.
+    // Iterate over user response times, and merge into global response times.
     for (response_time, count) in &local_response_times {
         let counter = match global_response_times.get(&response_time) {
             // We've seen this response_time before, increment counter.
@@ -175,7 +175,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
     );
     println!(" ----------------------------------------------------------------------------- ");
     for (request_key, request) in requests.clone() {
-        // Iterate over client response times, and merge into global response times.
+        // Iterate over user response times, and merge into global response times.
         aggregate_response_times =
             merge_response_times(aggregate_response_times, request.response_times.clone());
 
@@ -185,11 +185,11 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         // Increment counter tracking individual response times seen.
         aggregate_response_time_counter += &request.response_time_counter;
 
-        // If client had new fastest response time, update global fastest response time.
+        // If user had new fastest response time, update global fastest response time.
         aggregate_min_response_time =
             update_min_response_time(aggregate_min_response_time, request.min_response_time);
 
-        // If client had new slowest response time, update global slowest resposne time.
+        // If user had new slowest response time, update global slowest resposne time.
         aggregate_max_response_time =
             update_max_response_time(aggregate_max_response_time, request.max_response_time);
 

@@ -27,7 +27,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! goose = "0.7"
+//! goose = "0.8"
 //! ```
 //!
 //! Add the following boilerplate `use` declaration at the top of your `src/main.rs`:
@@ -41,23 +41,23 @@
 //!
 //! ```rust
 //! use goose::{GooseAttack, task, taskset};
-//! use goose::goose::{GooseTaskSet, GooseClient, GooseTask};
+//! use goose::goose::{GooseTaskSet, GooseUser, GooseTask};
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
 //! one or more load test functions. The names of these functions are arbitrary, but it is
 //! recommended you use self-documenting names. Load test functions must be async. Each load
-//! test function must accept a mutable GooseClient pointer. For example:
+//! test function must accept a GooseUser pointer. For example:
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_foo(client: &GooseClient) {
-//!   let _response = client.get("/path/to/foo");
+//! async fn loadtest_foo(user: &GooseUser) {
+//!   let _response = user.get("/path/to/foo");
 //! }   
 //! ```
 //!
-//! In the above example, we're using the GooseClient helper method `get` to load a path
+//! In the above example, we're using the GooseUser helper method `get` to load a path
 //! on the website we are load testing. This helper creates a Reqwest request builder, and
 //! uses it to build and execute a request for the above path. If you want access to the
 //! request builder object, you can instead use the `goose_get` helper, for example to
@@ -68,9 +68,9 @@
 //!
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_bar(client: &GooseClient) {
-//!   let request_builder = client.goose_get("/path/to/bar").await;
-//!   let _response = client.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
+//! async fn loadtest_bar(user: &GooseUser) {
+//!   let request_builder = user.goose_get("/path/to/bar").await;
+//!   let _response = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
 //! }   
 //! ```
 //!
@@ -99,19 +99,19 @@
 //!     //.set_host("http://dev.local/")
 //!     .execute();
 //!
-//! async fn loadtest_foo(client: &GooseClient) {
-//!   let _response = client.get("/path/to/foo");
+//! async fn loadtest_foo(user: &GooseUser) {
+//!   let _response = user.get("/path/to/foo");
 //! }   
 //!
-//! async fn loadtest_bar(client: &GooseClient) {
-//!   let _response = client.get("/path/to/bar");
+//! async fn loadtest_bar(user: &GooseUser) {
+//!   let _response = user.get("/path/to/bar");
 //! }   
 //! ```
 //!
-//! Goose now spins up a configurable number of clients, each simulating a user on your
-//! website. Thanks to Reqwest, each user maintains its own client state, handling cookies
-//! and more so your "users" can log in, fill out forms, and more, as real users on your
-//! sites would do.
+//! Goose now spins up a configurable number of users, each simulating a user on your
+//! website. Thanks to Reqwest, each user maintains its own web client state, handling
+//! cookies and more so your "users" can log in, fill out forms, and more, as real users
+//! on your sites would do.
 //!
 //! ### Running the Goose load test
 //!
@@ -159,28 +159,28 @@
 //!
 //! ```bash
 //! 05:56:30 [ INFO] run_time = 30
-//! 05:56:30 [ INFO] concurrent clients defaulted to 8 (number of CPUs)
+//! 05:56:30 [ INFO] concurrent users defaulted to 8 (number of CPUs)
 //! ```
 //!
-//! Goose will default to launching 1 client per available CPU core, and will launch them all in
-//! one second. You can change how many clients are launched with the `-c` option, and you can
-//! change how many clients are launched per second with the `-r` option. For example, `-c 30 -r 2`
-//! would launch 30 clients over 15 seconds, or two clients per second.
+//! Goose will default to launching 1 user per available CPU core, and will launch them all in
+//! one second. You can change how many users are launched with the `-u` option, and you can
+//! change how many users are launched per second with the `-r` option. For example, `-u 30 -r 2`
+//! would launch 30 users over 15 seconds, or two users per second.
 //!
 //! ```bash
 //! 05:56:30 [ INFO] global host configured: http://dev.local
-//! 05:56:30 [ INFO] launching client 1 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching client 2 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching client 3 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching client 4 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching client 5 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching client 6 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching client 7 from LoadtestTasks...
-//! 05:56:31 [ INFO] launching client 8 from LoadtestTasks...
-//! 05:56:31 [ INFO] launched 8 clients...
+//! 05:56:30 [ INFO] launching user 1 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching user 2 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching user 3 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching user 4 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching user 5 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching user 6 from LoadtestTasks...
+//! 05:56:30 [ INFO] launching user 7 from LoadtestTasks...
+//! 05:56:31 [ INFO] launching user 8 from LoadtestTasks...
+//! 05:56:31 [ INFO] launched 8 users...
 //! ```
 //!
-//! Each client is launched in its own thread with its own client state. Goose is able to make
+//! Each user is launched in its own thread with its own user state. Goose is able to make
 //! very efficient use of server resources.
 //!
 //! ```bash
@@ -223,7 +223,7 @@
 //!
 //! ```bash
 //! 05:37:10 [ INFO] stopping after 30 seconds...
-//! 05:37:10 [ INFO] waiting for clients to exit
+//! 05:37:10 [ INFO] waiting for users to exit
 //! ```
 //!
 //! Our example only runs for 30 seconds, so we only see running statistics once. When
@@ -292,11 +292,11 @@ extern crate structopt;
 
 pub mod goose;
 
-mod client;
 #[cfg(feature = "gaggle")]
 mod manager;
 pub mod prelude;
 mod stats;
+mod user;
 mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
@@ -322,7 +322,7 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
-    GooseClient, GooseClientCommand, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet,
+    GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
 };
 
 /// Constant defining how often statistics should be displayed while load test is running.
@@ -349,28 +349,28 @@ pub struct Socket {}
 /// Internal global state for load test.
 #[derive(Clone)]
 pub struct GooseAttack {
-    /// An optional task to run one time before starting clients and running task sets.
+    /// An optional task to run one time before starting users and running task sets.
     test_start_task: Option<GooseTask>,
-    /// An optional task to run one time after clients have finished running task sets.
+    /// An optional task to run one time after users have finished running task sets.
     test_stop_task: Option<GooseTask>,
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
     task_sets: Vec<GooseTaskSet>,
     /// A checksum of the task_sets vector to be sure all workers are running the same load test.
     task_sets_hash: u64,
-    /// A weighted vector containing a GooseClient object for each client that will run during this load test.
-    weighted_clients: Vec<GooseClient>,
+    /// A weighted vector containing a GooseUser object for each user that will run during this load test.
+    weighted_users: Vec<GooseUser>,
     /// An optional default host to run this load test against.
     host: Option<String>,
     /// Configuration object managed by StructOpt.
     configuration: GooseConfiguration,
-    /// By default launch 1 client per number of CPUs.
+    /// By default launch 1 user per number of CPUs.
     number_of_cpus: usize,
     /// Track how long the load test should run.
     run_time: usize,
-    /// Track total number of clients to run for this load test.
-    clients: usize,
-    /// Track how many clients are already loaded.
-    active_clients: usize,
+    /// Track total number of users to run for this load test.
+    users: usize,
+    /// Track how many users are already loaded.
+    active_users: usize,
     /// All requests statistics merged together.
     merged_requests: HashMap<String, GooseRequest>,
 }
@@ -390,13 +390,13 @@ impl GooseAttack {
             test_stop_task: None,
             task_sets: Vec::new(),
             task_sets_hash: 0,
-            weighted_clients: Vec::new(),
+            weighted_users: Vec::new(),
             host: None,
             configuration: GooseConfiguration::from_args(),
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            clients: 0,
-            active_clients: 0,
+            users: 0,
+            active_users: 0,
             merged_requests: HashMap::new(),
         };
         goose_attack.setup()
@@ -419,13 +419,13 @@ impl GooseAttack {
             test_stop_task: None,
             task_sets: Vec::new(),
             task_sets_hash: 0,
-            weighted_clients: Vec::new(),
+            weighted_users: Vec::new(),
             host: None,
             configuration: config,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            clients: 0,
-            active_clients: 0,
+            users: 0,
+            active_users: 0,
             merged_requests: HashMap::new(),
         }
     }
@@ -503,35 +503,35 @@ impl GooseAttack {
             self.run_time = 0;
         }
 
-        // Configure number of client threads to launch, default to the number of CPU cores available.
-        self.clients = match self.configuration.clients {
-            Some(c) => {
-                if c == 0 {
+        // Configure number of user threads to launch, default to the number of CPU cores available.
+        self.users = match self.configuration.users {
+            Some(u) => {
+                if u == 0 {
                     if self.configuration.worker {
-                        error!("At least 1 client is required.");
+                        error!("At least 1 user is required.");
                         std::process::exit(1);
                     } else {
                         0
                     }
                 } else {
                     if self.configuration.worker {
-                        error!("The --clients option is only available to the manager.");
+                        error!("The --users option is only available to the manager.");
                         std::process::exit(1);
                     }
-                    c
+                    u
                 }
             }
             None => {
-                let c = self.number_of_cpus;
+                let u = self.number_of_cpus;
                 if !self.configuration.manager && !self.configuration.worker {
-                    info!("concurrent clients defaulted to {} (number of CPUs)", c);
+                    info!("concurrent users defaulted to {} (number of CPUs)", u);
                 }
-                c
+                u
             }
         };
 
         if !self.configuration.manager && !self.configuration.worker {
-            debug!("clients = {}", self.clients);
+            debug!("users = {}", self.users);
         }
 
         self
@@ -552,12 +552,12 @@ impl GooseAttack {
     ///             .register_task(task!(other_task))
     ///         );
     ///
-    ///     async fn example_task(client: &GooseClient) {
-    ///       let _response = client.get("/foo");
+    ///     async fn example_task(user: &GooseUser) {
+    ///       let _response = user.get("/foo");
     ///     }
     ///
-    ///     async fn other_task(client: &GooseClient) {
-    ///       let _response = client.get("/bar");
+    ///     async fn other_task(user: &GooseUser) {
+    ///       let _response = user.get("/bar");
     ///     }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
@@ -566,7 +566,7 @@ impl GooseAttack {
         self
     }
 
-    /// Optionally define a task to run before clients are started and all task sets
+    /// Optionally define a task to run before users are started and all task sets
     /// start running. This is would generally be used to set up anything required
     /// for the load test.
     ///
@@ -580,7 +580,7 @@ impl GooseAttack {
     ///     GooseAttack::initialize()
     ///         .test_start(task!(setup));
     ///
-    ///     async fn setup(client: &GooseClient) {
+    ///     async fn setup(user: &GooseUser) {
     ///         // do stuff to set up load test ...
     ///     }
     /// ```
@@ -589,7 +589,7 @@ impl GooseAttack {
         self
     }
 
-    /// Optionally define a task to run after all clients have finished running
+    /// Optionally define a task to run after all users have finished running
     /// all defined task sets. This would generally be used to clean up anything
     /// that was specifically set up for the load test.
     ///
@@ -603,7 +603,7 @@ impl GooseAttack {
     ///     GooseAttack::initialize()
     ///         .test_stop(task!(teardown));
     ///
-    ///     async fn teardown(client: &GooseClient) {
+    ///     async fn teardown(user: &GooseUser) {
     ///         // do stuff to tear down the load test ...
     ///     }
     /// ```
@@ -635,9 +635,9 @@ impl GooseAttack {
         self
     }
 
-    /// Allocate a vector of weighted GooseClient.
-    fn weight_task_set_clients(&mut self) -> Vec<GooseClient> {
-        trace!("weight_task_set_clients");
+    /// Allocate a vector of weighted GooseUser.
+    fn weight_task_set_users(&mut self) -> Vec<GooseUser> {
+        trace!("weight_task_set_users");
 
         let mut u: usize = 0;
         let mut v: usize;
@@ -670,10 +670,10 @@ impl GooseAttack {
             weighted_task_sets.append(&mut weighted_sets);
         }
 
-        // Allocate a state for each client that will be spawned.
-        info!("initializing client states...");
-        let mut weighted_clients = Vec::new();
-        let mut client_count = 0;
+        // Allocate a state for each user that will be spawned.
+        info!("initializing user states...");
+        let mut weighted_users = Vec::new();
+        let mut user_count = 0;
         let config = self.configuration.clone();
         loop {
             for task_sets_index in &weighted_task_sets {
@@ -682,7 +682,7 @@ impl GooseAttack {
                     self.task_sets[*task_sets_index].host.clone(),
                     self.host.clone(),
                 );
-                weighted_clients.push(GooseClient::new(
+                weighted_users.push(GooseUser::new(
                     self.task_sets[*task_sets_index].task_sets_index,
                     base_url,
                     self.task_sets[*task_sets_index].min_wait,
@@ -690,10 +690,10 @@ impl GooseAttack {
                     &config,
                     self.task_sets_hash,
                 ));
-                client_count += 1;
-                if client_count >= self.clients {
-                    trace!("created {} weighted_clients", client_count);
-                    return weighted_clients;
+                user_count += 1;
+                if user_count >= self.users {
+                    trace!("created {} weighted_users", user_count);
+                    return weighted_users;
                 }
             }
         }
@@ -712,12 +712,12 @@ impl GooseAttack {
     ///         )
     ///         .execute();
     ///
-    ///     async fn example_task(client: &GooseClient) {
-    ///       let _response = client.get("/foo");
+    ///     async fn example_task(user: &GooseUser) {
+    ///       let _response = user.get("/foo");
     ///     }
     ///
-    ///     async fn another_example_task(client: &GooseClient) {
-    ///       let _response = client.get("/bar");
+    ///     async fn another_example_task(user: &GooseUser) {
+    ///       let _response = user.get("/bar");
     ///     }
     /// ```
     pub fn execute(mut self) {
@@ -751,10 +751,10 @@ impl GooseAttack {
                 error!("You must set --expect-workers to 1 or more.");
                 std::process::exit(1);
             }
-            if self.configuration.expect_workers as usize > self.clients {
+            if self.configuration.expect_workers as usize > self.users {
                 error!(
-                    "You must enable at least as many clients ({}) as workers ({}).",
-                    self.clients, self.configuration.expect_workers
+                    "You must enable at least as many users ({}) as workers ({}).",
+                    self.users, self.configuration.expect_workers
                 );
                 std::process::exit(1);
             }
@@ -818,10 +818,10 @@ impl GooseAttack {
             std::process::exit(1);
         }
 
-        // Configure number of client threads to launch per second, defaults to 1.
+        // Configure number of user threads to launch per second, defaults to 1.
         let hatch_rate = self.configuration.hatch_rate;
         if hatch_rate < 1 {
-            error!("Hatch rate must be greater than 0, or no clients will launch.");
+            error!("Hatch rate must be greater than 0, or no users will launch.");
             std::process::exit(1);
         }
         if hatch_rate > 1 && self.configuration.worker {
@@ -874,9 +874,9 @@ impl GooseAttack {
             );
         }
 
-        // Allocate a state for each of the clients we are about to start.
+        // Allocate a state for each of the users we are about to start.
         if !self.configuration.worker {
-            self.weighted_clients = self.weight_task_set_clients();
+            self.weighted_users = self.weight_task_set_users();
         }
 
         // Calculate a unique hash for the current load test.
@@ -887,7 +887,7 @@ impl GooseAttack {
 
         // Our load test is officially starting.
         let started = time::Instant::now();
-        // Spawn clients at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
+        // Spawn users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_float = 1.0 / hatch_rate as f32;
         let sleep_duration = time::Duration::from_secs_f32(sleep_float);
 
@@ -924,7 +924,7 @@ impl GooseAttack {
         // Start goose in single-process mode.
         else {
             let mut rt = tokio::runtime::Runtime::new().unwrap();
-            self = rt.block_on(self.launch_clients(started, sleep_duration, None));
+            self = rt.block_on(self.launch_users(started, sleep_duration, None));
         }
 
         if !self.configuration.no_stats && !self.configuration.worker {
@@ -942,95 +942,95 @@ impl GooseAttack {
     }
 
     /// Called internally in local-mode and gaggle-mode.
-    async fn launch_clients(
+    async fn launch_users(
         mut self,
         mut started: time::Instant,
         sleep_duration: time::Duration,
         socket: Option<Socket>,
     ) -> GooseAttack {
         trace!(
-            "launch clients: started({:?}) sleep_duration({:?}) socket({:?})",
+            "launch users: started({:?}) sleep_duration({:?}) socket({:?})",
             started,
             sleep_duration,
             socket
         );
 
-        // Initilize per-client states.
+        // Initilize per-user states.
         if !self.configuration.worker {
             // First run global test_start_task, if defined.
             match &self.test_start_task {
                 Some(t) => {
                     info!("running test_start_task");
-                    // Create a one-time-use Client to run the test_start_task.
+                    // Create a one-time-use User to run the test_start_task.
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
-                    let client = GooseClient::single(base_url, &self.configuration);
+                    let user = GooseUser::single(base_url, &self.configuration);
                     let function = t.function;
-                    function(&client).await;
+                    function(&user).await;
                 }
                 // No test_start_task defined, nothing to do.
                 None => (),
             }
         }
 
-        // Collect client threads in a vector for when we want to stop them later.
-        let mut clients = vec![];
-        // Collect client thread channels in a vector so we can talk to the client threads.
-        let mut client_channels = vec![];
+        // Collect user threads in a vector for when we want to stop them later.
+        let mut users = vec![];
+        // Collect user thread channels in a vector so we can talk to the user threads.
+        let mut user_channels = vec![];
         // Create a single channel allowing all Goose child threads to sync state back to parent
         let (all_threads_sender, mut parent_receiver): (
             mpsc::UnboundedSender<GooseRawRequest>,
             mpsc::UnboundedReceiver<GooseRawRequest>,
         ) = mpsc::unbounded_channel();
-        // Spawn clients, each with their own weighted task_set.
-        for mut thread_client in self.weighted_clients.clone() {
+        // Spawn users, each with their own weighted task_set.
+        for mut thread_user in self.weighted_users.clone() {
             // Stop launching threads if the run_timer has expired.
             if util::timer_expired(started, self.run_time) {
                 break;
             }
 
-            // Copy weighted tasks and weighted on start tasks into the client thread.
-            thread_client.weighted_tasks = self.task_sets[thread_client.task_sets_index]
+            // Copy weighted tasks and weighted on start tasks into the user thread.
+            thread_user.weighted_tasks = self.task_sets[thread_user.task_sets_index]
                 .weighted_tasks
                 .clone();
-            thread_client.weighted_on_start_tasks = self.task_sets[thread_client.task_sets_index]
+            thread_user.weighted_on_start_tasks = self.task_sets[thread_user.task_sets_index]
                 .weighted_on_start_tasks
                 .clone();
-            thread_client.weighted_on_stop_tasks = self.task_sets[thread_client.task_sets_index]
+            thread_user.weighted_on_stop_tasks = self.task_sets[thread_user.task_sets_index]
                 .weighted_on_stop_tasks
                 .clone();
-            // Remember which task group this client is using.
-            thread_client.weighted_clients_index = self.active_clients;
+            // Remember which task group this user is using.
+            thread_user.weighted_users_index = self.active_users;
 
             // Create a per-thread channel allowing parent thread to control child threads.
             let (parent_sender, thread_receiver): (
-                mpsc::UnboundedSender<GooseClientCommand>,
-                mpsc::UnboundedReceiver<GooseClientCommand>,
+                mpsc::UnboundedSender<GooseUserCommand>,
+                mpsc::UnboundedReceiver<GooseUserCommand>,
             ) = mpsc::unbounded_channel();
-            client_channels.push(parent_sender);
+            user_channels.push(parent_sender);
 
-            // Copy the client-to-parent sender channel, used by all threads.
-            thread_client.parent = Some(all_threads_sender.clone());
+            // Copy the user-to-parent sender channel, used by all threads.
+            thread_user.parent = Some(all_threads_sender.clone());
 
             // Copy the appropriate task_set into the thread.
-            let thread_task_set = self.task_sets[thread_client.task_sets_index].clone();
+            let thread_task_set = self.task_sets[thread_user.task_sets_index].clone();
 
-            // We number threads from 1 as they're human-visible (in the logs), whereas active_clients starts at 0.
-            let thread_number = self.active_clients + 1;
+            // We number threads from 1 as they're human-visible (in the logs), whereas active_users starts at 0.
+            let thread_number = self.active_users + 1;
 
             let is_worker = self.configuration.worker;
 
-            // Launch a new client.
-            let client = tokio::spawn(client::client_main(
+            // Launch a new user.
+            let user = tokio::spawn(user::user_main(
                 thread_number,
                 thread_task_set,
-                thread_client,
+                thread_user,
                 thread_receiver,
                 is_worker,
             ));
 
-            clients.push(client);
-            self.active_clients += 1;
+            users.push(user);
+            self.active_users += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
             tokio::time::delay_for(sleep_duration).await;
         }
@@ -1038,15 +1038,15 @@ impl GooseAttack {
         started = time::Instant::now();
         if self.configuration.worker {
             info!(
-                "[{}] launched {} clients...",
+                "[{}] launched {} users...",
                 get_worker_id(),
-                self.active_clients
+                self.active_users
             );
         } else {
-            info!("launched {} clients...", self.active_clients);
+            info!("launched {} users...", self.active_users);
         }
 
-        // Track whether or not we've (optionally) reset the statistics after all clients started.
+        // Track whether or not we've (optionally) reset the statistics after all users started.
         let mut statistics_reset: bool = false;
 
         // Catch ctrl-c to allow clean shutdown to display statistics.
@@ -1058,9 +1058,9 @@ impl GooseAttack {
         let mut display_running_statistics = false;
 
         loop {
-            // When displaying running statistics, sync data from client threads first.
+            // When displaying running statistics, sync data from user threads first.
             if !self.configuration.no_stats {
-                // Synchronize statistics from client threads into parent.
+                // Synchronize statistics from user threads into parent.
                 if util::timer_expired(statistics_timer, RUNNING_STATS_EVERY) {
                     statistics_timer = time::Instant::now();
                     if !self.configuration.only_summary {
@@ -1068,7 +1068,7 @@ impl GooseAttack {
                     }
                 }
 
-                // Load messages from client threads until the receiver queue is empty.
+                // Load messages from user threads until the receiver queue is empty.
                 let mut received_message = false;
                 let mut message = parent_receiver.try_recv();
                 while message.is_ok() {
@@ -1122,7 +1122,7 @@ impl GooseAttack {
                     }
                 }
 
-                // Flush statistics collected prior to all client threads running
+                // Flush statistics collected prior to all user threads running
                 if self.configuration.reset_stats && !statistics_reset {
                     info!("statistics reset...");
                     self.merged_requests = HashMap::new();
@@ -1140,25 +1140,25 @@ impl GooseAttack {
                 } else {
                     info!("stopping after {} seconds...", started.elapsed().as_secs());
                 }
-                for (index, send_to_client) in client_channels.iter().enumerate() {
-                    match send_to_client.send(GooseClientCommand::EXIT) {
+                for (index, send_to_user) in user_channels.iter().enumerate() {
+                    match send_to_user.send(GooseUserCommand::EXIT) {
                         Ok(_) => {
-                            debug!("telling client {} to exit", index);
+                            debug!("telling user {} to exit", index);
                         }
                         Err(e) => {
-                            info!("failed to tell client {} to exit: {}", index, e);
+                            info!("failed to tell user {} to exit: {}", index, e);
                         }
                     }
                 }
                 if self.configuration.worker {
-                    info!("[{}] waiting for clients to exit", get_worker_id());
+                    info!("[{}] waiting for users to exit", get_worker_id());
                 } else {
-                    info!("waiting for clients to exit");
+                    info!("waiting for users to exit");
                 }
-                futures::future::join_all(clients).await;
-                debug!("all clients exited");
+                futures::future::join_all(users).await;
+                debug!("all users exited");
 
-                // If we're printing statistics, collect the final messages received from clients
+                // If we're printing statistics, collect the final messages received from users.
                 if !self.configuration.no_stats {
                     let mut message = parent_receiver.try_recv();
                     while message.is_ok() {
@@ -1195,7 +1195,7 @@ impl GooseAttack {
                     }
                 }
 
-                // All clients are done, exit out of loop for final cleanup.
+                // All users are done, exit out of loop for final cleanup.
                 break;
             }
 
@@ -1216,10 +1216,10 @@ impl GooseAttack {
                     info!("running test_stop_task");
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
-                    // Create a one-time-use Client to run the test_stop_task.
-                    let client = GooseClient::single(base_url, &self.configuration);
+                    // Create a one-time-use user to run the test_stop_task.
+                    let user = GooseUser::single(base_url, &self.configuration);
                     let function = t.function;
-                    function(&client).await;
+                    function(&user).await;
                 }
                 // No test_stop_task defined, nothing to do.
                 None => (),
@@ -1232,7 +1232,7 @@ impl GooseAttack {
 
 /// CLI options available when launching a Goose load test.
 #[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
-#[structopt(name = "client")]
+#[structopt(name = "Goose")]
 pub struct GooseConfiguration {
     /// Host to load test, for example: http://10.21.32.33
     #[structopt(short = "H", long, required = false, default_value = "")]
@@ -1240,7 +1240,7 @@ pub struct GooseConfiguration {
 
     /// Number of concurrent Goose users (defaults to available CPUs).
     #[structopt(short, long)]
-    pub clients: Option<usize>,
+    pub users: Option<usize>,
 
     /// How many users to spawn per second.
     #[structopt(short = "r", long, required = false, default_value = "1")]
@@ -1284,7 +1284,7 @@ pub struct GooseConfiguration {
     #[structopt(long, default_value = "goose.log")]
     pub log_file: String,
 
-    /// Client follows redirect of base_url with subsequent requests
+    /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]
     pub sticky_follow: bool,
 

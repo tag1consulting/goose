@@ -6,32 +6,32 @@ use std::time;
 use tokio::sync::mpsc;
 
 use crate::get_worker_id;
-use crate::goose::{GooseClient, GooseClientCommand, GooseTaskSet};
+use crate::goose::{GooseTaskSet, GooseUser, GooseUserCommand};
 
-pub async fn client_main(
+pub async fn user_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
-    mut thread_client: GooseClient,
-    mut thread_receiver: mpsc::UnboundedReceiver<GooseClientCommand>,
+    mut thread_user: GooseUser,
+    mut thread_receiver: mpsc::UnboundedReceiver<GooseUserCommand>,
     worker: bool,
 ) {
     if worker {
         info!(
-            "[{}] launching client {} from {}...",
+            "[{}] launching user {} from {}...",
             get_worker_id(),
             thread_number,
             thread_task_set.name
         );
     } else {
         info!(
-            "launching client {} from {}...",
+            "launching user {} from {}...",
             thread_number, thread_task_set.name
         );
     }
 
-    // Client is starting, first invoke the weighted on_start tasks.
-    if !thread_client.weighted_on_start_tasks.is_empty() {
-        for mut sequence in thread_client.weighted_on_start_tasks.clone() {
+    // User is starting, first invoke the weighted on_start tasks.
+    if !thread_user.weighted_on_start_tasks.is_empty() {
+        for mut sequence in thread_user.weighted_on_start_tasks.clone() {
             if sequence.len() > 1 {
                 sequence.shuffle(&mut thread_rng());
             }
@@ -44,51 +44,49 @@ pub async fn client_main(
                     thread_task_name, thread_task_set.name
                 );
                 if thread_task_name != "" {
-                    thread_client.task_request_name = Some(thread_task_name.to_string());
+                    thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&thread_client).await;
+                function(&thread_user).await;
             }
         }
     }
 
     // Repeatedly loop through all available tasks in a random order.
     let mut thread_continue: bool = true;
-    let mut weighted_bucket = thread_client.weighted_bucket.load(Ordering::SeqCst);
-    let mut weighted_bucket_position = thread_client
-        .weighted_bucket_position
-        .load(Ordering::SeqCst);
-    if thread_client.weighted_tasks.is_empty() {
+    let mut weighted_bucket = thread_user.weighted_bucket.load(Ordering::SeqCst);
+    let mut weighted_bucket_position = thread_user.weighted_bucket_position.load(Ordering::SeqCst);
+    if thread_user.weighted_tasks.is_empty() {
         // Handle the edge case where a load test doesn't define any normal tasks.
         thread_continue = false;
     }
     while thread_continue {
         // Weighted_tasks is divided into buckets of tasks sorted by sequence, and then all non-sequenced tasks.
-        if thread_client.weighted_tasks[weighted_bucket].len() <= weighted_bucket_position {
+        if thread_user.weighted_tasks[weighted_bucket].len() <= weighted_bucket_position {
             // This bucket is exhausted, move on to position 0 of the next bucket.
             weighted_bucket_position = 0;
-            thread_client
+            thread_user
                 .weighted_bucket_position
                 .store(weighted_bucket_position, Ordering::SeqCst);
 
             weighted_bucket += 1;
-            if thread_client.weighted_tasks.len() <= weighted_bucket {
+            if thread_user.weighted_tasks.len() <= weighted_bucket {
                 weighted_bucket = 0;
             }
-            thread_client
+            thread_user
                 .weighted_bucket
                 .store(weighted_bucket_position, Ordering::SeqCst);
             // Shuffle new bucket before we walk through the tasks.
-            thread_client.weighted_tasks[weighted_bucket].shuffle(&mut thread_rng());
+            thread_user.weighted_tasks[weighted_bucket].shuffle(&mut thread_rng());
             debug!(
                 "re-shuffled {} tasks: {:?}",
-                &thread_task_set.name, thread_client.weighted_tasks[weighted_bucket]
+                &thread_task_set.name, thread_user.weighted_tasks[weighted_bucket]
             );
         }
 
         // Determine which task we're going to run next.
         let thread_weighted_task =
-            thread_client.weighted_tasks[weighted_bucket][weighted_bucket_position];
+            thread_user.weighted_tasks[weighted_bucket][weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
         let function = &thread_task_set.tasks[thread_weighted_task].function;
         debug!(
@@ -97,14 +95,14 @@ pub async fn client_main(
         );
         // If task name is set, it will be used for storing request statistics instead of the raw url.
         if thread_task_name != "" {
-            thread_client.task_request_name = Some(thread_task_name.to_string());
+            thread_user.task_request_name = Some(thread_task_name.to_string());
         }
         // Invoke the task function.
-        function(&thread_client).await;
+        function(&thread_user).await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
-        let wait_time = if thread_client.max_wait > 0 {
-            rand::thread_rng().gen_range(thread_client.min_wait, thread_client.max_wait)
+        let wait_time = if thread_user.max_wait > 0 {
+            rand::thread_rng().gen_range(thread_user.min_wait, thread_user.max_wait)
         } else {
             0
         };
@@ -118,20 +116,20 @@ pub async fn client_main(
             while message.is_ok() {
                 match message.unwrap() {
                     // Time to exit.
-                    GooseClientCommand::EXIT => {
+                    GooseUserCommand::EXIT => {
                         // No need to reset per-thread counters, we're exiting and memory will be freed
                         thread_continue = false;
                     }
                     command => {
-                        debug!("ignoring unexpected GooseClientCommand: {:?}", command);
+                        debug!("ignoring unexpected GooseUserCommand: {:?}", command);
                     }
                 }
                 message = thread_receiver.try_recv();
             }
-            if thread_continue && thread_client.max_wait > 0 {
+            if thread_continue && thread_user.max_wait > 0 {
                 let sleep_duration = time::Duration::from_secs(1);
                 debug!(
-                    "client {} from {} sleeping {:?} second...",
+                    "user {} from {} sleeping {:?} second...",
                     thread_number, thread_task_set.name, sleep_duration
                 );
                 tokio::time::delay_for(sleep_duration).await;
@@ -144,16 +142,16 @@ pub async fn client_main(
             }
         }
 
-        // Move to the next task in thread_client.weighted_tasks.
+        // Move to the next task in thread_user.weighted_tasks.
         weighted_bucket_position += 1;
-        thread_client
+        thread_user
             .weighted_bucket_position
             .store(weighted_bucket_position, Ordering::SeqCst);
     }
 
-    // Client is exiting, first invoke the weighted on_stop tasks.
-    if !thread_client.weighted_on_stop_tasks.is_empty() {
-        for mut sequence in thread_client.weighted_on_stop_tasks.clone() {
+    // User is exiting, first invoke the weighted on_stop tasks.
+    if !thread_user.weighted_on_stop_tasks.is_empty() {
+        for mut sequence in thread_user.weighted_on_stop_tasks.clone() {
             if sequence.len() > 1 {
                 sequence.shuffle(&mut thread_rng());
             }
@@ -166,10 +164,10 @@ pub async fn client_main(
                     thread_task_name, thread_task_set.name
                 );
                 if thread_task_name != "" {
-                    thread_client.task_request_name = Some(thread_task_name.to_string());
+                    thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&thread_client).await;
+                function(&thread_user).await;
             }
         }
     }
@@ -177,14 +175,14 @@ pub async fn client_main(
     // Optional debug output when exiting.
     if worker {
         info!(
-            "[{}] exiting client {} from {}...",
+            "[{}] exiting user {} from {}...",
             get_worker_id(),
             thread_number,
             thread_task_set.name
         );
     } else {
         info!(
-            "exiting client {} from {}...",
+            "exiting user {} from {}...",
             thread_number, thread_task_set.name
         );
     }

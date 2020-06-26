@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 use std::{thread, time};
 use url::Url;
 
-use crate::goose::{GooseClient, GooseClientCommand, GooseMethod, GooseRequest};
-use crate::manager::GooseClientInitializer;
+use crate::goose::{GooseMethod, GooseRequest, GooseUser, GooseUserCommand};
+use crate::manager::GooseUserInitializer;
 use crate::util;
 use crate::{get_worker_id, GooseAttack, GooseConfiguration, WORKER_ID};
 
@@ -90,9 +90,9 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 
     let mut hatch_rate: Option<f32> = None;
     let mut config: GooseConfiguration = GooseConfiguration::default();
-    let mut weighted_clients: Vec<GooseClient> = Vec::new();
+    let mut weighted_users: Vec<GooseUser> = Vec::new();
 
-    // Wait for the manager to send client parameters.
+    // Wait for the manager to send user parameters.
     loop {
         info!("waiting for instructions from manager");
         let msg = match manager.recv() {
@@ -102,39 +102,38 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                 std::process::exit(1);
             }
         };
-        let initializers: Vec<GooseClientInitializer> =
-            match serde_cbor::from_reader(msg.as_slice()) {
-                Ok(i) => i,
-                Err(_) => {
-                    let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice())
-                    {
-                        Ok(c) => c,
-                        Err(e) => {
-                            error!("invalid message received: {}", e);
-                            continue;
-                        }
-                    };
-                    match command {
-                        GooseClientCommand::EXIT => {
-                            warn!("received EXIT command from manager");
-                            std::process::exit(0);
-                        }
-                        other => {
-                            info!("received unknown command from manager: {:?}", other);
-                        }
+        let initializers: Vec<GooseUserInitializer> = match serde_cbor::from_reader(msg.as_slice())
+        {
+            Ok(i) => i,
+            Err(_) => {
+                let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("invalid message received: {}", e);
+                        continue;
                     }
-                    continue;
+                };
+                match command {
+                    GooseUserCommand::EXIT => {
+                        warn!("received EXIT command from manager");
+                        std::process::exit(0);
+                    }
+                    other => {
+                        info!("received unknown command from manager: {:?}", other);
+                    }
                 }
-            };
+                continue;
+            }
+        };
 
         let mut worker_id: usize = 0;
-        // Allocate a state for each client that will be spawned.
-        info!("initializing client states...");
+        // Allocate a state for each user that will be spawned.
+        info!("initializing user states...");
         for initializer in initializers {
             if worker_id == 0 {
                 worker_id = initializer.worker_id;
             }
-            let client = GooseClient::new(
+            let user = GooseUser::new(
                 initializer.task_sets_index,
                 Url::parse(&initializer.base_url).unwrap(),
                 initializer.min_wait,
@@ -142,7 +141,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                 &initializer.config,
                 goose_attack.task_sets_hash,
             );
-            weighted_clients.push(client);
+            weighted_users.push(user);
             if hatch_rate == None {
                 hatch_rate = Some(
                     1.0 / (initializer.config.hatch_rate as f32
@@ -150,7 +149,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                 );
                 config = initializer.config;
                 info!(
-                    "[{}] prepared to start 1 client every {:.2} seconds",
+                    "[{}] prepared to start 1 user every {:.2} seconds",
                     worker_id,
                     hatch_rate.unwrap()
                 );
@@ -158,9 +157,9 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         }
         WORKER_ID.store(worker_id, Ordering::Relaxed);
         info!(
-            "[{}] initialized {} client states",
+            "[{}] initialized {} user states",
             get_worker_id(),
-            weighted_clients.len()
+            weighted_users.len()
         );
         break;
     }
@@ -182,7 +181,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                 std::process::exit(1);
             }
         };
-        let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice()) {
+        let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
             Ok(c) => c,
             Err(e) => {
                 error!("[{}] invalid message received: {}", get_worker_id(), e);
@@ -192,9 +191,9 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 
         match command {
             // Break out of loop and start the load test.
-            GooseClientCommand::RUN => break,
+            GooseUserCommand::RUN => break,
             // Exit worker process immediately.
-            GooseClientCommand::EXIT => {
+            GooseUserCommand::EXIT => {
                 warn!("[{}] received EXIT command from manager", get_worker_id());
                 std::process::exit(0);
             }
@@ -231,10 +230,10 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     } else {
         worker_goose_attack.run_time = 0;
     }
-    worker_goose_attack.weighted_clients = weighted_clients;
+    worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
     worker_goose_attack
-        .launch_clients(started, sleep_duration, Some(manager))
+        .launch_users(started, sleep_duration, Some(manager))
         .await
 }
 
@@ -281,7 +280,7 @@ pub fn push_stats_to_manager(
                 std::process::exit(1);
             }
         };
-        let command: GooseClientCommand = match serde_cbor::from_reader(msg.as_slice()) {
+        let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
             Ok(c) => c,
             Err(e) => {
                 error!("[{}] invalid message received: {}", get_worker_id(), e);
@@ -290,7 +289,7 @@ pub fn push_stats_to_manager(
         };
 
         match command {
-            GooseClientCommand::EXIT => {
+            GooseUserCommand::EXIT => {
                 info!("[{}] received EXIT command from manager", get_worker_id());
                 // Shutting down, register shutdown pipe handler.
                 match manager.pipe_notify(pipe_closed_during_shutdown) {
