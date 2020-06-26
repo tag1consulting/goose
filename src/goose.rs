@@ -256,6 +256,7 @@ use http::method::Method;
 use http::StatusCode;
 use reqwest::{Client, ClientBuilder, Error, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicUsize;
@@ -439,7 +440,7 @@ pub enum GooseUserCommand {
 }
 
 /// Supported HTTP methods.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
 pub enum GooseMethod {
     DELETE,
     GET,
@@ -523,7 +524,7 @@ impl GooseRawRequest {
     }
 }
 /// Statistics collected about a path-method pair, (for example `/index`-`GET`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequest {
     /// The path for which statistics are being collected.
     pub path: String,
@@ -645,6 +646,16 @@ impl GooseRequest {
         };
         self.status_code_counts.insert(status_code_u16, counter);
         debug!("incremented {} counter: {}", status_code_u16, counter);
+    }
+}
+impl Ord for GooseRequest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (&self.method, &self.path).cmp(&(&other.method, &other.path))
+    }
+}
+impl PartialOrd for GooseRequest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
