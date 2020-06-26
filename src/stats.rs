@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
@@ -85,7 +86,7 @@ pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapse
     println!(" ----------------------------------------------------------------------------- ");
     let mut aggregate_fail_count = 0;
     let mut aggregate_total_count = 0;
-    for (request_key, request) in requests {
+    for (request_key, request) in requests.iter().sorted() {
         let total_count = request.success_count + request.fail_count;
         let fail_percent = if request.fail_count > 0 {
             request.fail_count as f32 / total_count as f32 * 100.0
@@ -174,7 +175,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
         "Name", "Avg (ms)", "Min", "Max", "Median"
     );
     println!(" ----------------------------------------------------------------------------- ");
-    for (request_key, request) in requests.clone() {
+    for (request_key, request) in requests.iter().sorted() {
         // Iterate over user response times, and merge into global response times.
         aggregate_response_times =
             merge_response_times(aggregate_response_times, request.response_times.clone());
@@ -236,7 +237,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
             "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%"
         );
         println!(" ----------------------------------------------------------------------------- ");
-        for (request_key, request) in requests {
+        for (request_key, request) in requests.iter().sorted() {
             // Sort response times so we can calculate a mean.
             println!(
                 " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
@@ -345,7 +346,7 @@ fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
     println!(" {:<23} | {:<25} ", "Name", "Status codes");
     println!(" ----------------------------------------------------------------------------- ");
     let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
-    for (request_key, request) in requests {
+    for (request_key, request) in requests.iter().sorted() {
         let mut codes: String = "".to_string();
         for (status_code, count) in &request.status_code_counts {
             if codes.is_empty() {
