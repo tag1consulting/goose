@@ -65,7 +65,7 @@ use goose::prelude::*;
 
 Then create a new load testing function. For our example we're simply going
 to load the front page of the website we're load-testing. Goose passes all
-load testing functions a mutable pointer to a GooseClient object, which is used
+load testing functions a mutable pointer to a GooseUser object, which is used
 to track statistics and make web requests. Thanks to the Reqwest library, the
 Goose client manages things like cookies, headers, and sessions for you. Load
 testing functions must be declared async.
@@ -75,8 +75,8 @@ the host at run time, so you can easily run your load test against different
 environments without recompiling:
 
 ```rust
-async fn loadtest_index(client: &GooseClient) {
-    let _response = client.get("/").await;
+async fn loadtest_index(user: &GooseUser) {
+    let _response = user.get("/").await;
 }
 ```
 
@@ -165,11 +165,11 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 `cargo run --example simple -- -h`:
 
 ```
-client 0.8.0
+Goose 0.8.0
 CLI options available when launching a Goose load test
 
 USAGE:
-8   simple [FLAGS] [OPTIONS]
+    simple [FLAGS] [OPTIONS]
 
 FLAGS:
     -h, --help             Prints help information
@@ -181,13 +181,12 @@ FLAGS:
         --only-summary     Only prints summary stats
         --reset-stats      Resets statistics once hatching has been completed
         --status-codes     Includes status code counts in console stats
-        --sticky-follow    Client follows redirect of base_url with subsequent requests
+        --sticky-follow    User follows redirect of base_url with subsequent requests
     -V, --version          Prints version information
     -v, --verbose          Debug level (-v, -vv, -vvv, etc.)
         --worker           Enables worker mode
 
 OPTIONS:
-    -c, --clients <clients>                        Number of concurrent Goose users (defaults to available CPUs)
         --expect-workers <expect-workers>
             Required when in manager mode, how many workers to expect [default: 0]
 
@@ -200,11 +199,13 @@ OPTIONS:
         --manager-port <manager-port>              Port manager is listening on [default: 5115]
     -t, --run-time <run-time>
             Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.) [default: ]
+
+    -u, --users <users>                            Number of concurrent Goose users (defaults to available CPUs)
 ```
 
-The `examples/simple.rs` example copies the simple load test documented on the locust.io web page, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the client log in and then load a couple of pages.
+The `examples/simple.rs` example copies the simple load test documented on the locust.io web page, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the user log in and then load a couple of pages.
 
-Goose can make use of all available CPU cores. By default, it will launch 1 client per core, and it can be configured to launch many more. The following was configured instead to launch 1,024 clients. Each client randomly pauses 5 to 15 seconds after each task is loaded, so it's possible to spin up a large number of clients. Here is a snapshot of `top` when running this example on an 8-core VM with 10G of available RAM -- there were ample resources to launch considerably more "clients", though `ulimit` had to be resized:
+Goose can make use of all available CPU cores. By default, it will launch 1 user per core, and it can be configured to launch many more. The following was configured instead to launch 1,024 users. Each user randomly pauses 5 to 15 seconds after each task is loaded, so it's possible to spin up a large number of users. Here is a snapshot of `top` when running this example on an 8-core VM with 10G of available RAM -- there were ample resources to launch considerably more "users", though `ulimit` had to be resized:
 
 ```
 top - 11:14:57 up 16 days,  4:40,  2 users,  load average: 0.00, 0.04, 0.01
@@ -217,7 +218,7 @@ MiB Swap:  10237.0 total,  10234.7 free,      2.3 used.   8401.5 avail Mem
 19776 goose     20   0    9.8g 874688   8252 S   6.3   8.5   0:42.90 simple                                                    
 ```
 
-Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-c1024` tells Goose to spin up 1,024 clients. The `-r32` option tells Goose to spin up 32 clients per second. The `-t 10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--print-stats` flag tells Goose to collect statistics during the load test, and the `--status-codes` flag tells it to include statistics about HTTP Status codes returned by the server. Finally, the `--only-summary` flag tells Goose to only display the statistics when the load test finishes, otherwise it would display running statistics every 15 seconds for the duration of the test.
+Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to spin up 32 users per second. The `-t 10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--print-stats` flag tells Goose to collect statistics during the load test, and the `--status-codes` flag tells it to include statistics about HTTP Status codes returned by the server. Finally, the `--only-summary` flag tells Goose to only display the statistics when the load test finishes, otherwise it would display running statistics every 15 seconds for the duration of the test.
 
 ```
 $ cargo run --release --example simple -- --host http://apache.fosciana -v -c1024 -r32 -t 10m --print-stats --status-codes --only-summary
@@ -228,24 +229,24 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -c102
 18:42:48 [ INFO] Writing to log file: goose.log
 18:42:48 [ INFO] run_time = 600
 18:42:48 [ INFO] global host configured: http://apache.fosciana
-18:42:53 [ INFO] launching client 1 from WebsiteUser...
-18:42:53 [ INFO] launching client 2 from WebsiteUser...
-18:42:53 [ INFO] launching client 3 from WebsiteUser...
-18:42:53 [ INFO] launching client 4 from WebsiteUser...
-18:42:53 [ INFO] launching client 5 from WebsiteUser...
-18:42:53 [ INFO] launching client 6 from WebsiteUser...
-18:42:53 [ INFO] launching client 7 from WebsiteUser...
-18:42:53 [ INFO] launching client 8 from WebsiteUser...
+18:42:53 [ INFO] launching user 1 from WebsiteUser...
+18:42:53 [ INFO] launching user 2 from WebsiteUser...
+18:42:53 [ INFO] launching user 3 from WebsiteUser...
+18:42:53 [ INFO] launching user 4 from WebsiteUser...
+18:42:53 [ INFO] launching user 5 from WebsiteUser...
+18:42:53 [ INFO] launching user 6 from WebsiteUser...
+18:42:53 [ INFO] launching user 7 from WebsiteUser...
+18:42:53 [ INFO] launching user 8 from WebsiteUser...
 
 ```
 ...
 ```
-18:43:25 [ INFO] launching client 1022 from WebsiteUser...
-18:43:25 [ INFO] launching client 1023 from WebsiteUser...
-18:43:25 [ INFO] launching client 1024 from WebsiteUser...
-18:43:25 [ INFO] launched 1024 clients...
+18:43:25 [ INFO] launching user 1022 from WebsiteUser...
+18:43:25 [ INFO] launching user 1023 from WebsiteUser...
+18:43:25 [ INFO] launching user 1024 from WebsiteUser...
+18:43:25 [ INFO] launched 1024 users...
 18:53:26 [ INFO] stopping after 600 seconds...
-18:53:26 [ INFO] waiting for clients to exit
+18:53:26 [ INFO] waiting for users to exit
 ------------------------------------------------------------------------------ 
  Name                    | # reqs         | # fails        | req/s  | fail/s
  ----------------------------------------------------------------------------- 
@@ -362,7 +363,7 @@ The `--no-stats`, `--only-summary`, `--reset-stats`, `--status-codes`, and `--no
 * `--manager-host <manager-host>`: configures the host that the worker will talk to the manager on. By default, a Goose worker will connect to the localhost, or `127.0.0.1`. In a distributed load test, this must be set to the IP of the Goose manager.
 * `--manager-port <manager-port>`: configures the port that a worker will talk to the manager on. By default, a Goose worker will connect to port `5115`.
 
-The `--clients`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the manager. Workers inheret these options from the manager.
+The `--users`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the manager. Workers inheret these options from the manager.
 
 ### Technical Details
 

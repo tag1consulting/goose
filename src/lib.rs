@@ -1232,7 +1232,7 @@ impl GooseAttack {
 
 /// CLI options available when launching a Goose load test.
 #[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
-#[structopt(name = "client")]
+#[structopt(name = "Goose")]
 pub struct GooseConfiguration {
     /// Host to load test, for example: http://10.21.32.33
     #[structopt(short = "H", long, required = false, default_value = "")]
