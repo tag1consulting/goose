@@ -134,14 +134,15 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
             if worker_id == 0 {
                 worker_id = initializer.worker_id;
             }
-            weighted_clients.push(GooseClient::new(
+            let client = GooseClient::new(
                 initializer.task_sets_index,
                 Url::parse(&initializer.base_url).unwrap(),
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
                 goose_attack.task_sets_hash,
-            ));
+            );
+            weighted_clients.push(client);
             if hatch_rate == None {
                 hatch_rate = Some(
                     1.0 / (initializer.config.hatch_rate as f32

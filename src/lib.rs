@@ -304,7 +304,6 @@ mod worker;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
@@ -319,7 +318,7 @@ use std::sync::{
 };
 use std::time;
 use structopt::StructOpt;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
@@ -331,55 +330,6 @@ const RUNNING_STATS_EVERY: usize = 15;
 
 /// Constant defining Goose's default port when running a Gaggle.
 const DEFAULT_PORT: &str = "5115";
-
-static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-
-// Share CLIENT object globally.
-lazy_static! {
-    static ref CLIENT: RwLock<Vec<GooseClientState>> = RwLock::new(Vec::new());
-}
-
-struct GooseClientState {
-    /// A Reqwest client, wrapped in a Mutex as a read-write copy is always needed to
-    /// manage things like sessions and cookies.
-    client: Mutex<Client>,
-    /// Integer value indicating which sequenced bucket the client is currently running
-    /// tasks from.
-    weighted_bucket: AtomicUsize,
-    /// Integer value indicating which task within the current sequenced bucket is currently
-    /// running.
-    weighted_bucket_position: AtomicUsize,
-}
-impl GooseClientState {
-    // Initialize one client per thread.
-    async fn initialize(clients: usize) {
-        // Grab a write lock to initialize state for each client.
-        let mut goose_client_state = CLIENT.write().await;
-        // State can be reinitialized for `test_start` or `test_stop`.
-        if !goose_client_state.is_empty() {
-            goose_client_state.clear();
-        }
-        for _ in 0..clients {
-            // Build a new client, setting the USER_AGENT and enabling cookie storage.
-            let builder = Client::builder()
-                .user_agent(APP_USER_AGENT)
-                .cookie_store(true);
-            let client = match builder.build() {
-                Ok(c) => Mutex::new(c),
-                Err(e) => {
-                    error!("failed to build client: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            // Push the new client into the global client vector.
-            goose_client_state.push(GooseClientState {
-                client,
-                weighted_bucket: AtomicUsize::new(0),
-                weighted_bucket_position: AtomicUsize::new(0),
-            });
-        }
-    }
-}
 
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
@@ -727,13 +677,14 @@ impl GooseAttack {
         let config = self.configuration.clone();
         loop {
             for task_sets_index in &weighted_task_sets {
+                let base_url = goose::get_base_url(
+                    Some(config.host.to_string()),
+                    self.task_sets[*task_sets_index].host.clone(),
+                    self.host.clone(),
+                );
                 weighted_clients.push(GooseClient::new(
                     self.task_sets[*task_sets_index].task_sets_index,
-                    goose::get_base_url(
-                        Some(config.host.to_string()),
-                        self.task_sets[*task_sets_index].host.clone(),
-                        self.host.clone(),
-                    ),
+                    base_url,
                     self.task_sets[*task_sets_index].min_wait,
                     self.task_sets[*task_sets_index].max_wait,
                     &config,
@@ -1010,14 +961,10 @@ impl GooseAttack {
             match &self.test_start_task {
                 Some(t) => {
                     info!("running test_start_task");
-                    // Setup temporary state for our single client.
-                    GooseClientState::initialize(1).await;
                     // Create a one-time-use Client to run the test_start_task.
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
-                    let mut client = GooseClient::new(0, base_url, 0, 0, &self.configuration, 0);
-                    //goose::get_base_url(config.host, self.task_sets[*task_sets_index].host.clone(), self.host),
-                    client.weighted_clients_index = 0;
+                    let client = GooseClient::single(base_url, &self.configuration);
                     let function = t.function;
                     function(&client).await;
                 }
@@ -1025,9 +972,6 @@ impl GooseAttack {
                 None => (),
             }
         }
-
-        // Initial globa client state.
-        GooseClientState::initialize(self.weighted_clients.len()).await;
 
         // Collect client threads in a vector for when we want to stop them later.
         let mut clients = vec![];
@@ -1270,13 +1214,10 @@ impl GooseAttack {
             match &self.test_stop_task {
                 Some(t) => {
                     info!("running test_stop_task");
-                    // Setup temporary state for our single client.
-                    GooseClientState::initialize(1).await;
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
                     // Create a one-time-use Client to run the test_stop_task.
-                    let mut client = GooseClient::new(0, base_url, 0, 0, &self.configuration, 0);
-                    client.weighted_clients_index = 0;
+                    let client = GooseClient::single(base_url, &self.configuration);
                     let function = t.function;
                     function(&client).await;
                 }

@@ -254,16 +254,19 @@
 
 use http::method::Method;
 use http::StatusCode;
-use reqwest::{ClientBuilder, Error, RequestBuilder, Response};
+use reqwest::{Client, ClientBuilder, Error, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
-use crate::{GooseConfiguration, CLIENT};
+use crate::GooseConfiguration;
+
+static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 /// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
@@ -662,6 +665,12 @@ impl GooseResponse {
 pub struct GooseClient {
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
+    /// Client used to make requests, managing sessions and cookies.
+    pub client: Arc<Mutex<Client>>,
+    /// Integer value tracking the sequenced bucket client is running tasks from.
+    pub weighted_bucket: Arc<AtomicUsize>,
+    /// Integer value tracking the current task client is running.
+    pub weighted_bucket_position: Arc<AtomicUsize>,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
     /// Minimum amount of time to sleep after running a task.
@@ -698,22 +707,44 @@ impl GooseClient {
         load_test_hash: u64,
     ) -> Self {
         trace!("new client");
-        GooseClient {
-            task_sets_index,
-            base_url: Arc::new(RwLock::new(base_url)),
-            min_wait,
-            max_wait,
-            config: configuration.clone(),
-            parent: None,
-            // A value of max_value() indicates this client isn't fully initialized yet.
-            weighted_clients_index: usize::max_value(),
-            weighted_on_start_tasks: Vec::new(),
-            weighted_tasks: Vec::new(),
-            weighted_on_stop_tasks: Vec::new(),
-            task_request_name: None,
-            request_name: None,
-            load_test_hash,
+        match Client::builder()
+            .user_agent(APP_USER_AGENT)
+            .cookie_store(true)
+            .build()
+        {
+            Ok(c) => {
+                GooseClient {
+                    task_sets_index,
+                    client: Arc::new(Mutex::new(c)),
+                    weighted_bucket: Arc::new(AtomicUsize::new(0)),
+                    weighted_bucket_position: Arc::new(AtomicUsize::new(0)),
+                    base_url: Arc::new(RwLock::new(base_url)),
+                    min_wait,
+                    max_wait,
+                    config: configuration.clone(),
+                    parent: None,
+                    // A value of max_value() indicates this client isn't fully initialized yet.
+                    weighted_clients_index: usize::max_value(),
+                    weighted_on_start_tasks: Vec::new(),
+                    weighted_tasks: Vec::new(),
+                    weighted_on_stop_tasks: Vec::new(),
+                    task_request_name: None,
+                    request_name: None,
+                    load_test_hash,
+                }
+            }
+            Err(e) => {
+                error!("failed to create client: {}", e);
+                std::process::exit(1);
+            }
         }
+    }
+
+    /// Create a new single-use client.
+    pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Self {
+        let mut single_client = GooseClient::new(0, base_url, 0, 0, configuration, 0);
+        single_client.weighted_clients_index = 0;
+        single_client
     }
 
     /// A helper that prepends a base_url to all relative paths.
@@ -981,11 +1012,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_get(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path).await;
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .get(&url)
+        self.client.lock().await.get(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1009,11 +1036,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_post(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path).await;
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .post(&url)
+        self.client.lock().await.post(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1037,11 +1060,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_head(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path).await;
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .head(&url)
+        self.client.lock().await.head(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1065,11 +1084,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_put(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path).await;
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .put(&url)
+        self.client.lock().await.put(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1093,11 +1108,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_patch(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path).await;
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .patch(&url)
+        self.client.lock().await.patch(&url)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1121,11 +1132,7 @@ impl GooseClient {
     /// ```
     pub async fn goose_delete(&self, path: &str) -> RequestBuilder {
         let url = self.build_url(path).await;
-        CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .delete(&url)
+        self.client.lock().await.delete(&url)
     }
 
     /// Builds the provided
@@ -1183,13 +1190,8 @@ impl GooseClient {
             GooseRawRequest::new(method, &request_name, &request.url().to_string());
 
         // Make the actual request.
-        let response = CLIENT.read().await[self.weighted_clients_index]
-            .client
-            .lock()
-            .await
-            .execute(request)
-            .await;
-        let elapsed = started.elapsed();
+        let response = self.client.lock().await.execute(request).await;
+        raw_request.set_response_time(started.elapsed().as_millis());
 
         match &response {
             Ok(r) => {
@@ -1235,7 +1237,6 @@ impl GooseClient {
 
         // Send raw request object to parent if we're tracking statistics.
         if !self.config.no_stats {
-            raw_request.set_response_time(elapsed.as_millis());
             self.send_to_parent(&raw_request);
         }
 
@@ -1421,14 +1422,13 @@ impl GooseClient {
     /// }
     /// ```
     pub async fn set_client_builder(&self, builder: ClientBuilder) {
-        let client = match builder.build() {
-            Ok(c) => Mutex::new(c),
+        match builder.build() {
+            Ok(c) => *self.client.lock().await = c,
             Err(e) => {
                 error!("failed to build client: {}", e);
                 std::process::exit(1);
             }
         };
-        CLIENT.write().await[self.weighted_clients_index].client = client;
     }
 
     /// Some websites use multiple domains to serve traffic, redirecting depending on
@@ -1745,12 +1745,9 @@ mod tests {
 
     async fn setup_client() -> GooseClient {
         // Set up global client state.
-        crate::GooseClientState::initialize(1).await;
         let configuration = GooseConfiguration::default();
         let base_url = get_base_url(Some("http://127.0.0.1:5000".to_string()), None, None);
-        let mut client = GooseClient::new(0, base_url, 0, 0, &configuration, 0);
-        client.weighted_clients_index = 0;
-        client
+        GooseClient::single(base_url, &configuration)
     }
 
     #[test]
