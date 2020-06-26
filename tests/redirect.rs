@@ -13,30 +13,30 @@ const REDIRECT3_PATH: &str = "/redirect3";
 const ABOUT_PATH: &str = "/about.php";
 
 // Task function, load INDEX_PATH.
-pub async fn get_index(client: &GooseClient) -> () {
-    let _response = client.get(INDEX_PATH).await;
+pub async fn get_index(user: &GooseUser) -> () {
+    let _response = user.get(INDEX_PATH).await;
 }
 
 // Task function, load ABOUT PATH
-pub async fn get_about(client: &GooseClient) -> () {
-    let _response = client.get(ABOUT_PATH).await;
+pub async fn get_about(user: &GooseUser) -> () {
+    let _response = user.get(ABOUT_PATH).await;
 }
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
-pub async fn get_redirect(client: &GooseClient) -> () {
-    let mut response = client.get(REDIRECT_PATH).await;
+pub async fn get_redirect(user: &GooseUser) -> () {
+    let mut response = user.get(REDIRECT_PATH).await;
     match response.response {
         Ok(r) => match r.text().await {
             Ok(html) => {
                 // Confirm that we followed redirects and loaded the about page.
                 if !html.contains("about page") {
                     eprintln!("about page body wrong");
-                    client.set_failure(&mut response.request);
+                    user.set_failure(&mut response.request);
                 }
             }
             Err(e) => {
                 eprintln!("unexpected error parsing about page: {}", e);
-                client.set_failure(&mut response.request);
+                user.set_failure(&mut response.request);
             }
         },
         // Goose will catch this error.
@@ -45,8 +45,8 @@ pub async fn get_redirect(client: &GooseClient) -> () {
 }
 
 // Task function, load REDRECT_PATH and follow redirect to new domain.
-pub async fn get_domain_redirect(client: &GooseClient) -> () {
-    let _response = client.get(REDIRECT_PATH).await;
+pub async fn get_domain_redirect(user: &GooseUser) -> () {
+    let _response = user.get(REDIRECT_PATH).await;
 }
 
 #[test]

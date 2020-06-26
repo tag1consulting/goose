@@ -2,9 +2,9 @@
 //!
 //! Goose manages load tests with a series of objects:
 //!
-//! - [`GooseTaskSet`](./struct.GooseTaskSet.html) each client is assigned a task set, which is a collection of tasks.
+//! - [`GooseTaskSet`](./struct.GooseTaskSet.html) each user is assigned a task set, which is a collection of tasks.
 //! - [`GooseTask`](./struct.GooseTask.html) tasks define one or more web requests and are assigned to task sets.
-//! - [`GooseClient`](./struct.GooseClient.html) a client state responsible for repeatedly running all tasks in the assigned task set.
+//! - [`GooseUser`](./struct.GooseUser.html) a user state responsible for repeatedly running all tasks in the assigned task set.
 //! - [`GooseRequest`](./struct.GooseRequest.html) optional statistics collected for each URL/method pair.
 //!
 //! ## Creating Task Sets
@@ -19,9 +19,9 @@
 //!
 //! ### Task Set Weight
 //!
-//! A weight can be assigned to a task set, controlling how often it is assigned to client
-//! threads. The larger the value of weight, the more it will be assigned to clients. In the
-//! following example, `FooTasks` will be assigned to clients twice as often as `Bar` tasks.
+//! A weight can be assigned to a task set, controlling how often it is assigned to user
+//! threads. The larger the value of weight, the more it will be assigned to users. In the
+//! following example, `FooTasks` will be assigned to users twice as often as `Bar` tasks.
 //! We could have just added a weight of `2` to `FooTasks` and left the default weight of `1`
 //! assigned to `BarTasks` for the same weighting:
 //!
@@ -50,9 +50,9 @@
 //! ### Task Set Wait Time
 //!
 //! Wait time is specified as a low-high integer range. Each time a task completes in
-//! the task set, the client will pause for a random number of seconds inclusively between
-//! the low and high wait times. In the following example, Clients loading `foo` tasks will
-//! sleep 0 to 3 seconds after each task completes, and Clients loading `bar` tasks will
+//! the task set, the user will pause for a random number of seconds inclusively between
+//! the low and high wait times. In the following example, users loading `foo` tasks will
+//! sleep 0 to 3 seconds after each task completes, and users loading `bar` tasks will
 //! sleep 5 to 10 seconds after each task completes.
 //!
 //! ```rust
@@ -72,8 +72,8 @@
 //!     let mut a_task = task!(task_function);
 //!
 //!     /// A very simple task that simply loads the front page.
-//!     async fn task_function(client: &GooseClient) {
-//!       let _response = client.get("/");
+//!     async fn task_function(user: &GooseUser) {
+//!       let _response = user.get("/");
 //!     }
 //! ```
 //!
@@ -88,8 +88,8 @@
 //!     let mut a_task = task!(task_function).set_name("a");
 //!
 //!     /// A very simple task that simply loads the front page.
-//!     async fn task_function(client: &GooseClient) {
-//!       let _response = client.get("/");
+//!     async fn task_function(user: &GooseUser) {
+//!       let _response = user.get("/");
 //!     }
 //! ```
 //!
@@ -106,13 +106,13 @@
 //!     let mut b_task = task!(b_task_function).set_weight(3);
 //!
 //!     /// A very simple task that simply loads the "a" page.
-//!     async fn a_task_function(client: &GooseClient) {
-//!       let _response = client.get("/a/");
+//!     async fn a_task_function(user: &GooseUser) {
+//!       let _response = user.get("/a/");
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "b" page.
-//!     async fn b_task_function(client: &GooseClient) {
-//!       let _response = client.get("/b/");
+//!     async fn b_task_function(user: &GooseUser) {
+//!       let _response = user.get("/b/");
 //!     }
 //! ```
 //!
@@ -134,24 +134,24 @@
 //!     let mut c_task = task!(c_task_function);
 //!
 //!     /// A very simple task that simply loads the "a" page.
-//!     async fn a_task_function(client: &GooseClient) {
-//!       let _response = client.get("/a/");
+//!     async fn a_task_function(user: &GooseUser) {
+//!       let _response = user.get("/a/");
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "b" page.
-//!     async fn b_task_function(client: &GooseClient) {
-//!       let _response = client.get("/b/");
+//!     async fn b_task_function(user: &GooseUser) {
+//!       let _response = user.get("/b/");
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "c" page.
-//!     async fn c_task_function(client: &GooseClient) {
-//!       let _response = client.get("/c/");
+//!     async fn c_task_function(user: &GooseUser) {
+//!       let _response = user.get("/c/");
 //!     }
 //! ```
 //!
 //! ### Task On Start
 //!
-//! Tasks can be flagged to only run when a client first starts. This can be useful if you'd
+//! Tasks can be flagged to only run when a user first starts. This can be useful if you'd
 //! like your load test to use a logged-in user. It is possible to assign sequences and weights
 //! to `on_start` functions if you want to have multiple tasks run in a specific order at start
 //! time, and/or the tasks to run multiple times. A task can be flagged to run both on start
@@ -163,14 +163,14 @@
 //!     let mut a_task = task!(a_task_function).set_sequence(1).set_on_start();
 //!
 //!     /// A very simple task that simply loads the "a" page.
-//!     async fn a_task_function(client: &GooseClient) {
-//!       let _response = client.get("/a/");
+//!     async fn a_task_function(user: &GooseUser) {
+//!       let _response = user.get("/a/");
 //!     }
 //! ```
 //!
 //! ### Task On Stop
 //!
-//! Tasks can be flagged to only run when a client stops. This can be useful if you'd like your
+//! Tasks can be flagged to only run when a user stops. This can be useful if you'd like your
 //! load test to simluate a user logging out when it finishes. It is possible to assign sequences
 //! and weights to `on_stop` functions if you want to have multiple tasks run in a specific order
 //! at stop time, and/or the tasks to run multiple times. A task can be flagged to run both on
@@ -182,22 +182,22 @@
 //!     let mut b_task = task!(b_task_function).set_sequence(2).set_on_stop();
 //!
 //!     /// Another very simple task that simply loads the "b" page.
-//!     async fn b_task_function(client: &GooseClient) {
-//!       let _response = client.get("/b/");
+//!     async fn b_task_function(user: &GooseUser) {
+//!       let _response = user.get("/b/");
 //!     }
 //! ```
 //!
-//! ## Controlling Clients
+//! ## Controlling User
 //!
-//! When Goose starts, it creates one or more [`GooseClient`](./struct.GooseClient.html)s,
-//! assigning a single [`GooseTaskSet`](./struct.GooseTaskSet.html) to each. This client is
+//! When Goose starts, it creates one or more [`GooseUser`](./struct.GooseUser.html)s,
+//! assigning a single [`GooseTaskSet`](./struct.GooseTaskSet.html) to each. This user is
 //! then used to generate load. Behind the scenes, Goose is leveraging the
-//! [`reqwest::blocking::client`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Client.html)
+//! [`reqwest::client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html)
 //! to load web pages, and Goose can therefor do anything Reqwest can do.
 //!
-//! The most common request types are [`GET`](./struct.GooseClient.html#method.get) and
-//! [`POST`](./struct.GooseClient.html#method.post), but [`HEAD`](./struct.GooseClient.html#method.head),
-//! PUT, PATCH and [`DELETE`](./struct.GooseClient.html#method.delete) are also supported.
+//! The most common request types are [`GET`](./struct.GooseUser.html#method.get) and
+//! [`POST`](./struct.GooseUser.html#method.post), but [`HEAD`](./struct.GooseUser.html#method.head),
+//! PUT, PATCH and [`DELETE`](./struct.GooseUser.html#method.delete) are also supported.
 //!
 //! ### GET
 //!
@@ -210,8 +210,8 @@
 //!     let mut task = task!(get_function);
 //!
 //!     /// A very simple task that makes a GET request.
-//!     async  fn get_function(client: &GooseClient) {
-//!       let _response = client.get("/path/to/foo/");
+//!     async  fn get_function(user: &GooseUser) {
+//!       let _response = user.get("/path/to/foo/");
 //!     }
 //! ```
 //!
@@ -231,8 +231,8 @@
 //!     let mut task = task!(post_function);
 //!
 //!     /// A very simple task that makes a POST request.
-//!     async fn post_function(client: &GooseClient) {
-//!       let _response = client.post("/path/to/foo/", "string value to post");
+//!     async fn post_function(user: &GooseUser) {
+//!       let _response = user.post("/path/to/foo/", "string value to post");
 //!     }
 //! ```
 //!
@@ -291,19 +291,19 @@ pub struct GooseTaskSet {
     pub name: String,
     /// An integer reflecting where this task set lives in the internal `GooseTest.task_sets` vector.
     pub task_sets_index: usize,
-    /// An integer value that controls the frequency that this task set will be assigned to a client.
+    /// An integer value that controls the frequency that this task set will be assigned to a user.
     pub weight: usize,
-    /// An integer value indicating the minimum number of seconds a client will sleep after running a task.
+    /// An integer value indicating the minimum number of seconds a user will sleep after running a task.
     pub min_wait: usize,
-    /// An integer value indicating the maximum number of seconds a client will sleep after running a task.
+    /// An integer value indicating the maximum number of seconds a user will sleep after running a task.
     pub max_wait: usize,
-    /// A vector containing one copy of each GooseTask that will run by clients running this task set.
+    /// A vector containing one copy of each GooseTask that will run by users running this task set.
     pub tasks: Vec<GooseTask>,
     /// A vector of vectors of integers, controlling the sequence and order GooseTasks are run.
     pub weighted_tasks: Vec<Vec<usize>>,
-    /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when the client first starts.
+    /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when the user first starts.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
-    /// A vector of vectors of integers, controlling the sequence and order on_stop GooseTasks are run when a client stops.
+    /// A vector of vectors of integers, controlling the sequence and order on_stop GooseTasks are run when the user stops.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
     /// An optional default host to run this TaskSet against.
     pub host: Option<String>,
@@ -345,8 +345,8 @@ impl GooseTaskSet {
     ///     example_tasks.register_task(task!(a_task_function));
     ///
     ///     /// A very simple task that simply loads the "a" page.
-    ///     async fn a_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/a/");
+    ///     async fn a_task_function(user: &GooseUser) {
+    ///       let _response = user.get("/a/");
     ///     }
     /// ```
     pub fn register_task(mut self, mut task: GooseTask) -> Self {
@@ -357,8 +357,8 @@ impl GooseTaskSet {
     }
 
     /// Sets a weight on a task set. The larger the value of weight, the more often the task set will
-    /// be assigned to clients. For example, if you have task set foo with a weight of 3, and task set
-    /// bar with a weight of 1, and you spin up a load test with 8 clients, 6 of them will be running
+    /// be assigned to users. For example, if you have task set foo with a weight of 3, and task set
+    /// bar with a weight of 1, and you spin up a load test with 8 users, 6 of them will be running
     /// the foo task set, and 2 will be running the bar task set.
     ///
     /// # Example
@@ -398,7 +398,7 @@ impl GooseTaskSet {
 
     /// Configure a task_set to to pause after running each task. The length of the pause will be randomly
     /// selected from `min_weight` to `max_wait` inclusively.  For example, if `min_wait` is `0` and
-    /// `max_weight` is `2`, the client will randomly sleep for 0, 1 or 2 seconds after each task completes.
+    /// `max_weight` is `2`, the user will randomly sleep for 0, 1 or 2 seconds after each task completes.
     ///
     /// # Example
     /// ```rust
@@ -426,15 +426,15 @@ impl GooseTaskSet {
     }
 }
 
-/// Commands sent between the parent and client threads, and between manager and
+/// Commands sent between the parent and user threads, and between manager and
 /// worker processes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum GooseClientCommand {
+pub enum GooseUserCommand {
     /// Tell worker process to pause load test.
     WAIT,
     /// Tell worker process to start load test.
     RUN,
-    /// Tell client thread to exit.
+    /// Tell user thread to exit.
     EXIT,
 }
 
@@ -464,11 +464,11 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
     }
 }
 
-/// The request that Goose is making. Client threads send this data to the parent thread
+/// The request that Goose is making. User threads send this data to the parent thread
 /// when statistics are enabled. This request object must be provided to calls to
-/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseClient.html#method.set_success)
+/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
 /// or
-/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseClient.html#method.set_failure)
+/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
 /// so Goose knows which request is being updated.
 #[derive(Debug, Clone)]
 pub struct GooseRawRequest {
@@ -660,16 +660,16 @@ impl GooseResponse {
     }
 }
 
-/// An individual client state, repeatedly running all GooseTasks in a specific GooseTaskSet.
+/// An individual user state, repeatedly running all GooseTasks in a specific GooseTaskSet.
 #[derive(Debug, Clone)]
-pub struct GooseClient {
+pub struct GooseUser {
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Arc<Mutex<Client>>,
-    /// Integer value tracking the sequenced bucket client is running tasks from.
+    /// Integer value tracking the sequenced bucket user is running tasks from.
     pub weighted_bucket: Arc<AtomicUsize>,
-    /// Integer value tracking the current task client is running.
+    /// Integer value tracking the current task user is running.
     pub weighted_bucket_position: Arc<AtomicUsize>,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
@@ -681,13 +681,13 @@ pub struct GooseClient {
     pub config: GooseConfiguration,
     /// Channel
     pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
-    /// An index into the internal `GooseTest.weighted_clients, indicating which weighted GooseTaskSet is running.
-    pub weighted_clients_index: usize,
-    /// A weighted list of all tasks that run when the client first starts.
+    /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
+    pub weighted_users_index: usize,
+    /// A weighted list of all tasks that run when the user first starts.
     pub weighted_on_start_tasks: Vec<Vec<usize>>,
-    /// A weighted list of all tasks that this client runs once started.
+    /// A weighted list of all tasks that this user runs once started.
     pub weighted_tasks: Vec<Vec<usize>>,
-    /// A weighted list of all tasks that run when the client stops.
+    /// A weighted list of all tasks that run when the user stops.
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
     /// Optional name of all requests made within the current task.
     pub task_request_name: Option<String>,
@@ -696,8 +696,8 @@ pub struct GooseClient {
     /// Load test hash.
     pub load_test_hash: u64,
 }
-impl GooseClient {
-    /// Create a new client state.
+impl GooseUser {
+    /// Create a new user state.
     pub fn new(
         task_sets_index: usize,
         base_url: Url,
@@ -706,14 +706,14 @@ impl GooseClient {
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Self {
-        trace!("new client");
+        trace!("new user");
         match Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true)
             .build()
         {
             Ok(c) => {
-                GooseClient {
+                GooseUser {
                     task_sets_index,
                     client: Arc::new(Mutex::new(c)),
                     weighted_bucket: Arc::new(AtomicUsize::new(0)),
@@ -723,8 +723,8 @@ impl GooseClient {
                     max_wait,
                     config: configuration.clone(),
                     parent: None,
-                    // A value of max_value() indicates this client isn't fully initialized yet.
-                    weighted_clients_index: usize::max_value(),
+                    // A value of max_value() indicates this user isn't fully initialized yet.
+                    weighted_users_index: usize::max_value(),
                     weighted_on_start_tasks: Vec::new(),
                     weighted_tasks: Vec::new(),
                     weighted_on_stop_tasks: Vec::new(),
@@ -734,22 +734,22 @@ impl GooseClient {
                 }
             }
             Err(e) => {
-                error!("failed to create client: {}", e);
+                error!("failed to create web client: {}", e);
                 std::process::exit(1);
             }
         }
     }
 
-    /// Create a new single-use client.
+    /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Self {
-        let mut single_client = GooseClient::new(0, base_url, 0, 0, configuration, 0);
-        single_client.weighted_clients_index = 0;
-        single_client
+        let mut single_user = GooseUser::new(0, base_url, 0, 0, configuration, 0);
+        single_user.weighted_users_index = 0;
+        single_user
     }
 
     /// A helper that prepends a base_url to all relative paths.
     ///
-    /// A base_url is determined per Goose Client thread, using the following order
+    /// A base_url is determined per user thread, using the following order
     /// of precedence:
     ///  1. `--host` (host specified on the command line when running load test)
     ///  2. `GooseTaskSet.host` (default host defined for the current task set)
@@ -783,7 +783,7 @@ impl GooseClient {
     /// object, you can instead call `goose_get` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
-    /// Calls to `client.get` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.get` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -795,8 +795,8 @@ impl GooseClient {
     ///     let mut task = task!(get_function);
     ///
     ///     /// A very simple task that makes a GET request.
-    ///     async fn get_function(client: &GooseClient) {
-    ///       let _response = client.get("/path/to/foo/");
+    ///     async fn get_function(user: &GooseUser) {
+    ///       let _response = user.get("/path/to/foo/");
     ///     }
     /// ```
     pub async fn get(&self, path: &str) -> GooseResponse {
@@ -808,7 +808,7 @@ impl GooseClient {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// statistics.
     ///
-    /// Calls to `client.get_named` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.get_named` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -820,8 +820,8 @@ impl GooseClient {
     ///     let mut task = task!(get_function);
     ///
     ///     /// A very simple task that makes a GET request.
-    ///     async fn get_function(client: &GooseClient) {
-    ///       let _response = client.get_named("/path/to/foo/", "foo");
+    ///     async fn get_function(user: &GooseUser) {
+    ///       let _response = user.get_named("/path/to/foo/", "foo");
     ///     }
     /// ```
     pub async fn get_named(&self, path: &str, request_name: &str) -> GooseResponse {
@@ -837,7 +837,7 @@ impl GooseClient {
     /// object, you can instead call `goose_post` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
-    /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.post` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -849,8 +849,8 @@ impl GooseClient {
     ///     let mut task = task!(post_function);
     ///
     ///     /// A very simple task that makes a POST request.
-    ///     async fn post_function(client: &GooseClient) {
-    ///       let _response = client.post("/path/to/foo/", "BODY BEING POSTED");
+    ///     async fn post_function(user: &GooseUser) {
+    ///       let _response = user.post("/path/to/foo/", "BODY BEING POSTED");
     ///     }
     /// ```
     pub async fn post(&self, path: &str, body: &str) -> GooseResponse {
@@ -862,7 +862,7 @@ impl GooseClient {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// statistics.
     ///
-    /// Calls to `client.post` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.post` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -874,8 +874,8 @@ impl GooseClient {
     ///     let mut task = task!(post_function);
     ///
     ///     /// A very simple task that makes a POST request.
-    ///     async fn post_function(client: &GooseClient) {
-    ///       let _response = client.post_named("/path/to/foo/", "foo", "BODY BEING POSTED");
+    ///     async fn post_function(user: &GooseUser) {
+    ///       let _response = user.post_named("/path/to/foo/", "foo", "BODY BEING POSTED");
     ///     }
     /// ```
     pub async fn post_named(&self, path: &str, request_name: &str, body: &str) -> GooseResponse {
@@ -891,7 +891,7 @@ impl GooseClient {
     /// object, you can instead call `goose_head` which returns a RequestBuilder, then
     /// call `goose_send` to invoke the request.)
     ///
-    /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.head` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -903,8 +903,8 @@ impl GooseClient {
     ///     let mut task = task!(head_function);
     ///
     ///     /// A very simple task that makes a HEAD request.
-    ///     async fn head_function(client: &GooseClient) {
-    ///       let _response = client.head("/path/to/foo/");
+    ///     async fn head_function(user: &GooseUser) {
+    ///       let _response = user.head("/path/to/foo/");
     ///     }
     /// ```
     pub async fn head(&self, path: &str) -> GooseResponse {
@@ -916,7 +916,7 @@ impl GooseClient {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// statistics.
     ///
-    /// Calls to `client.head` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.head` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -928,8 +928,8 @@ impl GooseClient {
     ///     let mut task = task!(head_function);
     ///
     ///     /// A very simple task that makes a HEAD request.
-    ///     async fn head_function(client: &GooseClient) {
-    ///       let _response = client.head_named("/path/to/foo/", "foo");
+    ///     async fn head_function(user: &GooseUser) {
+    ///       let _response = user.head_named("/path/to/foo/", "foo");
     ///     }
     /// ```
     pub async fn head_named(&self, path: &str, request_name: &str) -> GooseResponse {
@@ -945,7 +945,7 @@ impl GooseClient {
     /// object, you can instead call `goose_delete` which returns a RequestBuilder,
     /// then call `goose_send` to invoke the request.)
     ///
-    /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.delete` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -957,8 +957,8 @@ impl GooseClient {
     ///     let mut task = task!(delete_function);
     ///
     ///     /// A very simple task that makes a DELETE request.
-    ///     async fn delete_function(client: &GooseClient) {
-    ///       let _response = client.delete("/path/to/foo/");
+    ///     async fn delete_function(user: &GooseUser) {
+    ///       let _response = user.delete("/path/to/foo/");
     ///     }
     /// ```
     pub async fn delete(&self, path: &str) -> GooseResponse {
@@ -970,7 +970,7 @@ impl GooseClient {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// statistics.
     ///
-    /// Calls to `client.delete` return a `GooseResponse` object which contains a copy of
+    /// Calls to `user.delete` return a `GooseResponse` object which contains a copy of
     /// the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -982,8 +982,8 @@ impl GooseClient {
     ///     let mut task = task!(delete_function);
     ///
     ///     /// A very simple task that makes a DELETE request.
-    ///     async fn delete_function(client: &GooseClient) {
-    ///       let _response = client.delete_named("/path/to/foo/", "foo");
+    ///     async fn delete_function(user: &GooseUser) {
+    ///       let _response = user.delete_named("/path/to/foo/", "foo");
     ///     }
     /// ```
     pub async fn delete_named(&self, path: &str, request_name: &str) -> GooseResponse {
@@ -1005,9 +1005,9 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a GET request, exposing the Reqwest
     ///     /// request builder.
-    ///     async fn get_function(client: &GooseClient) {
-    ///       let request_builder = client.goose_get("/path/to/foo").await;
-    ///       let response = client.goose_send(request_builder, None).await;
+    ///     async fn get_function(user: &GooseUser) {
+    ///       let request_builder = user.goose_get("/path/to/foo").await;
+    ///       let response = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_get(&self, path: &str) -> RequestBuilder {
@@ -1029,9 +1029,9 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a POST request, exposing the Reqwest
     ///     /// request builder.
-    ///     async fn post_function(client: &GooseClient) {
-    ///       let request_builder = client.goose_post("/path/to/foo").await;
-    ///       let response = client.goose_send(request_builder, None).await;
+    ///     async fn post_function(user: &GooseUser) {
+    ///       let request_builder = user.goose_post("/path/to/foo").await;
+    ///       let response = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_post(&self, path: &str) -> RequestBuilder {
@@ -1053,9 +1053,9 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a HEAD request, exposing the Reqwest
     ///     /// request builder.
-    ///     async fn head_function(client: &GooseClient) {
-    ///       let request_builder = client.goose_head("/path/to/foo").await;
-    ///       let response = client.goose_send(request_builder, None).await;
+    ///     async fn head_function(user: &GooseUser) {
+    ///       let request_builder = user.goose_head("/path/to/foo").await;
+    ///       let response = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_head(&self, path: &str) -> RequestBuilder {
@@ -1077,9 +1077,9 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a PUT request, exposing the Reqwest
     ///     /// request builder.
-    ///     async fn put_function(client: &GooseClient) {
-    ///       let request_builder = client.goose_put("/path/to/foo").await;
-    ///       let response = client.goose_send(request_builder, None).await;
+    ///     async fn put_function(user: &GooseUser) {
+    ///       let request_builder = user.goose_put("/path/to/foo").await;
+    ///       let response = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_put(&self, path: &str) -> RequestBuilder {
@@ -1101,9 +1101,9 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a PUT request, exposing the Reqwest
     ///     /// request builder.
-    ///     async fn patch_function(client: &GooseClient) {
-    ///       let request_builder = client.goose_patch("/path/to/foo").await;
-    ///       let response = client.goose_send(request_builder, None).await;
+    ///     async fn patch_function(user: &GooseUser) {
+    ///       let request_builder = user.goose_patch("/path/to/foo").await;
+    ///       let response = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_patch(&self, path: &str) -> RequestBuilder {
@@ -1125,9 +1125,9 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a DELETE request, exposing the Reqwest
     ///     /// request builder.
-    ///     async fn delete_function(client: &GooseClient) {
-    ///       let request_builder = client.goose_delete("/path/to/foo").await;
-    ///       let response = client.goose_send(request_builder, None).await;
+    ///     async fn delete_function(user: &GooseUser) {
+    ///       let request_builder = user.goose_delete("/path/to/foo").await;
+    ///       let response = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_delete(&self, path: &str) -> RequestBuilder {
@@ -1144,7 +1144,7 @@ impl GooseClient {
     /// Reqwest without using this helper function, but then Goose is unable to capture
     /// statistics.
     ///
-    /// Calls to `client.goose_send` return a `GooseResponse` object which contains a
+    /// Calls to `user.goose_send` return a `GooseResponse` object which contains a
     /// copy of the request you made
     /// ([`response.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
     /// ([`response.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
@@ -1157,9 +1157,9 @@ impl GooseClient {
     ///
     ///     /// A simple task that makes a GET request, exposing the Reqwest
     ///     /// request builder.
-    ///     async fn get_function(client: &GooseClient) {
-    ///       let request_builder = client.goose_get("/path/to/foo").await;
-    ///       let response = client.goose_send(request_builder, None).await;
+    ///     async fn get_function(user: &GooseUser) {
+    ///       let request_builder = user.goose_get("/path/to/foo").await;
+    ///       let response = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_send(
@@ -1204,7 +1204,7 @@ impl GooseClient {
                 raw_request.set_status_code(Some(status_code));
                 raw_request.set_final_url(r.url().as_str());
 
-                // Load test client was redirected.
+                // Load test user was redirected.
                 if self.config.sticky_follow && raw_request.url != raw_request.final_url {
                     let base_url = self.base_url.read().await.to_string();
                     // Check if the URL redirected started with the load test base_url.
@@ -1218,8 +1218,8 @@ impl GooseClient {
                             }
                         };
                         info!(
-                            "base_url for client {} redirected from {} to {}",
-                            self.weighted_clients_index + 1,
+                            "base_url for user {} redirected from {} to {}",
+                            self.weighted_users_index + 1,
                             &base_url,
                             &redirected_base_url
                         );
@@ -1287,13 +1287,13 @@ impl GooseClient {
     ///     let mut task = task!(get_function);
     ///
     ///     /// A simple task that makes a GET request.
-    ///     async fn get_function(client: &GooseClient) {
-    ///         let mut response = client.get("/404").await;
+    ///     async fn get_function(user: &GooseUser) {
+    ///         let mut response = user.get("/404").await;
     ///         match &response.response {
     ///             Ok(r) => {
     ///                 // We expect a 404 here.
     ///                 if r.status() == 404 {
-    ///                     client.set_success(&mut response.request);
+    ///                     user.set_success(&mut response.request);
     ///                 }
     ///             },
     ///             Err(_) => (),
@@ -1322,8 +1322,8 @@ impl GooseClient {
     ///
     ///     let mut task = task!(loadtest_index_page);
     ///
-    ///     async fn loadtest_index_page(client: &GooseClient) {
-    ///         let mut response = client.get_named("/", "index").await;
+    ///     async fn loadtest_index_page(user: &GooseUser) {
+    ///         let mut response = user.get_named("/", "index").await;
     ///         // Extract the response Result.
     ///         match response.response {
     ///             Ok(r) => {
@@ -1335,11 +1335,11 @@ impl GooseClient {
     ///                             // was a failure.
     ///                             if !text.contains("this string must exist") {
     ///                                 // As this is a named request, pass in the name not the URL
-    ///                                 client.set_failure(&mut response.request);
+    ///                                 user.set_failure(&mut response.request);
     ///                             }
     ///                         }
     ///                         // Empty page, this is a failure.
-    ///                         Err(_) => client.set_failure(&mut response.request),
+    ///                         Err(_) => user.set_failure(&mut response.request),
     ///                     }
     ///                 }
     ///             },
@@ -1387,7 +1387,7 @@ impl GooseClient {
     ///  - Manually building a client in `test_stop` will only affect requests made during
     ///    test teardown;
     ///  - A manually built client is specific to a single Goose thread -- if you are
-    ///    generating a large load test with many clients, each will need to manually build their
+    ///    generating a large load test with many users, each will need to manually build their
     ///    own client (typically you'd do this in a Task that is registered with `set_on_start()`
     ///    in each Task Set requiring a custom client;
     ///  - Manually building a client will completely replace the automatically built client
@@ -1406,7 +1406,7 @@ impl GooseClient {
     ///
     /// task!(setup_custom_client).set_on_start();
     ///
-    /// async fn setup_custom_client(client: &GooseClient) {
+    /// async fn setup_custom_client(user: &GooseUser) {
     ///   use reqwest::{Client, header};
     ///
     ///   // Build a custom HeaderMap to include with all requests made by this client.
@@ -1418,14 +1418,14 @@ impl GooseClient {
     ///     .user_agent("custom user agent")
     ///     .cookie_store(true);
     ///
-    ///   client.set_client_builder(builder);
+    ///   user.set_client_builder(builder);
     /// }
     /// ```
     pub async fn set_client_builder(&self, builder: ClientBuilder) {
         match builder.build() {
             Ok(c) => *self.client.lock().await = c,
             Err(e) => {
-                error!("failed to build client: {}", e);
+                error!("failed to build web client: {}", e);
                 std::process::exit(1);
             }
         };
@@ -1438,9 +1438,9 @@ impl GooseClient {
     /// For example, if the base_url (ie --host) is set to foo.example.com and the
     /// load test requests /login, thereby loading http://foo.example.com/login and
     /// this request gets redirected by the server to http://foo-secure.example.com/,
-    /// subsequent requests made by this client need to be against the new
+    /// subsequent requests made by this user need to be against the new
     /// foo-secure.example.com domain. (Further, if the base_url is again redirected,
-    /// such as when loading http://foo-secure.example.com/logout, the client should
+    /// such as when loading http://foo-secure.example.com/logout, the user should
     /// again follow for subsequent requests, perhaps in this case back to
     /// foo.example.com.)
     ///
@@ -1467,16 +1467,16 @@ impl GooseClient {
     ///     )
     ///     .execute();
     ///
-    ///     async fn task_foo(client: &GooseClient) {
-    ///       let _response = client.get("/");
+    ///     async fn task_foo(user: &GooseUser) {
+    ///       let _response = user.get("/");
     ///     }
     ///
-    ///     async fn task_bar(client: &GooseClient) {
+    ///     async fn task_bar(user: &GooseUser) {
     ///       // Before this task runs, all requests are being made against
     ///       // http://foo.example.com, after this task runs all subsequent
     ///       // requests are made against http://bar.example.com/.
-    ///       client.set_base_url("http://bar.example.com/");
-    ///       let _response = client.get("/");
+    ///       user.set_base_url("http://bar.example.com/");
+    ///       let _response = user.get("/");
     ///     }
     /// ```
     pub async fn set_base_url(&self, host: &str) {
@@ -1527,16 +1527,16 @@ pub struct GooseTask {
     pub weight: usize,
     /// An integer value that controls when this task runs compared to other tasks in the same GooseTaskSet.
     pub sequence: usize,
-    /// A flag indicating that this task runs when the client starts.
+    /// A flag indicating that this task runs when the user starts.
     pub on_start: bool,
-    /// A flag indicating that this task runs when the client stops.
+    /// A flag indicating that this task runs when the user stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    pub function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+    pub function: for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
 }
 impl GooseTask {
     pub fn new(
-        function: for<'r> fn(&'r GooseClient) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+        function: for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
     ) -> Self {
         trace!("new task");
         GooseTask {
@@ -1553,9 +1553,9 @@ impl GooseTask {
     /// Set an optional name for the task, used when displaying statistics about
     /// requests made by the task.
     ///
-    /// @TODO: rewrite:
     /// Individual requests can also be named withing your load test. See the
-    /// documentation for `GooseClient`.[`set_request_name()`](./struct.GooseClient.html#method.set_request_name)
+    /// documentation for `GooseUser`.
+    /// [`set_request_name()`](./struct.GooseUser.html#method.set_request_name)
     ///
     /// # Example
     /// ```rust
@@ -1563,8 +1563,8 @@ impl GooseTask {
     ///
     ///     task!(my_task_function).set_name("foo");
     ///
-    ///     async fn my_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/");
+    ///     async fn my_task_function(user: &GooseUser) {
+    ///       let _response = user.get("/");
     ///     }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
@@ -1574,14 +1574,14 @@ impl GooseTask {
     }
 
     /// Set an optional flag indicating that this task should be run when
-    /// a client first starts. This could be used to log the user in, and
+    /// a user first starts. This could be used to log the user in, and
     /// so all subsequent tasks are done as a logged in user. A task with
     /// this flag set will only run at start time (and optionally at stop
     /// time as well, if that flag is also set).
     ///
     /// On-start tasks can be sequenced and weighted. Sequences allow
     /// multiple on-start tasks to run in a controlled order. Weights allow
-    /// on-start tasks to run multiple times when a client starts.
+    /// on-start tasks to run multiple times when a user starts.
     ///
     /// # Example
     /// ```rust
@@ -1589,8 +1589,8 @@ impl GooseTask {
     ///
     ///     task!(my_on_start_function).set_on_start();
     ///
-    ///     async fn my_on_start_function(client: &GooseClient) {
-    ///       let _response = client.get("/");
+    ///     async fn my_on_start_function(user: &GooseUser) {
+    ///       let _response = user.get("/");
     ///     }
     /// ```
     pub fn set_on_start(mut self) -> Self {
@@ -1600,14 +1600,14 @@ impl GooseTask {
     }
 
     /// Set an optional flag indicating that this task should be run when
-    /// a client stops. This could be used to log a user out when the client
+    /// a user stops. This could be used to log a user out when the user
     /// finishes its load test. A task with this flag set will only run at
     /// stop time (and optionally at start time as well, if that flag is
     /// also set).
     ///
     /// On-stop tasks can be sequenced and weighted. Sequences allow
     /// multiple on-stop tasks to run in a controlled order. Weights allow
-    /// on-stop tasks to run multiple times when a client stops.
+    /// on-stop tasks to run multiple times when a user stops.
     ///
     /// # Example
     /// ```rust
@@ -1615,8 +1615,8 @@ impl GooseTask {
     ///
     ///     task!(my_on_stop_function).set_on_stop();
     ///
-    ///     async fn my_on_stop_function(client: &GooseClient) {
-    ///       let _response = client.get("/");
+    ///     async fn my_on_stop_function(user: &GooseUser) {
+    ///       let _response = user.get("/");
     ///     }
     /// ```
     pub fn set_on_stop(mut self) -> Self {
@@ -1635,8 +1635,8 @@ impl GooseTask {
     ///
     ///     task!(task_function).set_weight(3);
     ///
-    ///     async fn task_function(client: &GooseClient) {
-    ///       let _response = client.get("/");
+    ///     async fn task_function(user: &GooseUser) {
+    ///       let _response = user.get("/");
     ///     }
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
@@ -1672,21 +1672,21 @@ impl GooseTask {
     ///     let runs_second = task!(second_task_function).set_sequence(5835);
     ///     let runs_last = task!(third_task_function);
     ///
-    ///     async fn first_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/1");
+    ///     async fn first_task_function(user: &GooseUser) {
+    ///       let _response = user.get("/1");
     ///     }
     ///
-    ///     async fn second_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/2");
+    ///     async fn second_task_function(user: &GooseUser) {
+    ///       let _response = user.get("/2");
     ///     }
     ///
-    ///     async fn third_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/3");
+    ///     async fn third_task_function(user: &GooseUser) {
+    ///       let _response = user.get("/3");
     ///     }
     /// ```
     ///
     /// In the following example, the `runs_first` task runs two times, then one instance of `runs_second`
-    /// and two instances of `also_runs_second` are all three run. The client will do this over and over
+    /// and two instances of `also_runs_second` are all three run. The user will do this over and over
     /// the entire time it runs, with `runs_first` always running first, then the other tasks being
     /// run in a random and weighted order:
     /// ```rust
@@ -1696,16 +1696,16 @@ impl GooseTask {
     ///     let runs_second = task!(second_task_function_a).set_sequence(2);
     ///     let also_runs_second = task!(second_task_function_b).set_sequence(2).set_weight(2);
     ///
-    ///     async fn first_task_function(client: &GooseClient) {
-    ///       let _response = client.get("/1");
+    ///     async fn first_task_function(user: &GooseUser) {
+    ///       let _response = user.get("/1");
     ///     }
     ///
-    ///     async fn second_task_function_a(client: &GooseClient) {
-    ///       let _response = client.get("/2a");
+    ///     async fn second_task_function_a(user: &GooseUser) {
+    ///       let _response = user.get("/2a");
     ///     }
     ///
-    ///     async fn second_task_function_b(client: &GooseClient) {
-    ///       let _response = client.get("/2b");
+    ///     async fn second_task_function_b(user: &GooseUser) {
+    ///       let _response = user.get("/2b");
     ///     }
     /// ```
     pub fn set_sequence(mut self, sequence: usize) -> Self {
@@ -1743,22 +1743,21 @@ mod tests {
     use httpmock::Method::{GET, POST};
     use httpmock::{mock, with_mock_server};
 
-    async fn setup_client() -> GooseClient {
-        // Set up global client state.
+    async fn setup_user() -> GooseUser {
         let configuration = GooseConfiguration::default();
         let base_url = get_base_url(Some("http://127.0.0.1:5000".to_string()), None, None);
-        GooseClient::single(base_url, &configuration)
+        GooseUser::single(base_url, &configuration)
     }
 
     #[test]
     fn goose_task_set() {
         // Simplistic test task functions.
-        async fn test_function_a(client: &GooseClient) -> () {
-            let _response = client.get("/a/").await;
+        async fn test_function_a(user: &GooseUser) -> () {
+            let _response = user.get("/a/").await;
         }
 
-        async fn test_function_b(client: &GooseClient) -> () {
-            let _response = client.get("/b/").await;
+        async fn test_function_b(user: &GooseUser) -> () {
+            let _response = user.get("/b/").await;
         }
 
         let mut task_set = taskset!("foo");
@@ -1850,8 +1849,8 @@ mod tests {
     #[test]
     fn goose_task() {
         // Simplistic test task functions.
-        async fn test_function_a(client: &GooseClient) -> () {
-            let _response = client.get("/a/");
+        async fn test_function_a(user: &GooseUser) -> () {
+            let _response = user.get("/a/");
         }
 
         // Initialize task set.
@@ -2165,69 +2164,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn goose_client() {
+    async fn goose_user() {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::default();
         let base_url = get_base_url(Some(HOST.to_string()), None, None);
-        let client = GooseClient::new(0, base_url, 0, 0, &configuration, 0);
-        assert_eq!(client.task_sets_index, 0);
-        assert_eq!(client.min_wait, 0);
-        assert_eq!(client.max_wait, 0);
-        assert_eq!(client.weighted_clients_index, usize::max_value());
-        assert_eq!(client.weighted_on_start_tasks.len(), 0);
-        assert_eq!(client.weighted_tasks.len(), 0);
-        assert_eq!(client.weighted_on_stop_tasks.len(), 0);
-        assert_eq!(client.task_request_name, None);
-        assert_eq!(client.request_name, None);
+        let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0);
+        assert_eq!(user.task_sets_index, 0);
+        assert_eq!(user.min_wait, 0);
+        assert_eq!(user.max_wait, 0);
+        assert_eq!(user.weighted_users_index, usize::max_value());
+        assert_eq!(user.weighted_on_start_tasks.len(), 0);
+        assert_eq!(user.weighted_tasks.len(), 0);
+        assert_eq!(user.weighted_on_stop_tasks.len(), 0);
+        assert_eq!(user.task_request_name, None);
+        assert_eq!(user.request_name, None);
 
         // Confirm the URLs are correctly built using the default_host.
-        let url = client.build_url("/foo").await;
+        let url = user.build_url("/foo").await;
         eprintln!("url: {}", url);
         assert_eq!(&url, &[HOST, "foo"].concat());
-        let url = client.build_url("bar/").await;
+        let url = user.build_url("bar/").await;
         assert_eq!(&url, &[HOST, "bar/"].concat());
-        let url = client.build_url("/foo/bar").await;
+        let url = user.build_url("/foo/bar").await;
         assert_eq!(&url, &[HOST, "foo/bar"].concat());
 
         // Confirm the URLs are built with their own specified host.
-        let url = client.build_url("https://example.com/foo").await;
+        let url = user.build_url("https://example.com/foo").await;
         assert_eq!(url, "https://example.com/foo");
-        let url = client
+        let url = user
             .build_url("https://www.example.com/path/to/resource")
             .await;
         assert_eq!(url, "https://www.example.com/path/to/resource");
 
-        // Create a second client, this time setting a task_set_host.
+        // Create a second user, this time setting a task_set_host.
         let base_url = get_base_url(
             None,
             Some("http://www2.example.com/".to_string()),
             Some("http://www.example.com/".to_string()),
         );
-        let client2 = GooseClient::new(0, base_url, 1, 3, &configuration, 0);
-        assert_eq!(client2.min_wait, 1);
-        assert_eq!(client2.max_wait, 3);
+        let user2 = GooseUser::new(0, base_url, 1, 3, &configuration, 0);
+        assert_eq!(user2.min_wait, 1);
+        assert_eq!(user2.max_wait, 3);
 
         // Confirm the URLs are correctly built using the task_set_host.
-        let url = client2.build_url("/foo").await;
+        let url = user2.build_url("/foo").await;
         assert_eq!(url, "http://www2.example.com/foo");
 
         // Confirm URLs are still built with their own specified host.
-        let url = client.build_url("https://example.com/foo").await;
+        let url = user2.build_url("https://example.com/foo").await;
         assert_eq!(url, "https://example.com/foo");
 
-        // Recreate client.
-        let client = setup_client().await;
+        // Recreate user2.
+        let user2 = setup_user().await;
         const MOCKHOST: &str = "http://127.0.0.1:5000/";
 
         // Create a GET request.
-        let mut goose_request = client.goose_get("/foo").await;
+        let mut goose_request = user2.goose_get("/foo").await;
         let mut built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::GET);
         assert_eq!(built_request.url().as_str(), &[MOCKHOST, "foo"].concat());
         assert_eq!(built_request.timeout(), None);
 
         // Create a POST request.
-        goose_request = client.goose_post("/path/to/post").await;
+        goose_request = user2.goose_post("/path/to/post").await;
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::POST);
         assert_eq!(
@@ -2237,7 +2236,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a PUT request.
-        goose_request = client.goose_put("/path/to/put").await;
+        goose_request = user2.goose_put("/path/to/put").await;
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PUT);
         assert_eq!(
@@ -2247,7 +2246,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a PATCH request.
-        goose_request = client.goose_patch("/path/to/patch").await;
+        goose_request = user2.goose_patch("/path/to/patch").await;
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PATCH);
         assert_eq!(
@@ -2257,7 +2256,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a DELETE request.
-        goose_request = client.goose_delete("/path/to/delete").await;
+        goose_request = user2.goose_delete("/path/to/delete").await;
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::DELETE);
         assert_eq!(
@@ -2267,7 +2266,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a HEAD request.
-        goose_request = client.goose_head("/path/to/head").await;
+        goose_request = user2.goose_head("/path/to/head").await;
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::HEAD);
         assert_eq!(
@@ -2280,14 +2279,14 @@ mod tests {
     #[tokio::test]
     #[with_mock_server]
     async fn manual_requests() {
-        let client = setup_client().await;
+        let user = setup_user().await;
 
         // Set up a mock http server endpoint.
         let mock_index = mock(GET, "/").return_status(200).create();
 
         // Make a GET request to the mock http server and confirm we get a 200 response.
         assert_eq!(mock_index.times_called(), 0);
-        let response = client.get("/").await;
+        let response = user.get("/").await;
         let status = response.response.unwrap().status();
         assert_eq!(status, 200);
         assert_eq!(mock_index.times_called(), 1);
@@ -2302,7 +2301,7 @@ mod tests {
 
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
         assert_eq!(mock_404.times_called(), 0);
-        let response = client.get(NO_SUCH_PATH).await;
+        let response = user.get(NO_SUCH_PATH).await;
         let status = response.response.unwrap().status();
         assert_eq!(status, 404);
         assert_eq!(mock_404.times_called(), 1);
@@ -2325,7 +2324,7 @@ mod tests {
 
         // Make a POST request to the mock http server and confirm we get a 200 OK response.
         assert_eq!(mock_comment.times_called(), 0);
-        let response = client.post(COMMENT_PATH, "foo").await;
+        let response = user.post(COMMENT_PATH, "foo").await;
         let unwrapped_response = response.response.unwrap();
         let status = unwrapped_response.status();
         assert_eq!(status, 200);

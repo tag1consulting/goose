@@ -81,8 +81,8 @@ fn main() {
 }
 
 /// View the front page.
-async fn drupal_loadtest_front_page(client: &GooseClient) {
-    let mut response = client.get("/").await;
+async fn drupal_loadtest_front_page(user: &GooseUser) {
+    let mut response = user.get("/").await;
 
     // Grab some static assets from the front page.
     match response.response {
@@ -97,36 +97,36 @@ async fn drupal_loadtest_front_page(client: &GooseClient) {
                     }
                 }
                 for index in 0..urls.len() {
-                    client.get_named(&urls[index], "static asset").await;
+                    user.get_named(&urls[index], "static asset").await;
                 }
             }
             Err(e) => {
                 eprintln!("failed to parse front page: {}", e);
-                client.set_failure(&mut response.request);
+                user.set_failure(&mut response.request);
             }
         },
         Err(e) => {
             eprintln!("unexpected error when loading front page: {}", e);
-            client.set_failure(&mut response.request);
+            user.set_failure(&mut response.request);
         }
     }
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
-async fn drupal_loadtest_node_page(client: &GooseClient) {
+async fn drupal_loadtest_node_page(user: &GooseUser) {
     let nid = rand::thread_rng().gen_range(1, 10_000);
-    let _response = client.get(format!("/node/{}", &nid).as_str()).await;
+    let _response = user.get(format!("/node/{}", &nid).as_str()).await;
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
-async fn drupal_loadtest_profile_page(client: &GooseClient) {
+async fn drupal_loadtest_profile_page(user: &GooseUser) {
     let uid = rand::thread_rng().gen_range(2, 5_001);
-    let _response = client.get(format!("/user/{}", &uid).as_str()).await;
+    let _response = user.get(format!("/user/{}", &uid).as_str()).await;
 }
 
 /// Log in.
-async fn drupal_loadtest_login(client: &GooseClient) {
-    let mut response = client.get("/user").await;
+async fn drupal_loadtest_login(user: &GooseUser) {
+    let mut response = user.get("/user").await;
     match response.response {
         Ok(r) => {
             match r.text().await {
@@ -136,7 +136,7 @@ async fn drupal_loadtest_login(client: &GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_build_id on page: /user page");
-                            client.set_failure(&mut response.request);
+                            user.set_failure(&mut response.request);
                             return;
                         }
                     };
@@ -151,13 +151,13 @@ async fn drupal_loadtest_login(client: &GooseClient) {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let request_builder = client.goose_post("/user").await;
-                    let _response = client.goose_send(request_builder.form(&params), None).await;
+                    let request_builder = user.goose_post("/user").await;
+                    let _response = user.goose_send(request_builder.form(&params), None).await;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
                     eprintln!("unexpected error when loading /user page: {}", e);
-                    client.set_failure(&mut response.request);
+                    user.set_failure(&mut response.request);
                 }
             }
         }
@@ -167,11 +167,11 @@ async fn drupal_loadtest_login(client: &GooseClient) {
 }
 
 /// Post a comment.
-async fn drupal_loadtest_post_comment(client: &GooseClient) {
+async fn drupal_loadtest_post_comment(user: &GooseUser) {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
-    let mut response = client.get(&node_path).await;
+    let mut response = user.get(&node_path).await;
     match response.response {
         Ok(r) => {
             match r.text().await {
@@ -182,7 +182,7 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_build_id found on {}", &node_path);
-                            client.set_failure(&mut response.request);
+                            user.set_failure(&mut response.request);
                             return;
                         }
                     };
@@ -192,7 +192,7 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_token found on {}", &node_path);
-                            client.set_failure(&mut response.request);
+                            user.set_failure(&mut response.request);
                             return;
                         }
                     };
@@ -202,7 +202,7 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
                         Some(f) => f,
                         None => {
                             eprintln!("no form_id found on {}", &node_path);
-                            client.set_failure(&mut response.request);
+                            user.set_failure(&mut response.request);
                             return;
                         }
                     };
@@ -218,8 +218,8 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
                         ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
-                    let request_builder = client.goose_post(&comment_path).await;
-                    let mut response = client.goose_send(request_builder.form(&params), None).await;
+                    let request_builder = user.goose_post(&comment_path).await;
+                    let mut response = user.goose_send(request_builder.form(&params), None).await;
                     match response.response {
                         Ok(r) => match r.text().await {
                             Ok(html) => {
@@ -228,7 +228,7 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
                                         "no comment showed up after posting to {}",
                                         &comment_path
                                     );
-                                    client.set_failure(&mut response.request);
+                                    user.set_failure(&mut response.request);
                                 }
                             }
                             Err(e) => {
@@ -236,7 +236,7 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
                                     "unexpected error when posting to {}: {}",
                                     &comment_path, e
                                 );
-                                client.set_failure(&mut response.request);
+                                user.set_failure(&mut response.request);
                             }
                         },
                         // Goose will catch this error.
@@ -245,7 +245,7 @@ async fn drupal_loadtest_post_comment(client: &GooseClient) {
                 }
                 Err(e) => {
                     eprintln!("unexpected error when loading {} page: {}", &node_path, e);
-                    client.set_failure(&mut response.request);
+                    user.set_failure(&mut response.request);
                 }
             }
         }

@@ -38,7 +38,7 @@ heading:
 
 ```toml
 [dependencies]
-goose = "^0.7"
+goose = "^0.8"
 ```
 
 At this point it's possible to compile all dependencies, though the
@@ -47,9 +47,9 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.7.5
+  Downloaded goose v0.8.0
       ...
-   Compiling goose v0.7.5
+   Compiling goose v0.8.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -165,11 +165,11 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 `cargo run --example simple -- -h`:
 
 ```
-client 0.7.5
+client 0.8.0
 CLI options available when launching a Goose load test
 
 USAGE:
-    simple [FLAGS] [OPTIONS]
+8   simple [FLAGS] [OPTIONS]
 
 FLAGS:
     -h, --help             Prints help information
@@ -305,7 +305,7 @@ feature in the `dependencies` section of your `Cargo.toml`, for example:
 
 ```toml
 [dependencies]
-goose = { version = "^0.7", features = ["gaggle"] }
+goose = { version = "^0.8", features = ["gaggle"] }
 ```
 
 ### Goose Manager

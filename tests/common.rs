@@ -5,7 +5,7 @@ pub fn build_configuration() -> GooseConfiguration {
     // CLI options.
     GooseConfiguration {
         host: "http://127.0.0.1:5000".to_string(),
-        clients: Some(1),
+        users: Some(1),
         hatch_rate: 1,
         run_time: "1".to_string(),
         no_stats: true,

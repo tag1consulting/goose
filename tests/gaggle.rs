@@ -9,12 +9,12 @@ use goose::prelude::*;
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
-pub async fn get_index(client: &GooseClient) {
-    let _response = client.get(INDEX_PATH).await;
+pub async fn get_index(user: &GooseUser) {
+    let _response = user.get(INDEX_PATH).await;
 }
 
-pub async fn get_about(client: &GooseClient) {
-    let _response = client.get(ABOUT_PATH).await;
+pub async fn get_about(user: &GooseUser) {
+    let _response = user.get(ABOUT_PATH).await;
 }
 
 /// Test test_start alone.
@@ -29,7 +29,7 @@ fn test_gaggle() {
     // Start manager instance of the load test.
     let mut master_configuration = configuration.clone();
     let master_handle = thread::spawn(move || {
-        master_configuration.clients = Some(2);
+        master_configuration.users = Some(2);
         master_configuration.hatch_rate = 4;
         master_configuration.manager = true;
         master_configuration.expect_workers = 1;
@@ -45,7 +45,7 @@ fn test_gaggle() {
     let worker_handle = thread::spawn(move || {
         configuration.worker = true;
         configuration.host = "".to_string();
-        configuration.clients = None;
+        configuration.users = None;
         configuration.no_stats = false;
         configuration.run_time = "".to_string();
         crate::GooseAttack::initialize_with_config(configuration)

@@ -9,18 +9,18 @@ const INDEX_PATH: &str = "/";
 const SETUP_PATH: &str = "/setup";
 const TEARDOWN_PATH: &str = "/teardown";
 
-pub async fn setup(client: &GooseClient) {
-    let _response = client.post(SETUP_PATH, "setting up load test").await;
+pub async fn setup(user: &GooseUser) {
+    let _response = user.post(SETUP_PATH, "setting up load test").await;
 }
 
-pub async fn teardown(client: &GooseClient) {
-    let _response = client
+pub async fn teardown(user: &GooseUser) {
+    let _response = user
         .post(TEARDOWN_PATH, "cleaning up after load test")
         .await;
 }
 
-pub async fn get_index(client: &GooseClient) {
-    let _response = client.get(INDEX_PATH).await;
+pub async fn get_index(user: &GooseUser) {
+    let _response = user.get(INDEX_PATH).await;
 }
 
 /// Test test_start alone.
@@ -87,8 +87,8 @@ fn test_setup_teardown() {
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
 
     let mut configuration = common::build_configuration();
-    // Launch several client threads, confirm we still only setup and teardown one time.
-    configuration.clients = Some(5);
+    // Launch several user threads, confirm we still only setup and teardown one time.
+    configuration.users = Some(5);
     configuration.hatch_rate = 5;
 
     crate::GooseAttack::initialize_with_config(configuration)
