@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.8.1-dev
+ -
+
 ## 0.8.0 June 26, 2020
  - properly subtract previous statistic when handling `set_failure()` and `set_success()`
  - detect and track redirects in `GooseRawRequest`
