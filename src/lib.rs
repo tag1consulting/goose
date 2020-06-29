@@ -310,6 +310,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
 use std::fs::File;
+use std::io::prelude::*;
+use std::io::BufWriter;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
@@ -1057,6 +1059,17 @@ impl GooseAttack {
         let mut statistics_timer = time::Instant::now();
         let mut display_running_statistics = false;
 
+        let mut stats_log_file = None;
+        if !self.configuration.no_stats && !self.configuration.stats_log_file.is_empty() {
+            stats_log_file = match File::create(&self.configuration.stats_log_file) {
+                Ok(f) => Some(BufWriter::new(f)),
+                Err(e) => {
+                    error!("failed to create stats_log_file ({}): {}", self.configuration.stats_log_file, e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
         loop {
             // When displaying running statistics, sync data from user threads first.
             if !self.configuration.no_stats {
@@ -1074,6 +1087,19 @@ impl GooseAttack {
                 while message.is_ok() {
                     received_message = true;
                     let raw_request = message.unwrap();
+
+                    match stats_log_file.as_mut() {
+                        Some(file) => {
+                            match writeln!(*file, "{:?}", &raw_request) {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    warn!("failed to write statistics to {}: {}", &self.configuration.stats_log_file, e);
+                                }
+                            }
+                        },
+                        None => (),
+                    }
+
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.merged_requests.get(&key) {
                         Some(m) => m.clone(),
@@ -1283,6 +1309,10 @@ pub struct GooseConfiguration {
     /// Log file name
     #[structopt(long, default_value = "goose.log")]
     pub log_file: String,
+
+    /// Statistics log file name
+    #[structopt(short = "s", long, default_value = "")]
+    pub stats_log_file: String,
 
     /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]
