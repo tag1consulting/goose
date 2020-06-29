@@ -486,7 +486,7 @@ pub struct GooseRawRequest {
     /// How many milliseconds the request took.
     pub response_time: u128,
     /// The HTTP response code (optional).
-    pub status_code: Option<StatusCode>,
+    pub status_code: u16,
     /// Whether or not the request was successful.
     pub success: bool,
     /// Whether or not we're updating a previous request, modifies how the parent thread records it.
@@ -501,7 +501,7 @@ impl GooseRawRequest {
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,
-            status_code: None,
+            status_code: 0,
             success: true,
             update: false,
         }
@@ -520,7 +520,10 @@ impl GooseRawRequest {
     }
 
     fn set_status_code(&mut self, status_code: Option<StatusCode>) {
-        self.status_code = status_code;
+        self.status_code = match status_code {
+            Some(status_code) => status_code.as_u16(),
+            None => 0,
+        };
     }
 }
 /// Statistics collected about a path-method pair, (for example `/index`-`GET`).
@@ -627,12 +630,8 @@ impl GooseRequest {
     }
 
     /// Increment counter for status code, creating new counter if first time seeing status code.
-    pub fn set_status_code(&mut self, status_code: Option<StatusCode>) {
-        let status_code_u16 = match status_code {
-            Some(s) => s.as_u16(),
-            _ => 0,
-        };
-        let counter = match self.status_code_counts.get(&status_code_u16) {
+    pub fn set_status_code(&mut self, status_code: u16) {
+        let counter = match self.status_code_counts.get(&status_code) {
             // We've seen this status code before, increment counter.
             Some(c) => {
                 debug!("got {:?} counter: {}", status_code, c);
@@ -640,12 +639,12 @@ impl GooseRequest {
             }
             // First time we've seen this status code, initialize counter.
             None => {
-                debug!("no match for counter: {}", status_code_u16);
+                debug!("no match for counter: {}", status_code);
                 1
             }
         };
-        self.status_code_counts.insert(status_code_u16, counter);
-        debug!("incremented {} counter: {}", status_code_u16, counter);
+        self.status_code_counts.insert(status_code, counter);
+        debug!("incremented {} counter: {}", status_code, counter);
     }
 }
 impl Ord for GooseRequest {
@@ -1943,7 +1942,7 @@ mod tests {
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, 0);
-        assert_eq!(raw_request.status_code, None);
+        assert_eq!(raw_request.status_code, 0);
         assert_eq!(raw_request.success, true);
         assert_eq!(raw_request.update, false);
 
@@ -1953,7 +1952,7 @@ mod tests {
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time);
-        assert_eq!(raw_request.status_code, None);
+        assert_eq!(raw_request.status_code, 0);
         assert_eq!(raw_request.success, true);
         assert_eq!(raw_request.update, false);
 
@@ -1963,7 +1962,7 @@ mod tests {
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time);
-        assert_eq!(raw_request.status_code, Some(status_code));
+        assert_eq!(raw_request.status_code, 200);
         assert_eq!(raw_request.success, true);
         assert_eq!(raw_request.update, false);
     }
@@ -2115,7 +2114,7 @@ mod tests {
         assert_eq!(request.response_time_counter, 8);
 
         // Tracking status code updates all related fields.
-        request.set_status_code(Some(StatusCode::OK));
+        request.set_status_code(200);
         // We've seen only one status code.
         assert_eq!(request.status_code_counts.len(), 1);
         // First time seeing this status code.
@@ -2131,35 +2130,35 @@ mod tests {
         assert_eq!(request.response_time_counter, 8);
 
         // Tracking status code updates all related fields.
-        request.set_status_code(Some(StatusCode::OK));
+        request.set_status_code(200);
         // We've seen only one unique status code.
         assert_eq!(request.status_code_counts.len(), 1);
         // Second time seeing this status code.
         assert_eq!(request.status_code_counts[&200], 2);
 
         // Tracking status code updates all related fields.
-        request.set_status_code(None);
+        request.set_status_code(0);
         // We've seen two unique status codes.
         assert_eq!(request.status_code_counts.len(), 2);
         // First time seeing a client-side error.
         assert_eq!(request.status_code_counts[&0], 1);
 
         // Tracking status code updates all related fields.
-        request.set_status_code(Some(StatusCode::INTERNAL_SERVER_ERROR));
+        request.set_status_code(500);
         // We've seen three unique status codes.
         assert_eq!(request.status_code_counts.len(), 3);
         // First time seeing an internal server error.
         assert_eq!(request.status_code_counts[&500], 1);
 
         // Tracking status code updates all related fields.
-        request.set_status_code(Some(StatusCode::PERMANENT_REDIRECT));
+        request.set_status_code(308);
         // We've seen four unique status codes.
         assert_eq!(request.status_code_counts.len(), 4);
         // First time seeing an internal server error.
         assert_eq!(request.status_code_counts[&308], 1);
 
         // Tracking status code updates all related fields.
-        request.set_status_code(Some(StatusCode::OK));
+        request.set_status_code(200);
         // We've seen four unique status codes.
         assert_eq!(request.status_code_counts.len(), 4);
         // Third time seeing this status code.
@@ -2305,7 +2304,7 @@ mod tests {
         assert_eq!(response.request.name, "/");
         assert_eq!(response.request.success, true);
         assert_eq!(response.request.update, false);
-        assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
+        assert_eq!(response.request.status_code, 200);
 
         const NO_SUCH_PATH: &str = "/no/such/path";
         let mock_404 = mock(GET, NO_SUCH_PATH).return_status(404).create();
@@ -2320,10 +2319,7 @@ mod tests {
         assert_eq!(response.request.name, NO_SUCH_PATH);
         assert_eq!(response.request.success, false);
         assert_eq!(response.request.update, false);
-        assert_eq!(
-            response.request.status_code,
-            Some(http::StatusCode::NOT_FOUND)
-        );
+        assert_eq!(response.request.status_code, 404,);
 
         // Set up a mock http server endpoint.
         const COMMENT_PATH: &str = "/comment";
@@ -2346,6 +2342,6 @@ mod tests {
         assert_eq!(response.request.name, COMMENT_PATH);
         assert_eq!(response.request.success, true);
         assert_eq!(response.request.update, false);
-        assert_eq!(response.request.status_code, Some(http::StatusCode::OK));
+        assert_eq!(response.request.status_code, 200);
     }
 }

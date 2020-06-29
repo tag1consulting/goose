@@ -310,9 +310,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
 use std::io::BufWriter;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -1064,7 +1064,10 @@ impl GooseAttack {
             stats_log_file = match File::create(&self.configuration.stats_log_file) {
                 Ok(f) => Some(BufWriter::new(f)),
                 Err(e) => {
-                    error!("failed to create stats_log_file ({}): {}", self.configuration.stats_log_file, e);
+                    error!(
+                        "failed to create stats_log_file ({}): {}",
+                        self.configuration.stats_log_file, e
+                    );
                     std::process::exit(1);
                 }
             }
@@ -1089,12 +1092,13 @@ impl GooseAttack {
                     let raw_request = message.unwrap();
 
                     match stats_log_file.as_mut() {
-                        Some(file) => {
-                            match writeln!(*file, "{:?}", &raw_request) {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    warn!("failed to write statistics to {}: {}", &self.configuration.stats_log_file, e);
-                                }
+                        Some(file) => match writeln!(*file, "{:?}", &raw_request) {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!(
+                                    "failed to write statistics to {}: {}",
+                                    &self.configuration.stats_log_file, e
+                                );
                             }
                         },
                         None => (),
