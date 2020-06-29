@@ -16,6 +16,7 @@ pub fn build_configuration() -> GooseConfiguration {
         verbose: 0,
         log_level: 0,
         log_file: "goose.log".to_string(),
+        stats_log_file: "".to_string(),
         sticky_follow: false,
         manager: false,
         no_hash_check: false,

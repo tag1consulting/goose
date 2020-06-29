@@ -309,7 +309,6 @@ use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
-use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
@@ -318,6 +317,9 @@ use std::sync::{
 };
 use std::time;
 use structopt::StructOpt;
+use tokio::fs::File;
+use tokio::io::BufWriter;
+use tokio::prelude::*;
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -461,7 +463,7 @@ impl GooseAttack {
             WriteLogger::new(
                 log_level,
                 Config::default(),
-                File::create(&log_file).unwrap(),
+                std::fs::File::create(&log_file).unwrap(),
             ),
         ]) {
             Ok(_) => (),
@@ -477,16 +479,25 @@ impl GooseAttack {
     pub fn setup(mut self) -> Self {
         self.initialize_logger();
 
-        // Don't allow overhead of collecting status codes unless we're printing statistics.
-        if self.configuration.status_codes && self.configuration.no_stats {
-            error!("You must not enable --no-stats when enabling --status-codes.");
-            std::process::exit(1);
-        }
+        // Collecting statistics is required for the following options.
+        if self.configuration.no_stats {
+            // Don't allow overhead of collecting statistics unless we're printing them.
+            if self.configuration.status_codes {
+                error!("You must not enable --no-stats when enabling --status-codes.");
+                std::process::exit(1);
+            }
 
-        // Don't allow overhead of collecting statistics unless we're printing them.
-        if self.configuration.only_summary && self.configuration.no_stats {
-            error!("You must not enable --no-stats when enabling --only-summary.");
-            std::process::exit(1);
+            // Don't allow overhead of collecting statistics unless we're printing them.
+            if self.configuration.only_summary {
+                error!("You must not enable --no-stats when enabling --only-summary.");
+                std::process::exit(1);
+            }
+
+            // There is nothing to log if statistics are disabled.
+            if !self.configuration.stats_log_file.is_empty() {
+                error!("You must not enable --no-stats when enabling --stats-log-file.");
+                std::process::exit(1);
+            }
         }
 
         // Configure maximum run time if specified, otherwise run until canceled.
@@ -1057,6 +1068,21 @@ impl GooseAttack {
         let mut statistics_timer = time::Instant::now();
         let mut display_running_statistics = false;
 
+        // Prepare an asynchronous buffered file writer for stats_log_file (if enabled).
+        let mut stats_log_file = None;
+        if !self.configuration.no_stats && !self.configuration.stats_log_file.is_empty() {
+            stats_log_file = match File::create(&self.configuration.stats_log_file).await {
+                Ok(f) => Some(BufWriter::new(f)),
+                Err(e) => {
+                    error!(
+                        "failed to create stats_log_file ({}): {}",
+                        self.configuration.stats_log_file, e
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+
         loop {
             // When displaying running statistics, sync data from user threads first.
             if !self.configuration.no_stats {
@@ -1074,6 +1100,22 @@ impl GooseAttack {
                 while message.is_ok() {
                     received_message = true;
                     let raw_request = message.unwrap();
+
+                    match stats_log_file.as_mut() {
+                        Some(file) => {
+                            match file.write(format!("{:?}\n", &raw_request).as_ref()).await {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    warn!(
+                                        "failed to write statistics to {}: {}",
+                                        &self.configuration.stats_log_file, e
+                                    );
+                                }
+                            }
+                        }
+                        None => (),
+                    }
+
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.merged_requests.get(&key) {
                         Some(m) => m.clone(),
@@ -1226,6 +1268,21 @@ impl GooseAttack {
             }
         }
 
+        // If stats logging is enabled, flush all stats before we exit.
+        match stats_log_file.as_mut() {
+            Some(file) => {
+                info!(
+                    "flushing stats_log_file: {}",
+                    &self.configuration.stats_log_file
+                );
+                match file.flush().await {
+                    Ok(_) => (),
+                    Err(_) => (),
+                }
+            }
+            None => (),
+        };
+
         self
     }
 }
@@ -1283,6 +1340,10 @@ pub struct GooseConfiguration {
     /// Log file name
     #[structopt(long, default_value = "goose.log")]
     pub log_file: String,
+
+    /// Statistics log file name
+    #[structopt(short = "s", long, default_value = "")]
+    pub stats_log_file: String,
 
     /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]
