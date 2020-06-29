@@ -485,15 +485,19 @@ pub struct GooseRawRequest {
     pub redirected: bool,
     /// How many milliseconds the request took.
     pub response_time: u128,
+    /// How many milliseconds the load test has been running.
+    pub elapsed: u128,
     /// The HTTP response code (optional).
     pub status_code: u16,
     /// Whether or not the request was successful.
     pub success: bool,
     /// Whether or not we're updating a previous request, modifies how the parent thread records it.
     pub update: bool,
+    /// Which GooseUser thread processed the request.
+    pub user: usize,
 }
 impl GooseRawRequest {
-    pub fn new(method: GooseMethod, name: &str, url: &str) -> Self {
+    pub fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
         GooseRawRequest {
             method,
             name: name.to_string(),
@@ -501,9 +505,11 @@ impl GooseRawRequest {
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,
+            elapsed: elapsed,
             status_code: 0,
             success: true,
             update: false,
+            user,
         }
     }
 
@@ -673,6 +679,8 @@ impl GooseResponse {
 /// An individual user state, repeatedly running all GooseTasks in a specific GooseTaskSet.
 #[derive(Debug, Clone)]
 pub struct GooseUser {
+    /// The Instant when this GooseUser client started.
+    pub started: Instant,
     /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
     pub task_sets_index: usize,
     /// Client used to make requests, managing sessions and cookies.
@@ -724,6 +732,7 @@ impl GooseUser {
         {
             Ok(c) => {
                 GooseUser {
+                    started: Instant::now(),
                     task_sets_index,
                     client: Arc::new(Mutex::new(c)),
                     weighted_bucket: Arc::new(AtomicUsize::new(0)),
@@ -1196,8 +1205,13 @@ impl GooseUser {
         };
         let method = goose_method_from_method(request.method().clone());
         let request_name = self.get_request_name(&path, request_name);
-        let mut raw_request =
-            GooseRawRequest::new(method, &request_name, &request.url().to_string());
+        let mut raw_request = GooseRawRequest::new(
+            method,
+            &request_name,
+            &request.url().to_string(),
+            self.started.elapsed().as_millis(),
+            self.weighted_users_index,
+        );
 
         // Make the actual request.
         let response = self.client.lock().await.execute(request).await;
@@ -1937,7 +1951,7 @@ mod tests {
     #[test]
     fn goose_raw_request() {
         const PATH: &str = "http://127.0.0.1/";
-        let mut raw_request = GooseRawRequest::new(GooseMethod::GET, "/", PATH);
+        let mut raw_request = GooseRawRequest::new(GooseMethod::GET, "/", PATH, 0, 0);
         assert_eq!(raw_request.method, GooseMethod::GET);
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());

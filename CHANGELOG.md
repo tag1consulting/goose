@@ -2,6 +2,7 @@
 
 ## 0.8.1-dev
  - sort stats by method:name to ease comparisons
+ - optionally log all requests in JSON Lines format to file specified with `--log-stats-file=`
 
 ## 0.8.0 June 26, 2020
  - properly subtract previous statistic when handling `set_failure()` and `set_success()`

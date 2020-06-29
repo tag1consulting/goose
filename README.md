@@ -294,15 +294,21 @@ exist will be overwritten.
 Logs are written in the following format:
 
 ```
-GooseRawRequest { method: GET, name: "/", url: "http://apache/", final_url: "http://apache/", redirected: false, response_time: 3, status_code: 200, success: true, update: false }
-GooseRawRequest { method: GET, name: "/about/", url: "http://apache/about/", final_url: "http://apache/about/", redirected: false, response_time: 13, status_code: 404, success: false, update: false }
-GooseRawRequest { method: POST, name: "/login", url: "http://apache/login", final_url: "http://apache/user/1", redirected: true, response_time: 244, status_code: 200, success: true, update: false }
+GooseRawRequest { method: GET, name: "/", url: "http://apache/", final_url: "http://apache/", redirected: false, response_time: 3, elapsed: 1031, status_code: 200, success: true, update: false, user: 0 }
+GooseRawRequest { method: GET, name: "/about/", url: "http://apache/about/", final_url: "http://apache/about/", redirected: false, response_time: 13, elapsed: 1059, status_code: 404, success: false, update: false, user: 5 }
+GooseRawRequest { method: POST, name: "/login", url: "http://apache/login", final_url: "http://apache/user/1", redirected: true, response_time: 244, elapsed: 2028, status_code: 200, success: true, update: false, user: 4 }
 ```
 
-In the above example, the first line is a successful GET request of `/`, which took 3
+In the above example, the first line is a successful `GET` request of `/`, which took 3
 milliseconds to load. The second line is a failed request for `/about/` which returned
-a 404 error in 13 milliseconds. The third line is a failed POST request to `/login`
+a 404 error in 13 milliseconds. The third line is a failed `POST` request to `/login`
 which resulted in a redirect to `/user/1` and took 244 milliseconds.
+
+The `elapsed` entry is the number of milliseconds since the `GooseUser` thread started
+to when it started this request. The `response_time` entry is the number of milliseconds
+it takes the thread to make the request and get a response from the server being load
+tested. The `user` value is the thread number that invoked the request (for example if
+Goose is started with `-u10` there will be logs for 10 threads numbered from 0 to 9).
 
 The final field, `update`, will only be true if this is a reccurence of a previous log
 entry, but with `success` toggling between `true` and `false`. This happens when a load
