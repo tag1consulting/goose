@@ -309,10 +309,7 @@ use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
-use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::prelude::*;
-use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -320,6 +317,9 @@ use std::sync::{
 };
 use std::time;
 use structopt::StructOpt;
+use tokio::fs::File;
+use tokio::io::BufWriter;
+use tokio::prelude::*;
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -463,7 +463,7 @@ impl GooseAttack {
             WriteLogger::new(
                 log_level,
                 Config::default(),
-                File::create(&log_file).unwrap(),
+                std::fs::File::create(&log_file).unwrap(),
             ),
         ]) {
             Ok(_) => (),
@@ -1061,7 +1061,7 @@ impl GooseAttack {
 
         let mut stats_log_file = None;
         if !self.configuration.no_stats && !self.configuration.stats_log_file.is_empty() {
-            stats_log_file = match File::create(&self.configuration.stats_log_file) {
+            stats_log_file = match File::create(&self.configuration.stats_log_file).await {
                 Ok(f) => Some(BufWriter::new(f)),
                 Err(e) => {
                     error!(
@@ -1092,15 +1092,17 @@ impl GooseAttack {
                     let raw_request = message.unwrap();
 
                     match stats_log_file.as_mut() {
-                        Some(file) => match writeln!(*file, "{:?}", &raw_request) {
-                            Ok(_) => (),
-                            Err(e) => {
-                                warn!(
-                                    "failed to write statistics to {}: {}",
-                                    &self.configuration.stats_log_file, e
-                                );
+                        Some(file) => {
+                            match file.write(format!("{:?}\n", &raw_request).as_ref()).await {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    warn!(
+                                        "failed to write statistics to {}: {}",
+                                        &self.configuration.stats_log_file, e
+                                    );
+                                }
                             }
-                        },
+                        }
                         None => (),
                     }
 
@@ -1255,6 +1257,21 @@ impl GooseAttack {
                 None => (),
             }
         }
+
+        // If stats logging is enabled, flush all stats before we exit.
+        match stats_log_file.as_mut() {
+            Some(file) => {
+                info!(
+                    "flushing stats_log_file: {}",
+                    &self.configuration.stats_log_file
+                );
+                match file.flush().await {
+                    Ok(_) => (),
+                    Err(_) => (),
+                }
+            }
+            None => (),
+        };
 
         self
     }
