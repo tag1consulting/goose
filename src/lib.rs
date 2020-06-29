@@ -493,7 +493,7 @@ impl GooseAttack {
                 std::process::exit(1);
             }
 
-            // There is nothing to log if statistics are disabled
+            // There is nothing to log if statistics are disabled.
             if !self.configuration.stats_log_file.is_empty() {
                 error!("You must not enable --no-stats when enabling --stats-log-file.");
                 std::process::exit(1);
