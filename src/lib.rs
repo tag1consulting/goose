@@ -479,16 +479,25 @@ impl GooseAttack {
     pub fn setup(mut self) -> Self {
         self.initialize_logger();
 
-        // Don't allow overhead of collecting status codes unless we're printing statistics.
-        if self.configuration.status_codes && self.configuration.no_stats {
-            error!("You must not enable --no-stats when enabling --status-codes.");
-            std::process::exit(1);
-        }
+        // Collecting statistics is required for the following options.
+        if self.configuration.no_stats {
+            // Don't allow overhead of collecting statistics unless we're printing them.
+            if self.configuration.status_codes {
+                error!("You must not enable --no-stats when enabling --status-codes.");
+                std::process::exit(1);
+            }
 
-        // Don't allow overhead of collecting statistics unless we're printing them.
-        if self.configuration.only_summary && self.configuration.no_stats {
-            error!("You must not enable --no-stats when enabling --only-summary.");
-            std::process::exit(1);
+            // Don't allow overhead of collecting statistics unless we're printing them.
+            if self.configuration.only_summary {
+                error!("You must not enable --no-stats when enabling --only-summary.");
+                std::process::exit(1);
+            }
+
+            // There is nothing to log if statistics are disabled
+            if !self.configuration.stats_log_file.is_empty() {
+                error!("You must not enable --no-stats when enabling --stats-log-file.");
+                std::process::exit(1);
+            }
         }
 
         // Configure maximum run time if specified, otherwise run until canceled.
@@ -1059,6 +1068,7 @@ impl GooseAttack {
         let mut statistics_timer = time::Instant::now();
         let mut display_running_statistics = false;
 
+        // Prepare an asynchronous buffered file writer for stats_log_file (if enabled).
         let mut stats_log_file = None;
         if !self.configuration.no_stats && !self.configuration.stats_log_file.is_empty() {
             stats_log_file = match File::create(&self.configuration.stats_log_file).await {
