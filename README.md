@@ -301,7 +301,7 @@ GooseRawRequest { method: POST, name: "/login", url: "http://apache/login", fina
 
 In the above example, the first line is a successful `GET` request of `/`, which took 3
 milliseconds to load. The second line is a failed request for `/about/` which returned
-a 404 error in 13 milliseconds. The third line is a failed `POST` request to `/login`
+a 404 error in 13 milliseconds. The third line is a successful `POST` request to `/login`
 which resulted in a redirect to `/user/1` and took 244 milliseconds.
 
 The `elapsed` entry is the number of milliseconds since the `GooseUser` thread started
