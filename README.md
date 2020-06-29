@@ -200,6 +200,7 @@ OPTIONS:
     -t, --run-time <run-time>
             Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.) [default: ]
 
+    -s, --stats-log-file <stats-log-file>          Statistics log file name [default: ]
     -u, --users <users>                            Number of concurrent Goose users (defaults to available CPUs)
 ```
 
@@ -282,6 +283,35 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -c102
 -------------------------------------------------------------------------------
  Aggregated              | 67,953 [200]              
 ```
+
+## Logging Load Test Requests
+
+Goose can optionally log details about all load test requests in JSON Lines format to a
+file. To enable, add the `--stats-log-file=foo` command line option, where `foo` is
+either a relative or absolute path to the log file to create. Any existing file that may
+exist will be overwritten.
+
+Logs are written in the following format:
+
+```
+GooseRawRequest { method: GET, name: "/", url: "http://apache/", final_url: "http://apache/", redirected: false, response_time: 3, status_code: 200, success: true, update: false }
+GooseRawRequest { method: GET, name: "/about/", url: "http://apache/about/", final_url: "http://apache/about/", redirected: false, response_time: 13, status_code: 404, success: false, update: false }
+GooseRawRequest { method: POST, name: "/login", url: "http://apache/login", final_url: "http://apache/user/1", redirected: true, response_time: 244, status_code: 200, success: true, update: false }
+```
+
+In the above example, the first line is a successful GET request of `/`, which took 3
+milliseconds to load. The second line is a failed request for `/about/` which returned
+a 404 error in 13 milliseconds. The third line is a failed POST request to `/login`
+which resulted in a redirect to `/user/1` and took 244 milliseconds.
+
+The final field, `update`, will only be true if this is a reccurence of a previous log
+entry, but with `success` toggling between `true` and `false`. This happens when a load
+test calls `set_sucess()` on a request that Goose interpreted as a failure, or
+`set_failure()` on a request that Goose interpreted as a success.
+
+When operating in Gaggle-mode, the `--stats-log-file` option can be enabled on workers
+and/or on the manager process. You may prefer to spread out the overhead of writing logs
+to each worker, or you may prefer logging to a central place (or both).
 
 ## Gaggle: Distributed Load Test
 
