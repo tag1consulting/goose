@@ -197,10 +197,9 @@ OPTIONS:
         --manager-bind-port <manager-bind-port>    Define port manager listens on [default: 5115]
         --manager-host <manager-host>              Host manager is running on [default: 127.0.0.1]
         --manager-port <manager-port>              Port manager is listening on [default: 5115]
-    -t, --run-time <run-time>
-            Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.) [default: ]
-
+    -t, --run-time <run-time>                      Stop after e.g. (300s, 20m, 3h, 1h30m, etc.) [default: ]
     -s, --stats-log-file <stats-log-file>          Statistics log file name [default: ]
+        --stats-log-format <stats-log-format>      Statistics log format ('csv', 'json', or 'raw') [default: json]
     -u, --users <users>                            Number of concurrent Goose users (defaults to available CPUs)
 ```
 
@@ -286,38 +285,62 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -c102
 
 ## Logging Load Test Requests
 
-Goose can optionally log details about all load test requests in JSON Lines format to a
-file. To enable, add the `--stats-log-file=foo` command line option, where `foo` is
-either a relative or absolute path to the log file to create. Any existing file that may
-exist will be overwritten.
+Goose can optionally log details about all load test requests to a file. To enable, add
+the `--stats-log-file=foo` command line option, where `foo` is either a relative or
+absolute path of the log file to create. Any existing file that may already exist will be
+overwritten.
 
-Logs are written in the following format:
+When operating in Gaggle-mode, the `--stats-log-file` option can be enabled on worker
+processes and/or on the manager process. You can therefor configure Goose to spread out
+the overhead of writing logs by enabling the option on workers, or you can configure
+Goose to create a single combined log of all requests by enabling the option on the
+manager.
 
+By default, logs are written in JSON Lines format. For example:
+
+```json
+{"elapsed":30,"final_url":"http://local.dev/user/42","method":"POST","name":"/login","redirected":true,"response_time":220,"status_code":200,"success":true,"update":false,"url":"http://local.dev/login","user":0}
+{"elapsed":251,"final_url":"http://local.dev/","method":"GET","name":"/","redirected":false,"response_time":3,"status_code":200,"success":true,"update":false,"url":"http://local.dev/","user":0}
+{"elapsed":1027,"final_url":"http://local.dev/user/13","method":"POST","name":"/login","redirected":true,"response_time":266,"status_code":200,"success":true,"update":false,"url":"http://local.dev/login","user":1}
+{"elapsed":1294,"final_url":"http://local.dev/","method":"GET","name":"/","redirected":false,"response_time":4,"status_code":200,"success":true,"update":false,"url":"http://local.dev/","user":1}
 ```
-GooseRawRequest { method: GET, name: "/", url: "http://apache/", final_url: "http://apache/", redirected: false, response_time: 3, elapsed: 1031, status_code: 200, success: true, update: false, user: 0 }
-GooseRawRequest { method: GET, name: "/about/", url: "http://apache/about/", final_url: "http://apache/about/", redirected: false, response_time: 13, elapsed: 1059, status_code: 404, success: false, update: false, user: 5 }
-GooseRawRequest { method: POST, name: "/login", url: "http://apache/login", final_url: "http://apache/user/1", redirected: true, response_time: 244, elapsed: 2028, status_code: 200, success: true, update: false, user: 4 }
+
+Logs include the entire `GooseRawRequest` object as defined in `src/goose.rs`, which
+are created on all requests. This object includes the following fields:
+ - `elapsed`: total milliseconds between when this `GooseUser` thread started and this;
+ - `method`: the type of HTTP request made;
+ - `name`: the name of the request;
+ - `url`: the URL that was requested;
+ - `final_url`: the URL that was returned;
+ - `redirected`: true or false if the request was redirected;
+ - `response_time`: how many milliseconds the request took
+   request was made;
+ - `status_code`: the HTTP response code returned for this request;
+ - `success`: true or false if this was a successful request;
+ - `update`: true or false if this is a recurrence of a previous log entery, but with
+   `success` toggling between `true` and `false`. This happens when a load test calls
+   `set_success()` on a request that Goose previously interpreted as a failure, or
+   `set_failure()` on a request that Goose interpreted as a success;
+ - `user`: an integer value indicating which `GooseUser` thread made this request
+
+In the first line of the above example, `GooseUser` thread 0 made a `POST` request to
+`/login` and was successfully redirected to `/user/42` in 220 milliseconds. The second
+line is the same `GooseUser` thread which then made a `GET` request to `/` in 3
+milliseconds. The third and fourth lines are a second `GooseUser` thread doing the same
+thing, first logging in and then loading the front page.
+
+By default Goose logs statistics in JSON Lines format. The `--stats-log-format` option
+can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug
+output of the entire `GooseRawRequest` object.
+
+For example, `csv` output of the same requests logged above would look like:
+```csv
+elapsed,method,name,url,final_url,redirected,response_time,status_code,success,update,user
+220,POST,"/login","http://local.dev/login","http://local.dev/user/42",true,30,200,true,false,0
+251,GET,"/","http://local.dev/","http://local.dev/",false,3,200,true,false,0
+1027,POST,"/login","http://local.dev/login","http://local.dev/user/13",true,266,200,true,false,1
+1294,GET,"/","http://local.dev/","http://local.dev/",false,4,200,true,false,1
 ```
-
-In the above example, the first line is a successful `GET` request of `/`, which took 3
-milliseconds to load. The second line is a failed request for `/about/` which returned
-a 404 error in 13 milliseconds. The third line is a successful `POST` request to `/login`
-which resulted in a redirect to `/user/1` and took 244 milliseconds.
-
-The `elapsed` entry is the number of milliseconds since the `GooseUser` thread started
-to when it started this request. The `response_time` entry is the number of milliseconds
-it takes the thread to make the request and get a response from the server being load
-tested. The `user` value is the thread number that invoked the request (for example if
-Goose is started with `-u10` there will be logs for 10 threads numbered from 0 to 9).
-
-The final field, `update`, will only be true if this is a reccurence of a previous log
-entry, but with `success` toggling between `true` and `false`. This happens when a load
-test calls `set_sucess()` on a request that Goose interpreted as a failure, or
-`set_failure()` on a request that Goose interpreted as a success.
-
-When operating in Gaggle-mode, the `--stats-log-file` option can be enabled on workers
-and/or on the manager process. You may prefer to spread out the overhead of writing logs
-to each worker, or you may prefer logging to a central place (or both).
 
 ## Gaggle: Distributed Load Test
 

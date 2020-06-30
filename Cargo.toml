@@ -25,6 +25,7 @@ regex = "1"
 reqwest = { version = "0.10", features = ["cookies", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
+serde_json = "1.0"
 simplelog = "0.7"
 structopt = "0.3"
 tokio = { version = "0.2.20", features = ["fs", "io-util", "macros", "rt-core", "sync", "time"] }
