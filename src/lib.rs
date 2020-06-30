@@ -1116,13 +1116,13 @@ impl GooseAttack {
                         .write(
                             format!(
                                 "{},{},{},{},{},{},{},{},{},{},{}\n",
+                                "elapsed",
                                 "method",
                                 "name",
                                 "url",
                                 "final_url",
                                 "redirected",
                                 "response_time",
-                                "elapsed",
                                 "status_code",
                                 "success",
                                 "update",
@@ -1169,14 +1169,14 @@ impl GooseAttack {
                         "json" => json!(raw_request).to_string(),
                         // Manually create CSV, library doesn't support single-row string conversion.
                         "csv" => format!(
-                            "{:?},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{}",
+                            "{},{:?},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
+                            raw_request.elapsed,
                             raw_request.method,
                             raw_request.name,
                             raw_request.url,
                             raw_request.final_url,
                             raw_request.redirected,
                             raw_request.response_time,
-                            raw_request.elapsed,
                             raw_request.status_code,
                             raw_request.success,
                             raw_request.update,
@@ -1390,7 +1390,7 @@ pub struct GooseConfiguration {
     #[structopt(short = "r", long, required = false, default_value = "1")]
     pub hatch_rate: usize,
 
-    /// Stop after the specified amount of time, e.g. (300s, 20m, 3h, 1h30m, etc.).
+    /// Stop after e.g. (300s, 20m, 3h, 1h30m, etc.).
     #[structopt(short = "t", long, required = false, default_value = "")]
     pub run_time: String,
 
@@ -1432,7 +1432,7 @@ pub struct GooseConfiguration {
     #[structopt(short = "s", long, default_value = "")]
     pub stats_log_file: String,
 
-    /// Statistics log file format
+    /// Statistics log format ('csv', 'json', or 'raw')
     #[structopt(long, default_value = "json")]
     pub stats_log_format: String,
 

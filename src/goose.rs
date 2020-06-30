@@ -473,6 +473,8 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
 /// so Goose knows which request is being updated.
 #[derive(Debug, Clone, Serialize)]
 pub struct GooseRawRequest {
+    /// How many milliseconds the load test has been running.
+    pub elapsed: u64,
     /// The method being used (ie, GET, POST, etc).
     pub method: GooseMethod,
     /// The optional name of the request.
@@ -485,8 +487,6 @@ pub struct GooseRawRequest {
     pub redirected: bool,
     /// How many milliseconds the request took.
     pub response_time: u64,
-    /// How many milliseconds the load test has been running.
-    pub elapsed: u64,
     /// The HTTP response code (optional).
     pub status_code: u16,
     /// Whether or not the request was successful.
@@ -499,13 +499,13 @@ pub struct GooseRawRequest {
 impl GooseRawRequest {
     pub fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
         GooseRawRequest {
+            elapsed: elapsed as u64,
             method,
             name: name.to_string(),
             url: url.to_string(),
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,
-            elapsed: elapsed as u64,
             status_code: 0,
             success: true,
             update: false,
@@ -532,6 +532,7 @@ impl GooseRawRequest {
         };
     }
 }
+
 /// Statistics collected about a path-method pair, (for example `/index`-`GET`).
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequest {
