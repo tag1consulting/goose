@@ -471,7 +471,7 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
 /// or
 /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
 /// so Goose knows which request is being updated.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GooseRawRequest {
     /// The method being used (ie, GET, POST, etc).
     pub method: GooseMethod,
@@ -484,9 +484,9 @@ pub struct GooseRawRequest {
     /// How many milliseconds the request took.
     pub redirected: bool,
     /// How many milliseconds the request took.
-    pub response_time: u128,
+    pub response_time: u64,
     /// How many milliseconds the load test has been running.
-    pub elapsed: u128,
+    pub elapsed: u64,
     /// The HTTP response code (optional).
     pub status_code: u16,
     /// Whether or not the request was successful.
@@ -505,7 +505,7 @@ impl GooseRawRequest {
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,
-            elapsed: elapsed,
+            elapsed: elapsed as u64,
             status_code: 0,
             success: true,
             update: false,
@@ -522,7 +522,7 @@ impl GooseRawRequest {
     }
 
     fn set_response_time(&mut self, response_time: u128) {
-        self.response_time = response_time;
+        self.response_time = response_time as u64;
     }
 
     fn set_status_code(&mut self, status_code: Option<StatusCode>) {
@@ -578,7 +578,7 @@ impl GooseRequest {
     }
 
     /// Track response time.
-    pub fn set_response_time(&mut self, response_time: u128) {
+    pub fn set_response_time(&mut self, response_time: u64) {
         // Perform this conversin only once, then re-use throughout this funciton.
         let response_time_usize = response_time as usize;
 
@@ -1965,7 +1965,7 @@ mod tests {
         assert_eq!(raw_request.method, GooseMethod::GET);
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time);
+        assert_eq!(raw_request.response_time, response_time as u64);
         assert_eq!(raw_request.status_code, 0);
         assert_eq!(raw_request.success, true);
         assert_eq!(raw_request.update, false);
@@ -1975,7 +1975,7 @@ mod tests {
         assert_eq!(raw_request.method, GooseMethod::GET);
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time);
+        assert_eq!(raw_request.response_time, response_time as u64);
         assert_eq!(raw_request.status_code, 200);
         assert_eq!(raw_request.success, true);
         assert_eq!(raw_request.update, false);

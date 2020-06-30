@@ -305,6 +305,7 @@ use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
@@ -1103,7 +1104,10 @@ impl GooseAttack {
 
                     match stats_log_file.as_mut() {
                         Some(file) => {
-                            match file.write(format!("{:?}\n", &raw_request).as_ref()).await {
+                            match file
+                                .write(format!("{}\n", json!(raw_request).to_string()).as_ref())
+                                .await
+                            {
                                 Ok(_) => (),
                                 Err(e) => {
                                     warn!(
