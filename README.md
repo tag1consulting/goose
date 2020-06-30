@@ -307,21 +307,21 @@ By default, logs are written in JSON Lines format. For example:
 
 Logs include the entire `GooseRawRequest` object as defined in `src/goose.rs`, which
 are created on all requests. This object includes the following fields:
- - `elapsed`: total milliseconds between when this `GooseUser` thread started and this;
+ - `elapsed`: total milliseconds between when this `GooseUser` thread started and this
+   request was made;
  - `method`: the type of HTTP request made;
  - `name`: the name of the request;
  - `url`: the URL that was requested;
  - `final_url`: the URL that was returned;
  - `redirected`: true or false if the request was redirected;
- - `response_time`: how many milliseconds the request took
-   request was made;
+ - `response_time`: how many milliseconds the request took;
  - `status_code`: the HTTP response code returned for this request;
  - `success`: true or false if this was a successful request;
  - `update`: true or false if this is a recurrence of a previous log entery, but with
    `success` toggling between `true` and `false`. This happens when a load test calls
    `set_success()` on a request that Goose previously interpreted as a failure, or
    `set_failure()` on a request that Goose interpreted as a success;
- - `user`: an integer value indicating which `GooseUser` thread made this request
+ - `user`: an integer value indicating which `GooseUser` thread made this request.
 
 In the first line of the above example, `GooseUser` thread 0 made a `POST` request to
 `/login` and was successfully redirected to `/user/42` in 220 milliseconds. The second
