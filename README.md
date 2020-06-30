@@ -47,9 +47,9 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.8.0
+  Downloaded goose v0.8.1
       ...
-   Compiling goose v0.8.0
+   Compiling goose v0.8.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -165,7 +165,7 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 `cargo run --example simple -- -h`:
 
 ```
-Goose 0.8.0
+Goose 0.8.1
 CLI options available when launching a Goose load test
 
 USAGE:
@@ -336,7 +336,7 @@ output of the entire `GooseRawRequest` object.
 For example, `csv` output of the same requests logged above would look like:
 ```csv
 elapsed,method,name,url,final_url,redirected,response_time,status_code,success,update,user
-220,POST,"/login","http://local.dev/login","http://local.dev/user/42",true,30,200,true,false,0
+30,POST,"/login","http://local.dev/login","http://local.dev/user/42",true,30,200,true,false,0
 251,GET,"/","http://local.dev/","http://local.dev/",false,3,200,true,false,0
 1027,POST,"/login","http://local.dev/login","http://local.dev/user/13",true,266,200,true,false,1
 1294,GET,"/","http://local.dev/","http://local.dev/",false,4,200,true,false,1

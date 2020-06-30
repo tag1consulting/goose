@@ -4,15 +4,14 @@ Goose is a Rust load testing tool, inspired by Locust.
 
 ### In progress
 
-- [ ] request logging
+- [ ] web UI
+- [ ] alternative HTTP clients
 
 ### Future
 
-- [ ] web UI
 - [ ] website
 - [ ] detect/report when available CPU power is bottleneck
 - [ ] add TLS support (https://gitlab.com/neachdainn/nng-rs/-/issues/46)
-- [ ] alternative HTTP clients
 - [ ] alternative non-HTTP clients
   - [ ] gRPC
 - [ ] detect terminal width and adjust statistics output (when wide enough collapse into a single table, etc)
@@ -79,3 +78,4 @@ Goose is a Rust load testing tool, inspired by Locust.
 - [x] async clients
    - [x] use Reqwest async client
    - [x] audit code for additional places to use async
+- [x] request logging
