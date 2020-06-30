@@ -977,6 +977,46 @@ impl GooseAttack {
         }
     }
 
+    /// Helper to create CSV-formatted logs.
+    fn prepare_csv(raw_request: &GooseRawRequest, header: &mut bool) -> String {
+        let body = format!(
+            // Put quotes around name, url and final_url as they are strings.
+            "{},{:?},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
+            raw_request.elapsed,
+            raw_request.method,
+            raw_request.name,
+            raw_request.url,
+            raw_request.final_url,
+            raw_request.redirected,
+            raw_request.response_time,
+            raw_request.status_code,
+            raw_request.success,
+            raw_request.update,
+            raw_request.user
+        );
+        // Concatonate the header before the body one time.
+        if *header {
+            *header = false;
+            format!(
+                // No quotes needed in header.
+                "{},{},{},{},{},{},{},{},{},{},{}\n",
+                "elapsed",
+                "method",
+                "name",
+                "url",
+                "final_url",
+                "redirected",
+                "response_time",
+                "status_code",
+                "success",
+                "update",
+                "user"
+            ) + &body
+        } else {
+            body
+        }
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -1108,43 +1148,8 @@ impl GooseAttack {
             }
         }
 
-        // Add a header when stats_log_format is csv.
-        if self.configuration.stats_log_format.as_str() == "csv" {
-            match stats_log_file.as_mut() {
-                Some(file) => {
-                    match file
-                        .write(
-                            format!(
-                                "{},{},{},{},{},{},{},{},{},{},{}\n",
-                                "elapsed",
-                                "method",
-                                "name",
-                                "url",
-                                "final_url",
-                                "redirected",
-                                "response_time",
-                                "status_code",
-                                "success",
-                                "update",
-                                "user"
-                            )
-                            .as_ref(),
-                        )
-                        .await
-                    {
-                        Ok(_) => (),
-                        Err(e) => {
-                            warn!(
-                                "failed to write statistics to {}: {}",
-                                &self.configuration.stats_log_file, e
-                            );
-                        }
-                    }
-                }
-                None => (),
-            }
-        }
-
+        // If logging stats to CSV, use this flag to write header; otherwise it's ignored.
+        let mut header = true;
         loop {
             // When displaying running statistics, sync data from user threads first.
             if !self.configuration.no_stats {
@@ -1168,21 +1173,7 @@ impl GooseAttack {
                         // Use serde_json to create JSON.
                         "json" => json!(raw_request).to_string(),
                         // Manually create CSV, library doesn't support single-row string conversion.
-                        "csv" => format!(
-                            "{},{:?},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
-                            raw_request.elapsed,
-                            raw_request.method,
-                            raw_request.name,
-                            raw_request.url,
-                            raw_request.final_url,
-                            raw_request.redirected,
-                            raw_request.response_time,
-                            raw_request.status_code,
-                            raw_request.success,
-                            raw_request.update,
-                            raw_request.user,
-                        )
-                        .to_string(),
+                        "csv" => GooseAttack::prepare_csv(&raw_request, &mut header),
                         // Raw format is Debug output for GooseRawRequest structure.
                         "raw" => format!("{:?}", raw_request).to_string(),
                         _ => unreachable!(),
