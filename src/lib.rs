@@ -994,7 +994,7 @@ impl GooseAttack {
             raw_request.update,
             raw_request.user
         );
-        // Concatonate the header before the body one time.
+        // Concatenate the header before the body one time.
         if *header {
             *header = false;
             format!(
