@@ -499,6 +499,30 @@ impl GooseAttack {
                 error!("You must not enable --no-stats when enabling --stats-log-file.");
                 std::process::exit(1);
             }
+
+            // There is nothing to log if statistics are disabled.
+            if !self.configuration.stats_log_file.is_empty() {
+                error!("You must not enable --no-stats when enabling --stats-log-format.");
+                std::process::exit(1);
+            }
+        }
+
+        if self.configuration.stats_log_format != "json" {
+            // Log format isn't relevant if log not enabled.
+            if self.configuration.stats_log_file.is_empty() {
+                error!("You must enable --stats-log-file when setting --stats-log-format.");
+                std::process::exit(1);
+            }
+
+            // All of these options must be defined below, search for formatted_log.
+            let options = vec!["json", "csv", "raw"];
+            if !options.contains(&self.configuration.stats_log_format.as_str()) {
+                error!(
+                    "The --stats-log-format must be set to one of: {}.",
+                    options.join(", ")
+                );
+                std::process::exit(1);
+            }
         }
 
         // Configure maximum run time if specified, otherwise run until canceled.
@@ -1084,6 +1108,43 @@ impl GooseAttack {
             }
         }
 
+        // Add a header when stats_log_format is csv.
+        if self.configuration.stats_log_format.as_str() == "csv" {
+            match stats_log_file.as_mut() {
+                Some(file) => {
+                    match file
+                        .write(
+                            format!(
+                                "{},{},{},{},{},{},{},{},{},{},{}\n",
+                                "method",
+                                "name",
+                                "url",
+                                "final_url",
+                                "redirected",
+                                "response_time",
+                                "elapsed",
+                                "status_code",
+                                "success",
+                                "update",
+                                "user"
+                            )
+                            .as_ref(),
+                        )
+                        .await
+                    {
+                        Ok(_) => (),
+                        Err(e) => {
+                            warn!(
+                                "failed to write statistics to {}: {}",
+                                &self.configuration.stats_log_file, e
+                            );
+                        }
+                    }
+                }
+                None => (),
+            }
+        }
+
         loop {
             // When displaying running statistics, sync data from user threads first.
             if !self.configuration.no_stats {
@@ -1102,12 +1163,34 @@ impl GooseAttack {
                     received_message = true;
                     let raw_request = message.unwrap();
 
+                    // Options should appear above, search for formatted_log.
+                    let formatted_log = match self.configuration.stats_log_format.as_str() {
+                        // Use serde_json to create JSON.
+                        "json" => json!(raw_request).to_string(),
+                        // Manually create CSV, library doesn't support single-row string conversion.
+                        "csv" => format!(
+                            "{:?},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{}",
+                            raw_request.method,
+                            raw_request.name,
+                            raw_request.url,
+                            raw_request.final_url,
+                            raw_request.redirected,
+                            raw_request.response_time,
+                            raw_request.elapsed,
+                            raw_request.status_code,
+                            raw_request.success,
+                            raw_request.update,
+                            raw_request.user,
+                        )
+                        .to_string(),
+                        // Raw format is Debug output for GooseRawRequest structure.
+                        "raw" => format!("{:?}", raw_request).to_string(),
+                        _ => unreachable!(),
+                    };
+
                     match stats_log_file.as_mut() {
                         Some(file) => {
-                            match file
-                                .write(format!("{}\n", json!(raw_request).to_string()).as_ref())
-                                .await
-                            {
+                            match file.write(format!("{}\n", formatted_log).as_ref()).await {
                                 Ok(_) => (),
                                 Err(e) => {
                                     warn!(
@@ -1348,6 +1431,10 @@ pub struct GooseConfiguration {
     /// Statistics log file name
     #[structopt(short = "s", long, default_value = "")]
     pub stats_log_file: String,
+
+    /// Statistics log file format
+    #[structopt(long, default_value = "json")]
+    pub stats_log_format: String,
 
     /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]
