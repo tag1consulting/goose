@@ -22,7 +22,7 @@ num_cpus = "1.0"
 num-format = "0.4"
 rand = "0.7"
 regex = "1"
-reqwest = { version = "0.10", features = ["cookies", "json"] }
+reqwest = { version = "0.10",  default-features = false, features = ["cookies", "json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 serde_json = "1.0"
