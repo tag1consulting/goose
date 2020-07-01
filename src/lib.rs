@@ -291,7 +291,7 @@ extern crate log;
 extern crate structopt;
 
 pub mod goose;
-
+pub mod logger;
 #[cfg(feature = "gaggle")]
 mod manager;
 pub mod prelude;
@@ -325,7 +325,7 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
-    GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
+    GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
 };
 
 /// Constant defining how often statistics should be displayed while load test is running.
@@ -1049,6 +1049,18 @@ impl GooseAttack {
             }
         }
 
+        // Create a channel allowing GooseUser threads to log errors.
+        let (all_threads_logger, logger_receiver): (
+            mpsc::UnboundedSender<Option<GooseDebug>>,
+            mpsc::UnboundedReceiver<Option<GooseDebug>>,
+        ) = mpsc::unbounded_channel();
+
+        // Launch a new user.
+        let logger_thread = tokio::spawn(logger::logger_main(
+            self.configuration.clone(),
+            logger_receiver,
+        ));
+
         // Collect user threads in a vector for when we want to stop them later.
         let mut users = vec![];
         // Collect user thread channels in a vector so we can talk to the user threads.
@@ -1085,7 +1097,10 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             user_channels.push(parent_sender);
 
-            // Copy the user-to-parent sender channel, used by all threads.
+            // Copy the GooseUser-to-logger sender channel, used by all threads.
+            thread_user.logger = Some(all_threads_logger.clone());
+
+            // Copy the GooseUser-to-parent sender channel, used by all threads.
             thread_user.parent = Some(all_threads_sender.clone());
 
             // Copy the appropriate task_set into the thread.
@@ -1278,6 +1293,13 @@ impl GooseAttack {
                 futures::future::join_all(users).await;
                 debug!("all users exited");
 
+                // Tell logger thread to flush and exit.
+                if let Err(e) = all_threads_logger.send(None) {
+                    warn!("unexpected error telling logger thread to exit: {}", e);
+                };
+                // Wait for logger thread to flush and exit.
+                let _ = tokio::join!(logger_thread);
+
                 // If we're printing statistics, collect the final messages received from users.
                 if !self.configuration.no_stats {
                     let mut message = parent_receiver.try_recv();
@@ -1426,6 +1448,10 @@ pub struct GooseConfiguration {
     /// Statistics log format ('csv', 'json', or 'raw')
     #[structopt(long, default_value = "json")]
     pub stats_log_format: String,
+
+    /// Debug log file name
+    #[structopt(short = "e", long, default_value = "")]
+    pub debug_log_file: String,
 
     /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]

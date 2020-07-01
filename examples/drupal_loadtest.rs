@@ -86,28 +86,38 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
 
     // Grab some static assets from the front page.
     match response.response {
-        Ok(r) => match r.text().await {
-            Ok(t) => {
-                let re = Regex::new(r#"src="(.*?)""#).unwrap();
-                // Collect copy of URLs to run them async
-                let mut urls = Vec::new();
-                for url in re.captures_iter(&t) {
-                    if url[1].contains("/misc") || url[1].contains("/themes") {
-                        urls.push(url[1].to_string());
+        Ok(r) => {
+            // Copy the headers so we have them for logging if there are errors.
+            let headers = &r.headers().clone();
+            match r.text().await {
+                Ok(t) => {
+                    let re = Regex::new(r#"src="(.*?)""#).unwrap();
+                    // Collect copy of URLs to run them async
+                    let mut urls = Vec::new();
+                    for url in re.captures_iter(&t) {
+                        if url[1].contains("/misc") || url[1].contains("/themes") {
+                            urls.push(url[1].to_string());
+                        }
+                    }
+                    for index in 0..urls.len() {
+                        user.get_named(&urls[index], "static asset").await;
                     }
                 }
-                for index in 0..urls.len() {
-                    user.get_named(&urls[index], "static asset").await;
+                Err(e) => {
+                    user.set_failure(&mut response.request);
+                    let error = format!("front_page: failed to parse pag: {}", e);
+                    // We choose to both log and display errors to stdout.
+                    eprintln!("{}", &error);
+                    user.log_debug(&error, Some(&headers), None, Some(response.request));
                 }
             }
-            Err(e) => {
-                eprintln!("failed to parse front page: {}", e);
-                user.set_failure(&mut response.request);
-            }
-        },
+        }
         Err(e) => {
-            eprintln!("unexpected error when loading front page: {}", e);
             user.set_failure(&mut response.request);
+            let error = format!("front_page: no response from server: {}", e);
+            // We choose to both log and display errors to stdout.
+            eprintln!("{}", &error);
+            user.log_debug(&error, None, None, Some(response.request));
         }
     }
 }
@@ -129,20 +139,30 @@ async fn drupal_loadtest_login(user: &GooseUser) {
     let mut response = user.get("/user").await;
     match response.response {
         Ok(r) => {
+            // Copy the headers so we have them for logging if there are errors.
+            let headers = &r.headers().clone();
             match r.text().await {
                 Ok(html) => {
                     let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            eprintln!("no form_build_id on page: /user page");
                             user.set_failure(&mut response.request);
+                            let error = format!("login: no form_build_id on page: /user page");
+                            // We choose to both log and display errors to stdout.
+                            eprintln!("{}", &error);
+                            user.log_debug(
+                                &error,
+                                Some(&headers),
+                                Some(html.clone()),
+                                Some(response.request),
+                            );
                             return;
                         }
                     };
 
                     // Log the user in.
-                    let uid = rand::thread_rng().gen_range(3, 5_002);
+                    let uid: usize = rand::thread_rng().gen_range(3, 5_002);
                     let username = format!("user{}", uid);
                     let params = [
                         ("name", username.as_str()),
@@ -156,13 +176,23 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
-                    eprintln!("unexpected error when loading /user page: {}", e);
                     user.set_failure(&mut response.request);
+                    let error = format!("login: unexpected error when loading /user page: {}", e);
+                    // We choose to both log and display errors to stdout.
+                    eprintln!("{}", &error);
+                    user.log_debug(&error, Some(&headers), None, Some(response.request));
                 }
             }
         }
         // Goose will catch this error.
-        Err(_) => (),
+        Err(e) => {
+            user.log_debug(
+                format!("login: no response from server: {}", e).as_str(),
+                None,
+                None,
+                None,
+            );
+        }
     }
 }
 
@@ -174,6 +204,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
     let mut response = user.get(&node_path).await;
     match response.response {
         Ok(r) => {
+            // Copy the headers so we have them for logging if there are errors.
+            let headers = &r.headers().clone();
             match r.text().await {
                 Ok(html) => {
                     // Extract the form_build_id from the user login form.
@@ -181,8 +213,17 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            eprintln!("no form_build_id found on {}", &node_path);
                             user.set_failure(&mut response.request);
+                            let error =
+                                format!("post_comment: no form_build_id found on {}", &node_path);
+                            // We choose to both log and display errors to stdout.
+                            eprintln!("{}", &error);
+                            user.log_debug(
+                                &error,
+                                Some(headers),
+                                Some(html.clone()),
+                                Some(response.request),
+                            );
                             return;
                         }
                     };
@@ -191,8 +232,17 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_token = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            eprintln!("no form_token found on {}", &node_path);
                             user.set_failure(&mut response.request);
+                            let error =
+                                format!("post_comment: no form_token found on {}", &node_path);
+                            // We choose to both log and display errors to stdout.
+                            eprintln!("{}", &error);
+                            user.log_debug(
+                                &error,
+                                Some(&headers),
+                                Some(html.clone()),
+                                Some(response.request),
+                            );
                             return;
                         }
                     };
@@ -201,8 +251,16 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            eprintln!("no form_id found on {}", &node_path);
                             user.set_failure(&mut response.request);
+                            let error = format!("post_comment: no form_id found on {}", &node_path);
+                            // We choose to both log and display errors to stdout.
+                            eprintln!("{}", &error);
+                            user.log_debug(
+                                &error,
+                                Some(&headers),
+                                Some(html.clone()),
+                                Some(response.request),
+                            );
                             return;
                         }
                     };
@@ -221,35 +279,71 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let request_builder = user.goose_post(&comment_path).await;
                     let mut response = user.goose_send(request_builder.form(&params), None).await;
                     match response.response {
-                        Ok(r) => match r.text().await {
-                            Ok(html) => {
-                                if !html.contains(&comment_body) {
-                                    eprintln!(
-                                        "no comment showed up after posting to {}",
-                                        &comment_path
-                                    );
+                        Ok(r) => {
+                            // Copy the headers so we have them for logging if there are errors.
+                            let headers = &r.headers().clone();
+                            match r.text().await {
+                                Ok(html) => {
+                                    if !html.contains(&comment_body) {
+                                        user.set_failure(&mut response.request);
+                                        let error = format!("post_comment: no comment showed up after posting to {}", &comment_path);
+                                        // We choose to both log and display errors to stdout.
+                                        eprintln!("{}", &error);
+                                        user.log_debug(
+                                            &error,
+                                            Some(&headers),
+                                            Some(html),
+                                            Some(response.request),
+                                        );
+                                    }
+                                }
+                                Err(e) => {
                                     user.set_failure(&mut response.request);
+                                    let error = format!(
+                                        "post_comment: unexpected error when posting to {}: {}",
+                                        &comment_path, e
+                                    );
+                                    // We choose to both log and display errors to stdout.
+                                    eprintln!("{}", &error);
+                                    user.log_debug(
+                                        &error,
+                                        Some(&headers),
+                                        None,
+                                        Some(response.request),
+                                    );
                                 }
                             }
-                            Err(e) => {
-                                eprintln!(
-                                    "unexpected error when posting to {}: {}",
-                                    &comment_path, e
-                                );
-                                user.set_failure(&mut response.request);
-                            }
-                        },
+                        }
                         // Goose will catch this error.
-                        Err(_) => (),
+                        Err(e) => {
+                            let error = format!(
+                                "post_comment: no response when posting to {}: {}",
+                                &comment_path, e
+                            );
+                            // We choose to both log and display errors to stdout.
+                            eprintln!("{}", &error);
+                            user.log_debug(&error, None, None, Some(response.request));
+                        }
                     }
                 }
                 Err(e) => {
-                    eprintln!("unexpected error when loading {} page: {}", &node_path, e);
                     user.set_failure(&mut response.request);
+                    let error = format!("post_comment: no text when loading {}: {}", &node_path, e);
+                    // We choose to both log and display errors to stdout.
+                    eprintln!("{}", &error);
+                    user.log_debug(&error, None, None, Some(response.request));
                 }
             }
         }
         // Goose will catch this error.
-        Err(_) => (),
+        Err(e) => {
+            let error = format!(
+                "post_comment: no response when loading {}: {}",
+                &node_path, e
+            );
+            // We choose to both log and display errors to stdout.
+            eprintln!("{}", &error);
+            user.log_debug(&error, None, None, Some(response.request));
+        }
     }
 }
