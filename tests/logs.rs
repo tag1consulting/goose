@@ -21,14 +21,18 @@ pub async fn get_error(user: &GooseUser) -> () {
         Ok(r) => {
             let headers = &r.headers().clone();
             match r.text().await {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(_) => {
-                    user.log_debug("there was an error", Some(response.request), Some(headers), None);
-
+                    user.log_debug(
+                        "there was an error",
+                        Some(response.request),
+                        Some(headers),
+                        None,
+                    );
                 }
             }
-        },
-        Err(_) => {},
+        }
+        Err(_) => {}
     }
 }
 
@@ -49,10 +53,7 @@ fn test_stat_logs_json() {
     config.no_stats = false;
     crate::GooseAttack::initialize_with_config(config)
         .setup()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index))
-        )
+        .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
         .execute();
 
     let called_index = mock_index.times_called();
@@ -80,10 +81,7 @@ fn test_stat_logs_csv() {
     config.no_stats = false;
     crate::GooseAttack::initialize_with_config(config)
         .setup()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index))
-        )
+        .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
         .execute();
 
     let called_index = mock_index.times_called();
@@ -111,10 +109,7 @@ fn test_stat_logs_raw() {
     config.no_stats = false;
     crate::GooseAttack::initialize_with_config(config)
         .setup()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index))
-        )
+        .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
         .execute();
 
     let called_index = mock_index.times_called();
@@ -135,9 +130,7 @@ fn test_debug_logs() {
     cleanup_files();
 
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_error = mock(GET, ERROR_PATH)
-        .return_status(503)
-        .create();
+    let mock_error = mock(GET, ERROR_PATH).return_status(503).create();
 
     let mut config = common::build_configuration();
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
@@ -146,7 +139,7 @@ fn test_debug_logs() {
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index))
-                .register_task(task!(get_error))
+                .register_task(task!(get_error)),
         )
         .execute();
 
@@ -170,9 +163,7 @@ fn test_stats_and_debug_logs() {
     cleanup_files();
 
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_error = mock(GET, ERROR_PATH)
-        .return_status(503)
-        .create();
+    let mock_error = mock(GET, ERROR_PATH).return_status(503).create();
 
     let mut config = common::build_configuration();
     config.stats_log_file = STATS_LOG_FILE.to_string();
@@ -184,7 +175,7 @@ fn test_stats_and_debug_logs() {
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index))
-                .register_task(task!(get_error))
+                .register_task(task!(get_error)),
         )
         .execute();
 
