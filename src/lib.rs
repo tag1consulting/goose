@@ -794,6 +794,11 @@ impl GooseAttack {
                 );
                 std::process::exit(1);
             }
+
+            if !self.configuration.debug_log_file.is_empty() {
+                error!("You can only enable --debug-log-file in stand-alone or worker mode, not as manager.");
+                std::process::exit(1);
+            }
         }
 
         // Worker mode.
