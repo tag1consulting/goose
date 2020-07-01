@@ -1049,17 +1049,27 @@ impl GooseAttack {
             }
         }
 
-        // Create a channel allowing GooseUser threads to log errors.
-        let (all_threads_logger, logger_receiver): (
-            mpsc::UnboundedSender<Option<GooseDebug>>,
-            mpsc::UnboundedReceiver<Option<GooseDebug>>,
-        ) = mpsc::unbounded_channel();
+        let logger_thread;
+        let all_threads_logger;
+        let logger_receiver;
+        if !self.configuration.debug_log_file.is_empty() {
+            // Create a channel allowing GooseUser threads to log errors.
+            let (sender, receiver): (
+                mpsc::UnboundedSender<Option<GooseDebug>>,
+                mpsc::UnboundedReceiver<Option<GooseDebug>>,
+            ) = mpsc::unbounded_channel();
+            all_threads_logger = Some(sender);
+            logger_receiver = Some(receiver);
 
-        // Launch a new user.
-        let logger_thread = tokio::spawn(logger::logger_main(
-            self.configuration.clone(),
-            logger_receiver,
-        ));
+            // Launch a new user.
+            logger_thread = Some(tokio::spawn(logger::logger_main(
+                self.configuration.clone(),
+                logger_receiver.unwrap(),
+            )));
+        } else {
+            logger_thread = None;
+            all_threads_logger = None;
+        }
 
         // Collect user threads in a vector for when we want to stop them later.
         let mut users = vec![];
@@ -1097,8 +1107,12 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             user_channels.push(parent_sender);
 
-            // Copy the GooseUser-to-logger sender channel, used by all threads.
-            thread_user.logger = Some(all_threads_logger.clone());
+            if !self.configuration.debug_log_file.is_empty() {
+                // Copy the GooseUser-to-logger sender channel, used by all threads.
+                thread_user.logger = Some(all_threads_logger.clone().unwrap());
+            } else {
+                thread_user.logger = None;
+            }
 
             // Copy the GooseUser-to-parent sender channel, used by all threads.
             thread_user.parent = Some(all_threads_sender.clone());
@@ -1293,12 +1307,14 @@ impl GooseAttack {
                 futures::future::join_all(users).await;
                 debug!("all users exited");
 
-                // Tell logger thread to flush and exit.
-                if let Err(e) = all_threads_logger.send(None) {
-                    warn!("unexpected error telling logger thread to exit: {}", e);
-                };
-                // Wait for logger thread to flush and exit.
-                let _ = tokio::join!(logger_thread);
+                if !self.configuration.debug_log_file.is_empty() {
+                    // Tell logger thread to flush and exit.
+                    if let Err(e) = all_threads_logger.unwrap().send(None) {
+                        warn!("unexpected error telling logger thread to exit: {}", e);
+                    };
+                    // Wait for logger thread to flush and exit.
+                    let _ = tokio::join!(logger_thread.unwrap());
+                }
 
                 // If we're printing statistics, collect the final messages received from users.
                 if !self.configuration.no_stats {
