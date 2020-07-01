@@ -682,19 +682,19 @@ impl GooseResponse {
 pub struct GooseDebug {
     /// String to identify the source of the log message.
     pub tag: String,
+    /// Optional request made.
+    pub request: Option<GooseRawRequest>,
     /// Optional headers returned by server.
     pub header: Option<String>,
     /// Optional body text returned by server.
     pub body: Option<String>,
-    /// Optional request made.
-    pub request: Option<GooseRawRequest>,
 }
 impl GooseDebug {
     fn new(
         tag: &str,
+        request: Option<GooseRawRequest>,
         header: Option<&header::HeaderMap>,
         body: Option<String>,
-        request: Option<GooseRawRequest>,
     ) -> Self {
         let header_string = match header {
             Some(h) => Some(format!("{:?}", h)),
@@ -702,9 +702,9 @@ impl GooseDebug {
         };
         GooseDebug {
             tag: tag.to_string(),
+            request,
             header: header_string,
             body,
-            request,
         }
     }
 }
@@ -1422,8 +1422,8 @@ impl GooseUser {
     /// This function provides a mechanism for optoional debug logging when a load test
     /// is running. This can be especially helpful when writing a load test. Each entry
     /// must include a tag, which is an arbitrary string identifying the debug message.
-    /// . It may also optionally include the headers returned by the server, the text
-    /// returned by the server, and the GooseRawRequest made.
+    /// It may also optionally include the GooseRawRequest made, the headers returned by
+    /// the server, and the text returned by the server,
     ///
     /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
     /// option set, where `foo` is either a relative or an absolute path of the log file
@@ -1451,18 +1451,18 @@ impl GooseUser {
     ///                             // Server returned an error code, log everything.
     ///                             user.log_debug(
     ///                                 "error loading /",
+    ///                                 Some(response.request),
     ///                                 Some(headers),
     ///                                 Some(html.clone()),
-    ///                                 Some(response.request),
     ///                             );
     ///                         },
     ///                         Err(e) => {
     ///                             // No body was returned, log everything else.
     ///                             user.log_debug(
     ///                                 "error loading /",
+    ///                                 Some(response.request),
     ///                                 Some(headers),
     ///                                 None,
-    ///                                 Some(response.request),
     ///                             );
     ///                         }
     ///                     }
@@ -1472,9 +1472,9 @@ impl GooseUser {
     ///             Err(e) => {
     ///                 user.log_debug(
     ///                     "no response from server when loading /",
-    ///                     None,
-    ///                     None,
     ///                     Some(response.request),
+    ///                     None,
+    ///                     None,
     ///                 );
     ///             }
     ///         }
@@ -1483,15 +1483,15 @@ impl GooseUser {
     pub fn log_debug(
         &self,
         tag: &str,
+        request: Option<GooseRawRequest>,
         headers: Option<&header::HeaderMap>,
         body: Option<String>,
-        request: Option<GooseRawRequest>,
     ) {
         if !self.config.debug_log_file.is_empty() {
             match self.logger.clone() {
                 Some(l) => {
                     let logger = l;
-                    match logger.send(Some(GooseDebug::new(tag, headers, body, request))) {
+                    match logger.send(Some(GooseDebug::new(tag, request, headers, body))) {
                         Ok(_) => (),
                         Err(e) => {
                             info!("unable to communicate with logger thread, exiting: {}", e);

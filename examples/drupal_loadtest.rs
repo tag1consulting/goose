@@ -108,7 +108,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
                     let error = format!("front_page: failed to parse pag: {}", e);
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
-                    user.log_debug(&error, Some(&headers), None, Some(response.request));
+                    user.log_debug(&error, Some(response.request), Some(&headers), None);
                 }
             }
         }
@@ -117,7 +117,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
             let error = format!("front_page: no response from server: {}", e);
             // We choose to both log and display errors to stdout.
             eprintln!("{}", &error);
-            user.log_debug(&error, None, None, Some(response.request));
+            user.log_debug(&error, Some(response.request), None, None);
         }
     }
 }
@@ -153,9 +153,9 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                             eprintln!("{}", &error);
                             user.log_debug(
                                 &error,
+                                Some(response.request),
                                 Some(&headers),
                                 Some(html.clone()),
-                                Some(response.request),
                             );
                             return;
                         }
@@ -180,7 +180,7 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                     let error = format!("login: unexpected error when loading /user page: {}", e);
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
-                    user.log_debug(&error, Some(&headers), None, Some(response.request));
+                    user.log_debug(&error, Some(response.request), Some(&headers), None);
                 }
             }
         }
@@ -220,9 +220,9 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                             eprintln!("{}", &error);
                             user.log_debug(
                                 &error,
+                                Some(response.request),
                                 Some(headers),
                                 Some(html.clone()),
-                                Some(response.request),
                             );
                             return;
                         }
@@ -239,9 +239,9 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                             eprintln!("{}", &error);
                             user.log_debug(
                                 &error,
+                                Some(response.request),
                                 Some(&headers),
                                 Some(html.clone()),
-                                Some(response.request),
                             );
                             return;
                         }
@@ -257,9 +257,9 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                             eprintln!("{}", &error);
                             user.log_debug(
                                 &error,
+                                Some(response.request),
                                 Some(&headers),
                                 Some(html.clone()),
-                                Some(response.request),
                             );
                             return;
                         }
@@ -291,9 +291,9 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                                         eprintln!("{}", &error);
                                         user.log_debug(
                                             &error,
+                                            Some(response.request),
                                             Some(&headers),
                                             Some(html),
-                                            Some(response.request),
                                         );
                                     }
                                 }
@@ -307,9 +307,9 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                                     eprintln!("{}", &error);
                                     user.log_debug(
                                         &error,
+                                        Some(response.request),
                                         Some(&headers),
                                         None,
-                                        Some(response.request),
                                     );
                                 }
                             }
@@ -322,7 +322,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                             );
                             // We choose to both log and display errors to stdout.
                             eprintln!("{}", &error);
-                            user.log_debug(&error, None, None, Some(response.request));
+                            user.log_debug(&error, Some(response.request), None, None);
                         }
                     }
                 }
@@ -331,7 +331,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let error = format!("post_comment: no text when loading {}: {}", &node_path, e);
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
-                    user.log_debug(&error, None, None, Some(response.request));
+                    user.log_debug(&error, Some(response.request), None, None);
                 }
             }
         }
@@ -343,7 +343,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
             );
             // We choose to both log and display errors to stdout.
             eprintln!("{}", &error);
-            user.log_debug(&error, None, None, Some(response.request));
+            user.log_debug(&error, Some(response.request), None, None);
         }
     }
 }

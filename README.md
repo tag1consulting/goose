@@ -345,11 +345,11 @@ elapsed,method,name,url,final_url,redirected,response_time,status_code,success,u
 
 ## Load Test Debug Logging
 
-Goose can optionally log details about requests and responses for debug purposes. First, when writing
-a load test you must invoke `client.log_debug(tag, Option<headers>, Option<body>, Option<request>)`)
+Goose can optionally log details about requests and responses for debug purposes. When writing
+a load test you must invoke `client.log_debug(tag, Option<request>, Option<headers>, Option<body>)`
 where `tag` is an arbitrary string to identify where in the load test and/or why debug is being
-written, `headers` are the HTTP headers returned by the server, `body` is the web page body returned
-by the server, and `request` is a `GooseRawRequest` object.
+written, `request` is a `GooseRawRequest` object, `headers` are the HTTP headers returned by the
+server, and `body` is the web page body returned by the server.
 
 For an example on how to correctly use `client.log_debug()`, including how to obtain the response
 headers and body, see `examples/drupal_loadtest`.
