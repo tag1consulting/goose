@@ -254,7 +254,7 @@
 
 use http::method::Method;
 use http::StatusCode;
-use reqwest::{Client, ClientBuilder, Error, RequestBuilder, Response};
+use reqwest::{header, Client, ClientBuilder, Error, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
@@ -677,6 +677,38 @@ impl GooseResponse {
     }
 }
 
+/// Object created by log_debug() and written to log to assist in debugging.
+#[derive(Debug, Serialize)]
+pub struct GooseDebug {
+    /// String to identify the source of the log message.
+    pub tag: String,
+    /// Optional request made.
+    pub request: Option<GooseRawRequest>,
+    /// Optional headers returned by server.
+    pub header: Option<String>,
+    /// Optional body text returned by server.
+    pub body: Option<String>,
+}
+impl GooseDebug {
+    fn new(
+        tag: &str,
+        request: Option<GooseRawRequest>,
+        header: Option<&header::HeaderMap>,
+        body: Option<String>,
+    ) -> Self {
+        let header_string = match header {
+            Some(h) => Some(format!("{:?}", h)),
+            None => None,
+        };
+        GooseDebug {
+            tag: tag.to_string(),
+            request,
+            header: header_string,
+            body,
+        }
+    }
+}
+
 /// An individual user state, repeatedly running all GooseTasks in a specific GooseTaskSet.
 #[derive(Debug, Clone)]
 pub struct GooseUser {
@@ -698,7 +730,9 @@ pub struct GooseUser {
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
-    /// Channel
+    /// Channel to logger.
+    pub logger: Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
+    /// Channel to parent.
     pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
     /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
     pub weighted_users_index: usize,
@@ -742,6 +776,7 @@ impl GooseUser {
                     min_wait,
                     max_wait,
                     config: configuration.clone(),
+                    logger: None,
                     parent: None,
                     // A value of max_value() indicates this user isn't fully initialized yet.
                     weighted_users_index: usize::max_value(),
@@ -1379,6 +1414,95 @@ impl GooseUser {
             request.success = false;
             request.update = true;
             self.send_to_parent(&request);
+        }
+    }
+
+    /// Write to debug_log_file if enabled.
+    ///
+    /// This function provides a mechanism for optoional debug logging when a load test
+    /// is running. This can be especially helpful when writing a load test. Each entry
+    /// must include a tag, which is an arbitrary string identifying the debug message.
+    /// It may also optionally include the GooseRawRequest made, the headers returned by
+    /// the server, and the text returned by the server,
+    ///
+    /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
+    /// option set, where `foo` is either a relative or an absolute path of the log file
+    /// to create. Any existing file that may already exist will be overwritten.
+    ///
+    /// In the following example, we are logging debug messages whenever there are errors.
+    ///
+    /// # Example
+    /// ```rust
+    ///     use goose::prelude::*;
+    ///
+    ///     let mut task = task!(loadtest_index_page);
+    ///
+    ///     async fn loadtest_index_page(user: &GooseUser) {
+    ///         let mut response = user.get_named("/", "index").await;
+    ///         // Extract the response Result.
+    ///         match response.response {
+    ///             Ok(r) => {
+    ///                 // Grab a copy of the headers so we can include them when logging errors.
+    ///                 let headers = &r.headers().clone();
+    ///                 // We only need to check pages that returned a success status code.
+    ///                 if !r.status().is_success() {
+    ///                     match r.text().await {
+    ///                         Ok(html) => {
+    ///                             // Server returned an error code, log everything.
+    ///                             user.log_debug(
+    ///                                 "error loading /",
+    ///                                 Some(response.request),
+    ///                                 Some(headers),
+    ///                                 Some(html.clone()),
+    ///                             );
+    ///                         },
+    ///                         Err(e) => {
+    ///                             // No body was returned, log everything else.
+    ///                             user.log_debug(
+    ///                                 "error loading /",
+    ///                                 Some(response.request),
+    ///                                 Some(headers),
+    ///                                 None,
+    ///                             );
+    ///                         }
+    ///                     }
+    ///                 }
+    ///             },
+    ///             // No response from server.
+    ///             Err(e) => {
+    ///                 user.log_debug(
+    ///                     "no response from server when loading /",
+    ///                     Some(response.request),
+    ///                     None,
+    ///                     None,
+    ///                 );
+    ///             }
+    ///         }
+    ///     }
+    /// ````
+    pub fn log_debug(
+        &self,
+        tag: &str,
+        request: Option<GooseRawRequest>,
+        headers: Option<&header::HeaderMap>,
+        body: Option<String>,
+    ) {
+        if !self.config.debug_log_file.is_empty() {
+            match self.logger.clone() {
+                Some(l) => {
+                    let logger = l;
+                    match logger.send(Some(GooseDebug::new(tag, request, headers, body))) {
+                        Ok(_) => (),
+                        Err(e) => {
+                            info!("unable to communicate with logger thread, exiting: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                // Logger is not defined when running test_start_task, test_stop_task,
+                // and during testing.
+                None => (),
+            }
         }
     }
 

@@ -1,9 +1,12 @@
 # Changelog
 
+## 0.8.2-dev
+ - `client.log_error()` will log errors to file when load test is started with `--error-log-file=` and specifies an error log file
+
 ## 0.8.1 June 30, 2020
  - sort stats by method:name to ease comparisons
- - optionally log all requests to file specified with `--log-stats-file=`
- - add `--log-stats-format=` to switch between `json` (default), `csv` and `raw` formats
+ - optionally log all requests to file specified with `--stats-log-file=`
+ - add `--stats-log-format=` to switch between `json` (default), `csv` and `raw` formats
 
 ## 0.8.0 June 26, 2020
  - properly subtract previous statistic when handling `set_failure()` and `set_success()`
