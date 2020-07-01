@@ -126,7 +126,41 @@ fn test_stat_logs_raw() {
 
 #[test]
 #[with_mock_server]
-fn test_debug_logs() {
+fn test_debug_logs_raw() {
+    cleanup_files();
+
+    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
+    let mock_error = mock(GET, ERROR_PATH).return_status(503).create();
+
+    let mut config = common::build_configuration();
+    config.debug_log_file = DEBUG_LOG_FILE.to_string();
+    config.debug_log_format = "raw".to_string();
+    crate::GooseAttack::initialize_with_config(config)
+        .setup()
+        .register_taskset(
+            taskset!("LoadTest")
+                .register_task(task!(get_index))
+                .register_task(task!(get_error)),
+        )
+        .execute();
+
+    let called_index = mock_index.times_called();
+    let called_error = mock_error.times_called();
+
+    // Confirm that we loaded the mock endpoints.
+    assert_ne!(called_index, 0);
+    assert_ne!(called_error, 0);
+
+    // Confirm only the debug log file exists.
+    let stats_log_exists = std::path::Path::new(STATS_LOG_FILE).exists();
+    let debug_log_exists = std::path::Path::new(DEBUG_LOG_FILE).exists();
+    assert_eq!(stats_log_exists, false);
+    assert_eq!(debug_log_exists, true);
+}
+
+#[test]
+#[with_mock_server]
+fn test_debug_logs_json() {
     cleanup_files();
 
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();

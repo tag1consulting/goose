@@ -525,6 +525,24 @@ impl GooseAttack {
             }
         }
 
+        if self.configuration.debug_log_format != "json" {
+            // Log format isn't relevant if log not enabled.
+            if self.configuration.debug_log_file.is_empty() {
+                error!("You must enable --debug-log-file when setting --debug-log-format.");
+                std::process::exit(1);
+            }
+
+            // All of these options must be defined below, search for formatted_log.
+            let options = vec!["json", "raw"];
+            if !options.contains(&self.configuration.debug_log_format.as_str()) {
+                error!(
+                    "The --debug-log-format must be set to one of: {}.",
+                    options.join(", ")
+                );
+                std::process::exit(1);
+            }
+        }
+
         // Configure maximum run time if specified, otherwise run until canceled.
         if self.configuration.worker {
             if self.configuration.run_time != "" {
@@ -1473,6 +1491,10 @@ pub struct GooseConfiguration {
     /// Debug log file name
     #[structopt(short = "d", long, default_value = "")]
     pub debug_log_file: String,
+
+    /// Debug log format ('json' or 'raw')
+    #[structopt(long, default_value = "json")]
+    pub debug_log_format: String,
 
     /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]

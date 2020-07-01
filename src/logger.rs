@@ -44,10 +44,16 @@ pub async fn logger_main(
                     Some(goose_debug) => {
                         match debug_log_file.as_mut() {
                             Some(file) => {
-                                match file
-                                    .write(format!("{}\n", json!(goose_debug)).as_ref())
-                                    .await
-                                {
+                                // Options should appear above, search for formatted_log.
+                                let formatted_log = match configuration.debug_log_format.as_str() {
+                                    // Use serde_json to create JSON.
+                                    "json" => json!(goose_debug).to_string(),
+                                    // Raw format is Debug output for GooseRawRequest structure.
+                                    "raw" => format!("{:?}", goose_debug).to_string(),
+                                    _ => unreachable!(),
+                                };
+
+                                match file.write(format!("{}\n", formatted_log).as_ref()).await {
                                     Ok(_) => (),
                                     Err(e) => {
                                         warn!(
