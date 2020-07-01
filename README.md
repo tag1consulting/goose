@@ -187,6 +187,7 @@ FLAGS:
         --worker           Enables worker mode
 
 OPTIONS:
+    -d, --debug-log-file <debug-log-file>          Debug log file name [default: ]
         --expect-workers <expect-workers>
             Required when in manager mode, how many workers to expect [default: 0]
 

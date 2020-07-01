@@ -1450,7 +1450,7 @@ pub struct GooseConfiguration {
     pub stats_log_format: String,
 
     /// Debug log file name
-    #[structopt(short = "e", long, default_value = "")]
+    #[structopt(short = "d", long, default_value = "")]
     pub debug_log_file: String,
 
     /// User follows redirect of base_url with subsequent requests
