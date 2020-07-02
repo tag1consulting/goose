@@ -41,6 +41,15 @@ heading:
 goose = "^0.8"
 ```
 
+If you prefer using a [pure rust TLS implementation](https://github.com/ctz/rustls) for network requests,
+add Goose as following:
+
+```toml
+[dependencies]
+goose = { version = "^0.8", default-features = false, features = ["rustls"] }
+```
+
+
 At this point it's possible to compile all dependencies, though the
 resulting binary only displays "Hello, world!":
 
