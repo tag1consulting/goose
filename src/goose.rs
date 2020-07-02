@@ -1541,6 +1541,23 @@ pub fn get_base_url(
     }
 }
 
+// pub function: for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+trait GooseTaskCallback<'a> {
+    type Output: std::future::Future<Output = ()> + Send + 'a;
+    fn call(self, arg: &'a GooseUser) -> Self::Output;
+}
+
+impl<'a, Fut: 'a, F> GooseTaskCallback<'a> for F
+where
+    F: FnOnce(&'a GooseUser) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send,
+{
+    type Output = Fut;
+    fn call(self, arg: &'a GooseUser) -> Fut {
+        self(arg)
+    }
+}
+
 /// An individual task within a `GooseTaskSet`.
 #[derive(Clone)]
 pub struct GooseTask {
@@ -1557,9 +1574,28 @@ pub struct GooseTask {
     /// A flag indicating that this task runs when the user stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    pub function: for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
+    pub function: Box<
+        dyn for<'r> Fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>
+            + Send
+            + Sync,
+    >,
 }
+
 impl GooseTask {
+    pub fn from_async_fn<F>(cb: F) -> Self
+    where
+        for<'a> F: GooseTaskCallback<'a> + Send + Sync + 'static,
+    {
+        Self {
+            tasks_index: usize::max_value(),
+            name: "".to_string(),
+            weight: 1,
+            sequence: 0,
+            on_start: false,
+            on_stop: false,
+            function: Box::new(move |s| Box::pin(cb.call(s))),
+        }
+    }
     pub fn new(
         function: for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
     ) -> Self {
@@ -1571,7 +1607,7 @@ impl GooseTask {
             sequence: 0,
             on_start: false,
             on_stop: false,
-            function,
+            function: Box::new(function),
         }
     }
 
