@@ -188,6 +188,7 @@ FLAGS:
 
 OPTIONS:
     -d, --debug-log-file <debug-log-file>          Debug log file name [default: ]
+        --debug-log-format <debug-log-format>      Debug log format ('json' or 'raw') [default: json]
         --expect-workers <expect-workers>
             Required when in manager mode, how many workers to expect [default: 0]
 
@@ -363,6 +364,10 @@ to this file. Debug is logged in JSON Lines format. For example:
 ```
 
 If `--debug-log-file=foo` is not specified at run time, nothing will be logged.
+
+By default Goose writes debug logs in JSON Lines format. The `--debug-log-format` option
+can be used to log in `json` or `raw` format. The `raw` format is Rust's debug
+output of the entire `GooseDebug` object.
 
 ## Gaggle: Distributed Load Test
 

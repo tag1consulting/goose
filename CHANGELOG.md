@@ -1,7 +1,8 @@
 # Changelog
 
 ## 0.8.2-dev
- - `client.log_error()` will log errors to file when load test is started with `--error-log-file=` and specifies an error log file
+ - `client.log_debug()` will write debug logs to file when specified with `--debug-log-file=`
+ - add `-debug-log-format=` to switch between `json` (default) and `raw` formats
 
 ## 0.8.1 June 30, 2020
  - sort stats by method:name to ease comparisons
