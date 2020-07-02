@@ -1650,7 +1650,7 @@ pub fn get_base_url(
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
                 Some(host) => Url::parse(&host).unwrap(),
                 // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
-                None => Url::parse(&default_host.clone().unwrap()).unwrap(),
+                None => Url::parse(&default_host.unwrap()).unwrap(),
             }
         }
     }
