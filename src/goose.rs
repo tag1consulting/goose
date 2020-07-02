@@ -1633,7 +1633,6 @@ impl GooseUser {
             Ok(url) => *self.base_url.write().await = url,
             Err(e) => {
                 error!("failed to set_base_url({}): {}", host, e);
-                return;
             }
         }
     }
