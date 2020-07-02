@@ -288,20 +288,17 @@ pub fn push_stats_to_manager(
             }
         };
 
-        match command {
-            GooseUserCommand::EXIT => {
-                info!("[{}] received EXIT command from manager", get_worker_id());
-                // Shutting down, register shutdown pipe handler.
-                match manager.pipe_notify(pipe_closed_during_shutdown) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!("failed to set up new pipe handler: {}", e);
-                        std::process::exit(1);
-                    }
+        if command == GooseUserCommand::EXIT {
+            info!("[{}] received EXIT command from manager", get_worker_id());
+            // Shutting down, register shutdown pipe handler.
+            match manager.pipe_notify(pipe_closed_during_shutdown) {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("failed to set up new pipe handler: {}", e);
+                    std::process::exit(1);
                 }
-                return false;
             }
-            _ => (),
+            return false;
         }
     }
     true
