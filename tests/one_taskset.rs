@@ -8,11 +8,11 @@ use goose::prelude::*;
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
-pub async fn get_index(user: &GooseUser) -> () {
+pub async fn get_index(user: &GooseUser) {
     let _response = user.get(INDEX_PATH).await;
 }
 
-pub async fn get_about(user: &GooseUser) -> () {
+pub async fn get_about(user: &GooseUser) {
     let _response = user.get(ABOUT_PATH).await;
 }
 

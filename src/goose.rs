@@ -1892,11 +1892,11 @@ mod tests {
     #[test]
     fn goose_task_set() {
         // Simplistic test task functions.
-        async fn test_function_a(user: &GooseUser) -> () {
+        async fn test_function_a(user: &GooseUser) {
             let _response = user.get("/a/").await;
         }
 
-        async fn test_function_b(user: &GooseUser) -> () {
+        async fn test_function_b(user: &GooseUser) {
             let _response = user.get("/b/").await;
         }
 
@@ -1989,7 +1989,7 @@ mod tests {
     #[test]
     fn goose_task() {
         // Simplistic test task functions.
-        async fn test_function_a(user: &GooseUser) -> () {
+        async fn test_function_a(user: &GooseUser) {
             let _response = user.get("/a/");
         }
 

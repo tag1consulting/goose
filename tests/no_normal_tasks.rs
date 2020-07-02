@@ -8,13 +8,13 @@ use goose::prelude::*;
 const LOGIN_PATH: &str = "/login";
 const LOGOUT_PATH: &str = "/logout";
 
-pub async fn login(user: &GooseUser) -> () {
+pub async fn login(user: &GooseUser) {
     let request_builder = user.goose_post(LOGIN_PATH).await;
     let params = [("username", "me"), ("password", "s3crET!")];
     let _response = user.goose_send(request_builder.form(&params), None).await;
 }
 
-pub async fn logout(user: &GooseUser) -> () {
+pub async fn logout(user: &GooseUser) {
     let _response = user.get(LOGOUT_PATH).await;
 }
 
