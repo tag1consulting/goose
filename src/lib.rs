@@ -1528,7 +1528,9 @@ pub struct GooseConfiguration {
 }
 
 /// Returns a sequenced bucket of weighted usize pointers to Goose Tasks
-fn weight_tasks(task_set: &GooseTaskSet) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
+fn weight_tasks(
+    task_set: &GooseTaskSet,
+) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
     trace!("weight_tasks for {}", task_set.name);
 
     // A BTreeMap of Vectors allows us to group and sort tasks per sequence value.
