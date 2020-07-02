@@ -456,11 +456,9 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
             }
             Err(e) => {
                 if e == Error::TryAgain {
-                    if workers.len() > 0 {
-                        if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
-                            info!("all workers have exited");
-                            break;
-                        }
+                    if workers.len() > 0 && ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
+                        info!("all workers have exited");
+                        break;
                     }
                     if !load_test_finished {
                         // Sleep half a second then return to the loop.
