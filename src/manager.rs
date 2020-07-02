@@ -253,7 +253,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // All workers are running load test, sending statistics.
                     if workers.len() == goose_attack.configuration.expect_workers as usize {
                         // Requests statistics received, merge them into our local copy.
-                        if requests.len() > 0 {
+                        if !requests.is_empty() {
                             debug!("requests statistics received: {:?}", requests.len());
                             for (request_key, request) in requests {
                                 trace!("request_key: {}", request_key);
@@ -456,7 +456,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
             }
             Err(e) => {
                 if e == Error::TryAgain {
-                    if workers.len() > 0 && ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
+                    if !workers.is_empty() && ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
                         info!("all workers have exited");
                         break;
                     }
