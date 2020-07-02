@@ -1231,19 +1231,16 @@ impl GooseAttack {
                         _ => unreachable!(),
                     };
 
-                    match stats_log_file.as_mut() {
-                        Some(file) => {
-                            match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    warn!(
-                                        "failed to write statistics to {}: {}",
-                                        &self.configuration.stats_log_file, e
-                                    );
-                                }
+                    if let Some(file) = stats_log_file.as_mut() {
+                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!(
+                                    "failed to write statistics to {}: {}",
+                                    &self.configuration.stats_log_file, e
+                                );
                             }
                         }
-                        None => (),
                     }
 
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
@@ -1408,18 +1405,12 @@ impl GooseAttack {
         }
 
         // If stats logging is enabled, flush all stats before we exit.
-        match stats_log_file.as_mut() {
-            Some(file) => {
-                info!(
-                    "flushing stats_log_file: {}",
-                    &self.configuration.stats_log_file
-                );
-                match file.flush().await {
-                    Ok(_) => (),
-                    Err(_) => (),
-                }
-            }
-            None => (),
+        if let Some(file) = stats_log_file.as_mut() {
+            info!(
+                "flushing stats_log_file: {}",
+                &self.configuration.stats_log_file
+            );
+            let _ = file.flush().await;
         };
 
         self

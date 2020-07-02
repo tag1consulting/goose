@@ -38,56 +38,41 @@ pub async fn logger_main(
     loop {
         // Wait here until a GooseUser thread sends us an error to log, or all GooseUser threads
         // close the error log channel.
-        match log_receiver.recv().await {
-            Some(message) => {
-                match message {
-                    Some(goose_debug) => {
-                        match debug_log_file.as_mut() {
-                            Some(file) => {
-                                // Options should appear above, search for formatted_log.
-                                let formatted_log = match configuration.debug_log_format.as_str() {
-                                    // Use serde_json to create JSON.
-                                    "json" => json!(goose_debug).to_string(),
-                                    // Raw format is Debug output for GooseRawRequest structure.
-                                    "raw" => format!("{:?}", goose_debug).to_string(),
-                                    _ => unreachable!(),
-                                };
+        if let Some(message) = log_receiver.recv().await {
+            if let Some(goose_debug) = message {
+                // All Options are defined above, search for formatted_log.
+                if let Some(file) = debug_log_file.as_mut() {
+                    let formatted_log = match configuration.debug_log_format.as_str() {
+                        // Use serde_json to create JSON.
+                        "json" => json!(goose_debug).to_string(),
+                        // Raw format is Debug output for GooseRawRequest structure.
+                        "raw" => format!("{:?}", goose_debug).to_string(),
+                        _ => unreachable!(),
+                    };
 
-                                match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                                    Ok(_) => (),
-                                    Err(e) => {
-                                        warn!(
-                                            "failed to write  to {}: {}",
-                                            &configuration.debug_log_file, e
-                                        );
-                                    }
-                                }
-                            }
-                            None => (),
-                        };
+                    match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                        Ok(_) => (),
+                        Err(e) => {
+                            warn!(
+                                "failed to write  to {}: {}",
+                                &configuration.debug_log_file, e
+                            );
+                        }
                     }
-                    None => {
-                        // Empty message means it's time to exit.
-                        break;
-                    }
-                }
-            }
-            None => {
-                // Pipe is closed, cleanup and exit.
+                };
+            } else {
+                // Empty message means it's time to exit.
                 break;
             }
+        } else {
+            // Pipe is closed, cleanup and exit.
+            break;
         }
     }
 
     // Cleanup and flush all logs to disk.
-    match debug_log_file.as_mut() {
-        Some(file) => {
-            info!("flushing debug_log_file: {}", &configuration.debug_log_file);
-            match file.flush().await {
-                Ok(_) => (),
-                Err(_) => (),
-            }
-        }
-        None => (),
+    if let Some(file) = debug_log_file.as_mut() {
+        info!("flushing debug_log_file: {}", &configuration.debug_log_file);
+        let _ = file.flush().await;
     };
 }
