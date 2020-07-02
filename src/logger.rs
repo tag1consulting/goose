@@ -35,37 +35,30 @@ pub async fn logger_main(
     }
 
     // Loop waiting for and writing error logs from GooseUser threads.
-    loop {
-        // Wait here until a GooseUser thread sends us an error to log, or all GooseUser threads
-        // close the error log channel.
-        if let Some(message) = log_receiver.recv().await {
-            if let Some(goose_debug) = message {
-                // All Options are defined above, search for formatted_log.
-                if let Some(file) = debug_log_file.as_mut() {
-                    let formatted_log = match configuration.debug_log_format.as_str() {
-                        // Use serde_json to create JSON.
-                        "json" => json!(goose_debug).to_string(),
-                        // Raw format is Debug output for GooseRawRequest structure.
-                        "raw" => format!("{:?}", goose_debug).to_string(),
-                        _ => unreachable!(),
-                    };
-
-                    match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                        Ok(_) => (),
-                        Err(e) => {
-                            warn!(
-                                "failed to write  to {}: {}",
-                                &configuration.debug_log_file, e
-                            );
-                        }
-                    }
+    while let Some(message) = log_receiver.recv().await {
+        if let Some(goose_debug) = message {
+            // All Options are defined above, search for formatted_log.
+            if let Some(file) = debug_log_file.as_mut() {
+                let formatted_log = match configuration.debug_log_format.as_str() {
+                    // Use serde_json to create JSON.
+                    "json" => json!(goose_debug).to_string(),
+                    // Raw format is Debug output for GooseRawRequest structure.
+                    "raw" => format!("{:?}", goose_debug).to_string(),
+                    _ => unreachable!(),
                 };
-            } else {
-                // Empty message means it's time to exit.
-                break;
-            }
+
+                match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                    Ok(_) => (),
+                    Err(e) => {
+                        warn!(
+                            "failed to write  to {}: {}",
+                            &configuration.debug_log_file, e
+                        );
+                    }
+                }
+            };
         } else {
-            // Pipe is closed, cleanup and exit.
+            // Empty message means it's time to exit.
             break;
         }
     }
