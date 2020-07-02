@@ -339,6 +339,9 @@ lazy_static! {
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
 }
 
+/// Internal representation of a weighted task list.
+type WeightedGooseTasks = Vec<Vec<usize>>;
+
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
     WORKER_ID.load(Ordering::Relaxed)
@@ -1525,7 +1528,7 @@ pub struct GooseConfiguration {
 }
 
 /// Returns a sequenced bucket of weighted usize pointers to Goose Tasks
-fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<Vec<usize>>) {
+fn weight_tasks(task_set: &GooseTaskSet) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
     trace!("weight_tasks for {}", task_set.name);
 
     // A BTreeMap of Vectors allows us to group and sort tasks per sequence value.
@@ -1593,7 +1596,7 @@ fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, V
     debug!("gcd: {}", u);
 
     // Apply weight to sequenced tasks.
-    let mut weighted_tasks: Vec<Vec<usize>> = Vec::new();
+    let mut weighted_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_tasks.iter() {
         let mut sequence_weighted_tasks = Vec::new();
         for task in tasks {
@@ -1633,7 +1636,7 @@ fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, V
     }
 
     // Apply weight to on_start sequenced tasks.
-    let mut weighted_on_start_tasks: Vec<Vec<usize>> = Vec::new();
+    let mut weighted_on_start_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_on_start_tasks.iter() {
         let mut sequence_on_start_weighted_tasks = Vec::new();
         for task in tasks {
@@ -1671,7 +1674,7 @@ fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, V
     weighted_on_start_tasks.push(weighted_on_start_unsequenced_tasks);
 
     // Apply weight to on_stop sequenced tasks.
-    let mut weighted_on_stop_tasks: Vec<Vec<usize>> = Vec::new();
+    let mut weighted_on_stop_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_on_stop_tasks.iter() {
         let mut sequence_on_stop_weighted_tasks = Vec::new();
         for task in tasks {
