@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.8.3-dev
+
 ## 0.8.2 July 2, 2020
  - `client.log_debug()` will write debug logs to file when specified with `--debug-log-file=`
  - add `-debug-log-format=` to switch between `json` (default) and `raw` formats
