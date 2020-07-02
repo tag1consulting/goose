@@ -47,9 +47,9 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.8.1
+  Downloaded goose v0.8.2
       ...
-   Compiling goose v0.8.1
+   Compiling goose v0.8.2
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -165,7 +165,7 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 `cargo run --example simple -- -h`:
 
 ```
-Goose 0.8.1
+Goose 0.8.2
 CLI options available when launching a Goose load test
 
 USAGE:
@@ -223,9 +223,9 @@ MiB Swap:  10237.0 total,  10234.7 free,      2.3 used.   8401.5 avail Mem
 Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to spin up 32 users per second. The `-t 10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--print-stats` flag tells Goose to collect statistics during the load test, and the `--status-codes` flag tells it to include statistics about HTTP Status codes returned by the server. Finally, the `--only-summary` flag tells Goose to only display the statistics when the load test finishes, otherwise it would display running statistics every 15 seconds for the duration of the test.
 
 ```
-$ cargo run --release --example simple -- --host http://apache.fosciana -v -c1024 -r32 -t 10m --print-stats --status-codes --only-summary
+$ cargo run --release --example simple -- --host http://apache.fosciana -v -u1024 -r32 -t 10m --print-stats --status-codes --only-summary
     Finished release [optimized] target(s) in 0.05s
-     Running `target/release/examples/simple --host 'http://apache.fosciana' -v -c1024 -r32 -t 10m --print-stats --status-codes --only-summary`
+     Running `target/release/examples/simple --host 'http://apache.fosciana' -v -u1024 -r32 -t 10m --print-stats --status-codes --only-summary`
 18:42:48 [ INFO] Output verbosity level: INFO
 18:42:48 [ INFO] Logfile verbosity level: INFO
 18:42:48 [ INFO] Writing to log file: goose.log
