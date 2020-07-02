@@ -1304,20 +1304,16 @@ impl GooseUser {
     }
 
     fn send_to_parent(&self, raw_request: &GooseRawRequest) {
-        match self.parent.clone() {
-            Some(p) => {
-                let parent = p;
-                match parent.send(raw_request.clone()) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        info!("unable to communicate with parent thread, exiting: {}", e);
-                        std::process::exit(1);
-                    }
+        // Parent is not defined when running test_start_task, test_stop_task,
+        // and during testing.
+        if let Some(parent) = self.parent.clone() {
+            match parent.send(raw_request.clone()) {
+                Ok(_) => (),
+                Err(e) => {
+                    info!("unable to communicate with parent thread, exiting: {}", e);
+                    std::process::exit(1);
                 }
             }
-            // Parent is not defined when running test_start_task, test_stop_task,
-            // and during testing.
-            None => (),
         }
     }
 
@@ -1488,20 +1484,16 @@ impl GooseUser {
         body: Option<String>,
     ) {
         if !self.config.debug_log_file.is_empty() {
-            match self.logger.clone() {
-                Some(l) => {
-                    let logger = l;
-                    match logger.send(Some(GooseDebug::new(tag, request, headers, body))) {
-                        Ok(_) => (),
-                        Err(e) => {
-                            info!("unable to communicate with logger thread, exiting: {}", e);
-                            std::process::exit(1);
-                        }
+            // Logger is not defined when running test_start_task, test_stop_task,
+            // and during testing.
+            if let Some(logger) = self.logger.clone() {
+                match logger.send(Some(GooseDebug::new(tag, request, headers, body))) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        info!("unable to communicate with logger thread, exiting: {}", e);
+                        std::process::exit(1);
                     }
                 }
-                // Logger is not defined when running test_start_task, test_stop_task,
-                // and during testing.
-                None => (),
             }
         }
     }
@@ -1633,7 +1625,6 @@ impl GooseUser {
             Ok(url) => *self.base_url.write().await = url,
             Err(e) => {
                 error!("failed to set_base_url({}): {}", host, e);
-                return;
             }
         }
     }
@@ -1659,7 +1650,7 @@ pub fn get_base_url(
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
                 Some(host) => Url::parse(&host).unwrap(),
                 // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
-                None => Url::parse(&default_host.clone().unwrap()).unwrap(),
+                None => Url::parse(&default_host.unwrap()).unwrap(),
             }
         }
     }
@@ -1901,11 +1892,11 @@ mod tests {
     #[test]
     fn goose_task_set() {
         // Simplistic test task functions.
-        async fn test_function_a(user: &GooseUser) -> () {
+        async fn test_function_a(user: &GooseUser) {
             let _response = user.get("/a/").await;
         }
 
-        async fn test_function_b(user: &GooseUser) -> () {
+        async fn test_function_b(user: &GooseUser) {
             let _response = user.get("/b/").await;
         }
 
@@ -1998,7 +1989,7 @@ mod tests {
     #[test]
     fn goose_task() {
         // Simplistic test task functions.
-        async fn test_function_a(user: &GooseUser) -> () {
+        async fn test_function_a(user: &GooseUser) {
             let _response = user.get("/a/");
         }
 

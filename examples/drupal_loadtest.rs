@@ -99,8 +99,8 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
                             urls.push(url[1].to_string());
                         }
                     }
-                    for index in 0..urls.len() {
-                        user.get_named(&urls[index], "static asset").await;
+                    for asset in &urls {
+                        user.get_named(asset, "static asset").await;
                     }
                 }
                 Err(e) => {
@@ -148,11 +148,11 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                         Some(f) => f,
                         None => {
                             user.set_failure(&mut response.request);
-                            let error = format!("login: no form_build_id on page: /user page");
+                            let error = "login: no form_build_id on page: /user page";
                             // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
+                            eprintln!("{}", error);
                             user.log_debug(
-                                &error,
+                                error,
                                 Some(response.request),
                                 Some(&headers),
                                 Some(html.clone()),

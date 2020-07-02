@@ -339,6 +339,9 @@ lazy_static! {
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
 }
 
+/// Internal representation of a weighted task list.
+type WeightedGooseTasks = Vec<Vec<usize>>;
+
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
     WORKER_ID.load(Ordering::Relaxed)
@@ -1231,19 +1234,16 @@ impl GooseAttack {
                         _ => unreachable!(),
                     };
 
-                    match stats_log_file.as_mut() {
-                        Some(file) => {
-                            match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    warn!(
-                                        "failed to write statistics to {}: {}",
-                                        &self.configuration.stats_log_file, e
-                                    );
-                                }
+                    if let Some(file) = stats_log_file.as_mut() {
+                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!(
+                                    "failed to write statistics to {}: {}",
+                                    &self.configuration.stats_log_file, e
+                                );
                             }
                         }
-                        None => (),
                     }
 
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
@@ -1408,18 +1408,12 @@ impl GooseAttack {
         }
 
         // If stats logging is enabled, flush all stats before we exit.
-        match stats_log_file.as_mut() {
-            Some(file) => {
-                info!(
-                    "flushing stats_log_file: {}",
-                    &self.configuration.stats_log_file
-                );
-                match file.flush().await {
-                    Ok(_) => (),
-                    Err(_) => (),
-                }
-            }
-            None => (),
+        if let Some(file) = stats_log_file.as_mut() {
+            info!(
+                "flushing stats_log_file: {}",
+                &self.configuration.stats_log_file
+            );
+            let _ = file.flush().await;
         };
 
         self
@@ -1534,7 +1528,9 @@ pub struct GooseConfiguration {
 }
 
 /// Returns a sequenced bucket of weighted usize pointers to Goose Tasks
-fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<Vec<usize>>) {
+fn weight_tasks(
+    task_set: &GooseTaskSet,
+) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
     trace!("weight_tasks for {}", task_set.name);
 
     // A BTreeMap of Vectors allows us to group and sort tasks per sequence value.
@@ -1602,7 +1598,7 @@ fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, V
     debug!("gcd: {}", u);
 
     // Apply weight to sequenced tasks.
-    let mut weighted_tasks: Vec<Vec<usize>> = Vec::new();
+    let mut weighted_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_tasks.iter() {
         let mut sequence_weighted_tasks = Vec::new();
         for task in tasks {
@@ -1642,7 +1638,7 @@ fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, V
     }
 
     // Apply weight to on_start sequenced tasks.
-    let mut weighted_on_start_tasks: Vec<Vec<usize>> = Vec::new();
+    let mut weighted_on_start_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_on_start_tasks.iter() {
         let mut sequence_on_start_weighted_tasks = Vec::new();
         for task in tasks {
@@ -1680,7 +1676,7 @@ fn weight_tasks(task_set: &GooseTaskSet) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, V
     weighted_on_start_tasks.push(weighted_on_start_unsequenced_tasks);
 
     // Apply weight to on_stop sequenced tasks.
-    let mut weighted_on_stop_tasks: Vec<Vec<usize>> = Vec::new();
+    let mut weighted_on_stop_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_on_stop_tasks.iter() {
         let mut sequence_on_stop_weighted_tasks = Vec::new();
         for task in tasks {

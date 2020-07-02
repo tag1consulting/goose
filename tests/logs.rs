@@ -11,28 +11,25 @@ const ERROR_PATH: &str = "/error";
 const STATS_LOG_FILE: &str = "stats.log";
 const DEBUG_LOG_FILE: &str = "debug.log";
 
-pub async fn get_index(user: &GooseUser) -> () {
+pub async fn get_index(user: &GooseUser) {
     let _response = user.get(INDEX_PATH).await;
 }
 
-pub async fn get_error(user: &GooseUser) -> () {
+pub async fn get_error(user: &GooseUser) {
     let response = user.get(ERROR_PATH).await;
-    match response.response {
-        Ok(r) => {
-            let headers = &r.headers().clone();
-            match r.text().await {
-                Ok(_) => {}
-                Err(_) => {
-                    user.log_debug(
-                        "there was an error",
-                        Some(response.request),
-                        Some(headers),
-                        None,
-                    );
-                }
+    if let Ok(r) = response.response {
+        let headers = &r.headers().clone();
+        match r.text().await {
+            Ok(_) => {}
+            Err(_) => {
+                user.log_debug(
+                    "there was an error",
+                    Some(response.request),
+                    Some(headers),
+                    None,
+                );
             }
         }
-        Err(_) => {}
     }
 }
 

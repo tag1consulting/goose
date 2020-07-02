@@ -10,15 +10,26 @@ env:
     RUST_BACKTRACE: 1
 
 jobs:
-  build:
-
+  style:
+    name: verify formatting and style
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
     - name: Verify code formatting
       run: cargo fmt -- --check
+    - name: Verify code style
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+  build:
+    name: build and run tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
     - name: Build
       run: cargo build --verbose --all-features
+    - name: Docs
+      run: cargo rustdoc --lib --examples
     - name: Run tests
       run: cargo test --verbose --all-features
