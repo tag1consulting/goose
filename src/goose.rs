@@ -269,11 +269,11 @@ use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
+/// task!(foo) expands to GooseTask::from_async_fn(foo),
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
-        GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
+        GooseTask::from_async_fn($task_func)
     };
 }
 
