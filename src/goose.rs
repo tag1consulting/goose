@@ -73,7 +73,7 @@
 //!
 //!     /// A very simple task that simply loads the front page.
 //!     async fn task_function(user: &GooseUser) {
-//!       let _response = user.get("/");
+//!       let _response = user.get("/").await;
 //!     }
 //! ```
 //!
@@ -89,7 +89,7 @@
 //!
 //!     /// A very simple task that simply loads the front page.
 //!     async fn task_function(user: &GooseUser) {
-//!       let _response = user.get("/");
+//!       let _response = user.get("/").await;
 //!     }
 //! ```
 //!
@@ -107,12 +107,12 @@
 //!
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(user: &GooseUser) {
-//!       let _response = user.get("/a/");
+//!       let _response = user.get("/a/").await;
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(user: &GooseUser) {
-//!       let _response = user.get("/b/");
+//!       let _response = user.get("/b/").await;
 //!     }
 //! ```
 //!
@@ -135,17 +135,17 @@
 //!
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(user: &GooseUser) {
-//!       let _response = user.get("/a/");
+//!       let _response = user.get("/a/").await;
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(user: &GooseUser) {
-//!       let _response = user.get("/b/");
+//!       let _response = user.get("/b/").await;
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "c" page.
 //!     async fn c_task_function(user: &GooseUser) {
-//!       let _response = user.get("/c/");
+//!       let _response = user.get("/c/").await;
 //!     }
 //! ```
 //!
@@ -164,7 +164,7 @@
 //!
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(user: &GooseUser) {
-//!       let _response = user.get("/a/");
+//!       let _response = user.get("/a/").await;
 //!     }
 //! ```
 //!
@@ -183,7 +183,7 @@
 //!
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(user: &GooseUser) {
-//!       let _response = user.get("/b/");
+//!       let _response = user.get("/b/").await;
 //!     }
 //! ```
 //!
@@ -211,7 +211,7 @@
 //!
 //!     /// A very simple task that makes a GET request.
 //!     async  fn get_function(user: &GooseUser) {
-//!       let _response = user.get("/path/to/foo/");
+//!       let _response = user.get("/path/to/foo/").await;
 //!     }
 //! ```
 //!
@@ -232,7 +232,7 @@
 //!
 //!     /// A very simple task that makes a POST request.
 //!     async fn post_function(user: &GooseUser) {
-//!       let _response = user.post("/path/to/foo/", "string value to post");
+//!       let _response = user.post("/path/to/foo/", "string value to post").await;
 //!     }
 //! ```
 //!
@@ -347,7 +347,7 @@ impl GooseTaskSet {
     ///
     ///     /// A very simple task that simply loads the "a" page.
     ///     async fn a_task_function(user: &GooseUser) {
-    ///       let _response = user.get("/a/");
+    ///       let _response = user.get("/a/").await;
     ///     }
     /// ```
     pub fn register_task(mut self, mut task: GooseTask) -> Self {
@@ -851,7 +851,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a GET request.
     ///     async fn get_function(user: &GooseUser) {
-    ///       let _response = user.get("/path/to/foo/");
+    ///       let _response = user.get("/path/to/foo/").await;
     ///     }
     /// ```
     pub async fn get(&self, path: &str) -> GooseResponse {
@@ -876,7 +876,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a GET request.
     ///     async fn get_function(user: &GooseUser) {
-    ///       let _response = user.get_named("/path/to/foo/", "foo");
+    ///       let _response = user.get_named("/path/to/foo/", "foo").await;
     ///     }
     /// ```
     pub async fn get_named(&self, path: &str, request_name: &str) -> GooseResponse {
@@ -905,7 +905,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a POST request.
     ///     async fn post_function(user: &GooseUser) {
-    ///       let _response = user.post("/path/to/foo/", "BODY BEING POSTED");
+    ///       let _response = user.post("/path/to/foo/", "BODY BEING POSTED").await;
     ///     }
     /// ```
     pub async fn post(&self, path: &str, body: &str) -> GooseResponse {
@@ -930,7 +930,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a POST request.
     ///     async fn post_function(user: &GooseUser) {
-    ///       let _response = user.post_named("/path/to/foo/", "foo", "BODY BEING POSTED");
+    ///       let _response = user.post_named("/path/to/foo/", "foo", "BODY BEING POSTED").await;
     ///     }
     /// ```
     pub async fn post_named(&self, path: &str, request_name: &str, body: &str) -> GooseResponse {
@@ -959,7 +959,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a HEAD request.
     ///     async fn head_function(user: &GooseUser) {
-    ///       let _response = user.head("/path/to/foo/");
+    ///       let _response = user.head("/path/to/foo/").await;
     ///     }
     /// ```
     pub async fn head(&self, path: &str) -> GooseResponse {
@@ -984,7 +984,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a HEAD request.
     ///     async fn head_function(user: &GooseUser) {
-    ///       let _response = user.head_named("/path/to/foo/", "foo");
+    ///       let _response = user.head_named("/path/to/foo/", "foo").await;
     ///     }
     /// ```
     pub async fn head_named(&self, path: &str, request_name: &str) -> GooseResponse {
@@ -1013,7 +1013,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a DELETE request.
     ///     async fn delete_function(user: &GooseUser) {
-    ///       let _response = user.delete("/path/to/foo/");
+    ///       let _response = user.delete("/path/to/foo/").await;
     ///     }
     /// ```
     pub async fn delete(&self, path: &str) -> GooseResponse {
@@ -1038,7 +1038,7 @@ impl GooseUser {
     ///
     ///     /// A very simple task that makes a DELETE request.
     ///     async fn delete_function(user: &GooseUser) {
-    ///       let _response = user.delete_named("/path/to/foo/", "foo");
+    ///       let _response = user.delete_named("/path/to/foo/", "foo").await;
     ///     }
     /// ```
     pub async fn delete_named(&self, path: &str, request_name: &str) -> GooseResponse {
@@ -1609,7 +1609,7 @@ impl GooseUser {
     ///     .execute();
     ///
     ///     async fn task_foo(user: &GooseUser) {
-    ///       let _response = user.get("/");
+    ///       let _response = user.get("/").await;
     ///     }
     ///
     ///     async fn task_bar(user: &GooseUser) {
@@ -1617,7 +1617,7 @@ impl GooseUser {
     ///       // http://foo.example.com, after this task runs all subsequent
     ///       // requests are made against http://bar.example.com/.
     ///       user.set_base_url("http://bar.example.com/");
-    ///       let _response = user.get("/");
+    ///       let _response = user.get("/").await;
     ///     }
     /// ```
     pub async fn set_base_url(&self, host: &str) {
@@ -1704,7 +1704,7 @@ impl GooseTask {
     ///     task!(my_task_function).set_name("foo");
     ///
     ///     async fn my_task_function(user: &GooseUser) {
-    ///       let _response = user.get("/");
+    ///       let _response = user.get("/").await;
     ///     }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
@@ -1730,7 +1730,7 @@ impl GooseTask {
     ///     task!(my_on_start_function).set_on_start();
     ///
     ///     async fn my_on_start_function(user: &GooseUser) {
-    ///       let _response = user.get("/");
+    ///       let _response = user.get("/").await;
     ///     }
     /// ```
     pub fn set_on_start(mut self) -> Self {
@@ -1756,7 +1756,7 @@ impl GooseTask {
     ///     task!(my_on_stop_function).set_on_stop();
     ///
     ///     async fn my_on_stop_function(user: &GooseUser) {
-    ///       let _response = user.get("/");
+    ///       let _response = user.get("/").await;
     ///     }
     /// ```
     pub fn set_on_stop(mut self) -> Self {
@@ -1776,7 +1776,7 @@ impl GooseTask {
     ///     task!(task_function).set_weight(3);
     ///
     ///     async fn task_function(user: &GooseUser) {
-    ///       let _response = user.get("/");
+    ///       let _response = user.get("/").await;
     ///     }
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Self {
@@ -1813,15 +1813,15 @@ impl GooseTask {
     ///     let runs_last = task!(third_task_function);
     ///
     ///     async fn first_task_function(user: &GooseUser) {
-    ///       let _response = user.get("/1");
+    ///       let _response = user.get("/1").await;
     ///     }
     ///
     ///     async fn second_task_function(user: &GooseUser) {
-    ///       let _response = user.get("/2");
+    ///       let _response = user.get("/2").await;
     ///     }
     ///
     ///     async fn third_task_function(user: &GooseUser) {
-    ///       let _response = user.get("/3");
+    ///       let _response = user.get("/3").await;
     ///     }
     /// ```
     ///
@@ -1837,15 +1837,15 @@ impl GooseTask {
     ///     let also_runs_second = task!(second_task_function_b).set_sequence(2).set_weight(2);
     ///
     ///     async fn first_task_function(user: &GooseUser) {
-    ///       let _response = user.get("/1");
+    ///       let _response = user.get("/1").await;
     ///     }
     ///
     ///     async fn second_task_function_a(user: &GooseUser) {
-    ///       let _response = user.get("/2a");
+    ///       let _response = user.get("/2a").await;
     ///     }
     ///
     ///     async fn second_task_function_b(user: &GooseUser) {
-    ///       let _response = user.get("/2b");
+    ///       let _response = user.get("/2b").await;
     ///     }
     /// ```
     pub fn set_sequence(mut self, sequence: usize) -> Self {
