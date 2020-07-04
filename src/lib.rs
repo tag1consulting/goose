@@ -731,11 +731,10 @@ impl GooseAttack {
         info!("initializing user states...");
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
-        let config = self.configuration.clone();
         loop {
             for task_sets_index in &weighted_task_sets {
                 let base_url = goose::get_base_url(
-                    Some(config.host.to_string()),
+                    self.get_configuration_host(),
                     self.task_sets[*task_sets_index].host.clone(),
                     self.host.clone(),
                 );
@@ -744,7 +743,7 @@ impl GooseAttack {
                     base_url,
                     self.task_sets[*task_sets_index].min_wait,
                     self.task_sets[*task_sets_index].max_wait,
-                    &config,
+                    &self.configuration,
                     self.task_sets_hash,
                 ));
                 user_count += 1;
