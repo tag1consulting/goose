@@ -252,6 +252,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+use async_std::sync::Receiver;
 use http::method::Method;
 use http::StatusCode;
 use reqwest::{header, Client, ClientBuilder, Error, RequestBuilder, Response};
@@ -732,6 +733,8 @@ pub struct GooseUser {
     pub config: GooseConfiguration,
     /// Channel to logger.
     pub logger: Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
+    /// Channel to throttle.
+    pub throttle: Option<Receiver<bool>>,
     /// Channel to parent.
     pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
     /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
@@ -777,6 +780,7 @@ impl GooseUser {
                     max_wait,
                     config: configuration.clone(),
                     logger: None,
+                    throttle: None,
                     parent: None,
                     // A value of max_value() indicates this user isn't fully initialized yet.
                     weighted_users_index: usize::max_value(),
@@ -1241,6 +1245,14 @@ impl GooseUser {
         };
         let method = goose_method_from_method(request.method().clone());
         let request_name = self.get_request_name(&path, request_name);
+
+        // If throttle-requests is enabled...
+        if self.config.throttle_requests.is_some() {
+            // ...wait to receive a token from the throttle channel before proceeding.
+            debug!("GooseUser: waiting on throttle");
+            let _ = self.throttle.clone().unwrap().recv().await;
+        };
+
         let mut raw_request = GooseRawRequest::new(
             method,
             &request_name,

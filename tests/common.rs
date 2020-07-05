@@ -20,6 +20,7 @@ pub fn build_configuration() -> GooseConfiguration {
         stats_log_format: "json".to_string(),
         debug_log_file: "".to_string(),
         debug_log_format: "json".to_string(),
+        throttle_requests: None,
         sticky_follow: false,
         manager: false,
         no_hash_check: false,

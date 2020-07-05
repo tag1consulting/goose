@@ -296,11 +296,13 @@ pub mod logger;
 mod manager;
 pub mod prelude;
 mod stats;
+mod throttle;
 mod user;
 mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
+use async_std::sync::{channel, Receiver, Sender};
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
@@ -1104,6 +1106,24 @@ impl GooseAttack {
         // If enabled, spawn a logger thread.
         let (logger_thread, all_threads_logger) = self.setup_logger();
 
+        let throttle_sender;
+        let all_threads_throttle;
+        if let Some(throttle_requests) = self.configuration.throttle_requests {
+            // Create a bounded channel allowing single-sender multi-receiver to throttle
+            // GooseUser threads.
+            let (sender, receiver): (Sender<bool>, Receiver<bool>) = channel(throttle_requests);
+            all_threads_throttle = Some(receiver);
+            throttle_sender = Some(sender);
+
+            // Launch a new thread for throttling.
+            let _ = Some(tokio::spawn(throttle::throttle_main(
+                self.configuration.clone(),
+                throttle_sender.unwrap(),
+            )));
+        } else {
+            all_threads_throttle = None;
+        }
+
         // Collect user threads in a vector for when we want to stop them later.
         let mut users = vec![];
         // Collect user thread channels in a vector so we can talk to the user threads.
@@ -1140,11 +1160,17 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             user_channels.push(parent_sender);
 
+            // Copy the GooseUser-to-logger sender channel, used by all threads.
             if !self.configuration.debug_log_file.is_empty() {
-                // Copy the GooseUser-to-logger sender channel, used by all threads.
                 thread_user.logger = Some(all_threads_logger.clone().unwrap());
             } else {
                 thread_user.logger = None;
+            }
+
+            // Copy the GooseUser-throttle receiver channel, used by all threads.
+            match self.configuration.throttle_requests {
+                Some(_) => thread_user.throttle = Some(all_threads_throttle.clone().unwrap()),
+                None => thread_user.throttle = None,
             }
 
             // Copy the GooseUser-to-parent sender channel, used by all threads.
@@ -1496,6 +1522,10 @@ pub struct GooseConfiguration {
     /// Debug log format ('json' or 'raw')
     #[structopt(long, default_value = "json")]
     pub debug_log_format: String,
+
+    /// Throttle (max) requests per second
+    #[structopt(long)]
+    pub throttle_requests: Option<usize>,
 
     /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]
