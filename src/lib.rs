@@ -1041,8 +1041,7 @@ impl GooseAttack {
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
                     let user = GooseUser::single(base_url, &self.configuration);
-                    let function = &t.function;
-                    function(&user).await;
+                    t.function(&user).await;
                 }
                 // No test_start_task defined, nothing to do.
                 None => (),
@@ -1338,8 +1337,7 @@ impl GooseAttack {
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
                     // Create a one-time-use user to run the test_stop_task.
                     let user = GooseUser::single(base_url, &self.configuration);
-                    let function = &t.function;
-                    function(&user).await;
+                    t.function(&user).await;
                 }
                 // No test_stop_task defined, nothing to do.
                 None => (),

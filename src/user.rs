@@ -38,7 +38,6 @@ pub async fn user_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = &thread_task_set.tasks[*task_index].function;
                 debug!(
                     "launching on_start {} task from {}",
                     thread_task_name, thread_task_set.name
@@ -47,7 +46,9 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&thread_user).await;
+                thread_task_set.tasks[*task_index]
+                    .function(&thread_user)
+                    .await;
             }
         }
     }
@@ -88,7 +89,6 @@ pub async fn user_main(
         let thread_weighted_task =
             thread_user.weighted_tasks[weighted_bucket][weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
-        let function = &thread_task_set.tasks[thread_weighted_task].function;
         debug!(
             "launching {} task from {}",
             thread_task_name, thread_task_set.name
@@ -98,7 +98,9 @@ pub async fn user_main(
             thread_user.task_request_name = Some(thread_task_name.to_string());
         }
         // Invoke the task function.
-        function(&thread_user).await;
+        thread_task_set.tasks[thread_weighted_task]
+            .function(&thread_user)
+            .await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time = if thread_user.max_wait > 0 {
@@ -158,7 +160,6 @@ pub async fn user_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = &thread_task_set.tasks[*task_index].function;
                 debug!(
                     "launching on_stop {} task from {}",
                     thread_task_name, thread_task_set.name
@@ -167,7 +168,9 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&thread_user).await;
+                thread_task_set.tasks[*task_index]
+                    .function(&thread_user)
+                    .await;
             }
         }
     }

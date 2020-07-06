@@ -252,6 +252,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+use futures::FutureExt;
 use http::method::Method;
 use http::StatusCode;
 use reqwest::{Client, ClientBuilder, Error, RequestBuilder, Response};
@@ -1541,20 +1542,42 @@ pub fn get_base_url(
     }
 }
 
-// pub function: for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
-pub trait GooseTaskCallback<'a> {
+// A helper trait that allows GooseTask::from_async_fn() to accept an async fn
+// that borrows its arguments (otherwise specifying lifetimes is impossible)
+pub trait GooseTaskCallback<'a>: Send + Sync {
     type Output: std::future::Future<Output = ()> + Send + 'a;
-    fn call(self, arg: &'a GooseUser) -> Self::Output;
+    fn call(&self, arg: &'a GooseUser) -> Self::Output;
 }
 
 impl<'a, Fut: 'a, F> GooseTaskCallback<'a> for F
 where
-    F: FnOnce(&'a GooseUser) -> Fut,
+    F: Fn(&'a GooseUser) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = ()> + Send,
 {
     type Output = Fut;
-    fn call(self, arg: &'a GooseUser) -> Fut {
+    fn call(&self, arg: &'a GooseUser) -> Fut {
         self(arg)
+    }
+}
+
+// A helper trait that allows GooseTask to store a GooseTaskCallback without
+// needing to be generic over the Output type.
+trait WrappedGooseTaskCallback<'a>: Send + Sync {
+    fn call_and_box(
+        &self,
+        arg: &'a GooseUser,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
+}
+
+impl<'a, F> WrappedGooseTaskCallback<'a> for F
+where
+    F: GooseTaskCallback<'a>,
+{
+    fn call_and_box(
+        &self,
+        arg: &'a GooseUser,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        self.call(arg).boxed()
     }
 }
 
@@ -1574,17 +1597,13 @@ pub struct GooseTask {
     /// A flag indicating that this task runs when the user stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    pub function: Arc<
-        dyn for<'r> Fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>
-            + Send
-            + Sync,
-    >,
+    callback: Arc<dyn for<'a> WrappedGooseTaskCallback<'a> + 'static>,
 }
 
 impl GooseTask {
     pub fn from_async_fn<F>(cb: F) -> Self
     where
-        for<'a> F: GooseTaskCallback<'a> + Copy + Send + Sync + 'static,
+        for<'a> F: GooseTaskCallback<'a> + 'static,
     {
         Self {
             tasks_index: usize::max_value(),
@@ -1593,7 +1612,7 @@ impl GooseTask {
             sequence: 0,
             on_start: false,
             on_stop: false,
-            function: Arc::new(move |s| Box::pin(cb.call(s))),
+            callback: Arc::new(cb),
         }
     }
     pub fn new(
@@ -1607,8 +1626,16 @@ impl GooseTask {
             sequence: 0,
             on_start: false,
             on_stop: false,
-            function: Arc::new(function),
+            callback: Arc::new(function),
         }
+    }
+
+    /// Execute the callback function and return a boxed future.
+    pub fn function<'r>(
+        &self,
+        user: &'r GooseUser,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>> {
+        self.callback.call_and_box(user)
     }
 
     /// Set an optional name for the task, used when displaying statistics about
