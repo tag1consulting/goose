@@ -270,11 +270,11 @@ use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// task!(foo) expands to GooseTask::from_async_fn(foo),
+/// task!(foo) expands to GooseTask::new(foo),
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
-        GooseTask::from_async_fn($task_func)
+        GooseTask::new($task_func)
     };
 }
 
@@ -1601,7 +1601,7 @@ pub struct GooseTask {
 }
 
 impl GooseTask {
-    pub fn from_async_fn<F>(cb: F) -> Self
+    pub fn new<F>(cb: F) -> Self
     where
         for<'a> F: GooseTaskCallback<'a> + 'static,
     {
@@ -1615,21 +1615,6 @@ impl GooseTask {
             callback: Arc::new(cb),
         }
     }
-    pub fn new(
-        function: for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = ()> + Send + 'r>>,
-    ) -> Self {
-        trace!("new task");
-        GooseTask {
-            tasks_index: usize::max_value(),
-            name: "".to_string(),
-            weight: 1,
-            sequence: 0,
-            on_start: false,
-            on_stop: false,
-            callback: Arc::new(function),
-        }
-    }
-
     /// Execute the callback function and return a boxed future.
     pub fn function<'r>(
         &self,
