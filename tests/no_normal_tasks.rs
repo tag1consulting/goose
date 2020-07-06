@@ -27,9 +27,9 @@ fn test_no_normal_tasks() {
     crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(login).set_on_start())
-                .register_task(task!(logout).set_on_stop()),
+            GooseTaskSet::new("LoadTest")
+                .register_task(GooseTask::new(login).set_on_start())
+                .register_task(GooseTask::new(logout).set_on_stop()),
         )
         .execute();
 

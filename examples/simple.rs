@@ -23,14 +23,14 @@ fn main() {
     GooseAttack::initialize()
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(
-            taskset!("WebsiteUser")
+            GooseTaskSet::new("WebsiteUser")
                 // After each task runs, sleep randomly from 5 to 15 seconds.
                 .set_wait_time(5, 15)
                 // This task only runs one time when the user first starts.
-                .register_task(task!(website_login).set_on_start())
+                .register_task(GooseTask::new(website_login).set_on_start())
                 // These next two tasks run repeatedly as long as the load test is running.
-                .register_task(task!(website_index))
-                .register_task(task!(website_about)),
+                .register_task(GooseTask::new(website_index))
+                .register_task(GooseTask::new(website_about)),
         )
         .execute();
 }

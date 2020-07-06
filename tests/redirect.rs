@@ -78,12 +78,12 @@ fn test_redirect() {
     crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .register_taskset(
-            taskset!("LoadTest")
+            GooseTaskSet::new("LoadTest")
                 // Load index directly.
-                .register_task(task!(get_index))
+                .register_task(GooseTask::new(get_index))
                 // Load redirect path, redirect to redirect2 path, redirect to
                 // redirect3 path, redirect to about.
-                .register_task(task!(get_redirect)),
+                .register_task(GooseTask::new(get_redirect)),
         )
         .execute();
 
@@ -137,13 +137,13 @@ fn test_domain_redirect() {
     crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .register_taskset(
-            taskset!("LoadTest")
+            GooseTaskSet::new("LoadTest")
                 // First load redirect, takes this request only to another domain.
-                .register_task(task!(get_domain_redirect).set_on_start())
+                .register_task(GooseTask::new(get_domain_redirect).set_on_start())
                 // Load index directly.
-                .register_task(task!(get_index))
+                .register_task(GooseTask::new(get_index))
                 // Load about directly, always on original domain.
-                .register_task(task!(get_about)),
+                .register_task(GooseTask::new(get_about)),
         )
         .execute();
 
@@ -193,14 +193,14 @@ fn test_sticky_domain_redirect() {
     crate::GooseAttack::initialize_with_config(configuration)
         .setup()
         .register_taskset(
-            taskset!("LoadTest")
+            GooseTaskSet::new("LoadTest")
                 // First load redirect, due to stick_follow the load test stays on the
                 // new domain for all subsequent requests.
-                .register_task(task!(get_domain_redirect).set_on_start())
+                .register_task(GooseTask::new(get_domain_redirect).set_on_start())
                 // Due to sticky follow, we should always load the alternative index.
-                .register_task(task!(get_index))
+                .register_task(GooseTask::new(get_index))
                 // Due to sticky follow, we should always load the alternative about.
-                .register_task(task!(get_about)),
+                .register_task(GooseTask::new(get_about)),
         )
         .execute();
 
