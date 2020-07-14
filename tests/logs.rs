@@ -17,17 +17,19 @@ pub async fn get_index(user: &GooseUser) {
 
 pub async fn get_error(user: &GooseUser) {
     let goose = user.get(ERROR_PATH).await;
-    if let Ok(r) = goose.response {
-        let headers = &r.headers().clone();
-        match r.text().await {
-            Ok(_) => {}
-            Err(_) => {
-                user.log_debug(
-                    "there was an error",
-                    Some(goose.request),
-                    Some(headers),
-                    None,
-                );
+    if let Some(response) = goose.response {
+        if let Ok(r) = response {
+            let headers = &r.headers().clone();
+            match r.text().await {
+                Ok(_) => {}
+                Err(_) => {
+                    user.log_debug(
+                        "there was an error",
+                        Some(goose.request),
+                        Some(headers),
+                        None,
+                    );
+                }
             }
         }
     }

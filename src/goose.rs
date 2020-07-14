@@ -252,7 +252,6 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use async_std::sync::Receiver;
 use http::method::Method;
 use http::StatusCode;
 use reqwest::{header, Client, ClientBuilder, Error, RequestBuilder, Response};
@@ -670,10 +669,10 @@ impl PartialOrd for GooseRequest {
 #[derive(Debug)]
 pub struct GooseResponse {
     pub request: GooseRawRequest,
-    pub response: Result<Response, Error>,
+    pub response: Option<Result<Response, Error>>,
 }
 impl GooseResponse {
-    pub fn new(request: GooseRawRequest, response: Result<Response, Error>) -> Self {
+    pub fn new(request: GooseRawRequest, response: Option<Result<Response, Error>>) -> Self {
         GooseResponse { request, response }
     }
 }
@@ -734,7 +733,9 @@ pub struct GooseUser {
     /// Channel to logger.
     pub logger: Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
     /// Channel to throttle.
-    pub throttle: Option<Receiver<bool>>,
+    pub throttle: Option<mpsc::Sender<bool>>,
+    /// Normal tasks are optionally throttled, test_start and test_stop tasks are not.
+    pub is_throttled: bool,
     /// Channel to parent.
     pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
     /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
@@ -781,6 +782,7 @@ impl GooseUser {
                     config: configuration.clone(),
                     logger: None,
                     throttle: None,
+                    is_throttled: true,
                     parent: None,
                     // A value of max_value() indicates this user isn't fully initialized yet.
                     weighted_users_index: usize::max_value(),
@@ -802,7 +804,10 @@ impl GooseUser {
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Self {
         let mut single_user = GooseUser::new(0, base_url, 0, 0, configuration, 0);
+        // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
+        // Do not throttle test_start (setup) and test_stop (teardown) tasks.
+        single_user.is_throttled = false;
         single_user
     }
 
@@ -1226,7 +1231,7 @@ impl GooseUser {
         request_builder: RequestBuilder,
         request_name: Option<&str>,
     ) -> GooseResponse {
-        let started = Instant::now();
+        let mut started = Instant::now();
         let request = match request_builder.build() {
             Ok(r) => r,
             Err(e) => {
@@ -1247,12 +1252,28 @@ impl GooseUser {
         let request_name = self.get_request_name(&path, request_name);
 
         // If throttle-requests is enabled...
-        if self.config.throttle_requests.is_some() {
-            // ...wait to receive a token from the throttle channel before proceeding.
+        if self.is_throttled && self.config.throttle_requests.is_some() {
+            // ...wait until there's room to add a token to the throttle channel before proceeding.
             debug!("GooseUser: waiting on throttle");
-            let _ = self.throttle.clone().unwrap().recv().await;
+            if self.throttle.clone().unwrap().send(true).await.is_err() {
+                // The throttle channel has closed, meaning the load test is over. Cancel this
+                // request.
+                return GooseResponse::new(
+                    GooseRawRequest::new(
+                        method,
+                        &request_name,
+                        &request.url().to_string(),
+                        self.started.elapsed().as_millis(),
+                        self.weighted_users_index,
+                    ),
+                    None,
+                );
+            }
+            // If we got here, reset started timestamp as we may have gotten throttled.
+            started = Instant::now();
         };
 
+        // Record information about the request.
         let mut raw_request = GooseRawRequest::new(
             method,
             &request_name,
@@ -1312,7 +1333,7 @@ impl GooseUser {
             self.send_to_parent(&raw_request);
         }
 
-        GooseResponse::new(raw_request, response)
+        GooseResponse::new(raw_request, Some(response))
     }
 
     fn send_to_parent(&self, raw_request: &GooseRawRequest) {
@@ -1357,14 +1378,16 @@ impl GooseUser {
     ///     /// A simple task that makes a GET request.
     ///     async fn get_function(user: &GooseUser) {
     ///         let mut goose = user.get("/404").await;
-    ///         match &goose.response {
-    ///             Ok(r) => {
-    ///                 // We expect a 404 here.
-    ///                 if r.status() == 404 {
-    ///                     user.set_success(&mut goose.request);
-    ///                 }
-    ///             },
-    ///             Err(_) => (),
+    ///         if let Some(response) = goose.response {
+    ///             match &response {
+    ///                 Ok(r) => {
+    ///                     // We expect a 404 here.
+    ///                     if r.status() == 404 {
+    ///                         user.set_success(&mut goose.request);
+    ///                     }
+    ///                 },
+    ///                 Err(_) => (),
+    ///             }
     ///         }
     ///     }
     /// ````
@@ -1392,27 +1415,29 @@ impl GooseUser {
     ///
     ///     async fn loadtest_index_page(user: &GooseUser) {
     ///         let mut goose = user.get_named("/", "index").await;
-    ///         // Extract the response Result.
-    ///         match goose.response {
-    ///             Ok(r) => {
-    ///                 // We only need to check pages that returned a success status code.
-    ///                 if r.status().is_success() {
-    ///                     match r.text().await {
-    ///                         Ok(text) => {
-    ///                             // If the expected string doesn't exist, this page load
-    ///                             // was a failure.
-    ///                             if !text.contains("this string must exist") {
-    ///                                 // As this is a named request, pass in the name not the URL
-    ///                                 user.set_failure(&mut goose.request);
+    ///         if let Some(response) = goose.response {
+    ///             // Extract the response Result.
+    ///             match response {
+    ///                 Ok(r) => {
+    ///                     // We only need to check pages that returned a success status code.
+    ///                     if r.status().is_success() {
+    ///                         match r.text().await {
+    ///                             Ok(text) => {
+    ///                                 // If the expected string doesn't exist, this page load
+    ///                                 // was a failure.
+    ///                                 if !text.contains("this string must exist") {
+    ///                                     // As this is a named request, pass in the name not the URL
+    ///                                     user.set_failure(&mut goose.request);
+    ///                                 }
     ///                             }
+    ///                             // Empty page, this is a failure.
+    ///                             Err(_) => user.set_failure(&mut goose.request),
     ///                         }
-    ///                         // Empty page, this is a failure.
-    ///                         Err(_) => user.set_failure(&mut goose.request),
     ///                     }
-    ///                 }
-    ///             },
-    ///             // Invalid response, this is already a failure.
-    ///             Err(_) => (),
+    ///                 },
+    ///                 // Invalid response, this is already a failure.
+    ///                 Err(_) => (),
+    ///             }
     ///         }
     ///     }
     /// ````
@@ -1447,43 +1472,45 @@ impl GooseUser {
     ///
     ///     async fn loadtest_index_page(user: &GooseUser) {
     ///         let mut goose = user.get_named("/", "index").await;
-    ///         // Extract the response Result.
-    ///         match goose.response {
-    ///             Ok(r) => {
-    ///                 // Grab a copy of the headers so we can include them when logging errors.
-    ///                 let headers = &r.headers().clone();
-    ///                 // We only need to check pages that returned a success status code.
-    ///                 if !r.status().is_success() {
-    ///                     match r.text().await {
-    ///                         Ok(html) => {
-    ///                             // Server returned an error code, log everything.
-    ///                             user.log_debug(
-    ///                                 "error loading /",
-    ///                                 Some(goose.request),
-    ///                                 Some(headers),
-    ///                                 Some(html.clone()),
-    ///                             );
-    ///                         },
-    ///                         Err(e) => {
-    ///                             // No body was returned, log everything else.
-    ///                             user.log_debug(
-    ///                                 "error loading /",
-    ///                                 Some(goose.request),
-    ///                                 Some(headers),
-    ///                                 None,
-    ///                             );
+    ///         if let Some(response) = goose.response {
+    ///            // Extract the response Result.
+    ///             match response {
+    ///                 Ok(r) => {
+    ///                     // Grab a copy of the headers so we can include them when logging errors.
+    ///                     let headers = &r.headers().clone();
+    ///                     // We only need to check pages that returned a success status code.
+    ///                     if !r.status().is_success() {
+    ///                         match r.text().await {
+    ///                             Ok(html) => {
+    ///                                 // Server returned an error code, log everything.
+    ///                                 user.log_debug(
+    ///                                     "error loading /",
+    ///                                     Some(goose.request),
+    ///                                     Some(headers),
+    ///                                     Some(html.clone()),
+    ///                                 );
+    ///                             },
+    ///                             Err(e) => {
+    ///                                 // No body was returned, log everything else.
+    ///                                 user.log_debug(
+    ///                                     "error loading /",
+    ///                                     Some(goose.request),
+    ///                                     Some(headers),
+    ///                                     None,
+    ///                                 );
+    ///                             }
     ///                         }
     ///                     }
+    ///                 },
+    ///                 // No response from server.
+    ///                 Err(e) => {
+    ///                     user.log_debug(
+    ///                         "no response from server when loading /",
+    ///                         Some(goose.request),
+    ///                         None,
+    ///                         None,
+    ///                     );
     ///                 }
-    ///             },
-    ///             // No response from server.
-    ///             Err(e) => {
-    ///                 user.log_debug(
-    ///                     "no response from server when loading /",
-    ///                     Some(goose.request),
-    ///                     None,
-    ///                     None,
-    ///                 );
     ///             }
     ///         }
     ///     }
@@ -2439,7 +2466,7 @@ mod tests {
         // Make a GET request to the mock http server and confirm we get a 200 response.
         assert_eq!(mock_index.times_called(), 0);
         let goose = user.get("/").await;
-        let status = goose.response.unwrap().status();
+        let status = goose.response.unwrap().unwrap().status();
         assert_eq!(status, 200);
         assert_eq!(mock_index.times_called(), 1);
         assert_eq!(goose.request.method, GooseMethod::GET);
@@ -2454,7 +2481,7 @@ mod tests {
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
         assert_eq!(mock_404.times_called(), 0);
         let goose = user.get(NO_SUCH_PATH).await;
-        let status = goose.response.unwrap().status();
+        let status = goose.response.unwrap().unwrap().status();
         assert_eq!(status, 404);
         assert_eq!(mock_404.times_called(), 1);
         assert_eq!(goose.request.method, GooseMethod::GET);
@@ -2474,7 +2501,7 @@ mod tests {
         // Make a POST request to the mock http server and confirm we get a 200 OK response.
         assert_eq!(mock_comment.times_called(), 0);
         let goose = user.post(COMMENT_PATH, "foo").await;
-        let unwrapped_response = goose.response.unwrap();
+        let unwrapped_response = goose.response.unwrap().unwrap();
         let status = unwrapped_response.status();
         assert_eq!(status, 200);
         let body = unwrapped_response.text().await.unwrap();

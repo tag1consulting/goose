@@ -302,7 +302,6 @@ mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
-use async_std::sync::{channel, Receiver, Sender};
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
@@ -1106,22 +1105,38 @@ impl GooseAttack {
         // If enabled, spawn a logger thread.
         let (logger_thread, all_threads_logger) = self.setup_logger();
 
-        let throttle_sender;
+        let throttle_receiver;
         let all_threads_throttle;
+        let parent_to_throttle_tx;
         if let Some(throttle_requests) = self.configuration.throttle_requests {
             // Create a bounded channel allowing single-sender multi-receiver to throttle
             // GooseUser threads.
-            let (sender, receiver): (Sender<bool>, Receiver<bool>) = channel(throttle_requests);
-            all_threads_throttle = Some(receiver);
-            throttle_sender = Some(sender);
+            let (sender, receiver): (mpsc::Sender<bool>, mpsc::Receiver<bool>) =
+                mpsc::channel(throttle_requests);
+            all_threads_throttle = Some(sender);
+            throttle_receiver = Some(receiver);
+
+            // Create a channel allowing the parent to inform the throttle thread when the
+            // load test is finished. Even though we only send one message, we can't use a
+            // oneshot channel as we don't want to block waiting for a message.
+            let (tx, throttle_rx) = mpsc::channel(1);
+            parent_to_throttle_tx = Some(tx);
 
             // Launch a new thread for throttling.
             let _ = Some(tokio::spawn(throttle::throttle_main(
                 self.configuration.clone(),
-                throttle_sender.unwrap(),
+                throttle_receiver.unwrap(),
+                throttle_rx,
             )));
+
+            // Fill the channel to avoid a burst of traffic during startup.
+            let mut sender = all_threads_throttle.clone().unwrap();
+            for _ in 0..throttle_requests {
+                let _ = sender.send(true).await;
+            }
         } else {
             all_threads_throttle = None;
+            parent_to_throttle_tx = None;
         }
 
         // Collect user threads in a vector for when we want to stop them later.
@@ -1360,6 +1375,12 @@ impl GooseAttack {
                 } else {
                     info!("waiting for users to exit");
                 }
+
+                // If throttle is enabled, tell throttle thread the load test is over.
+                if let Some(mut tx) = parent_to_throttle_tx {
+                    let _ = tx.send(false).await;
+                }
+
                 futures::future::join_all(users).await;
                 debug!("all users exited");
 
