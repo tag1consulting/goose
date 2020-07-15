@@ -13,29 +13,29 @@ const ABOUT_PATH: &str = "/about.php";
 
 // Task function, load INDEX_PATH.
 pub async fn get_index(user: &GooseUser) {
-    let _response = user.get(INDEX_PATH).await;
+    let _goose = user.get(INDEX_PATH).await;
 }
 
 // Task function, load ABOUT PATH
 pub async fn get_about(user: &GooseUser) {
-    let _response = user.get(ABOUT_PATH).await;
+    let _goose = user.get(ABOUT_PATH).await;
 }
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
 pub async fn get_redirect(user: &GooseUser) {
-    let mut response = user.get(REDIRECT_PATH).await;
-    if let Ok(r) = response.response {
+    let mut goose = user.get(REDIRECT_PATH).await;
+    if let Ok(r) = goose.response {
         match r.text().await {
             Ok(html) => {
                 // Confirm that we followed redirects and loaded the about page.
                 if !html.contains("about page") {
                     eprintln!("about page body wrong");
-                    user.set_failure(&mut response.request);
+                    user.set_failure(&mut goose.request);
                 }
             }
             Err(e) => {
                 eprintln!("unexpected error parsing about page: {}", e);
-                user.set_failure(&mut response.request);
+                user.set_failure(&mut goose.request);
             }
         }
     }
@@ -43,7 +43,7 @@ pub async fn get_redirect(user: &GooseUser) {
 
 // Task function, load REDRECT_PATH and follow redirect to new domain.
 pub async fn get_domain_redirect(user: &GooseUser) {
-    let _response = user.get(REDIRECT_PATH).await;
+    let _goose = user.get(REDIRECT_PATH).await;
 }
 
 #[test]

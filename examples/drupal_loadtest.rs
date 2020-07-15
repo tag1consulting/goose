@@ -82,10 +82,10 @@ fn main() {
 
 /// View the front page.
 async fn drupal_loadtest_front_page(user: &GooseUser) {
-    let mut response = user.get("/").await;
+    let mut goose = user.get("/").await;
 
     // Grab some static assets from the front page.
-    match response.response {
+    match goose.response {
         Ok(r) => {
             // Copy the headers so we have them for logging if there are errors.
             let headers = &r.headers().clone();
@@ -104,20 +104,20 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
                     }
                 }
                 Err(e) => {
-                    user.set_failure(&mut response.request);
+                    user.set_failure(&mut goose.request);
                     let error = format!("front_page: failed to parse pag: {}", e);
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
-                    user.log_debug(&error, Some(response.request), Some(&headers), None);
+                    user.log_debug(&error, Some(goose.request), Some(&headers), None);
                 }
             }
         }
         Err(e) => {
-            user.set_failure(&mut response.request);
+            user.set_failure(&mut goose.request);
             let error = format!("front_page: no response from server: {}", e);
             // We choose to both log and display errors to stdout.
             eprintln!("{}", &error);
-            user.log_debug(&error, Some(response.request), None, None);
+            user.log_debug(&error, Some(goose.request), None, None);
         }
     }
 }
@@ -125,19 +125,19 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_loadtest_node_page(user: &GooseUser) {
     let nid = rand::thread_rng().gen_range(1, 10_000);
-    let _response = user.get(format!("/node/{}", &nid).as_str()).await;
+    let _goose = user.get(format!("/node/{}", &nid).as_str()).await;
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_loadtest_profile_page(user: &GooseUser) {
     let uid = rand::thread_rng().gen_range(2, 5_001);
-    let _response = user.get(format!("/user/{}", &uid).as_str()).await;
+    let _goose = user.get(format!("/user/{}", &uid).as_str()).await;
 }
 
 /// Log in.
 async fn drupal_loadtest_login(user: &GooseUser) {
-    let mut response = user.get("/user").await;
-    match response.response {
+    let mut goose = user.get("/user").await;
+    match goose.response {
         Ok(r) => {
             // Copy the headers so we have them for logging if there are errors.
             let headers = &r.headers().clone();
@@ -147,13 +147,13 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut response.request);
+                            user.set_failure(&mut goose.request);
                             let error = "login: no form_build_id on page: /user page";
                             // We choose to both log and display errors to stdout.
                             eprintln!("{}", error);
                             user.log_debug(
                                 error,
-                                Some(response.request),
+                                Some(goose.request),
                                 Some(&headers),
                                 Some(html.clone()),
                             );
@@ -172,15 +172,15 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                         ("op", "Log+in"),
                     ];
                     let request_builder = user.goose_post("/user").await;
-                    let _response = user.goose_send(request_builder.form(&params), None).await;
+                    let _goose = user.goose_send(request_builder.form(&params), None).await;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
-                    user.set_failure(&mut response.request);
+                    user.set_failure(&mut goose.request);
                     let error = format!("login: unexpected error when loading /user page: {}", e);
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
-                    user.log_debug(&error, Some(response.request), Some(&headers), None);
+                    user.log_debug(&error, Some(goose.request), Some(&headers), None);
                 }
             }
         }
@@ -201,8 +201,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
-    let mut response = user.get(&node_path).await;
-    match response.response {
+    let mut goose = user.get(&node_path).await;
+    match goose.response {
         Ok(r) => {
             // Copy the headers so we have them for logging if there are errors.
             let headers = &r.headers().clone();
@@ -213,14 +213,14 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut response.request);
+                            user.set_failure(&mut goose.request);
                             let error =
                                 format!("post_comment: no form_build_id found on {}", &node_path);
                             // We choose to both log and display errors to stdout.
                             eprintln!("{}", &error);
                             user.log_debug(
                                 &error,
-                                Some(response.request),
+                                Some(goose.request),
                                 Some(headers),
                                 Some(html.clone()),
                             );
@@ -232,14 +232,14 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_token = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut response.request);
+                            user.set_failure(&mut goose.request);
                             let error =
                                 format!("post_comment: no form_token found on {}", &node_path);
                             // We choose to both log and display errors to stdout.
                             eprintln!("{}", &error);
                             user.log_debug(
                                 &error,
-                                Some(response.request),
+                                Some(goose.request),
                                 Some(&headers),
                                 Some(html.clone()),
                             );
@@ -251,13 +251,13 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut response.request);
+                            user.set_failure(&mut goose.request);
                             let error = format!("post_comment: no form_id found on {}", &node_path);
                             // We choose to both log and display errors to stdout.
                             eprintln!("{}", &error);
                             user.log_debug(
                                 &error,
-                                Some(response.request),
+                                Some(goose.request),
                                 Some(&headers),
                                 Some(html.clone()),
                             );
@@ -277,28 +277,28 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                         ("op", "Save"),
                     ];
                     let request_builder = user.goose_post(&comment_path).await;
-                    let mut response = user.goose_send(request_builder.form(&params), None).await;
-                    match response.response {
+                    let mut goose = user.goose_send(request_builder.form(&params), None).await;
+                    match goose.response {
                         Ok(r) => {
                             // Copy the headers so we have them for logging if there are errors.
                             let headers = &r.headers().clone();
                             match r.text().await {
                                 Ok(html) => {
                                     if !html.contains(&comment_body) {
-                                        user.set_failure(&mut response.request);
+                                        user.set_failure(&mut goose.request);
                                         let error = format!("post_comment: no comment showed up after posting to {}", &comment_path);
                                         // We choose to both log and display errors to stdout.
                                         eprintln!("{}", &error);
                                         user.log_debug(
                                             &error,
-                                            Some(response.request),
+                                            Some(goose.request),
                                             Some(&headers),
                                             Some(html),
                                         );
                                     }
                                 }
                                 Err(e) => {
-                                    user.set_failure(&mut response.request);
+                                    user.set_failure(&mut goose.request);
                                     let error = format!(
                                         "post_comment: unexpected error when posting to {}: {}",
                                         &comment_path, e
@@ -307,7 +307,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                                     eprintln!("{}", &error);
                                     user.log_debug(
                                         &error,
-                                        Some(response.request),
+                                        Some(goose.request),
                                         Some(&headers),
                                         None,
                                     );
@@ -322,16 +322,16 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                             );
                             // We choose to both log and display errors to stdout.
                             eprintln!("{}", &error);
-                            user.log_debug(&error, Some(response.request), None, None);
+                            user.log_debug(&error, Some(goose.request), None, None);
                         }
                     }
                 }
                 Err(e) => {
-                    user.set_failure(&mut response.request);
+                    user.set_failure(&mut goose.request);
                     let error = format!("post_comment: no text when loading {}: {}", &node_path, e);
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
-                    user.log_debug(&error, Some(response.request), None, None);
+                    user.log_debug(&error, Some(goose.request), None, None);
                 }
             }
         }
@@ -343,7 +343,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
             );
             // We choose to both log and display errors to stdout.
             eprintln!("{}", &error);
-            user.log_debug(&error, Some(response.request), None, None);
+            user.log_debug(&error, Some(goose.request), None, None);
         }
     }
 }
