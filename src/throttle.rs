@@ -13,25 +13,53 @@ pub async fn throttle_main(
     mut throttle_receiver: Receiver<bool>,
     mut parent_receiver: Receiver<bool>,
 ) {
-    let sleep_duration =
-        time::Duration::from_secs_f32(1.0 / configuration.throttle_requests.unwrap() as f32);
-    info!("throttle allowing 1 request every {:?}", sleep_duration);
+    // Use microseconds to allow configurations up to 1,000,000 requests per second.
+    let mut sleep_duration =
+        time::Duration::from_micros(1_000_000 / configuration.throttle_requests.unwrap() as u64);
+    let tokens_per_duration;
 
-    // Loop until parent thread exits, adding one element
+    let ten_milliseconds = time::Duration::from_millis(10);
+    debug!(
+        "sleep_duration: {:?} ten_milliseconds: {:?}",
+        sleep_duration, ten_milliseconds
+    );
+
+    // Keep sleep_duration at least ~10ms as `delay_for` has millisecond granularity.
+    if sleep_duration < ten_milliseconds {
+        tokens_per_duration = (ten_milliseconds.as_nanos() / sleep_duration.as_nanos()) as u32;
+        sleep_duration *= tokens_per_duration;
+    } else {
+        tokens_per_duration = 1;
+    }
+
+    info!(
+        "throttle allowing {} request(s) every {:?}",
+        tokens_per_duration, sleep_duration
+    );
+
+    // Loop and remove tokens from channel at controlled rate until load test ends.
     loop {
-        debug!("throttle removing token from channel");
-        // @TODO: if `sleep_duration` is <10ms, remove multiple tokens at once as `delay_for` has
-        // millisecond granularity.
+        debug!(
+            "throttle removing {} token(s) from channel",
+            tokens_per_duration
+        );
         time::delay_for(sleep_duration).await;
 
-        // Check if parent has informed us the load test is over.
+        // A message will be received when the load test is over.
         if parent_receiver.try_recv().is_ok() {
+            // Close throttle channel to prevent any further requests.
             info!("load test complete, closing throttle channel");
             throttle_receiver.close();
             break;
         }
 
-        // Remove a token from the channel, freeing a spot for a request to be made.
-        let _ = throttle_receiver.try_recv();
+        // Remove tokens from the channel, freeing spots for request to be made.
+        for token in 0..tokens_per_duration {
+            // If the channel is empty, we will get an error, so stop trying to remove tokens.
+            if throttle_receiver.try_recv().is_err() {
+                debug!("empty channel, exit after removing {} tokens", token);
+                break;
+            }
+        }
     }
 }

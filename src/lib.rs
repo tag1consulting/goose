@@ -820,6 +820,18 @@ impl GooseAttack {
                 error!("You can only enable --debug-log-file in stand-alone or worker mode, not as manager.");
                 std::process::exit(1);
             }
+
+            if self.configuration.throttle_requests.is_some() {
+                error!("You can only configure --throttle-requests in stand-alone mode or per worker, not as manager.");
+                std::process::exit(1);
+            }
+        }
+
+        if let Some(throttle_requests) = self.configuration.throttle_requests {
+            if throttle_requests > 1_000_000 {
+                error!("Throttle can not be more than 1,000,000 requests per second.");
+                std::process::exit(1);
+            }
         }
 
         // Worker mode.
