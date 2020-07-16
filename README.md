@@ -76,7 +76,7 @@ environments without recompiling:
 
 ```rust
 async fn loadtest_index(user: &GooseUser) {
-    let _response = user.get("/").await;
+    let _goose = user.get("/").await;
 }
 ```
 
