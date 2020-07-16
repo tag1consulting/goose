@@ -53,7 +53,7 @@
 //! use goose::prelude::*;
 //!
 //! async fn loadtest_foo(user: &GooseUser) {
-//!   let _response = user.get("/path/to/foo").await;
+//!   let _goose = user.get("/path/to/foo").await;
 //! }   
 //! ```
 //!
@@ -70,7 +70,7 @@
 //!
 //! async fn loadtest_bar(user: &GooseUser) {
 //!   let request_builder = user.goose_get("/path/to/bar").await;
-//!   let _response = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
+//!   let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
 //! }   
 //! ```
 //!
@@ -100,11 +100,11 @@
 //!     .execute();
 //!
 //! async fn loadtest_foo(user: &GooseUser) {
-//!   let _response = user.get("/path/to/foo").await;
+//!   let _goose = user.get("/path/to/foo").await;
 //! }   
 //!
 //! async fn loadtest_bar(user: &GooseUser) {
-//!   let _response = user.get("/path/to/bar").await;
+//!   let _goose = user.get("/path/to/bar").await;
 //! }   
 //! ```
 //!
@@ -610,11 +610,11 @@ impl GooseAttack {
     ///         );
     ///
     ///     async fn example_task(user: &GooseUser) {
-    ///       let _response = user.get("/foo").await;
+    ///       let _goose = user.get("/foo").await;
     ///     }
     ///
     ///     async fn other_task(user: &GooseUser) {
-    ///       let _response = user.get("/bar").await;
+    ///       let _goose = user.get("/bar").await;
     ///     }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
@@ -769,11 +769,11 @@ impl GooseAttack {
     ///         .execute();
     ///
     ///     async fn example_task(user: &GooseUser) {
-    ///       let _response = user.get("/foo").await;
+    ///       let _goose = user.get("/foo").await;
     ///     }
     ///
     ///     async fn another_example_task(user: &GooseUser) {
-    ///       let _response = user.get("/bar").await;
+    ///       let _goose = user.get("/bar").await;
     ///     }
     /// ```
     pub fn execute(mut self) {

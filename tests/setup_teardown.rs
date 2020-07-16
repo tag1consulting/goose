@@ -10,17 +10,17 @@ const SETUP_PATH: &str = "/setup";
 const TEARDOWN_PATH: &str = "/teardown";
 
 pub async fn setup(user: &GooseUser) {
-    let _response = user.post(SETUP_PATH, "setting up load test").await;
+    let _goose = user.post(SETUP_PATH, "setting up load test").await;
 }
 
 pub async fn teardown(user: &GooseUser) {
-    let _response = user
+    let _goose = user
         .post(TEARDOWN_PATH, "cleaning up after load test")
         .await;
 }
 
 pub async fn get_index(user: &GooseUser) {
-    let _response = user.get(INDEX_PATH).await;
+    let _goose = user.get(INDEX_PATH).await;
 }
 
 /// Test test_start alone.
