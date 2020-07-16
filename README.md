@@ -38,7 +38,7 @@ heading:
 
 ```toml
 [dependencies]
-goose = "^0.8"
+goose = "^0.9"
 ```
 
 At this point it's possible to compile all dependencies, though the
@@ -47,9 +47,9 @@ resulting binary only displays "Hello, world!":
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.8.2
+  Downloaded goose v0.9.0
       ...
-   Compiling goose v0.8.2
+   Compiling goose v0.9.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -165,7 +165,7 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 `cargo run --example simple -- -h`:
 
 ```
-Goose 0.8.2
+Goose 0.9.0
 CLI options available when launching a Goose load test
 
 USAGE:
@@ -202,6 +202,7 @@ OPTIONS:
     -t, --run-time <run-time>                      Stop after e.g. (300s, 20m, 3h, 1h30m, etc.) [default: ]
     -s, --stats-log-file <stats-log-file>          Statistics log file name [default: ]
         --stats-log-format <stats-log-format>      Statistics log format ('csv', 'json', or 'raw') [default: json]
+        --throttle-requests <throttle-requests>    Throttle (max) requests per second
     -u, --users <users>                            Number of concurrent Goose users (defaults to available CPUs)
 ```
 
@@ -284,6 +285,23 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -u102
 -------------------------------------------------------------------------------
  Aggregated              | 67,953 [200]              
 ```
+
+## Throttling Requests
+
+By default, Goose will generate as much load as it can. If this is not desirable, the
+throttle allows optionally limiting the maximum number of requests per second made during
+a load test. This can be helpful to ensure consistency when running a load test from
+multiple different servers with different available resources.
+
+The throttle is specified as an integer. For example:
+
+```rust
+$ cargo run --example simple -- --host http://local.dev/ -u100 -r20 -t10s -v --throttle-requests 5
+```
+
+In this example, Goose will launch 100 GooseUser threads, but the throttle will prevent them from
+generating a combined total of more than 5 requests per second. The `--throttle-requests` command
+line option imposes a maximum number of requests, not a minimum number of requests.
 
 ## Logging Load Test Requests
 
@@ -392,7 +410,7 @@ feature in the `dependencies` section of your `Cargo.toml`, for example:
 
 ```toml
 [dependencies]
-goose = { version = "^0.8", features = ["gaggle"] }
+goose = { version = "^0.9", features = ["gaggle"] }
 ```
 
 ### Goose Manager
@@ -451,6 +469,9 @@ The `--no-stats`, `--only-summary`, `--reset-stats`, `--status-codes`, and `--no
 
 The `--users`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the manager. Workers inheret these options from the manager.
 
+The `--throttle-requests` option must be configured on each worker, and can be set to a different value
+on each worker if desired.
+
 ### Technical Details
 
 Goose uses [`nng`](https://docs.rs/nng/) to send network messages between
@@ -470,7 +491,7 @@ disable default features and enable `rustls` in `Cargo.toml` as follows:
 
 ```toml
 [dependencies]
-goose = { version = "^0.8", default-features = false, features = ["rustls"] }
+goose = { version = "^0.9", default-features = false, features = ["rustls"] }
 ```
 
 ## Roadmap

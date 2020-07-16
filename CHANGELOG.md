@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.8.3-dev
+## 0.9.0-dev
  - fix code documentation, requests are async and require await
  - properly support setting host when registering task set 
  - rename `response` wrapper to `goose`, so we end up with `goose.request` and `goose.response`
- - add `--throttle-requests` to optionally limit the maximum requests per second
+ - add `--throttle-requests` to optionally limit the maximum requests per second (api change)
 
 ## 0.8.2 July 2, 2020
  - `client.log_debug()` will write debug logs to file when specified with `--debug-log-file=`
