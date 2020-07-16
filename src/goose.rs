@@ -1256,7 +1256,15 @@ impl GooseUser {
         request_builder: RequestBuilder,
         request_name: Option<&str>,
     ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
-        let mut started = Instant::now();
+        // If throttle-requests is enabled...
+        if self.is_throttled && self.config.throttle_requests.is_some() {
+            // ...wait until there's room to add a token to the throttle channel before proceeding.
+            debug!("GooseUser: waiting on throttle");
+            // Return mpsc::error:SendError<bool> if this fails.
+            self.throttle.clone().unwrap().send(true).await?;
+        };
+
+        let started = Instant::now();
         let request = match request_builder.build() {
             Ok(r) => r,
             Err(e) => {
@@ -1275,16 +1283,6 @@ impl GooseUser {
         };
         let method = goose_method_from_method(request.method().clone());
         let request_name = self.get_request_name(&path, request_name);
-
-        // If throttle-requests is enabled...
-        if self.is_throttled && self.config.throttle_requests.is_some() {
-            // ...wait until there's room to add a token to the throttle channel before proceeding.
-            debug!("GooseUser: waiting on throttle");
-            // Return mpsc::error:SendError<bool> if this fails.
-            self.throttle.clone().unwrap().send(true).await?;
-            // If we got here, reset started timestamp as we may have gotten throttled.
-            started = Instant::now();
-        };
 
         // Record information about the request.
         let mut raw_request = GooseRawRequest::new(
