@@ -2470,9 +2470,7 @@ mod tests {
 
         // Make a GET request to the mock http server and confirm we get a 200 response.
         assert_eq!(mock_index.times_called(), 0);
-        let response = user.get("/").await;
-        assert_eq!(mock_index.times_called(), 1);
-        if let Ok(goose) = response {
+        if let Ok(goose) = user.get("/").await {
             let status = goose.response.unwrap().status();
             assert_eq!(status, 200);
             assert_eq!(goose.request.method, GooseMethod::GET);
@@ -2481,15 +2479,14 @@ mod tests {
             assert_eq!(goose.request.update, false);
             assert_eq!(goose.request.status_code, 200);
         }
+        assert_eq!(mock_index.times_called(), 1);
 
         const NO_SUCH_PATH: &str = "/no/such/path";
         let mock_404 = mock(GET, NO_SUCH_PATH).return_status(404).create();
 
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
         assert_eq!(mock_404.times_called(), 0);
-        let response = user.get(NO_SUCH_PATH).await;
-        assert_eq!(mock_404.times_called(), 1);
-        if let Ok(goose) = response {
+        if let Ok(goose) = user.get(NO_SUCH_PATH).await {
             let status = goose.response.unwrap().status();
             assert_eq!(status, 404);
             assert_eq!(goose.request.method, GooseMethod::GET);
@@ -2498,6 +2495,7 @@ mod tests {
             assert_eq!(goose.request.update, false);
             assert_eq!(goose.request.status_code, 404,);
         }
+        assert_eq!(mock_404.times_called(), 1);
 
         // Set up a mock http server endpoint.
         const COMMENT_PATH: &str = "/comment";
@@ -2509,9 +2507,7 @@ mod tests {
 
         // Make a POST request to the mock http server and confirm we get a 200 OK response.
         assert_eq!(mock_comment.times_called(), 0);
-        let response = user.post(COMMENT_PATH, "foo").await;
-        assert_eq!(mock_comment.times_called(), 1);
-        if let Ok(goose) = response {
+        if let Ok(goose) = user.post(COMMENT_PATH, "foo").await {
             let unwrapped_response = goose.response.unwrap();
             let status = unwrapped_response.status();
             assert_eq!(status, 200);
@@ -2523,5 +2519,6 @@ mod tests {
             assert_eq!(goose.request.update, false);
             assert_eq!(goose.request.status_code, 200);
         }
+        assert_eq!(mock_comment.times_called(), 1);
     }
 }
