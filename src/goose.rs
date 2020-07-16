@@ -669,10 +669,10 @@ impl PartialOrd for GooseRequest {
 #[derive(Debug)]
 pub struct GooseResponse {
     pub request: GooseRawRequest,
-    pub response: Option<Result<Response, Error>>,
+    pub response: Result<Response, Error>,
 }
 impl GooseResponse {
-    pub fn new(request: GooseRawRequest, response: Option<Result<Response, Error>>) -> Self {
+    pub fn new(request: GooseRawRequest, response: Result<Response, Error>) -> Self {
         GooseResponse { request, response }
     }
 }
@@ -863,9 +863,9 @@ impl GooseUser {
     ///       let _goose = user.get("/path/to/foo/").await;
     ///     }
     /// ```
-    pub async fn get(&self, path: &str) -> GooseResponse {
+    pub async fn get(&self, path: &str) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_get(path).await;
-        self.goose_send(request_builder, None).await
+        Ok(self.goose_send(request_builder, None).await?)
     }
 
     /// A helper to make a named `GET` request of a path and collect relevant statistics.
@@ -888,9 +888,13 @@ impl GooseUser {
     ///       let _goose = user.get_named("/path/to/foo/", "foo").await;
     ///     }
     /// ```
-    pub async fn get_named(&self, path: &str, request_name: &str) -> GooseResponse {
+    pub async fn get_named(
+        &self,
+        path: &str,
+        request_name: &str,
+    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_get(path).await;
-        self.goose_send(request_builder, Some(request_name)).await
+        Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
     /// A helper to make a `POST` request of a path and collect relevant statistics.
@@ -917,9 +921,13 @@ impl GooseUser {
     ///       let _goose = user.post("/path/to/foo/", "BODY BEING POSTED").await;
     ///     }
     /// ```
-    pub async fn post(&self, path: &str, body: &str) -> GooseResponse {
+    pub async fn post(
+        &self,
+        path: &str,
+        body: &str,
+    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_post(path).await.body(body.to_string());
-        self.goose_send(request_builder, None).await
+        Ok(self.goose_send(request_builder, None).await?)
     }
 
     /// A helper to make a named `POST` request of a path and collect relevant statistics.
@@ -942,9 +950,14 @@ impl GooseUser {
     ///       let _goose = user.post_named("/path/to/foo/", "foo", "BODY BEING POSTED").await;
     ///     }
     /// ```
-    pub async fn post_named(&self, path: &str, request_name: &str, body: &str) -> GooseResponse {
+    pub async fn post_named(
+        &self,
+        path: &str,
+        request_name: &str,
+        body: &str,
+    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_post(path).await.body(body.to_string());
-        self.goose_send(request_builder, Some(request_name)).await
+        Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
     /// A helper to make a `HEAD` request of a path and collect relevant statistics.
@@ -971,9 +984,9 @@ impl GooseUser {
     ///       let _goose = user.head("/path/to/foo/").await;
     ///     }
     /// ```
-    pub async fn head(&self, path: &str) -> GooseResponse {
+    pub async fn head(&self, path: &str) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_head(path).await;
-        self.goose_send(request_builder, None).await
+        Ok(self.goose_send(request_builder, None).await?)
     }
 
     /// A helper to make a named `HEAD` request of a path and collect relevant statistics.
@@ -996,9 +1009,13 @@ impl GooseUser {
     ///       let _goose = user.head_named("/path/to/foo/", "foo").await;
     ///     }
     /// ```
-    pub async fn head_named(&self, path: &str, request_name: &str) -> GooseResponse {
+    pub async fn head_named(
+        &self,
+        path: &str,
+        request_name: &str,
+    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_head(path).await;
-        self.goose_send(request_builder, Some(request_name)).await
+        Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
     /// A helper to make a `DELETE` request of a path and collect relevant statistics.
@@ -1025,9 +1042,9 @@ impl GooseUser {
     ///       let _goose = user.delete("/path/to/foo/").await;
     ///     }
     /// ```
-    pub async fn delete(&self, path: &str) -> GooseResponse {
+    pub async fn delete(&self, path: &str) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_delete(path).await;
-        self.goose_send(request_builder, None).await
+        Ok(self.goose_send(request_builder, None).await?)
     }
 
     /// A helper to make a named `DELETE` request of a path and collect relevant statistics.
@@ -1050,9 +1067,13 @@ impl GooseUser {
     ///       let _goose = user.delete_named("/path/to/foo/", "foo").await;
     ///     }
     /// ```
-    pub async fn delete_named(&self, path: &str, request_name: &str) -> GooseResponse {
+    pub async fn delete_named(
+        &self,
+        path: &str,
+        request_name: &str,
+    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let request_builder = self.goose_delete(path).await;
-        self.goose_send(request_builder, Some(request_name)).await
+        Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1208,10 +1229,12 @@ impl GooseUser {
     /// Reqwest without using this helper function, but then Goose is unable to capture
     /// statistics.
     ///
-    /// Calls to `user.goose_send` return a `GooseResponse` object which contains a
-    /// copy of the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `user.goose_send()` returns a `Result` containing a `GooseResponse` on success,
+    /// and a `tokio::sync::mpsc::error::SendError<bool>` on failure. Failure only happens when
+    /// `--throttle-requests` is enabled and the load test completes. The `GooseResponse` object
+    // contains a copy of the request made
+    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the
+    /// Reqwest response ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1223,14 +1246,16 @@ impl GooseUser {
     ///     /// request builder.
     ///     async fn get_function(user: &GooseUser) {
     ///       let request_builder = user.goose_get("/path/to/foo").await;
-    ///       let _goose = user.goose_send(request_builder, None).await;
+    ///       if let Ok(_goose) = user.goose_send(request_builder, None).await {
+    ///         // Do stuff with _goose.request and/or _goose.response here.
+    ///       }
     ///     }
     /// ```
     pub async fn goose_send(
         &self,
         request_builder: RequestBuilder,
         request_name: Option<&str>,
-    ) -> GooseResponse {
+    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
         let mut started = Instant::now();
         let request = match request_builder.build() {
             Ok(r) => r,
@@ -1255,20 +1280,8 @@ impl GooseUser {
         if self.is_throttled && self.config.throttle_requests.is_some() {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
             debug!("GooseUser: waiting on throttle");
-            if self.throttle.clone().unwrap().send(true).await.is_err() {
-                // The throttle channel has closed, meaning the load test is over. Cancel this
-                // request.
-                return GooseResponse::new(
-                    GooseRawRequest::new(
-                        method,
-                        &request_name,
-                        &request.url().to_string(),
-                        self.started.elapsed().as_millis(),
-                        self.weighted_users_index,
-                    ),
-                    None,
-                );
-            }
+            // Return mpsc::error:SendError<bool> if this fails.
+            self.throttle.clone().unwrap().send(true).await?;
             // If we got here, reset started timestamp as we may have gotten throttled.
             started = Instant::now();
         };
@@ -1333,7 +1346,7 @@ impl GooseUser {
             self.send_to_parent(&raw_request);
         }
 
-        GooseResponse::new(raw_request, Some(response))
+        Ok(GooseResponse::new(raw_request, response))
     }
 
     fn send_to_parent(&self, raw_request: &GooseRawRequest) {
@@ -1377,16 +1390,12 @@ impl GooseUser {
     ///
     ///     /// A simple task that makes a GET request.
     ///     async fn get_function(user: &GooseUser) {
-    ///         let mut goose = user.get("/404").await;
-    ///         if let Some(response) = goose.response {
-    ///             match &response {
-    ///                 Ok(r) => {
-    ///                     // We expect a 404 here.
-    ///                     if r.status() == 404 {
-    ///                         user.set_success(&mut goose.request);
-    ///                     }
-    ///                 },
-    ///                 Err(_) => (),
+    ///         if let Ok(mut goose) = user.get("/404").await {
+    ///             if let Ok(response) = &goose.response {
+    ///                 // We expect a 404 here.
+    ///                 if response.status() == 404 {
+    ///                     user.set_success(&mut goose.request);
+    ///                 }
     ///             }
     ///         }
     ///     }
@@ -1414,14 +1423,13 @@ impl GooseUser {
     ///     let mut task = task!(loadtest_index_page);
     ///
     ///     async fn loadtest_index_page(user: &GooseUser) {
-    ///         let mut goose = user.get_named("/", "index").await;
-    ///         if let Some(response) = goose.response {
+    ///         if let Ok(mut goose) = user.get_named("/", "index").await {
     ///             // Extract the response Result.
-    ///             match response {
-    ///                 Ok(r) => {
+    ///             match goose.response {
+    ///                 Ok(response) => {
     ///                     // We only need to check pages that returned a success status code.
-    ///                     if r.status().is_success() {
-    ///                         match r.text().await {
+    ///                     if response.status().is_success() {
+    ///                         match response.text().await {
     ///                             Ok(text) => {
     ///                                 // If the expected string doesn't exist, this page load
     ///                                 // was a failure.
@@ -1471,16 +1479,15 @@ impl GooseUser {
     ///     let mut task = task!(loadtest_index_page);
     ///
     ///     async fn loadtest_index_page(user: &GooseUser) {
-    ///         let mut goose = user.get_named("/", "index").await;
-    ///         if let Some(response) = goose.response {
+    ///         if let Ok(mut goose) = user.get_named("/", "index").await {
     ///            // Extract the response Result.
-    ///             match response {
-    ///                 Ok(r) => {
+    ///             match goose.response {
+    ///                 Ok(response) => {
     ///                     // Grab a copy of the headers so we can include them when logging errors.
-    ///                     let headers = &r.headers().clone();
+    ///                     let headers = &response.headers().clone();
     ///                     // We only need to check pages that returned a success status code.
-    ///                     if !r.status().is_success() {
-    ///                         match r.text().await {
+    ///                     if !response.status().is_success() {
+    ///                         match response.text().await {
     ///                             Ok(html) => {
     ///                                 // Server returned an error code, log everything.
     ///                                 user.log_debug(
@@ -2465,30 +2472,34 @@ mod tests {
 
         // Make a GET request to the mock http server and confirm we get a 200 response.
         assert_eq!(mock_index.times_called(), 0);
-        let goose = user.get("/").await;
-        let status = goose.response.unwrap().unwrap().status();
-        assert_eq!(status, 200);
+        let response = user.get("/").await;
         assert_eq!(mock_index.times_called(), 1);
-        assert_eq!(goose.request.method, GooseMethod::GET);
-        assert_eq!(goose.request.name, "/");
-        assert_eq!(goose.request.success, true);
-        assert_eq!(goose.request.update, false);
-        assert_eq!(goose.request.status_code, 200);
+        if let Ok(goose) = response {
+            let status = goose.response.unwrap().status();
+            assert_eq!(status, 200);
+            assert_eq!(goose.request.method, GooseMethod::GET);
+            assert_eq!(goose.request.name, "/");
+            assert_eq!(goose.request.success, true);
+            assert_eq!(goose.request.update, false);
+            assert_eq!(goose.request.status_code, 200);
+        }
 
         const NO_SUCH_PATH: &str = "/no/such/path";
         let mock_404 = mock(GET, NO_SUCH_PATH).return_status(404).create();
 
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
         assert_eq!(mock_404.times_called(), 0);
-        let goose = user.get(NO_SUCH_PATH).await;
-        let status = goose.response.unwrap().unwrap().status();
-        assert_eq!(status, 404);
+        let response = user.get(NO_SUCH_PATH).await;
         assert_eq!(mock_404.times_called(), 1);
-        assert_eq!(goose.request.method, GooseMethod::GET);
-        assert_eq!(goose.request.name, NO_SUCH_PATH);
-        assert_eq!(goose.request.success, false);
-        assert_eq!(goose.request.update, false);
-        assert_eq!(goose.request.status_code, 404,);
+        if let Ok(goose) = response {
+            let status = goose.response.unwrap().status();
+            assert_eq!(status, 404);
+            assert_eq!(goose.request.method, GooseMethod::GET);
+            assert_eq!(goose.request.name, NO_SUCH_PATH);
+            assert_eq!(goose.request.success, false);
+            assert_eq!(goose.request.update, false);
+            assert_eq!(goose.request.status_code, 404,);
+        }
 
         // Set up a mock http server endpoint.
         const COMMENT_PATH: &str = "/comment";
@@ -2500,17 +2511,19 @@ mod tests {
 
         // Make a POST request to the mock http server and confirm we get a 200 OK response.
         assert_eq!(mock_comment.times_called(), 0);
-        let goose = user.post(COMMENT_PATH, "foo").await;
-        let unwrapped_response = goose.response.unwrap().unwrap();
-        let status = unwrapped_response.status();
-        assert_eq!(status, 200);
-        let body = unwrapped_response.text().await.unwrap();
-        assert_eq!(body, "foo");
+        let response = user.post(COMMENT_PATH, "foo").await;
         assert_eq!(mock_comment.times_called(), 1);
-        assert_eq!(goose.request.method, GooseMethod::POST);
-        assert_eq!(goose.request.name, COMMENT_PATH);
-        assert_eq!(goose.request.success, true);
-        assert_eq!(goose.request.update, false);
-        assert_eq!(goose.request.status_code, 200);
+        if let Ok(goose) = response {
+            let unwrapped_response = goose.response.unwrap();
+            let status = unwrapped_response.status();
+            assert_eq!(status, 200);
+            let body = unwrapped_response.text().await.unwrap();
+            assert_eq!(body, "foo");
+            assert_eq!(goose.request.method, GooseMethod::POST);
+            assert_eq!(goose.request.name, COMMENT_PATH);
+            assert_eq!(goose.request.success, true);
+            assert_eq!(goose.request.update, false);
+            assert_eq!(goose.request.status_code, 200);
+        }
     }
 }

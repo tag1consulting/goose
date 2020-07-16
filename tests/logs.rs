@@ -16,9 +16,8 @@ pub async fn get_index(user: &GooseUser) {
 }
 
 pub async fn get_error(user: &GooseUser) {
-    let goose = user.get(ERROR_PATH).await;
-    if let Some(response) = goose.response {
-        if let Ok(r) = response {
+    if let Ok(goose) = user.get(ERROR_PATH).await {
+        if let Ok(r) = goose.response {
             let headers = &r.headers().clone();
             match r.text().await {
                 Ok(_) => {}
