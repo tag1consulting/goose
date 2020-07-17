@@ -1089,6 +1089,50 @@ impl GooseAttack {
         (Some(logger_thread), Some(all_threads_logger))
     }
 
+    // Helper to spawn a throttle thread if configured.
+    async fn setup_throttle(
+        &self,
+    ) -> (
+        // A channel used by GooseClients to throttle requests.
+        Option<mpsc::Sender<bool>>,
+        // A channel used by parent to tell throttle the load test is complete.
+        Option<mpsc::Sender<bool>>,
+    ) {
+        match self.configuration.throttle_requests {
+            // Throttle is not configured, return immediately.
+            None => (None, None),
+            Some(throttle_requests) => {
+                // Create a bounded channel allowing single-sender multi-receiver to throttle
+                // GooseUser threads.
+                let (all_threads_throttle, throttle_receiver): (
+                    mpsc::Sender<bool>,
+                    mpsc::Receiver<bool>,
+                ) = mpsc::channel(throttle_requests);
+
+                // Create a channel allowing the parent to inform the throttle thread when the
+                // load test is finished. Even though we only send one message, we can't use a
+                // oneshot channel as we don't want to block waiting for a message.
+                let (parent_to_throttle_tx, throttle_rx) = mpsc::channel(1);
+
+                // Launch a new thread for throttling, no need to rejoin it.
+                let _ = Some(tokio::spawn(throttle::throttle_main(
+                    throttle_requests,
+                    throttle_receiver,
+                    throttle_rx,
+                )));
+
+                let mut sender = all_threads_throttle.clone();
+                // Fill all but one slot in the channel to avoid a burst of traffic during
+                // startup.
+                for _ in 1..throttle_requests {
+                    let _ = sender.send(true).await;
+                }
+
+                (Some(all_threads_throttle), Some(parent_to_throttle_tx))
+            }
+        }
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -1124,39 +1168,8 @@ impl GooseAttack {
         // If enabled, spawn a logger thread.
         let (logger_thread, all_threads_logger) = self.setup_logger();
 
-        let throttle_receiver;
-        let all_threads_throttle;
-        let parent_to_throttle_tx;
-        if let Some(throttle_requests) = self.configuration.throttle_requests {
-            // Create a bounded channel allowing single-sender multi-receiver to throttle
-            // GooseUser threads.
-            let (sender, receiver): (mpsc::Sender<bool>, mpsc::Receiver<bool>) =
-                mpsc::channel(throttle_requests);
-            all_threads_throttle = Some(sender);
-            throttle_receiver = Some(receiver);
-
-            // Create a channel allowing the parent to inform the throttle thread when the
-            // load test is finished. Even though we only send one message, we can't use a
-            // oneshot channel as we don't want to block waiting for a message.
-            let (tx, throttle_rx) = mpsc::channel(1);
-            parent_to_throttle_tx = Some(tx);
-
-            // Launch a new thread for throttling.
-            let _ = Some(tokio::spawn(throttle::throttle_main(
-                throttle_requests,
-                throttle_receiver.unwrap(),
-                throttle_rx,
-            )));
-
-            // Fill the channel to avoid a burst of traffic during startup.
-            let mut sender = all_threads_throttle.clone().unwrap();
-            for _ in 0..throttle_requests {
-                let _ = sender.send(true).await;
-            }
-        } else {
-            all_threads_throttle = None;
-            parent_to_throttle_tx = None;
-        }
+        // If enabled, spawn a throttle thread.
+        let (all_threads_throttle, parent_to_throttle_tx) = self.setup_throttle().await;
 
         // Collect user threads in a vector for when we want to stop them later.
         let mut users = vec![];
