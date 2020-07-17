@@ -296,7 +296,7 @@ multiple different servers with different available resources.
 The throttle is specified as an integer. For example:
 
 ```rust
-$ cargo run --example simple -- --host http://local.dev/ -u100 -r20 -t10s -v --throttle-requests 5
+$ cargo run --example simple -- --host http://local.dev/ -u100 -r20 -v --throttle-requests 5
 ```
 
 In this example, Goose will launch 100 GooseUser threads, but the throttle will prevent them from
