@@ -1143,7 +1143,7 @@ impl GooseAttack {
 
             // Launch a new thread for throttling.
             let _ = Some(tokio::spawn(throttle::throttle_main(
-                self.configuration.clone(),
+                throttle_requests,
                 throttle_receiver.unwrap(),
                 throttle_rx,
             )));

@@ -1,21 +1,18 @@
 use tokio::sync::mpsc::Receiver;
 use tokio::time;
 
-use crate::GooseConfiguration;
-
 /// This throttle thread limits the maximum number of requests that can be made across
 /// all GooseUser threads. When enabled, GooseUser threads must add a token to the
 /// bounded channel before making a request, and this thread limits how frequently
 /// tokens are removed thereby throttling how fast requests can be made. It is a variation
 /// on the leaky bucket algorithm: instead of leaking the overflow we asynchronously block.
 pub async fn throttle_main(
-    configuration: GooseConfiguration,
+    throttle_requests: usize,
     mut throttle_receiver: Receiver<bool>,
     mut parent_receiver: Receiver<bool>,
 ) {
     // Use microseconds to allow configurations up to 1,000,000 requests per second.
-    let mut sleep_duration =
-        time::Duration::from_micros(1_000_000 / configuration.throttle_requests.unwrap() as u64);
+    let mut sleep_duration = time::Duration::from_micros(1_000_000 / throttle_requests as u64);
     let tokens_per_duration;
 
     let ten_milliseconds = time::Duration::from_millis(10);
