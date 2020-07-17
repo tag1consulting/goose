@@ -1092,7 +1092,7 @@ impl GooseUser {
     ///     /// request builder.
     ///     async fn get_function(user: &GooseUser) {
     ///       let request_builder = user.goose_get("/path/to/foo").await;
-    ///       let goose = user.goose_send(request_builder, None).await;
+    ///       let _goose = user.goose_send(request_builder, None).await;
     ///     }
     /// ```
     pub async fn goose_get(&self, path: &str) -> RequestBuilder {
