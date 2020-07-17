@@ -1051,22 +1051,22 @@ impl GooseAttack {
         // A channel used by GooseClients to send logs.
         Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
     ) {
+        // If the logger isn't configured, return immediately.
         if self.configuration.debug_log_file.is_empty() {
-            // Logger is not configured, return immediately.
-            (None, None)
-        } else {
-            // Create an unbounded channel allowing GooseUser threads to log errors.
-            let (all_threads_logger, logger_receiver): (
-                mpsc::UnboundedSender<Option<GooseDebug>>,
-                mpsc::UnboundedReceiver<Option<GooseDebug>>,
-            ) = mpsc::unbounded_channel();
-            // Launch a new thread for logging.
-            let logger_thread = tokio::spawn(logger::logger_main(
-                self.configuration.clone(),
-                logger_receiver,
-            ));
-            (Some(logger_thread), Some(all_threads_logger))
+            return (None, None);
         }
+
+        // Create an unbounded channel allowing GooseUser threads to log errors.
+        let (all_threads_logger, logger_receiver): (
+            mpsc::UnboundedSender<Option<GooseDebug>>,
+            mpsc::UnboundedReceiver<Option<GooseDebug>>,
+        ) = mpsc::unbounded_channel();
+        // Launch a new thread for logging.
+        let logger_thread = tokio::spawn(logger::logger_main(
+            self.configuration.clone(),
+            logger_receiver,
+        ));
+        (Some(logger_thread), Some(all_threads_logger))
     }
 
     /// Called internally in local-mode and gaggle-mode.
