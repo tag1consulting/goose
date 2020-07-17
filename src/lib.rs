@@ -1124,8 +1124,12 @@ impl GooseAttack {
         )));
 
         let mut sender = all_threads_throttle.clone();
-        // Fill all but one slot in the channel to avoid a burst of traffic during
-        // startup.
+        // We start from 1 instead of 0 to intentionally fill all but one slot in the
+        // channel to avoid a burst of traffic during startup. The channel then provides
+        // an implementation of the leaky bucket algorithm as a queue. Requests have to
+        // add a token to the bucket before making a request, and are blocked until this
+        // throttle thread "leaks out" a token thereby creating space. More information
+        // can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
         for _ in 1..throttle_requests {
             let _ = sender.send(true).await;
         }
@@ -1207,8 +1211,8 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             user_channels.push(parent_sender);
 
-            // Copy the GooseUser-to-logger sender channel, used by all threads.
             if !self.configuration.debug_log_file.is_empty() {
+                // Copy the GooseUser-to-logger sender channel, used by all threads.
                 thread_user.logger = Some(all_threads_logger.clone().unwrap());
             } else {
                 thread_user.logger = None;

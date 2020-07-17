@@ -16,19 +16,24 @@ pub async fn get_index(user: &GooseUser) {
 }
 
 pub async fn get_error(user: &GooseUser) {
-    if let Ok(goose) = user.get(ERROR_PATH).await {
-        if let Ok(r) = goose.response {
-            let headers = &r.headers().clone();
-            match r.text().await {
-                Ok(_) => {}
-                Err(_) => {
-                    user.log_debug(
-                        "there was an error",
-                        Some(goose.request),
-                        Some(headers),
-                        None,
-                    );
-                }
+    let goose = match user.get(ERROR_PATH).await {
+        // Return early if get fails, there's nothing else to do.
+        Err(_) => return,
+        // Otherwise unwrap the Result.
+        Ok(g) => g,
+    };
+
+    if let Ok(r) = goose.response {
+        let headers = &r.headers().clone();
+        match r.text().await {
+            Ok(_) => {}
+            Err(_) => {
+                user.log_debug(
+                    "there was an error",
+                    Some(goose.request),
+                    Some(headers),
+                    None,
+                );
             }
         }
     }

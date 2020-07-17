@@ -23,20 +23,25 @@ pub async fn get_about(user: &GooseUser) {
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
 pub async fn get_redirect(user: &GooseUser) {
-    if let Ok(mut goose) = user.get(REDIRECT_PATH).await {
-        if let Ok(r) = goose.response {
-            match r.text().await {
-                Ok(html) => {
-                    // Confirm that we followed redirects and loaded the about page.
-                    if !html.contains("about page") {
-                        eprintln!("about page body wrong");
-                        user.set_failure(&mut goose.request);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("unexpected error parsing about page: {}", e);
+    let mut goose = match user.get(REDIRECT_PATH).await {
+        // Return early if get fails, there's nothing else to do.
+        Err(_) => return,
+        // Otherwise unwrap the Result.
+        Ok(g) => g,
+    };
+
+    if let Ok(r) = goose.response {
+        match r.text().await {
+            Ok(html) => {
+                // Confirm that we followed redirects and loaded the about page.
+                if !html.contains("about page") {
+                    eprintln!("about page body wrong");
                     user.set_failure(&mut goose.request);
                 }
+            }
+            Err(e) => {
+                eprintln!("unexpected error parsing about page: {}", e);
+                user.set_failure(&mut goose.request);
             }
         }
     }
