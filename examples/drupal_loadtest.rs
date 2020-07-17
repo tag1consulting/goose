@@ -82,14 +82,18 @@ fn main() {
 
 /// View the front page.
 async fn drupal_loadtest_front_page(user: &GooseUser) {
-    let mut goose = user.get("/").await;
+    let mut goose = match user.get("/").await {
+        // Return early if get fails, there's nothing else to do.
+        Err(_) => return,
+        // Otherwise unwrap the Result.
+        Ok(g) => g,
+    };
 
-    // Grab some static assets from the front page.
     match goose.response {
-        Ok(r) => {
+        Ok(response) => {
             // Copy the headers so we have them for logging if there are errors.
-            let headers = &r.headers().clone();
-            match r.text().await {
+            let headers = &response.headers().clone();
+            match response.text().await {
                 Ok(t) => {
                     let re = Regex::new(r#"src="(.*?)""#).unwrap();
                     // Collect copy of URLs to run them async
@@ -100,7 +104,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
                         }
                     }
                     for asset in &urls {
-                        user.get_named(asset, "static asset").await;
+                        let _ = user.get_named(asset, "static asset").await;
                     }
                 }
                 Err(e) => {
@@ -136,12 +140,18 @@ async fn drupal_loadtest_profile_page(user: &GooseUser) {
 
 /// Log in.
 async fn drupal_loadtest_login(user: &GooseUser) {
-    let mut goose = user.get("/user").await;
+    let mut goose = match user.get("/user").await {
+        // Return early if get fails, there's nothing else to do.
+        Err(_) => return,
+        // Otherwise unwrap the Result.
+        Ok(g) => g,
+    };
+
     match goose.response {
-        Ok(r) => {
+        Ok(response) => {
             // Copy the headers so we have them for logging if there are errors.
-            let headers = &r.headers().clone();
-            match r.text().await {
+            let headers = &response.headers().clone();
+            match response.text().await {
                 Ok(html) => {
                     let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
                     let form_build_id = match re.captures(&html) {
@@ -201,12 +211,19 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
-    let mut goose = user.get(&node_path).await;
+
+    let mut goose = match user.get(&node_path).await {
+        // Return early if get fails, there's nothing else to do.
+        Err(_) => return,
+        // Otherwise unwrap the Result.
+        Ok(g) => g,
+    };
+
     match goose.response {
-        Ok(r) => {
+        Ok(response) => {
             // Copy the headers so we have them for logging if there are errors.
-            let headers = &r.headers().clone();
-            match r.text().await {
+            let headers = &response.headers().clone();
+            match response.text().await {
                 Ok(html) => {
                     // Extract the form_build_id from the user login form.
                     let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
@@ -276,13 +293,23 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                         ("form_id", &form_id[1]),
                         ("op", "Save"),
                     ];
+
+                    // Post the comment.
                     let request_builder = user.goose_post(&comment_path).await;
-                    let mut goose = user.goose_send(request_builder.form(&params), None).await;
+                    let mut goose = match user.goose_send(request_builder.form(&params), None).await
+                    {
+                        // Return early if get fails, there's nothing else to do.
+                        Err(_) => return,
+                        // Otherwise unwrap the Result.
+                        Ok(g) => g,
+                    };
+
+                    // Verify that the comment posted.
                     match goose.response {
-                        Ok(r) => {
+                        Ok(response) => {
                             // Copy the headers so we have them for logging if there are errors.
-                            let headers = &r.headers().clone();
-                            match r.text().await {
+                            let headers = &response.headers().clone();
+                            match response.text().await {
                                 Ok(html) => {
                                     if !html.contains(&comment_body) {
                                         user.set_failure(&mut goose.request);

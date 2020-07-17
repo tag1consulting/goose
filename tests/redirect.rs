@@ -23,7 +23,13 @@ pub async fn get_about(user: &GooseUser) {
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
 pub async fn get_redirect(user: &GooseUser) {
-    let mut goose = user.get(REDIRECT_PATH).await;
+    let mut goose = match user.get(REDIRECT_PATH).await {
+        // Return early if get fails, there's nothing else to do.
+        Err(_) => return,
+        // Otherwise unwrap the Result.
+        Ok(g) => g,
+    };
+
     if let Ok(r) = goose.response {
         match r.text().await {
             Ok(html) => {

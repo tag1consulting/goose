@@ -27,7 +27,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! goose = "0.8"
+//! goose = "0.9"
 //! ```
 //!
 //! Add the following boilerplate `use` declaration at the top of your `src/main.rs`:
@@ -296,6 +296,7 @@ pub mod logger;
 mod manager;
 pub mod prelude;
 mod stats;
+mod throttle;
 mod user;
 mod util;
 #[cfg(feature = "gaggle")]
@@ -819,6 +820,25 @@ impl GooseAttack {
                 error!("You can only enable --debug-log-file in stand-alone or worker mode, not as manager.");
                 std::process::exit(1);
             }
+
+            if self.configuration.throttle_requests.is_some() {
+                error!("You can only configure --throttle-requests in stand-alone mode or per worker, not as manager.");
+                std::process::exit(1);
+            }
+        }
+
+        // Validate throttle_requests, which must be a value from 1 to 1,000,000.
+        match self.configuration.throttle_requests {
+            Some(throttle) if throttle == 0 => {
+                error!("Throttle must be at least 1 request per second.");
+                std::process::exit(1);
+            }
+            Some(throttle) if throttle > 1_000_000 => {
+                error!("Throttle can not be more than 1,000,000 requests per second.");
+                std::process::exit(1);
+            }
+            // Everything else is valid.
+            _ => (),
         }
 
         // Worker mode.
@@ -1069,6 +1089,54 @@ impl GooseAttack {
         (Some(logger_thread), Some(all_threads_logger))
     }
 
+    // Helper to spawn a throttle thread if configured.
+    async fn setup_throttle(
+        &self,
+    ) -> (
+        // A channel used by GooseClients to throttle requests.
+        Option<mpsc::Sender<bool>>,
+        // A channel used by parent to tell throttle the load test is complete.
+        Option<mpsc::Sender<bool>>,
+    ) {
+        // If the throttle isn't configured, return immediately.
+        if self.configuration.throttle_requests.is_none() {
+            return (None, None);
+        }
+
+        // Unwrap is safe here as we exit early if the throttle isn't configured.
+        let throttle_requests = self.configuration.throttle_requests.unwrap();
+
+        // Create a bounded channel allowing single-sender multi-receiver to throttle
+        // GooseUser threads.
+        let (all_threads_throttle, throttle_receiver): (mpsc::Sender<bool>, mpsc::Receiver<bool>) =
+            mpsc::channel(throttle_requests);
+
+        // Create a channel allowing the parent to inform the throttle thread when the
+        // load test is finished. Even though we only send one message, we can't use a
+        // oneshot channel as we don't want to block waiting for a message.
+        let (parent_to_throttle_tx, throttle_rx) = mpsc::channel(1);
+
+        // Launch a new thread for throttling, no need to rejoin it.
+        let _ = Some(tokio::spawn(throttle::throttle_main(
+            throttle_requests,
+            throttle_receiver,
+            throttle_rx,
+        )));
+
+        let mut sender = all_threads_throttle.clone();
+        // We start from 1 instead of 0 to intentionally fill all but one slot in the
+        // channel to avoid a burst of traffic during startup. The channel then provides
+        // an implementation of the leaky bucket algorithm as a queue. Requests have to
+        // add a token to the bucket before making a request, and are blocked until this
+        // throttle thread "leaks out" a token thereby creating space. More information
+        // can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
+        for _ in 1..throttle_requests {
+            let _ = sender.send(true).await;
+        }
+
+        (Some(all_threads_throttle), Some(parent_to_throttle_tx))
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -1103,6 +1171,9 @@ impl GooseAttack {
 
         // If enabled, spawn a logger thread.
         let (logger_thread, all_threads_logger) = self.setup_logger();
+
+        // If enabled, spawn a throttle thread.
+        let (all_threads_throttle, parent_to_throttle_tx) = self.setup_throttle().await;
 
         // Collect user threads in a vector for when we want to stop them later.
         let mut users = vec![];
@@ -1145,6 +1216,12 @@ impl GooseAttack {
                 thread_user.logger = Some(all_threads_logger.clone().unwrap());
             } else {
                 thread_user.logger = None;
+            }
+
+            // Copy the GooseUser-throttle receiver channel, used by all threads.
+            match self.configuration.throttle_requests {
+                Some(_) => thread_user.throttle = Some(all_threads_throttle.clone().unwrap()),
+                None => thread_user.throttle = None,
             }
 
             // Copy the GooseUser-to-parent sender channel, used by all threads.
@@ -1334,6 +1411,12 @@ impl GooseAttack {
                 } else {
                     info!("waiting for users to exit");
                 }
+
+                // If throttle is enabled, tell throttle thread the load test is over.
+                if let Some(mut tx) = parent_to_throttle_tx {
+                    let _ = tx.send(false).await;
+                }
+
                 futures::future::join_all(users).await;
                 debug!("all users exited");
 
@@ -1496,6 +1579,10 @@ pub struct GooseConfiguration {
     /// Debug log format ('json' or 'raw')
     #[structopt(long, default_value = "json")]
     pub debug_log_format: String,
+
+    /// Throttle (max) requests per second
+    #[structopt(long)]
+    pub throttle_requests: Option<usize>,
 
     /// User follows redirect of base_url with subsequent requests
     #[structopt(long)]
