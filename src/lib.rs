@@ -827,11 +827,18 @@ impl GooseAttack {
             }
         }
 
-        if let Some(throttle_requests) = self.configuration.throttle_requests {
-            if throttle_requests > 1_000_000 {
+        // Validate throttle_requests, which must be a value from 1 to 1,000,000.
+        match self.configuration.throttle_requests {
+            Some(throttle) if throttle == 0 => {
+                error!("Throttle must be at least 1 request per second.");
+                std::process::exit(1);
+            }
+            Some(throttle) if throttle > 1_000_000 => {
                 error!("Throttle can not be more than 1,000,000 requests per second.");
                 std::process::exit(1);
             }
+            // Everything else is valid.
+            _ => (),
         }
 
         // Worker mode.
