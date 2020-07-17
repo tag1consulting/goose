@@ -1042,6 +1042,33 @@ impl GooseAttack {
         }
     }
 
+    // Helper to spawn a logger thread if configured.
+    fn setup_logger(
+        &self,
+    ) -> (
+        // A handle to later rejoin the logger thread.
+        Option<tokio::task::JoinHandle<()>>,
+        // A channel used by GooseClients to send logs.
+        Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
+    ) {
+        if self.configuration.debug_log_file.is_empty() {
+            // Logger is not configured, return immediately.
+            (None, None)
+        } else {
+            // Create an unbounded channel allowing GooseUser threads to log errors.
+            let (all_threads_logger, logger_receiver): (
+                mpsc::UnboundedSender<Option<GooseDebug>>,
+                mpsc::UnboundedReceiver<Option<GooseDebug>>,
+            ) = mpsc::unbounded_channel();
+            // Launch a new thread for logging.
+            let logger_thread = tokio::spawn(logger::logger_main(
+                self.configuration.clone(),
+                logger_receiver,
+            ));
+            (Some(logger_thread), Some(all_threads_logger))
+        }
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -1074,27 +1101,8 @@ impl GooseAttack {
             }
         }
 
-        let logger_thread;
-        let all_threads_logger;
-        let logger_receiver;
-        if !self.configuration.debug_log_file.is_empty() {
-            // Create a channel allowing GooseUser threads to log errors.
-            let (sender, receiver): (
-                mpsc::UnboundedSender<Option<GooseDebug>>,
-                mpsc::UnboundedReceiver<Option<GooseDebug>>,
-            ) = mpsc::unbounded_channel();
-            all_threads_logger = Some(sender);
-            logger_receiver = Some(receiver);
-
-            // Launch a new user.
-            logger_thread = Some(tokio::spawn(logger::logger_main(
-                self.configuration.clone(),
-                logger_receiver.unwrap(),
-            )));
-        } else {
-            logger_thread = None;
-            all_threads_logger = None;
-        }
+        // If enabled, spawn a logger thread.
+        let (logger_thread, all_threads_logger) = self.setup_logger();
 
         // Collect user threads in a vector for when we want to stop them later.
         let mut users = vec![];
