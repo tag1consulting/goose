@@ -1245,10 +1245,15 @@ impl GooseUser {
     ///     /// A simple task that makes a GET request, exposing the Reqwest
     ///     /// request builder.
     ///     async fn get_function(user: &GooseUser) {
-    ///       let request_builder = user.goose_get("/path/to/foo").await;
-    ///       if let Ok(_goose) = user.goose_send(request_builder, None).await {
-    ///         // Do stuff with _goose.request and/or _goose.response here.
-    ///       }
+    ///         let request_builder = user.goose_get("/path/to/foo").await;
+    ///         let goose = match user.goose_send(request_builder, None).await {
+    ///             // Return early if get fails, there's nothing else to do.
+    ///             Err(_) => return,
+    ///             // Otherwise unwrap the Result.
+    ///             Ok(g) => g,
+    ///         };
+    ///
+    ///         // Do stuff with goose.request and/or goose.response here.
     ///     }
     /// ```
     pub async fn goose_send(
