@@ -1098,39 +1098,39 @@ impl GooseAttack {
         // A channel used by parent to tell throttle the load test is complete.
         Option<mpsc::Sender<bool>>,
     ) {
-        match self.configuration.throttle_requests {
-            // Throttle is not configured, return immediately.
-            None => (None, None),
-            Some(throttle_requests) => {
-                // Create a bounded channel allowing single-sender multi-receiver to throttle
-                // GooseUser threads.
-                let (all_threads_throttle, throttle_receiver): (
-                    mpsc::Sender<bool>,
-                    mpsc::Receiver<bool>,
-                ) = mpsc::channel(throttle_requests);
-
-                // Create a channel allowing the parent to inform the throttle thread when the
-                // load test is finished. Even though we only send one message, we can't use a
-                // oneshot channel as we don't want to block waiting for a message.
-                let (parent_to_throttle_tx, throttle_rx) = mpsc::channel(1);
-
-                // Launch a new thread for throttling, no need to rejoin it.
-                let _ = Some(tokio::spawn(throttle::throttle_main(
-                    throttle_requests,
-                    throttle_receiver,
-                    throttle_rx,
-                )));
-
-                let mut sender = all_threads_throttle.clone();
-                // Fill all but one slot in the channel to avoid a burst of traffic during
-                // startup.
-                for _ in 1..throttle_requests {
-                    let _ = sender.send(true).await;
-                }
-
-                (Some(all_threads_throttle), Some(parent_to_throttle_tx))
-            }
+        // If the throttle isn't configured, return immediately.
+        if self.configuration.throttle_requests.is_none() {
+            return (None, None);
         }
+
+        // Unwrap is safe here as we exit early if the throttle isn't configured.
+        let throttle_requests = self.configuration.throttle_requests.unwrap();
+
+        // Create a bounded channel allowing single-sender multi-receiver to throttle
+        // GooseUser threads.
+        let (all_threads_throttle, throttle_receiver): (mpsc::Sender<bool>, mpsc::Receiver<bool>) =
+            mpsc::channel(throttle_requests);
+
+        // Create a channel allowing the parent to inform the throttle thread when the
+        // load test is finished. Even though we only send one message, we can't use a
+        // oneshot channel as we don't want to block waiting for a message.
+        let (parent_to_throttle_tx, throttle_rx) = mpsc::channel(1);
+
+        // Launch a new thread for throttling, no need to rejoin it.
+        let _ = Some(tokio::spawn(throttle::throttle_main(
+            throttle_requests,
+            throttle_receiver,
+            throttle_rx,
+        )));
+
+        let mut sender = all_threads_throttle.clone();
+        // Fill all but one slot in the channel to avoid a burst of traffic during
+        // startup.
+        for _ in 1..throttle_requests {
+            let _ = sender.send(true).await;
+        }
+
+        (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
     /// Called internally in local-mode and gaggle-mode.
