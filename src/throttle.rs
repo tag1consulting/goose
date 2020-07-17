@@ -4,8 +4,10 @@ use tokio::time;
 /// This throttle thread limits the maximum number of requests that can be made across
 /// all GooseUser threads. When enabled, GooseUser threads must add a token to the
 /// bounded channel before making a request, and this thread limits how frequently
-/// tokens are removed thereby throttling how fast requests can be made. It is a variation
-/// on the leaky bucket algorithm: instead of leaking the overflow we asynchronously block.
+/// tokens are removed thereby throttling how fast requests can be made. It is an
+/// implementation of the leaky bucket algorithm as a queue: instead of leaking the
+/// overflow we asynchronously block. More information on the leaky bucket algorithm
+/// can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
 pub async fn throttle_main(
     throttle_requests: usize,
     mut throttle_receiver: Receiver<bool>,
