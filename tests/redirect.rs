@@ -12,20 +12,22 @@ const REDIRECT3_PATH: &str = "/redirect3";
 const ABOUT_PATH: &str = "/about.php";
 
 // Task function, load INDEX_PATH.
-pub async fn get_index(user: &GooseUser) {
+pub async fn get_index(user: &GooseUser) -> Result<(), ()> {
     let _goose = user.get(INDEX_PATH).await;
+    Ok(())
 }
 
 // Task function, load ABOUT PATH
-pub async fn get_about(user: &GooseUser) {
+pub async fn get_about(user: &GooseUser) -> Result<(), ()> {
     let _goose = user.get(ABOUT_PATH).await;
+    Ok(())
 }
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
-pub async fn get_redirect(user: &GooseUser) {
+pub async fn get_redirect(user: &GooseUser) -> Result<(), ()> {
     let mut goose = match user.get(REDIRECT_PATH).await {
         // Return early if get fails, there's nothing else to do.
-        Err(_) => return,
+        Err(_) => return Err(()),
         // Otherwise unwrap the Result.
         Ok(g) => g,
     };
@@ -37,19 +39,23 @@ pub async fn get_redirect(user: &GooseUser) {
                 if !html.contains("about page") {
                     eprintln!("about page body wrong");
                     user.set_failure(&mut goose.request);
+                    return Err(());
                 }
             }
             Err(e) => {
                 eprintln!("unexpected error parsing about page: {}", e);
                 user.set_failure(&mut goose.request);
+                return Err(());
             }
         }
     }
+    Ok(())
 }
 
 // Task function, load REDRECT_PATH and follow redirect to new domain.
-pub async fn get_domain_redirect(user: &GooseUser) {
+pub async fn get_domain_redirect(user: &GooseUser) -> Result<(), ()> {
     let _goose = user.get(REDIRECT_PATH).await;
+    Ok(())
 }
 
 #[test]

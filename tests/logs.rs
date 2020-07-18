@@ -11,14 +11,15 @@ const ERROR_PATH: &str = "/error";
 const STATS_LOG_FILE: &str = "stats.log";
 const DEBUG_LOG_FILE: &str = "debug.log";
 
-pub async fn get_index(user: &GooseUser) {
+pub async fn get_index(user: &GooseUser) -> Result<(), ()> {
     let _goose = user.get(INDEX_PATH).await;
+    Ok(())
 }
 
-pub async fn get_error(user: &GooseUser) {
+pub async fn get_error(user: &GooseUser) -> Result<(), ()> {
     let goose = match user.get(ERROR_PATH).await {
         // Return early if get fails, there's nothing else to do.
-        Err(_) => return,
+        Err(_) => return Err(()),
         // Otherwise unwrap the Result.
         Ok(g) => g,
     };
@@ -34,9 +35,11 @@ pub async fn get_error(user: &GooseUser) {
                     Some(headers),
                     None,
                 );
+                return Err(());
             }
         }
     }
+    Ok(())
 }
 
 fn cleanup_files() {

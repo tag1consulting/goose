@@ -52,8 +52,9 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_foo(user: &GooseUser) {
+//! async fn loadtest_foo(user: &GooseUser) -> Result<(), ()> {
 //!   let _goose = user.get("/path/to/foo").await;
+//!   Ok(())
 //! }   
 //! ```
 //!
@@ -68,9 +69,10 @@
 //!
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_bar(user: &GooseUser) {
+//! async fn loadtest_bar(user: &GooseUser) -> Result<(), ()> {
 //!   let request_builder = user.goose_get("/path/to/bar").await;
 //!   let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
+//!   Ok(())
 //! }   
 //! ```
 //!
@@ -99,12 +101,14 @@
 //!     //.set_host("http://dev.local/")
 //!     .execute();
 //!
-//! async fn loadtest_foo(user: &GooseUser) {
+//! async fn loadtest_foo(user: &GooseUser) -> Result<(), ()> {
 //!   let _goose = user.get("/path/to/foo").await;
+//!   Ok(())
 //! }   
 //!
-//! async fn loadtest_bar(user: &GooseUser) {
+//! async fn loadtest_bar(user: &GooseUser) -> Result<(), ()> {
 //!   let _goose = user.get("/path/to/bar").await;
+//!   Ok(())
 //! }   
 //! ```
 //!
@@ -610,12 +614,14 @@ impl GooseAttack {
     ///             .register_task(task!(other_task))
     ///         );
     ///
-    ///     async fn example_task(user: &GooseUser) {
+    ///     async fn example_task(user: &GooseUser) -> Result<(), ()> {
     ///       let _goose = user.get("/foo").await;
+    ///       Ok(())
     ///     }
     ///
-    ///     async fn other_task(user: &GooseUser) {
+    ///     async fn other_task(user: &GooseUser) -> Result<(), ()> {
     ///       let _goose = user.get("/bar").await;
+    ///       Ok(())
     ///     }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
@@ -638,8 +644,9 @@ impl GooseAttack {
     ///     GooseAttack::initialize()
     ///         .test_start(task!(setup));
     ///
-    ///     async fn setup(user: &GooseUser) {
+    ///     async fn setup(user: &GooseUser) -> Result<(), ()> {
     ///         // do stuff to set up load test ...
+    ///         Ok(())
     ///     }
     /// ```
     pub fn test_start(mut self, task: GooseTask) -> Self {
@@ -661,8 +668,9 @@ impl GooseAttack {
     ///     GooseAttack::initialize()
     ///         .test_stop(task!(teardown));
     ///
-    ///     async fn teardown(user: &GooseUser) {
+    ///     async fn teardown(user: &GooseUser) -> Result<(), ()> {
     ///         // do stuff to tear down the load test ...
+    ///         Ok(())
     ///     }
     /// ```
     pub fn test_stop(mut self, task: GooseTask) -> Self {
@@ -769,12 +777,14 @@ impl GooseAttack {
     ///         )
     ///         .execute();
     ///
-    ///     async fn example_task(user: &GooseUser) {
+    ///     async fn example_task(user: &GooseUser) -> Result<(), ()> {
     ///       let _goose = user.get("/foo").await;
+    ///       Ok(())
     ///     }
     ///
-    ///     async fn another_example_task(user: &GooseUser) {
+    ///     async fn another_example_task(user: &GooseUser) -> Result<(), ()> {
     ///       let _goose = user.get("/bar").await;
+    ///       Ok(())
     ///     }
     /// ```
     pub fn execute(mut self) {
@@ -1162,7 +1172,7 @@ impl GooseAttack {
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
                     let user = GooseUser::single(base_url, &self.configuration);
                     let function = t.function;
-                    function(&user).await;
+                    let _ = function(&user).await;
                 }
                 // No test_start_task defined, nothing to do.
                 None => (),
@@ -1490,7 +1500,7 @@ impl GooseAttack {
                     // Create a one-time-use user to run the test_stop_task.
                     let user = GooseUser::single(base_url, &self.configuration);
                     let function = t.function;
-                    function(&user).await;
+                    let _ = function(&user).await;
                 }
                 // No test_stop_task defined, nothing to do.
                 None => (),

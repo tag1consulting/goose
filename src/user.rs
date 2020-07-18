@@ -47,7 +47,7 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&thread_user).await;
+                let _ = function(&thread_user).await;
             }
         }
     }
@@ -98,7 +98,7 @@ pub async fn user_main(
             thread_user.task_request_name = Some(thread_task_name.to_string());
         }
         // Invoke the task function.
-        function(&thread_user).await;
+        let _ = function(&thread_user).await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time = if thread_user.max_wait > 0 {
@@ -167,7 +167,7 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                function(&thread_user).await;
+                let _ = function(&thread_user).await;
             }
         }
     }
