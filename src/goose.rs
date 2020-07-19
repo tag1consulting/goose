@@ -265,10 +265,12 @@
 
 use http::method::Method;
 use http::StatusCode;
-use reqwest::{header, Client, ClientBuilder, Error, RequestBuilder, Response};
+use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
+use std::error::Error;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -276,7 +278,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
-use crate::{GooseConfiguration, GooseTaskResult};
+use crate::GooseConfiguration;
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -294,6 +296,34 @@ macro_rules! taskset {
     ($name:tt) => {
         GooseTaskSet::new($name)
     };
+}
+
+/// Goose tasks can return an error.
+pub type GooseTaskResult = Result<(), Box<dyn Error>>;
+
+#[derive(Debug)]
+pub struct GooseTaskError {
+    details: String,
+}
+
+impl GooseTaskError {
+    pub fn new(msg: &str) -> GooseTaskError {
+        GooseTaskError {
+            details: msg.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for GooseTaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+impl Error for GooseTaskError {
+    fn description(&self) -> &str {
+        &self.details
+    }
 }
 
 /// An individual task set.
@@ -681,10 +711,10 @@ impl PartialOrd for GooseRequest {
 #[derive(Debug)]
 pub struct GooseResponse {
     pub request: GooseRawRequest,
-    pub response: Result<Response, Error>,
+    pub response: Result<Response, reqwest::Error>,
 }
 impl GooseResponse {
-    pub fn new(request: GooseRawRequest, response: Result<Response, Error>) -> Self {
+    pub fn new(request: GooseRawRequest, response: Result<Response, reqwest::Error>) -> Self {
         GooseResponse { request, response }
     }
 }

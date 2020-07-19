@@ -314,7 +314,7 @@ use serde_json::json;
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
+use std::f32;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
@@ -322,7 +322,6 @@ use std::sync::{
     Arc,
 };
 use std::time;
-use std::{f32, fmt};
 use structopt::StructOpt;
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -347,34 +346,6 @@ lazy_static! {
 
 /// Internal representation of a weighted task list.
 type WeightedGooseTasks = Vec<Vec<usize>>;
-
-/// Goose tasks can return an error.
-pub type GooseTaskResult = Result<(), Box<dyn Error>>;
-
-#[derive(Debug)]
-pub struct GooseTaskError {
-    details: String,
-}
-
-impl GooseTaskError {
-    pub fn new(msg: &str) -> GooseTaskError {
-        GooseTaskError {
-            details: msg.to_string(),
-        }
-    }
-}
-
-impl fmt::Display for GooseTaskError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.details)
-    }
-}
-
-impl Error for GooseTaskError {
-    fn description(&self) -> &str {
-        &self.details
-    }
-}
 
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
