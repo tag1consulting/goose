@@ -32,17 +32,21 @@ pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
             Ok(html) => {
                 // Confirm that we followed redirects and loaded the about page.
                 if !html.contains("about page") {
-                    let error = "about page body wrong";
-                    eprintln!("{}", error);
-                    user.set_failure(&mut goose.request);
-                    return Err(Box::new(GooseTaskError::new(error)));
+                    return user.set_failure(
+                        "about page body wrong",
+                        &mut goose.request,
+                        None,
+                        None,
+                    );
                 }
             }
             Err(e) => {
-                let error = format!("unexpected error parsing about page: {}", e);
-                eprintln!("{}", &error);
-                user.set_failure(&mut goose.request);
-                return Err(Box::new(GooseTaskError::new(&error)));
+                return user.set_failure(
+                    format!("unexpected error parsing about page: {}", e).as_str(),
+                    &mut goose.request,
+                    None,
+                    None,
+                );
             }
         }
     }

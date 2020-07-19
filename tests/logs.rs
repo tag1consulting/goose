@@ -17,17 +17,17 @@ pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
 }
 
 pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
-    let goose = user.get(ERROR_PATH).await?;
+    let mut goose = user.get(ERROR_PATH).await?;
 
     if let Ok(r) = goose.response {
         let headers = &r.headers().clone();
-        match r.text().await {
-            Ok(_) => {}
-            Err(_) => {
-                let error = "there was an error";
-                user.log_debug(error, Some(goose.request), Some(headers), None);
-                return Err(Box::new(GooseTaskError::new(error)));
-            }
+        if r.text().await.is_err() {
+            return user.set_failure(
+                "there was an error",
+                &mut goose.request,
+                Some(headers),
+                None,
+            );
         }
     }
     Ok(())

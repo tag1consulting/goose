@@ -298,31 +298,42 @@ macro_rules! taskset {
     };
 }
 
-/// Goose tasks can return an error.
-pub type GooseTaskResult = Result<(), Box<dyn Error>>;
-
 #[derive(Debug)]
-pub struct GooseTaskError {
-    details: String,
+pub enum GooseTaskError {
+    Reqwest(reqwest::Error),
+    RequestFailed,
+    RequestCanceled,
 }
 
-impl GooseTaskError {
-    pub fn new(msg: &str) -> GooseTaskError {
-        GooseTaskError {
-            details: msg.to_string(),
+/// Goose tasks can return an error.
+pub type GooseTaskResult = Result<(), GooseTaskError>;
+
+impl fmt::Display for GooseTaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            GooseTaskError::Reqwest(ref err) => err.fmt(f),
+            GooseTaskError::RequestFailed => write!(
+                f,
+                "Request failed, usually because server returned a non-200 response code."
+            ),
+            GooseTaskError::RequestCanceled => {
+                write!(f, "Request canceled because the load test ended.")
+            }
         }
     }
 }
 
-impl fmt::Display for GooseTaskError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.details)
+impl Error for GooseTaskError {}
+
+impl From<reqwest::Error> for GooseTaskError {
+    fn from(err: reqwest::Error) -> GooseTaskError {
+        GooseTaskError::Reqwest(err)
     }
 }
 
-impl Error for GooseTaskError {
-    fn description(&self) -> &str {
-        &self.details
+impl From<mpsc::error::SendError<bool>> for GooseTaskError {
+    fn from(_err: mpsc::error::SendError<bool>) -> GooseTaskError {
+        GooseTaskError::RequestCanceled
     }
 }
 
@@ -906,7 +917,7 @@ impl GooseUser {
     ///       Ok(())
     ///     }
     /// ```
-    pub async fn get(&self, path: &str) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    pub async fn get(&self, path: &str) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_get(path).await;
         Ok(self.goose_send(request_builder, None).await?)
     }
@@ -936,7 +947,7 @@ impl GooseUser {
         &self,
         path: &str,
         request_name: &str,
-    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    ) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_get(path).await;
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
@@ -966,11 +977,7 @@ impl GooseUser {
     ///       Ok(())
     ///     }
     /// ```
-    pub async fn post(
-        &self,
-        path: &str,
-        body: &str,
-    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    pub async fn post(&self, path: &str, body: &str) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_post(path).await.body(body.to_string());
         Ok(self.goose_send(request_builder, None).await?)
     }
@@ -1001,7 +1008,7 @@ impl GooseUser {
         path: &str,
         request_name: &str,
         body: &str,
-    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    ) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_post(path).await.body(body.to_string());
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
@@ -1031,7 +1038,7 @@ impl GooseUser {
     ///       Ok(())
     ///     }
     /// ```
-    pub async fn head(&self, path: &str) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    pub async fn head(&self, path: &str) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_head(path).await;
         Ok(self.goose_send(request_builder, None).await?)
     }
@@ -1061,7 +1068,7 @@ impl GooseUser {
         &self,
         path: &str,
         request_name: &str,
-    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    ) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_head(path).await;
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
@@ -1091,7 +1098,7 @@ impl GooseUser {
     ///       Ok(())
     ///     }
     /// ```
-    pub async fn delete(&self, path: &str) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    pub async fn delete(&self, path: &str) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_delete(path).await;
         Ok(self.goose_send(request_builder, None).await?)
     }
@@ -1121,7 +1128,7 @@ impl GooseUser {
         &self,
         path: &str,
         request_name: &str,
-    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    ) -> Result<GooseResponse, GooseTaskError> {
         let request_builder = self.goose_delete(path).await;
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
@@ -1312,12 +1319,12 @@ impl GooseUser {
         &self,
         request_builder: RequestBuilder,
         request_name: Option<&str>,
-    ) -> Result<GooseResponse, mpsc::error::SendError<bool>> {
+    ) -> Result<GooseResponse, GooseTaskError> {
         // If throttle-requests is enabled...
         if self.is_throttled && self.config.throttle_requests.is_some() {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
             debug!("GooseUser: waiting on throttle");
-            // Return mpsc::error:SendError<bool> if this fails.
+            // Will result in GooseTaskError::RequestCanceled if this fails.
             self.throttle.clone().unwrap().send(true).await?;
         };
 
@@ -1454,7 +1461,7 @@ impl GooseUser {
     ///                 return Ok(());
     ///             }
     ///         }
-    ///         return Err(Box::new(GooseTaskError::new("didn't get 404 response from /404")));
+    ///         Err(GooseTaskError::RequestFailed)
     ///     }
     /// ````
     pub fn set_success(&self, request: &mut GooseRawRequest) {
@@ -1491,14 +1498,12 @@ impl GooseUser {
     ///                         // was a failure.
     ///                         if !text.contains("this string must exist") {
     ///                             // As this is a named request, pass in the name not the URL
-    ///                             user.set_failure(&mut goose.request);
-    ///                             return Err(Box::new(GooseTaskError::new("string missing")));
+    ///                             return user.set_failure("string missing", &mut goose.request, None, None);
     ///                         }
     ///                     }
     ///                     // Empty page, this is a failure.
     ///                     Err(_) => {
-    ///                         user.set_failure(&mut goose.request);
-    ///                         return Err(Box::new(GooseTaskError::new("empty page")));
+    ///                         return user.set_failure("empty page", &mut goose.request, None, None);
     ///                     }
     ///                 }
     ///             }
@@ -1507,13 +1512,25 @@ impl GooseUser {
     ///         Ok(())
     ///     }
     /// ````
-    pub fn set_failure(&self, request: &mut GooseRawRequest) {
+    pub fn set_failure(
+        &self,
+        tag: &str,
+        request: &mut GooseRawRequest,
+        headers: Option<&header::HeaderMap>,
+        body: Option<String>,
+    ) -> GooseTaskResult {
         // Only send update if this was previously a success.
         if request.success {
             request.success = false;
             request.update = true;
             self.send_to_parent(&request);
+
+            // No need to clone() request unless logging is enabled.
+            if !self.config.debug_log_file.is_empty() {
+                self.log_debug(&tag, Some(request.clone()), headers, body);
+            }
         }
+        Err(GooseTaskError::RequestFailed)
     }
 
     /// Write to debug_log_file if enabled.
@@ -1549,35 +1566,33 @@ impl GooseUser {
     ///                     match response.text().await {
     ///                         Ok(html) => {
     ///                             // Server returned an error code, log everything.
-    ///                             user.log_debug(
+    ///                             return user.set_failure(
     ///                                 error,
-    ///                                 Some(goose.request),
+    ///                                 &mut goose.request,
     ///                                 Some(headers),
     ///                                 Some(html.clone()),
     ///                             );
     ///                         },
     ///                         Err(e) => {
     ///                             // No body was returned, log everything else.
-    ///                             user.log_debug(
+    ///                             return user.set_failure(
     ///                                 error,
-    ///                                 Some(goose.request),
+    ///                                 &mut goose.request,
     ///                                 Some(headers),
     ///                                 None,
     ///                             );
     ///                         }
     ///                     }
-    ///                     return Err(Box::new(GooseTaskError::new(error)));
     ///                 }
     ///             },
     ///             // No response from server.
     ///             Err(e) => {
-    ///                 user.log_debug(
+    ///                 return user.set_failure(
     ///                     "no response from server when loading /",
-    ///                     Some(goose.request),
+    ///                     &mut goose.request,
     ///                     None,
     ///                     None,
     ///                 );
-    ///                 return Err(Box::new(e));
     ///             }
     ///         }
     ///         Ok(())

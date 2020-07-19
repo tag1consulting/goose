@@ -103,22 +103,22 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
                     }
                 }
                 Err(e) => {
-                    user.set_failure(&mut goose.request);
-                    let error = format!("front_page: failed to parse pag: {}", e);
-                    // We choose to both log and display errors to stdout.
-                    eprintln!("{}", &error);
-                    user.log_debug(&error, Some(goose.request), Some(&headers), None);
-                    return Err(Box::new(e));
+                    return user.set_failure(
+                        &format!("front_page: failed to parse page: {}", e),
+                        &mut goose.request,
+                        Some(&headers),
+                        None,
+                    );
                 }
             }
         }
         Err(e) => {
-            user.set_failure(&mut goose.request);
-            let error = format!("front_page: no response from server: {}", e);
-            // We choose to both log and display errors to stdout.
-            eprintln!("{}", &error);
-            user.log_debug(&error, Some(goose.request), None, None);
-            return Err(Box::new(e));
+            return user.set_failure(
+                &format!("front_page: no response from server: {}", e),
+                &mut goose.request,
+                None,
+                None,
+            );
         }
     }
     Ok(())
@@ -152,17 +152,12 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error = "login: no form_build_id on page: /user page";
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", error);
-                            user.log_debug(
-                                error,
-                                Some(goose.request),
+                            return user.set_failure(
+                                "login: no form_build_id on page: /user page",
+                                &mut goose.request,
                                 Some(&headers),
                                 Some(html.clone()),
                             );
-                            return Err(Box::new(GooseTaskError::new(error)));
                         }
                     };
 
@@ -181,24 +176,23 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
-                    user.set_failure(&mut goose.request);
-                    let error = format!("login: unexpected error when loading /user page: {}", e);
-                    // We choose to both log and display errors to stdout.
-                    eprintln!("{}", &error);
-                    user.log_debug(&error, Some(goose.request), Some(&headers), None);
-                    return Err(Box::new(e));
+                    return user.set_failure(
+                        &format!("login: unexpected error when loading /user page: {}", e),
+                        &mut goose.request,
+                        Some(&headers),
+                        None,
+                    );
                 }
             }
         }
         // Goose will catch this error.
         Err(e) => {
-            user.log_debug(
-                format!("login: no response from server: {}", e).as_str(),
-                None,
+            return user.set_failure(
+                &format!("login: no response from server: {}", e),
+                &mut goose.request,
                 None,
                 None,
             );
-            return Err(Box::new(e));
         }
     }
     Ok(())
@@ -223,18 +217,12 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error =
-                                format!("post_comment: no form_build_id found on {}", &node_path);
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(
-                                &error,
-                                Some(goose.request),
-                                Some(headers),
+                            return user.set_failure(
+                                &format!("post_comment: no form_build_id found on {}", &node_path),
+                                &mut goose.request,
+                                Some(&headers),
                                 Some(html.clone()),
                             );
-                            return Err(Box::new(GooseTaskError::new(&error)));
                         }
                     };
 
@@ -242,18 +230,12 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     let form_token = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error =
-                                format!("post_comment: no form_token found on {}", &node_path);
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(
-                                &error,
-                                Some(goose.request),
+                            return user.set_failure(
+                                &format!("post_comment: no form_token found on {}", &node_path),
+                                &mut goose.request,
                                 Some(&headers),
                                 Some(html.clone()),
                             );
-                            return Err(Box::new(GooseTaskError::new(&error)));
                         }
                     };
 
@@ -261,17 +243,12 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     let form_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error = format!("post_comment: no form_id found on {}", &node_path);
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(
-                                &error,
-                                Some(goose.request),
+                            return user.set_failure(
+                                &format!("post_comment: no form_id found on {}", &node_path),
+                                &mut goose.request,
                                 Some(&headers),
                                 Some(html.clone()),
                             );
-                            return Err(Box::new(GooseTaskError::new(&error)));
                         }
                     };
                     //println!("form_id: {}, form_build_id: {}, form_token: {}", &form_id, &form_build_id, &form_token);
@@ -299,69 +276,60 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             match response.text().await {
                                 Ok(html) => {
                                     if !html.contains(&comment_body) {
-                                        user.set_failure(&mut goose.request);
-                                        let error = format!("post_comment: no comment showed up after posting to {}", &comment_path);
-                                        // We choose to both log and display errors to stdout.
-                                        eprintln!("{}", &error);
-                                        user.log_debug(
-                                            &error,
-                                            Some(goose.request),
+                                        return user.set_failure(
+                                            &format!("post_comment: no comment showed up after posting to {}", &comment_path),
+                                            &mut goose.request,
                                             Some(&headers),
                                             Some(html),
                                         );
                                     }
                                 }
                                 Err(e) => {
-                                    user.set_failure(&mut goose.request);
-                                    let error = format!(
-                                        "post_comment: unexpected error when posting to {}: {}",
-                                        &comment_path, e
-                                    );
-                                    // We choose to both log and display errors to stdout.
-                                    eprintln!("{}", &error);
-                                    user.log_debug(
-                                        &error,
-                                        Some(goose.request),
+                                    return user.set_failure(
+                                        &format!(
+                                            "post_comment: unexpected error when posting to {}: {}",
+                                            &comment_path, e
+                                        ),
+                                        &mut goose.request,
                                         Some(&headers),
                                         None,
                                     );
-                                    return Err(Box::new(e));
                                 }
                             }
                         }
-                        // Goose will catch this error.
                         Err(e) => {
-                            let error = format!(
-                                "post_comment: no response when posting to {}: {}",
-                                &comment_path, e
+                            return user.set_failure(
+                                &format!(
+                                    "post_comment: no response when posting to {}: {}",
+                                    &comment_path, e
+                                ),
+                                &mut goose.request,
+                                None,
+                                None,
                             );
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(&error, Some(goose.request), None, None);
-                            return Err(Box::new(e));
                         }
                     }
                 }
                 Err(e) => {
-                    user.set_failure(&mut goose.request);
-                    let error = format!("post_comment: no text when loading {}: {}", &node_path, e);
-                    // We choose to both log and display errors to stdout.
-                    eprintln!("{}", &error);
-                    user.log_debug(&error, Some(goose.request), None, None);
-                    return Err(Box::new(e));
+                    return user.set_failure(
+                        &format!("post_comment: no text when loading {}: {}", &node_path, e),
+                        &mut goose.request,
+                        None,
+                        None,
+                    );
                 }
             }
         }
-        // Goose will catch this error.
         Err(e) => {
-            let error = format!(
-                "post_comment: no response when loading {}: {}",
-                &node_path, e
+            return user.set_failure(
+                &format!(
+                    "post_comment: no response when loading {}: {}",
+                    &node_path, e
+                ),
+                &mut goose.request,
+                None,
+                None,
             );
-            // We choose to both log and display errors to stdout.
-            eprintln!("{}", &error);
-            user.log_debug(&error, Some(goose.request), None, None);
-            return Err(Box::new(e));
         }
     }
     Ok(())
