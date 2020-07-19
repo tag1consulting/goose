@@ -12,19 +12,19 @@ const REDIRECT3_PATH: &str = "/redirect3";
 const ABOUT_PATH: &str = "/about.php";
 
 // Task function, load INDEX_PATH.
-pub async fn get_index(user: &GooseUser) -> Result<(), ()> {
+pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await;
     Ok(())
 }
 
 // Task function, load ABOUT PATH
-pub async fn get_about(user: &GooseUser) -> Result<(), ()> {
+pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await;
     Ok(())
 }
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
-pub async fn get_redirect(user: &GooseUser) -> Result<(), ()> {
+pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
     let mut goose = match user.get(REDIRECT_PATH).await {
         // Return early if get fails, there's nothing else to do.
         Err(_) => return Err(()),
@@ -53,7 +53,7 @@ pub async fn get_redirect(user: &GooseUser) -> Result<(), ()> {
 }
 
 // Task function, load REDRECT_PATH and follow redirect to new domain.
-pub async fn get_domain_redirect(user: &GooseUser) -> Result<(), ()> {
+pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(REDIRECT_PATH).await;
     Ok(())
 }

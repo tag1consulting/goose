@@ -52,7 +52,7 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_foo(user: &GooseUser) -> Result<(), ()> {
+//! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
 //!   let _goose = user.get("/path/to/foo").await;
 //!   Ok(())
 //! }   
@@ -69,7 +69,7 @@
 //!
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_bar(user: &GooseUser) -> Result<(), ()> {
+//! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
 //!   let request_builder = user.goose_get("/path/to/bar").await;
 //!   let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
 //!   Ok(())
@@ -101,12 +101,12 @@
 //!     //.set_host("http://dev.local/")
 //!     .execute();
 //!
-//! async fn loadtest_foo(user: &GooseUser) -> Result<(), ()> {
+//! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
 //!   let _goose = user.get("/path/to/foo").await;
 //!   Ok(())
 //! }   
 //!
-//! async fn loadtest_bar(user: &GooseUser) -> Result<(), ()> {
+//! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
 //!   let _goose = user.get("/path/to/bar").await;
 //!   Ok(())
 //! }   
@@ -346,6 +346,9 @@ lazy_static! {
 
 /// Internal representation of a weighted task list.
 type WeightedGooseTasks = Vec<Vec<usize>>;
+
+/// Goose tasks can return an error.
+pub type GooseTaskResult = Result<(), ()>;
 
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
@@ -614,12 +617,12 @@ impl GooseAttack {
     ///             .register_task(task!(other_task))
     ///         );
     ///
-    ///     async fn example_task(user: &GooseUser) -> Result<(), ()> {
+    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/foo").await;
     ///       Ok(())
     ///     }
     ///
-    ///     async fn other_task(user: &GooseUser) -> Result<(), ()> {
+    ///     async fn other_task(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/bar").await;
     ///       Ok(())
     ///     }
@@ -644,7 +647,7 @@ impl GooseAttack {
     ///     GooseAttack::initialize()
     ///         .test_start(task!(setup));
     ///
-    ///     async fn setup(user: &GooseUser) -> Result<(), ()> {
+    ///     async fn setup(user: &GooseUser) -> GooseTaskResult {
     ///         // do stuff to set up load test ...
     ///         Ok(())
     ///     }
@@ -668,7 +671,7 @@ impl GooseAttack {
     ///     GooseAttack::initialize()
     ///         .test_stop(task!(teardown));
     ///
-    ///     async fn teardown(user: &GooseUser) -> Result<(), ()> {
+    ///     async fn teardown(user: &GooseUser) -> GooseTaskResult {
     ///         // do stuff to tear down the load test ...
     ///         Ok(())
     ///     }
@@ -777,12 +780,12 @@ impl GooseAttack {
     ///         )
     ///         .execute();
     ///
-    ///     async fn example_task(user: &GooseUser) -> Result<(), ()> {
+    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/foo").await;
     ///       Ok(())
     ///     }
     ///
-    ///     async fn another_example_task(user: &GooseUser) -> Result<(), ()> {
+    ///     async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/bar").await;
     ///       Ok(())
     ///     }

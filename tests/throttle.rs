@@ -9,12 +9,12 @@ const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 const STATS_LOG_FILE: &str = "throttle-stats.log";
 
-pub async fn get_index(user: &GooseUser) -> Result<(), ()> {
+pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await;
     Ok(())
 }
 
-pub async fn get_about(user: &GooseUser) -> Result<(), ()> {
+pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await;
     Ok(())
 }

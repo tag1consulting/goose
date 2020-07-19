@@ -1,2 +1,2 @@
 pub use crate::goose::{GooseMethod, GooseTask, GooseTaskSet, GooseUser};
-pub use crate::{task, taskset, GooseAttack};
+pub use crate::{task, taskset, GooseAttack, GooseTaskResult};
