@@ -13,39 +13,36 @@ const ABOUT_PATH: &str = "/about.php";
 
 // Task function, load INDEX_PATH.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
-    let _goose = user.get(INDEX_PATH).await;
+    let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
 // Task function, load ABOUT PATH
 pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
-    let _goose = user.get(ABOUT_PATH).await;
+    let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
 pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
-    let mut goose = match user.get(REDIRECT_PATH).await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return Err(()),
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+    let mut goose = user.get(REDIRECT_PATH).await?;
 
     if let Ok(r) = goose.response {
         match r.text().await {
             Ok(html) => {
                 // Confirm that we followed redirects and loaded the about page.
                 if !html.contains("about page") {
-                    eprintln!("about page body wrong");
+                    let error = "about page body wrong";
+                    eprintln!("{}", error);
                     user.set_failure(&mut goose.request);
-                    return Err(());
+                    return Err(Box::new(GooseTaskError::new(error)));
                 }
             }
             Err(e) => {
-                eprintln!("unexpected error parsing about page: {}", e);
+                let error = format!("unexpected error parsing about page: {}", e);
+                eprintln!("{}", &error);
                 user.set_failure(&mut goose.request);
-                return Err(());
+                return Err(Box::new(GooseTaskError::new(&error)));
             }
         }
     }

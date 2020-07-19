@@ -42,18 +42,18 @@ async fn website_login(user: &GooseUser) -> GooseTaskResult {
     let request_builder = user.goose_post("/login").await;
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
-    let _goose = user.goose_send(request_builder.form(&params), None).await;
+    let _goose = user.goose_send(request_builder.form(&params), None).await?;
     Ok(())
 }
 
 /// A very simple task that simply loads the front page.
 async fn website_index(user: &GooseUser) -> GooseTaskResult {
-    let _goose = user.get("/").await;
+    let _goose = user.get("/").await?;
     Ok(())
 }
 
 /// A very simple task that simply loads the about page.
 async fn website_about(user: &GooseUser) -> GooseTaskResult {
-    let _goose = user.get("/about/").await;
+    let _goose = user.get("/about/").await?;
     Ok(())
 }

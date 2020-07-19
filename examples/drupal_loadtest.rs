@@ -82,12 +82,7 @@ fn main() {
 
 /// View the front page.
 async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
-    let mut goose = match user.get("/").await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return Err(()),
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+    let mut goose = user.get("/").await?;
 
     match goose.response {
         Ok(response) => {
@@ -113,7 +108,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
                     user.log_debug(&error, Some(goose.request), Some(&headers), None);
-                    return Err(());
+                    return Err(Box::new(e));
                 }
             }
         }
@@ -123,7 +118,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
             // We choose to both log and display errors to stdout.
             eprintln!("{}", &error);
             user.log_debug(&error, Some(goose.request), None, None);
-            return Err(());
+            return Err(Box::new(e));
         }
     }
     Ok(())
@@ -132,25 +127,20 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
     let nid = rand::thread_rng().gen_range(1, 10_000);
-    let _goose = user.get(format!("/node/{}", &nid).as_str()).await;
+    let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
     Ok(())
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_loadtest_profile_page(user: &GooseUser) -> GooseTaskResult {
     let uid = rand::thread_rng().gen_range(2, 5_001);
-    let _goose = user.get(format!("/user/{}", &uid).as_str()).await;
+    let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
     Ok(())
 }
 
 /// Log in.
 async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
-    let mut goose = match user.get("/user").await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return Err(()),
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+    let mut goose = user.get("/user").await?;
 
     match goose.response {
         Ok(response) => {
@@ -172,7 +162,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                                 Some(&headers),
                                 Some(html.clone()),
                             );
-                            return Err(());
+                            return Err(Box::new(GooseTaskError::new(error)));
                         }
                     };
 
@@ -196,7 +186,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
                     user.log_debug(&error, Some(goose.request), Some(&headers), None);
-                    return Err(());
+                    return Err(Box::new(e));
                 }
             }
         }
@@ -208,7 +198,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                 None,
                 None,
             );
-            return Err(());
+            return Err(Box::new(e));
         }
     }
     Ok(())
@@ -220,12 +210,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
 
-    let mut goose = match user.get(&node_path).await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return Err(()),
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+    let mut goose = user.get(&node_path).await?;
 
     match goose.response {
         Ok(response) => {
@@ -249,7 +234,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                 Some(headers),
                                 Some(html.clone()),
                             );
-                            return Err(());
+                            return Err(Box::new(GooseTaskError::new(&error)));
                         }
                     };
 
@@ -268,7 +253,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                 Some(&headers),
                                 Some(html.clone()),
                             );
-                            return Err(());
+                            return Err(Box::new(GooseTaskError::new(&error)));
                         }
                     };
 
@@ -286,7 +271,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                 Some(&headers),
                                 Some(html.clone()),
                             );
-                            return Err(());
+                            return Err(Box::new(GooseTaskError::new(&error)));
                         }
                     };
                     //println!("form_id: {}, form_build_id: {}, form_token: {}", &form_id, &form_build_id, &form_token);
@@ -304,13 +289,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
 
                     // Post the comment.
                     let request_builder = user.goose_post(&comment_path).await;
-                    let mut goose = match user.goose_send(request_builder.form(&params), None).await
-                    {
-                        // Return early if get fails, there's nothing else to do.
-                        Err(_) => return Err(()),
-                        // Otherwise unwrap the Result.
-                        Ok(g) => g,
-                    };
+                    let mut goose = user.goose_send(request_builder.form(&params), None).await?;
 
                     // Verify that the comment posted.
                     match goose.response {
@@ -346,7 +325,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                         Some(&headers),
                                         None,
                                     );
-                                    return Err(());
+                                    return Err(Box::new(e));
                                 }
                             }
                         }
@@ -359,7 +338,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             // We choose to both log and display errors to stdout.
                             eprintln!("{}", &error);
                             user.log_debug(&error, Some(goose.request), None, None);
-                            return Err(());
+                            return Err(Box::new(e));
                         }
                     }
                 }
@@ -369,7 +348,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     // We choose to both log and display errors to stdout.
                     eprintln!("{}", &error);
                     user.log_debug(&error, Some(goose.request), None, None);
-                    return Err(());
+                    return Err(Box::new(e));
                 }
             }
         }
@@ -382,7 +361,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
             // We choose to both log and display errors to stdout.
             eprintln!("{}", &error);
             user.log_debug(&error, Some(goose.request), None, None);
-            return Err(());
+            return Err(Box::new(e));
         }
     }
     Ok(())

@@ -53,7 +53,7 @@
 //! use goose::prelude::*;
 //!
 //! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
-//!   let _goose = user.get("/path/to/foo").await;
+//!   let _goose = user.get("/path/to/foo").await?;
 //!   Ok(())
 //! }   
 //! ```
@@ -71,7 +71,7 @@
 //!
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
 //!   let request_builder = user.goose_get("/path/to/bar").await;
-//!   let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await;
+//!   let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
 //!   Ok(())
 //! }   
 //! ```
@@ -102,12 +102,12 @@
 //!     .execute();
 //!
 //! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
-//!   let _goose = user.get("/path/to/foo").await;
+//!   let _goose = user.get("/path/to/foo").await?;
 //!   Ok(())
 //! }   
 //!
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
-//!   let _goose = user.get("/path/to/bar").await;
+//!   let _goose = user.get("/path/to/bar").await?;
 //!   Ok(())
 //! }   
 //! ```
@@ -314,7 +314,7 @@ use serde_json::json;
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
-use std::f32;
+use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
@@ -322,6 +322,7 @@ use std::sync::{
     Arc,
 };
 use std::time;
+use std::{f32, fmt};
 use structopt::StructOpt;
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -348,7 +349,32 @@ lazy_static! {
 type WeightedGooseTasks = Vec<Vec<usize>>;
 
 /// Goose tasks can return an error.
-pub type GooseTaskResult = Result<(), ()>;
+pub type GooseTaskResult = Result<(), Box<dyn Error>>;
+
+#[derive(Debug)]
+pub struct GooseTaskError {
+    details: String,
+}
+
+impl GooseTaskError {
+    pub fn new(msg: &str) -> GooseTaskError {
+        GooseTaskError {
+            details: msg.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for GooseTaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+impl Error for GooseTaskError {
+    fn description(&self) -> &str {
+        &self.details
+    }
+}
 
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
@@ -618,12 +644,12 @@ impl GooseAttack {
     ///         );
     ///
     ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/foo").await;
+    ///       let _goose = user.get("/foo").await?;
     ///       Ok(())
     ///     }
     ///
     ///     async fn other_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/bar").await;
+    ///       let _goose = user.get("/bar").await?;
     ///       Ok(())
     ///     }
     /// ```
@@ -781,12 +807,12 @@ impl GooseAttack {
     ///         .execute();
     ///
     ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/foo").await;
+    ///       let _goose = user.get("/foo").await?;
     ///       Ok(())
     ///     }
     ///
     ///     async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/bar").await;
+    ///       let _goose = user.get("/bar").await?;
     ///       Ok(())
     ///     }
     /// ```

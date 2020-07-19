@@ -12,30 +12,21 @@ const STATS_LOG_FILE: &str = "stats.log";
 const DEBUG_LOG_FILE: &str = "debug.log";
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
-    let _goose = user.get(INDEX_PATH).await;
+    let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
 pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
-    let goose = match user.get(ERROR_PATH).await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return Err(()),
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+    let goose = user.get(ERROR_PATH).await?;
 
     if let Ok(r) = goose.response {
         let headers = &r.headers().clone();
         match r.text().await {
             Ok(_) => {}
             Err(_) => {
-                user.log_debug(
-                    "there was an error",
-                    Some(goose.request),
-                    Some(headers),
-                    None,
-                );
-                return Err(());
+                let error = "there was an error";
+                user.log_debug(error, Some(goose.request), Some(headers), None);
+                return Err(Box::new(GooseTaskError::new(error)));
             }
         }
     }

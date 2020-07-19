@@ -11,12 +11,12 @@ const LOGOUT_PATH: &str = "/logout";
 pub async fn login(user: &GooseUser) -> GooseTaskResult {
     let request_builder = user.goose_post(LOGIN_PATH).await;
     let params = [("username", "me"), ("password", "s3crET!")];
-    let _goose = user.goose_send(request_builder.form(&params), None).await;
+    let _goose = user.goose_send(request_builder.form(&params), None).await?;
     Ok(())
 }
 
 pub async fn logout(user: &GooseUser) -> GooseTaskResult {
-    let _goose = user.get(LOGOUT_PATH).await;
+    let _goose = user.get(LOGOUT_PATH).await?;
     Ok(())
 }
 
