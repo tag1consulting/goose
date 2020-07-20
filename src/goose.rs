@@ -763,7 +763,7 @@ impl GooseDebug {
             // Convert tag from &str to string.
             tag: tag.to_string(),
             // If request is defined, clone it.
-            request: request.map(|r| r.clone()),
+            request: request.cloned(),
             // If header is defined, convert it to a string.
             header: header.map(|h| format!("{:?}", h)),
             // If header is defined, convert from &str to string.
