@@ -362,10 +362,10 @@ pub struct Socket {}
 /// Goose optionally tracks statistics about requests made during a load test.
 pub type GooseRequestStats = HashMap<String, GooseRequest>;
 
-/// Definition of all errors Goose Tasks can return.
+/// Definition of all errors Goose can return.
 #[derive(Debug)]
 pub enum GooseError {
-    /// Contains any possible Reqwest library error.
+    /// Contains any possible GooseTask error.
     GooseTask(GooseTaskError),
 }
 
@@ -1221,8 +1221,6 @@ impl GooseAttack {
             socket
         );
 
-        let started = self.started.unwrap();
-
         // Initilize per-user states.
         if !self.configuration.worker {
             // First run global test_start_task, if defined.
@@ -1258,8 +1256,8 @@ impl GooseAttack {
         ) = mpsc::unbounded_channel();
         // Spawn users, each with their own weighted task_set.
         for mut thread_user in self.weighted_users.clone() {
-            // Stop launching threads if the run_timer has expired.
-            if util::timer_expired(started, self.run_time) {
+            // Stop launching threads if the run_timer has expired, unwrap is safe as we only get here if we started.
+            if util::timer_expired(self.started.unwrap(), self.run_time) {
                 break;
             }
 
