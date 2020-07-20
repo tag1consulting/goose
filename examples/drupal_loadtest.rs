@@ -156,7 +156,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                                 "login: no form_build_id on page: /user page",
                                 &mut goose.request,
                                 Some(&headers),
-                                Some(html.clone()),
+                                Some(&html),
                             );
                         }
                     };
@@ -221,7 +221,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                 &format!("post_comment: no form_build_id found on {}", &node_path),
                                 &mut goose.request,
                                 Some(&headers),
-                                Some(html.clone()),
+                                Some(&html),
                             );
                         }
                     };
@@ -234,7 +234,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                 &format!("post_comment: no form_token found on {}", &node_path),
                                 &mut goose.request,
                                 Some(&headers),
-                                Some(html.clone()),
+                                Some(&html),
                             );
                         }
                     };
@@ -247,7 +247,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                 &format!("post_comment: no form_id found on {}", &node_path),
                                 &mut goose.request,
                                 Some(&headers),
-                                Some(html.clone()),
+                                Some(&html),
                             );
                         }
                     };
@@ -280,7 +280,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                             &format!("post_comment: no comment showed up after posting to {}", &comment_path),
                                             &mut goose.request,
                                             Some(&headers),
-                                            Some(html),
+                                            Some(&html),
                                         );
                                     }
                                 }

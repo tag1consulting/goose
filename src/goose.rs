@@ -298,14 +298,20 @@ macro_rules! taskset {
     };
 }
 
+/// Definition of all errors Goose Tasks can return.
 #[derive(Debug)]
 pub enum GooseTaskError {
+    /// Contains any possible Reqwest library error.
     Reqwest(reqwest::Error),
+    /// The request failed.
     RequestFailed,
+    /// The request was canceled (this happens when the throttle is enabled and
+    /// the load test finished).
     RequestCanceled,
 }
 
-/// Goose tasks can return an error.
+/// Goose tasks return a result, which is empty on success, or contains a GooseTaskError
+/// on error.
 pub type GooseTaskResult = Result<(), GooseTaskError>;
 
 impl fmt::Display for GooseTaskError {
@@ -325,12 +331,16 @@ impl fmt::Display for GooseTaskError {
 
 impl Error for GooseTaskError {}
 
+/// Auto-wrap Reqwest errors allowing the use of `?` inside load tests.
 impl From<reqwest::Error> for GooseTaskError {
     fn from(err: reqwest::Error) -> GooseTaskError {
         GooseTaskError::Reqwest(err)
     }
 }
 
+/// When the throttle is enabled and the load test ends, the throttle channel is
+/// shut down. This causes mpsc SendError, which gets automatically converted to
+/// `RequestCanceled`.
 impl From<mpsc::error::SendError<bool>> for GooseTaskError {
     fn from(_err: mpsc::error::SendError<bool>) -> GooseTaskError {
         GooseTaskError::RequestCanceled
@@ -745,19 +755,27 @@ pub struct GooseDebug {
 impl GooseDebug {
     fn new(
         tag: &str,
-        request: Option<GooseRawRequest>,
+        request: Option<&GooseRawRequest>,
         header: Option<&header::HeaderMap>,
-        body: Option<String>,
+        body: Option<&str>,
     ) -> Self {
+        let cloned_request = match request {
+            Some(r) => Some(r.clone()),
+            None => None,
+        };
         let header_string = match header {
             Some(h) => Some(format!("{:?}", h)),
             None => None,
         };
+        let body_string = match body {
+            Some(b) => Some(b.to_string()),
+            None => None,
+        };
         GooseDebug {
             tag: tag.to_string(),
-            request,
+            request: cloned_request,
             header: header_string,
-            body,
+            body: body_string,
         }
     }
 }
@@ -1480,6 +1498,14 @@ impl GooseUser {
     /// failure. A copy of your original request is returned with the response, and a
     /// mutable copy must be included when setting a request as a failure.
     ///
+    /// Calls to `set_failure` must include four parameters. The first, `tag`, is an
+    /// arbitrary string identifying the reason for the failure, used when logging. The
+    /// second, `request`, is a mutable reference to the `GooseRawRequest` object of the
+    /// request being identified as a failure (the contained `success` field will be set
+    /// to `false`, and the `update` field will be set to `true`). The last two
+    /// parameters, `header` and `body`, are optional and used to provide more detail in
+    /// logs.
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -1517,33 +1543,31 @@ impl GooseUser {
         tag: &str,
         request: &mut GooseRawRequest,
         headers: Option<&header::HeaderMap>,
-        body: Option<String>,
+        body: Option<&str>,
     ) -> GooseTaskResult {
         // Only send update if this was previously a success.
         if request.success {
             request.success = false;
             request.update = true;
             self.send_to_parent(&request);
-
-            // No need to clone() request unless logging is enabled.
-            if !self.config.debug_log_file.is_empty() {
-                self.log_debug(&tag, Some(request.clone()), headers, body);
-            }
         }
+        // Log failure, converting `&mut request` to `&request` as needed by `log_debug()`.
+        self.log_debug(&tag, Some(&*request), headers, body);
+
         Err(GooseTaskError::RequestFailed)
     }
 
     /// Write to debug_log_file if enabled.
     ///
-    /// This function provides a mechanism for optoional debug logging when a load test
+    /// This function provides a mechanism for optional debug logging when a load test
     /// is running. This can be especially helpful when writing a load test. Each entry
     /// must include a tag, which is an arbitrary string identifying the debug message.
-    /// It may also optionally include the GooseRawRequest made, the headers returned by
-    /// the server, and the text returned by the server,
+    /// It may also optionally include references to the GooseRawRequest made, the headers
+    /// returned by the server, and the text returned by the server,
     ///
     /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
     /// option set, where `foo` is either a relative or an absolute path of the log file
-    /// to create. Any existing file that may already exist will be overwritten.
+    /// to create. Any existing file will be overwritten.
     ///
     /// In the following example, we are logging debug messages whenever there are errors.
     ///
@@ -1562,22 +1586,21 @@ impl GooseUser {
     ///                 let headers = &response.headers().clone();
     ///                 // We only need to check pages that returned a success status code.
     ///                 if !response.status().is_success() {
-    ///                     let error = "error loading /";
     ///                     match response.text().await {
     ///                         Ok(html) => {
     ///                             // Server returned an error code, log everything.
-    ///                             return user.set_failure(
-    ///                                 error,
-    ///                                 &mut goose.request,
+    ///                             user.log_debug(
+    ///                                 "error loading /",
+    ///                                 Some(&goose.request),
     ///                                 Some(headers),
-    ///                                 Some(html.clone()),
+    ///                                 Some(&html),
     ///                             );
     ///                         },
     ///                         Err(e) => {
     ///                             // No body was returned, log everything else.
-    ///                             return user.set_failure(
-    ///                                 error,
-    ///                                 &mut goose.request,
+    ///                             user.log_debug(
+    ///                                 &format!("error loading /: {}", e),
+    ///                                 Some(&goose.request),
     ///                                 Some(headers),
     ///                                 None,
     ///                             );
@@ -1587,9 +1610,9 @@ impl GooseUser {
     ///             },
     ///             // No response from server.
     ///             Err(e) => {
-    ///                 return user.set_failure(
+    ///                 user.log_debug(
     ///                     "no response from server when loading /",
-    ///                     &mut goose.request,
+    ///                     Some(&goose.request),
     ///                     None,
     ///                     None,
     ///                 );
@@ -1601,9 +1624,9 @@ impl GooseUser {
     pub fn log_debug(
         &self,
         tag: &str,
-        request: Option<GooseRawRequest>,
+        request: Option<&GooseRawRequest>,
         headers: Option<&header::HeaderMap>,
-        body: Option<String>,
+        body: Option<&str>,
     ) {
         if !self.config.debug_log_file.is_empty() {
             // Logger is not defined when running test_start_task, test_stop_task,
