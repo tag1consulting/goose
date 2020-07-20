@@ -38,9 +38,11 @@ fn test_gaggle() {
         master_configuration.run_time = "3".to_string();
         let _stats = crate::GooseAttack::initialize_with_config(master_configuration)
             .setup()
+            .unwrap()
             .register_taskset(taskset!("User1").register_task(task!(get_index)))
             .register_taskset(taskset!("User2").register_task(task!(get_about)))
-            .execute();
+            .execute()
+            .unwrap();
     });
 
     // Start worker instance of the load test.
@@ -52,9 +54,11 @@ fn test_gaggle() {
         configuration.run_time = "".to_string();
         let _stats = crate::GooseAttack::initialize_with_config(configuration)
             .setup()
+            .unwrap()
             .register_taskset(taskset!("User1").register_task(task!(get_index)))
             .register_taskset(taskset!("User2").register_task(task!(get_about)))
-            .execute();
+            .execute()
+            .unwrap();
     });
 
     // Wait for the load test to finish.

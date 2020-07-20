@@ -87,28 +87,34 @@
 //! ```rust,no_run
 //! use goose::prelude::*;
 //!
-//! GooseAttack::initialize()
-//!     .register_taskset(taskset!("LoadtestTasks")
-//!         .set_wait_time(0, 3)
-//!         // Register the foo task, assigning it a weight of 10.
-//!         .register_task(task!(loadtest_foo).set_weight(10))
-//!         // Register the bar task, assigning it a weight of 2 (so it
-//!         // runs 1/5 as often as bar). Apply a task name which shows up
-//!         // in statistics.
-//!         .register_task(task!(loadtest_bar).set_name("bar").set_weight(2))
-//!     )
-//!     // You could also set a default host here, for example:
-//!     //.set_host("http://dev.local/")
-//!     .execute();
+//! fn main() -> Result<(), GooseError> {
+//!     GooseAttack::initialize()?
+//!         .register_taskset(taskset!("LoadtestTasks")
+//!             .set_wait_time(0, 3)
+//!             // Register the foo task, assigning it a weight of 10.
+//!             .register_task(task!(loadtest_foo).set_weight(10))
+//!             // Register the bar task, assigning it a weight of 2 (so it
+//!             // runs 1/5 as often as bar). Apply a task name which shows up
+//!             // in statistics.
+//!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2))
+//!         )
+//!         // You could also set a default host here, for example:
+//!         //.set_host("http://dev.local/")
+//!         .execute()?;
+//!
+//!     Ok(())
+//! }
 //!
 //! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
-//!   let _goose = user.get("/path/to/foo").await?;
-//!   Ok(())
+//!     let _goose = user.get("/path/to/foo").await?;
+//!
+//!     Ok(())
 //! }   
 //!
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
-//!   let _goose = user.get("/path/to/bar").await?;
-//!   Ok(())
+//!     let _goose = user.get("/path/to/bar").await?;
+//!
+//!     Ok(())
 //! }   
 //! ```
 //!
@@ -369,6 +375,9 @@ pub enum GooseError {
     GooseTask(GooseTaskError),
     NoTaskSets,
     InvalidOption,
+    FeatureNotEnabled,
+    #[cfg(feature = "gaggle")]
+    Nng(nng::Error),
 }
 
 impl fmt::Display for GooseError {
@@ -377,11 +386,22 @@ impl fmt::Display for GooseError {
             GooseError::GooseTask(ref err) => err.fmt(f),
             GooseError::NoTaskSets => write!(f, "No task sets defined."),
             GooseError::InvalidOption => write!(f, "Invalid option specified."),
+            GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
+            #[cfg(feature = "gaggle")]
+            GooseError::Nng(ref err) => err.fmt(f),
         }
     }
 }
 
 impl Error for GooseError {}
+
+/// Auto-wrap Nng errors.
+#[cfg(feature = "gaggle")]
+impl From<nng::Error> for GooseError {
+    fn from(err: nng::Error) -> GooseError {
+        GooseError::Nng(err)
+    }
+}
 
 /// Internal global state for load test.
 #[derive(Clone)]
@@ -423,7 +443,7 @@ impl GooseAttack {
     ///
     ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
-    pub fn initialize() -> GooseAttack {
+    pub fn initialize() -> Result<GooseAttack, GooseError> {
         let goose_attack = GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -439,7 +459,7 @@ impl GooseAttack {
             merged_requests: HashMap::new(),
             started: None,
         };
-        goose_attack.setup()
+        Ok(goose_attack.setup()?)
     }
 
     /// Initialize a GooseAttack with an already loaded configuration.
@@ -515,7 +535,7 @@ impl GooseAttack {
         info!("Writing to log file: {}", log_file.display());
     }
 
-    pub fn setup(mut self) -> Self {
+    pub fn setup(mut self) -> Result<Self, GooseError> {
         self.initialize_logger();
 
         // Collecting statistics is required for the following options.
@@ -626,7 +646,7 @@ impl GooseAttack {
             debug!("users = {}", self.users);
         }
 
-        self
+        Ok(self)
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
@@ -636,7 +656,8 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task))
     ///         )
@@ -644,15 +665,18 @@ impl GooseAttack {
     ///             .register_task(task!(other_task))
     ///         );
     ///
-    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/foo").await?;
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn other_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/bar").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn other_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/bar").await?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
         taskset.task_sets_index = self.task_sets.len();
@@ -671,13 +695,18 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .test_start(task!(setup));
     ///
-    ///     async fn setup(user: &GooseUser) -> GooseTaskResult {
-    ///         // do stuff to set up load test ...
-    ///         Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn setup(user: &GooseUser) -> GooseTaskResult {
+    ///     // do stuff to set up load test ...
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn test_start(mut self, task: GooseTask) -> Self {
         self.test_start_task = Some(task);
@@ -695,13 +724,18 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .test_stop(task!(teardown));
     ///
-    ///     async fn teardown(user: &GooseUser) -> GooseTaskResult {
-    ///         // do stuff to tear down the load test ...
-    ///         Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn teardown(user: &GooseUser) -> GooseTaskResult {
+    ///     // do stuff to tear down the load test ...
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn test_stop(mut self, task: GooseTask) -> Self {
         self.test_stop_task = Some(task);
@@ -721,8 +755,12 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .set_host("local.dev");
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("set_host: {}", host);
@@ -798,24 +836,30 @@ impl GooseAttack {
     ///
     /// # Example
     /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let _stats = GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     let _stats = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2))
     ///             .register_task(task!(another_example_task).set_weight(3))
     ///         )
-    ///         .execute();
+    ///         .execute()?;
     ///
-    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/foo").await?;
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/bar").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/bar").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn execute(mut self) -> Result<GooseAttack, GooseError> {
         // At least one task set is required.
@@ -1025,7 +1069,7 @@ impl GooseAttack {
                 error!(
                     "goose must be recompiled with `--features gaggle` to start in manager mode"
                 );
-                std::process::exit(1);
+                return Err(GooseError::FeatureNotEnabled);
             }
         }
         // Start goose in worker mode.
@@ -1039,7 +1083,7 @@ impl GooseAttack {
             #[cfg(not(feature = "gaggle"))]
             {
                 error!("goose must be recompiled with `--features gaggle` to start in worker mode");
-                std::process::exit(1);
+                return Err(GooseError::FeatureNotEnabled);
             }
         }
         // Start goose in single-process mode.
@@ -1053,29 +1097,32 @@ impl GooseAttack {
 
     /// Display the statistics optionally collected during a load test.
     ///
-    /// @TODO: put GooseAttack in a function, so we don't have to use `.map()`.
-    ///
     /// # Example
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     let _stats = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2))
     ///             .register_task(task!(another_example_task).set_weight(3))
     ///         )
-    ///         .execute()
-    ///         .map(|attack| attack.display_stats());
+    ///         .execute()?
+    ///         .display_stats();
     ///
-    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/foo").await?;
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/bar").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/bar").await?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn display_stats(self) {
         if !self.configuration.no_stats && !self.configuration.worker {

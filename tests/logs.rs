@@ -50,8 +50,10 @@ fn test_stat_logs_json() {
     config.no_stats = false;
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
 
@@ -78,8 +80,10 @@ fn test_stat_logs_csv() {
     config.no_stats = false;
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
 
@@ -106,8 +110,10 @@ fn test_stat_logs_raw() {
     config.no_stats = false;
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
 
@@ -134,12 +140,14 @@ fn test_debug_logs_raw() {
     config.debug_log_format = "raw".to_string();
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index))
                 .register_task(task!(get_error)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_error = mock_error.times_called();
@@ -167,12 +175,14 @@ fn test_debug_logs_json() {
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index))
                 .register_task(task!(get_error)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_error = mock_error.times_called();
@@ -203,12 +213,14 @@ fn test_stats_and_debug_logs() {
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index))
                 .register_task(task!(get_error)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_error = mock_error.times_called();

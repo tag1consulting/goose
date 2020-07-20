@@ -1748,27 +1748,30 @@ impl GooseUser {
     /// ```rust,no_run
     /// use goose::prelude::*;
     ///
-    /// GooseAttack::initialize()
-    ///     .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
-    ///         .set_wait_time(0, 3)
-    ///         .register_task(task!(task_foo).set_weight(10))
-    ///         .register_task(task!(task_bar))
-    ///     )
-    ///     .execute();
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
+    ///         .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
+    ///             .set_wait_time(0, 3)
+    ///             .register_task(task!(task_foo).set_weight(10))
+    ///             .register_task(task!(task_bar))
+    ///         )
+    ///         .execute()?;
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn task_foo(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn task_foo(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn task_bar(user: &GooseUser) -> GooseTaskResult {
-    ///       // Before this task runs, all requests are being made against
-    ///       // http://foo.example.com, after this task runs all subsequent
-    ///       // requests are made against http://bar.example.com/.
-    ///       user.set_base_url("http://bar.example.com/");
-    ///       let _goose = user.get("/").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn task_bar(user: &GooseUser) -> GooseTaskResult {
+    ///     // Before this task runs, all requests are being made against
+    ///     // http://foo.example.com, after this task runs all subsequent
+    ///     // requests are made against http://bar.example.com/.
+    ///     user.set_base_url("http://bar.example.com/");
+    ///     let _goose = user.get("/").await?;
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn set_base_url(&self, host: &str) {
         match Url::parse(host) {

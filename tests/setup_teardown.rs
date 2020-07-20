@@ -36,9 +36,11 @@ fn test_start() {
 
     let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .test_start(task!(setup))
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_setup = mock_setup.times_called();
     let called_index = mock_index.times_called();
@@ -64,9 +66,11 @@ fn test_stop() {
 
     let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .test_stop(task!(teardown))
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_setup = mock_setup.times_called();
     let called_index = mock_index.times_called();
@@ -96,10 +100,12 @@ fn test_setup_teardown() {
 
     let _stats = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
+        .unwrap()
         .test_start(task!(setup))
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
         .test_stop(task!(teardown))
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_setup = mock_setup.times_called();
     let called_index = mock_index.times_called();

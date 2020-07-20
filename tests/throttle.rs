@@ -44,12 +44,14 @@ fn test_throttle() {
     config.run_time = run_time.to_string();
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_about))
                 .register_task(task!(get_index)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();
@@ -84,12 +86,14 @@ fn test_throttle() {
     config.run_time = run_time.to_string();
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_about))
                 .register_task(task!(get_index)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();

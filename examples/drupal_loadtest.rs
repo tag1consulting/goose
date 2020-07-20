@@ -28,7 +28,7 @@ use rand::Rng;
 use regex::Regex;
 
 fn main() -> Result<(), GooseError> {
-    GooseAttack::initialize()
+    GooseAttack::initialize()?
         .register_taskset(
             taskset!("AnonBrowsingUser")
                 .set_weight(4)

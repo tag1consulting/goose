@@ -29,12 +29,14 @@ fn test_single_taskset() {
 
     let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index).set_weight(9))
                 .register_task(task!(get_about).set_weight(3)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();
@@ -63,13 +65,15 @@ fn test_single_taskset_empty_config_host() {
     let host = std::mem::take(&mut config.host);
     let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index).set_weight(9))
                 .register_task(task!(get_about).set_weight(3)),
         )
         .set_host(&host)
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();

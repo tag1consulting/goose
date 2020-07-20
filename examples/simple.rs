@@ -20,7 +20,7 @@
 use goose::prelude::*;
 
 fn main() -> Result<(), GooseError> {
-    GooseAttack::initialize()
+    GooseAttack::initialize()?
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(
             taskset!("WebsiteUser")

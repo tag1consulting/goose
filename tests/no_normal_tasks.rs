@@ -28,12 +28,14 @@ fn test_no_normal_tasks() {
 
     let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(login).set_on_start())
                 .register_task(task!(logout).set_on_stop()),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_login = mock_login.times_called();
     let called_logout = mock_logout.times_called();
