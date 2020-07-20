@@ -367,18 +367,16 @@ pub type GooseRequestStats = HashMap<String, GooseRequest>;
 pub enum GooseError {
     /// Contains any possible GooseTask error.
     GooseTask(GooseTaskError),
+    NoTaskSets,
+    InvalidOption,
 }
 
 impl fmt::Display for GooseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             GooseError::GooseTask(ref err) => err.fmt(f),
-            /*
-            GooseTaskError::RequestFailed => write!(
-                f,
-                "Request failed, usually because server returned a non-200 response code."
-            ),
-            */
+            GooseError::NoTaskSets => write!(f, "No task sets defined."),
+            GooseError::InvalidOption => write!(f, "Invalid option specified."),
         }
     }
 }
@@ -823,7 +821,7 @@ impl GooseAttack {
         // At least one task set is required.
         if self.task_sets.is_empty() {
             error!("No task sets defined.");
-            std::process::exit(1);
+            return Err(GooseError::NoTaskSets);
         }
 
         if self.configuration.list {
@@ -843,29 +841,29 @@ impl GooseAttack {
             // @TODO: support running in both manager and worker mode.
             if self.configuration.worker {
                 error!("You can only run in manager or worker mode, not both.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.expect_workers < 1 {
                 error!("You must set --expect-workers to 1 or more.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             if self.configuration.expect_workers as usize > self.users {
                 error!(
                     "You must enable at least as many users ({}) as workers ({}).",
                     self.users, self.configuration.expect_workers
                 );
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if !self.configuration.debug_log_file.is_empty() {
                 error!("You can only enable --debug-log-file in stand-alone or worker mode, not as manager.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.throttle_requests.is_some() {
                 error!("You can only configure --throttle-requests in stand-alone mode or per worker, not as manager.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -873,11 +871,11 @@ impl GooseAttack {
         match self.configuration.throttle_requests {
             Some(throttle) if throttle == 0 => {
                 error!("Throttle must be at least 1 request per second.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             Some(throttle) if throttle > 1_000_000 => {
                 error!("Throttle can not be more than 1,000,000 requests per second.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             // Everything else is valid.
             _ => (),
@@ -888,48 +886,48 @@ impl GooseAttack {
             // @TODO: support running in both manager and worker mode.
             if self.configuration.manager {
                 error!("You can only run in manager or worker mode, not both.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.expect_workers > 0 {
                 error!("The --expect-workers option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.host != "" {
                 error!("The --host option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.manager_bind_host != "0.0.0.0" {
                 error!("The --manager-bind-host option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
             if self.configuration.manager_bind_port != default_port {
                 error!("The --manager-bind-port option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.no_stats {
                 error!("The --no-stats option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.only_summary {
                 error!("The --only-summary option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.status_codes {
                 error!("The --status-codes option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.no_hash_check {
                 error!("The --no-hash-check option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -938,18 +936,18 @@ impl GooseAttack {
             && self.configuration.no_hash_check
         {
             error!("The --no-hash-check option is only available when running in manager mode");
-            std::process::exit(1);
+            return Err(GooseError::InvalidOption);
         }
 
         // Configure number of user threads to launch per second, defaults to 1.
         let hatch_rate = self.configuration.hatch_rate;
         if hatch_rate < 1 {
             error!("Hatch rate must be greater than 0, or no users will launch.");
-            std::process::exit(1);
+            return Err(GooseError::InvalidOption);
         }
         if hatch_rate > 1 && self.configuration.worker {
             error!("The --hatch-rate option is only available to the manager");
-            std::process::exit(1);
+            return Err(GooseError::InvalidOption);
         }
         debug!("hatch_rate = {}", hatch_rate);
 
@@ -971,7 +969,7 @@ impl GooseAttack {
                         None => {
                             if !self.configuration.worker {
                                 error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
-                                std::process::exit(1);
+                                return Err(GooseError::InvalidOption);
                             }
                         }
                     },
