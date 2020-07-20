@@ -103,6 +103,8 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
                     }
                 }
                 Err(e) => {
+                    // This will automatically get written to the error log if enabled, and will
+                    // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
                         &format!("front_page: failed to parse page: {}", e),
                         &mut goose.request,
@@ -113,6 +115,8 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
             }
         }
         Err(e) => {
+            // This will automatically get written to the error log if enabled, and will
+            // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
                 &format!("front_page: no response from server: {}", e),
                 &mut goose.request,
@@ -152,6 +156,8 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
                                 "login: no form_build_id on page: /user page",
                                 &mut goose.request,
@@ -176,6 +182,8 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
+                    // This will automatically get written to the error log if enabled, and will
+                    // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
                         &format!("login: unexpected error when loading /user page: {}", e),
                         &mut goose.request,
@@ -187,6 +195,8 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
         }
         // Goose will catch this error.
         Err(e) => {
+            // This will automatically get written to the error log if enabled, and will
+            // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
                 &format!("login: no response from server: {}", e),
                 &mut goose.request,
@@ -217,6 +227,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
                                 &format!("post_comment: no form_build_id found on {}", &node_path),
                                 &mut goose.request,
@@ -230,6 +242,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     let form_token = match re.captures(&html) {
                         Some(f) => f,
                         None => {
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
                                 &format!("post_comment: no form_token found on {}", &node_path),
                                 &mut goose.request,
@@ -243,6 +257,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     let form_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
                                 &format!("post_comment: no form_id found on {}", &node_path),
                                 &mut goose.request,
@@ -251,7 +267,19 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             );
                         }
                     };
-                    //println!("form_id: {}, form_build_id: {}, form_token: {}", &form_id, &form_build_id, &form_token);
+                    // Optionally uncomment to log form_id, form_build_id, and form_token, together with
+                    // the full body of the page. This is useful when modifying the load test.
+                    /*
+                    user.log_debug(
+                        &format!(
+                            "form_id: {}, form_build_id: {}, form_token: {}",
+                            &form_id[1], &form_build_id[1], &form_token[1]
+                        ),
+                        Some(&goose.request),
+                        Some(&headers),
+                        Some(&html),
+                    );
+                    */
 
                     let comment_body = "this is a test comment body";
                     let params = [
@@ -276,6 +304,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             match response.text().await {
                                 Ok(html) => {
                                     if !html.contains(&comment_body) {
+                                        // This will automatically get written to the error log if enabled, and will
+                                        // be displayed to stdout if `-v` is enabled when running the load test.
                                         return user.set_failure(
                                             &format!("post_comment: no comment showed up after posting to {}", &comment_path),
                                             &mut goose.request,
@@ -285,6 +315,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                     }
                                 }
                                 Err(e) => {
+                                    // This will automatically get written to the error log if enabled, and will
+                                    // be displayed to stdout if `-v` is enabled when running the load test.
                                     return user.set_failure(
                                         &format!(
                                             "post_comment: unexpected error when posting to {}: {}",
@@ -298,6 +330,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             }
                         }
                         Err(e) => {
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
                                 &format!(
                                     "post_comment: no response when posting to {}: {}",
@@ -311,6 +345,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     }
                 }
                 Err(e) => {
+                    // This will automatically get written to the error log if enabled, and will
+                    // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
                         &format!("post_comment: no text when loading {}: {}", &node_path, e),
                         &mut goose.request,
@@ -321,6 +357,8 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
             }
         }
         Err(e) => {
+            // This will automatically get written to the error log if enabled, and will
+            // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
                 &format!(
                     "post_comment: no response when loading {}: {}",

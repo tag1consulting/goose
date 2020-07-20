@@ -1547,7 +1547,10 @@ impl GooseUser {
             self.send_to_parent(&request);
         }
         // Log failure, converting `&mut request` to `&request` as needed by `log_debug()`.
-        self.log_debug(&tag, Some(&*request), headers, body);
+        self.log_debug(tag, Some(&*request), headers, body);
+
+        // Log to stdout if `-v` is enabled.
+        info!("set_failure: {}", tag);
 
         Err(GooseTaskError::RequestFailed)
     }
