@@ -55,7 +55,7 @@ pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
 
 // Task function, load REDRECT_PATH and follow redirect to new domain.
 pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
-    let _goose = user.get(REDIRECT_PATH).await;
+    let _goose = user.get(REDIRECT_PATH).await?;
     Ok(())
 }
 
