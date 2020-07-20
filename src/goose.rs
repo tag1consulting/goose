@@ -1498,6 +1498,9 @@ impl GooseUser {
     /// parameters, `header` and `body`, are optional and used to provide more detail in
     /// logs.
     ///
+    /// This also calls
+    /// [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug).
+    ///
     /// # Example
     /// ```rust
     ///     use goose::prelude::*;
@@ -1556,6 +1559,10 @@ impl GooseUser {
     /// must include a tag, which is an arbitrary string identifying the debug message.
     /// It may also optionally include references to the GooseRawRequest made, the headers
     /// returned by the server, and the text returned by the server,
+    ///
+    /// Calls to
+    /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
+    // automatically invoke `log_debug`.
     ///
     /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
     /// option set, where `foo` is either a relative or an absolute path of the log file
