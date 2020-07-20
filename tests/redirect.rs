@@ -12,44 +12,51 @@ const REDIRECT3_PATH: &str = "/redirect3";
 const ABOUT_PATH: &str = "/about.php";
 
 // Task function, load INDEX_PATH.
-pub async fn get_index(user: &GooseUser) {
-    let _goose = user.get(INDEX_PATH).await;
+pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.get(INDEX_PATH).await?;
+    Ok(())
 }
 
 // Task function, load ABOUT PATH
-pub async fn get_about(user: &GooseUser) {
-    let _goose = user.get(ABOUT_PATH).await;
+pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.get(ABOUT_PATH).await?;
+    Ok(())
 }
 
 // Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
-pub async fn get_redirect(user: &GooseUser) {
-    let mut goose = match user.get(REDIRECT_PATH).await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return,
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
+    let mut goose = user.get(REDIRECT_PATH).await?;
 
     if let Ok(r) = goose.response {
         match r.text().await {
             Ok(html) => {
                 // Confirm that we followed redirects and loaded the about page.
                 if !html.contains("about page") {
-                    eprintln!("about page body wrong");
-                    user.set_failure(&mut goose.request);
+                    return user.set_failure(
+                        "about page body wrong",
+                        &mut goose.request,
+                        None,
+                        None,
+                    );
                 }
             }
             Err(e) => {
-                eprintln!("unexpected error parsing about page: {}", e);
-                user.set_failure(&mut goose.request);
+                return user.set_failure(
+                    format!("unexpected error parsing about page: {}", e).as_str(),
+                    &mut goose.request,
+                    None,
+                    None,
+                );
             }
         }
     }
+    Ok(())
 }
 
 // Task function, load REDRECT_PATH and follow redirect to new domain.
-pub async fn get_domain_redirect(user: &GooseUser) {
-    let _goose = user.get(REDIRECT_PATH).await;
+pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.get(REDIRECT_PATH).await?;
+    Ok(())
 }
 
 #[test]

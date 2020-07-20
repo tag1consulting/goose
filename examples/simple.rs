@@ -38,19 +38,22 @@ fn main() {
 /// Demonstrates how to log in when a user starts. We flag this task as an
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
-async fn website_login(user: &GooseUser) {
+async fn website_login(user: &GooseUser) -> GooseTaskResult {
     let request_builder = user.goose_post("/login").await;
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
-    let _goose = user.goose_send(request_builder.form(&params), None).await;
+    let _goose = user.goose_send(request_builder.form(&params), None).await?;
+    Ok(())
 }
 
 /// A very simple task that simply loads the front page.
-async fn website_index(user: &GooseUser) {
-    let _goose = user.get("/").await;
+async fn website_index(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.get("/").await?;
+    Ok(())
 }
 
 /// A very simple task that simply loads the about page.
-async fn website_about(user: &GooseUser) {
-    let _goose = user.get("/about/").await;
+async fn website_about(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.get("/about/").await?;
+    Ok(())
 }

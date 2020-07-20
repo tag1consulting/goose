@@ -11,32 +11,26 @@ const ERROR_PATH: &str = "/error";
 const STATS_LOG_FILE: &str = "stats.log";
 const DEBUG_LOG_FILE: &str = "debug.log";
 
-pub async fn get_index(user: &GooseUser) {
-    let _goose = user.get(INDEX_PATH).await;
+pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.get(INDEX_PATH).await?;
+    Ok(())
 }
 
-pub async fn get_error(user: &GooseUser) {
-    let goose = match user.get(ERROR_PATH).await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return,
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
+    let mut goose = user.get(ERROR_PATH).await?;
 
     if let Ok(r) = goose.response {
         let headers = &r.headers().clone();
-        match r.text().await {
-            Ok(_) => {}
-            Err(_) => {
-                user.log_debug(
-                    "there was an error",
-                    Some(goose.request),
-                    Some(headers),
-                    None,
-                );
-            }
+        if r.text().await.is_err() {
+            return user.set_failure(
+                "there was an error",
+                &mut goose.request,
+                Some(headers),
+                None,
+            );
         }
     }
+    Ok(())
 }
 
 fn cleanup_files() {

@@ -9,18 +9,21 @@ const INDEX_PATH: &str = "/";
 const SETUP_PATH: &str = "/setup";
 const TEARDOWN_PATH: &str = "/teardown";
 
-pub async fn setup(user: &GooseUser) {
-    let _goose = user.post(SETUP_PATH, "setting up load test").await;
+pub async fn setup(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.post(SETUP_PATH, "setting up load test").await?;
+    Ok(())
 }
 
-pub async fn teardown(user: &GooseUser) {
+pub async fn teardown(user: &GooseUser) -> GooseTaskResult {
     let _goose = user
         .post(TEARDOWN_PATH, "cleaning up after load test")
-        .await;
+        .await?;
+    Ok(())
 }
 
-pub async fn get_index(user: &GooseUser) {
-    let _goose = user.get(INDEX_PATH).await;
+pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+    let _goose = user.get(INDEX_PATH).await?;
+    Ok(())
 }
 
 /// Test test_start alone.

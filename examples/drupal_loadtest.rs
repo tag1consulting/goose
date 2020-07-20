@@ -81,13 +81,8 @@ fn main() {
 }
 
 /// View the front page.
-async fn drupal_loadtest_front_page(user: &GooseUser) {
-    let mut goose = match user.get("/").await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return,
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
+    let mut goose = user.get("/").await?;
 
     match goose.response {
         Ok(response) => {
@@ -108,44 +103,48 @@ async fn drupal_loadtest_front_page(user: &GooseUser) {
                     }
                 }
                 Err(e) => {
-                    user.set_failure(&mut goose.request);
-                    let error = format!("front_page: failed to parse pag: {}", e);
-                    // We choose to both log and display errors to stdout.
-                    eprintln!("{}", &error);
-                    user.log_debug(&error, Some(goose.request), Some(&headers), None);
+                    // This will automatically get written to the error log if enabled, and will
+                    // be displayed to stdout if `-v` is enabled when running the load test.
+                    return user.set_failure(
+                        &format!("front_page: failed to parse page: {}", e),
+                        &mut goose.request,
+                        Some(&headers),
+                        None,
+                    );
                 }
             }
         }
         Err(e) => {
-            user.set_failure(&mut goose.request);
-            let error = format!("front_page: no response from server: {}", e);
-            // We choose to both log and display errors to stdout.
-            eprintln!("{}", &error);
-            user.log_debug(&error, Some(goose.request), None, None);
+            // This will automatically get written to the error log if enabled, and will
+            // be displayed to stdout if `-v` is enabled when running the load test.
+            return user.set_failure(
+                &format!("front_page: no response from server: {}", e),
+                &mut goose.request,
+                None,
+                None,
+            );
         }
     }
+    Ok(())
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
-async fn drupal_loadtest_node_page(user: &GooseUser) {
+async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
     let nid = rand::thread_rng().gen_range(1, 10_000);
-    let _goose = user.get(format!("/node/{}", &nid).as_str()).await;
+    let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
+    Ok(())
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
-async fn drupal_loadtest_profile_page(user: &GooseUser) {
+async fn drupal_loadtest_profile_page(user: &GooseUser) -> GooseTaskResult {
     let uid = rand::thread_rng().gen_range(2, 5_001);
-    let _goose = user.get(format!("/user/{}", &uid).as_str()).await;
+    let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
+    Ok(())
 }
 
 /// Log in.
-async fn drupal_loadtest_login(user: &GooseUser) {
-    let mut goose = match user.get("/user").await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return,
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
+    let mut goose = user.get("/user").await?;
 
     match goose.response {
         Ok(response) => {
@@ -157,17 +156,14 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error = "login: no form_build_id on page: /user page";
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", error);
-                            user.log_debug(
-                                error,
-                                Some(goose.request),
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
+                            return user.set_failure(
+                                "login: no form_build_id on page: /user page",
+                                &mut goose.request,
                                 Some(&headers),
-                                Some(html.clone()),
+                                Some(&html),
                             );
-                            return;
                         }
                     };
 
@@ -186,38 +182,39 @@ async fn drupal_loadtest_login(user: &GooseUser) {
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
-                    user.set_failure(&mut goose.request);
-                    let error = format!("login: unexpected error when loading /user page: {}", e);
-                    // We choose to both log and display errors to stdout.
-                    eprintln!("{}", &error);
-                    user.log_debug(&error, Some(goose.request), Some(&headers), None);
+                    // This will automatically get written to the error log if enabled, and will
+                    // be displayed to stdout if `-v` is enabled when running the load test.
+                    return user.set_failure(
+                        &format!("login: unexpected error when loading /user page: {}", e),
+                        &mut goose.request,
+                        Some(&headers),
+                        None,
+                    );
                 }
             }
         }
         // Goose will catch this error.
         Err(e) => {
-            user.log_debug(
-                format!("login: no response from server: {}", e).as_str(),
-                None,
+            // This will automatically get written to the error log if enabled, and will
+            // be displayed to stdout if `-v` is enabled when running the load test.
+            return user.set_failure(
+                &format!("login: no response from server: {}", e),
+                &mut goose.request,
                 None,
                 None,
             );
         }
     }
+    Ok(())
 }
 
 /// Post a comment.
-async fn drupal_loadtest_post_comment(user: &GooseUser) {
+async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
     let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
 
-    let mut goose = match user.get(&node_path).await {
-        // Return early if get fails, there's nothing else to do.
-        Err(_) => return,
-        // Otherwise unwrap the Result.
-        Ok(g) => g,
-    };
+    let mut goose = user.get(&node_path).await?;
 
     match goose.response {
         Ok(response) => {
@@ -230,18 +227,14 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_build_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error =
-                                format!("post_comment: no form_build_id found on {}", &node_path);
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(
-                                &error,
-                                Some(goose.request),
-                                Some(headers),
-                                Some(html.clone()),
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
+                            return user.set_failure(
+                                &format!("post_comment: no form_build_id found on {}", &node_path),
+                                &mut goose.request,
+                                Some(&headers),
+                                Some(&html),
                             );
-                            return;
                         }
                     };
 
@@ -249,18 +242,14 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_token = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error =
-                                format!("post_comment: no form_token found on {}", &node_path);
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(
-                                &error,
-                                Some(goose.request),
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
+                            return user.set_failure(
+                                &format!("post_comment: no form_token found on {}", &node_path),
+                                &mut goose.request,
                                 Some(&headers),
-                                Some(html.clone()),
+                                Some(&html),
                             );
-                            return;
                         }
                     };
 
@@ -268,20 +257,29 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                     let form_id = match re.captures(&html) {
                         Some(f) => f,
                         None => {
-                            user.set_failure(&mut goose.request);
-                            let error = format!("post_comment: no form_id found on {}", &node_path);
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(
-                                &error,
-                                Some(goose.request),
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
+                            return user.set_failure(
+                                &format!("post_comment: no form_id found on {}", &node_path),
+                                &mut goose.request,
                                 Some(&headers),
-                                Some(html.clone()),
+                                Some(&html),
                             );
-                            return;
                         }
                     };
-                    //println!("form_id: {}, form_build_id: {}, form_token: {}", &form_id, &form_build_id, &form_token);
+                    // Optionally uncomment to log form_id, form_build_id, and form_token, together with
+                    // the full body of the page. This is useful when modifying the load test.
+                    /*
+                    user.log_debug(
+                        &format!(
+                            "form_id: {}, form_build_id: {}, form_token: {}",
+                            &form_id[1], &form_build_id[1], &form_token[1]
+                        ),
+                        Some(&goose.request),
+                        Some(&headers),
+                        Some(&html),
+                    );
+                    */
 
                     let comment_body = "this is a test comment body";
                     let params = [
@@ -296,13 +294,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
 
                     // Post the comment.
                     let request_builder = user.goose_post(&comment_path).await;
-                    let mut goose = match user.goose_send(request_builder.form(&params), None).await
-                    {
-                        // Return early if get fails, there's nothing else to do.
-                        Err(_) => return,
-                        // Otherwise unwrap the Result.
-                        Ok(g) => g,
-                    };
+                    let mut goose = user.goose_send(request_builder.form(&params), None).await?;
 
                     // Verify that the comment posted.
                     match goose.response {
@@ -312,65 +304,71 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) {
                             match response.text().await {
                                 Ok(html) => {
                                     if !html.contains(&comment_body) {
-                                        user.set_failure(&mut goose.request);
-                                        let error = format!("post_comment: no comment showed up after posting to {}", &comment_path);
-                                        // We choose to both log and display errors to stdout.
-                                        eprintln!("{}", &error);
-                                        user.log_debug(
-                                            &error,
-                                            Some(goose.request),
+                                        // This will automatically get written to the error log if enabled, and will
+                                        // be displayed to stdout if `-v` is enabled when running the load test.
+                                        return user.set_failure(
+                                            &format!("post_comment: no comment showed up after posting to {}", &comment_path),
+                                            &mut goose.request,
                                             Some(&headers),
-                                            Some(html),
+                                            Some(&html),
                                         );
                                     }
                                 }
                                 Err(e) => {
-                                    user.set_failure(&mut goose.request);
-                                    let error = format!(
-                                        "post_comment: unexpected error when posting to {}: {}",
-                                        &comment_path, e
-                                    );
-                                    // We choose to both log and display errors to stdout.
-                                    eprintln!("{}", &error);
-                                    user.log_debug(
-                                        &error,
-                                        Some(goose.request),
+                                    // This will automatically get written to the error log if enabled, and will
+                                    // be displayed to stdout if `-v` is enabled when running the load test.
+                                    return user.set_failure(
+                                        &format!(
+                                            "post_comment: unexpected error when posting to {}: {}",
+                                            &comment_path, e
+                                        ),
+                                        &mut goose.request,
                                         Some(&headers),
                                         None,
                                     );
                                 }
                             }
                         }
-                        // Goose will catch this error.
                         Err(e) => {
-                            let error = format!(
-                                "post_comment: no response when posting to {}: {}",
-                                &comment_path, e
+                            // This will automatically get written to the error log if enabled, and will
+                            // be displayed to stdout if `-v` is enabled when running the load test.
+                            return user.set_failure(
+                                &format!(
+                                    "post_comment: no response when posting to {}: {}",
+                                    &comment_path, e
+                                ),
+                                &mut goose.request,
+                                None,
+                                None,
                             );
-                            // We choose to both log and display errors to stdout.
-                            eprintln!("{}", &error);
-                            user.log_debug(&error, Some(goose.request), None, None);
                         }
                     }
                 }
                 Err(e) => {
-                    user.set_failure(&mut goose.request);
-                    let error = format!("post_comment: no text when loading {}: {}", &node_path, e);
-                    // We choose to both log and display errors to stdout.
-                    eprintln!("{}", &error);
-                    user.log_debug(&error, Some(goose.request), None, None);
+                    // This will automatically get written to the error log if enabled, and will
+                    // be displayed to stdout if `-v` is enabled when running the load test.
+                    return user.set_failure(
+                        &format!("post_comment: no text when loading {}: {}", &node_path, e),
+                        &mut goose.request,
+                        None,
+                        None,
+                    );
                 }
             }
         }
-        // Goose will catch this error.
         Err(e) => {
-            let error = format!(
-                "post_comment: no response when loading {}: {}",
-                &node_path, e
+            // This will automatically get written to the error log if enabled, and will
+            // be displayed to stdout if `-v` is enabled when running the load test.
+            return user.set_failure(
+                &format!(
+                    "post_comment: no response when loading {}: {}",
+                    &node_path, e
+                ),
+                &mut goose.request,
+                None,
+                None,
             );
-            // We choose to both log and display errors to stdout.
-            eprintln!("{}", &error);
-            user.log_debug(&error, Some(goose.request), None, None);
         }
     }
+    Ok(())
 }
