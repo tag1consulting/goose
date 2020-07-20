@@ -759,23 +759,15 @@ impl GooseDebug {
         header: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> Self {
-        let cloned_request = match request {
-            Some(r) => Some(r.clone()),
-            None => None,
-        };
-        let header_string = match header {
-            Some(h) => Some(format!("{:?}", h)),
-            None => None,
-        };
-        let body_string = match body {
-            Some(b) => Some(b.to_string()),
-            None => None,
-        };
         GooseDebug {
+            // Convert tag from &str to string.
             tag: tag.to_string(),
-            request: cloned_request,
-            header: header_string,
-            body: body_string,
+            // If request is defined, clone it.
+            request: request.map(|r| r.clone()),
+            // If header is defined, convert it to a string.
+            header: header.map(|h| format!("{:?}", h)),
+            // If header is defined, convert from &str to string.
+            body: body.map(|b| b.to_string()),
         }
     }
 }
