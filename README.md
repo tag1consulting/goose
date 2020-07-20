@@ -89,7 +89,8 @@ fn main() {
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))
         )
-        .execute();
+        .execute()?
+        .display_stats();
 }
 ```
 

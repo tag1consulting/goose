@@ -42,7 +42,7 @@ fn test_throttle() {
     config.hatch_rate = users;
     // Run for a few seconds to be sure throttle really works.
     config.run_time = run_time.to_string();
-    crate::GooseAttack::initialize_with_config(config)
+    let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .register_taskset(
             taskset!("LoadTest")
@@ -82,7 +82,7 @@ fn test_throttle() {
     // Start all users in half a second.
     config.hatch_rate = users;
     config.run_time = run_time.to_string();
-    crate::GooseAttack::initialize_with_config(config)
+    let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .register_taskset(
             taskset!("LoadTest")

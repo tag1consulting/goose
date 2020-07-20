@@ -85,7 +85,7 @@ fn test_redirect() {
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .register_taskset(
             taskset!("LoadTest")
@@ -144,7 +144,7 @@ fn test_domain_redirect() {
         .expect(0)
         .create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .register_taskset(
             taskset!("LoadTest")
@@ -200,7 +200,7 @@ fn test_sticky_domain_redirect() {
     // Enable sticky_follow option.
     let mut configuration = common::build_configuration();
     configuration.sticky_follow = true;
-    crate::GooseAttack::initialize_with_config(configuration)
+    let _stats = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
         .register_taskset(
             taskset!("LoadTest")

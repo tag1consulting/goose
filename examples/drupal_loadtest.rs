@@ -27,7 +27,7 @@ use goose::prelude::*;
 use rand::Rng;
 use regex::Regex;
 
-fn main() {
+fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()
         .register_taskset(
             taskset!("AnonBrowsingUser")
@@ -77,7 +77,10 @@ fn main() {
                         .set_name("(Auth) comment form"),
                 ),
         )
-        .execute();
+        .execute()?
+        .display_stats();
+
+    Ok(())
 }
 
 /// View the front page.

@@ -7,6 +7,8 @@
  - add `--throttle-requests` to optionally limit the maximum requests per second (api change)
  - change task function signature, tasks must return a `GooseTaskResult`
  - introduce `GooseTaskError`
+ - change `GooseAttack.execute()` to return `Result<GooseAttack, GooseError>`
+ - introduce `GooseAttack.display_stats()` which consumes the execute Result and displays statistics
 
 ## 0.8.2 July 2, 2020
  - `client.log_debug()` will write debug logs to file when specified with `--debug-log-file=`

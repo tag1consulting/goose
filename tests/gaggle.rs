@@ -36,7 +36,7 @@ fn test_gaggle() {
         master_configuration.manager = true;
         master_configuration.expect_workers = 1;
         master_configuration.run_time = "3".to_string();
-        crate::GooseAttack::initialize_with_config(master_configuration)
+        let _stats = crate::GooseAttack::initialize_with_config(master_configuration)
             .setup()
             .register_taskset(taskset!("User1").register_task(task!(get_index)))
             .register_taskset(taskset!("User2").register_task(task!(get_about)))
@@ -50,7 +50,7 @@ fn test_gaggle() {
         configuration.users = None;
         configuration.no_stats = false;
         configuration.run_time = "".to_string();
-        crate::GooseAttack::initialize_with_config(configuration)
+        let _stats = crate::GooseAttack::initialize_with_config(configuration)
             .setup()
             .register_taskset(taskset!("User1").register_task(task!(get_index)))
             .register_taskset(taskset!("User2").register_task(task!(get_about)))

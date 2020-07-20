@@ -19,7 +19,7 @@
 
 use goose::prelude::*;
 
-fn main() {
+fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(
@@ -32,7 +32,10 @@ fn main() {
                 .register_task(task!(website_index))
                 .register_task(task!(website_about)),
         )
-        .execute();
+        .execute()?
+        .display_stats();
+
+    Ok(())
 }
 
 /// Demonstrates how to log in when a user starts. We flag this task as an

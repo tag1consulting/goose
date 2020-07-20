@@ -27,7 +27,7 @@ fn test_single_taskset() {
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .register_taskset(
             taskset!("LoadTest")
@@ -61,7 +61,7 @@ fn test_single_taskset_empty_config_host() {
     let mut config = common::build_configuration();
     // this will leave an empty string in config.host
     let host = std::mem::take(&mut config.host);
-    crate::GooseAttack::initialize_with_config(config)
+    let _stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .register_taskset(
             taskset!("LoadTest")

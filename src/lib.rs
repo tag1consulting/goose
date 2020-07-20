@@ -314,7 +314,7 @@ use serde_json::json;
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
-use std::f32;
+use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
@@ -322,6 +322,7 @@ use std::sync::{
     Arc,
 };
 use std::time;
+use std::{f32, fmt};
 use structopt::StructOpt;
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -330,7 +331,8 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
-    GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
+    GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskError, GooseTaskSet, GooseUser,
+    GooseUserCommand,
 };
 
 /// Constant defining how often statistics should be displayed while load test is running.
@@ -356,6 +358,32 @@ pub fn get_worker_id() -> usize {
 #[derive(Debug)]
 /// Socket used for coordinating a Gaggle, a distributed load test.
 pub struct Socket {}
+
+/// Goose optionally tracks statistics about requests made during a load test.
+pub type GooseRequestStats = HashMap<String, GooseRequest>;
+
+/// Definition of all errors Goose Tasks can return.
+#[derive(Debug)]
+pub enum GooseError {
+    /// Contains any possible Reqwest library error.
+    GooseTask(GooseTaskError),
+}
+
+impl fmt::Display for GooseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            GooseError::GooseTask(ref err) => err.fmt(f),
+            /*
+            GooseTaskError::RequestFailed => write!(
+                f,
+                "Request failed, usually because server returned a non-200 response code."
+            ),
+            */
+        }
+    }
+}
+
+impl Error for GooseError {}
 
 /// Internal global state for load test.
 #[derive(Clone)]
@@ -383,7 +411,9 @@ pub struct GooseAttack {
     /// Track how many users are already loaded.
     active_users: usize,
     /// All requests statistics merged together.
-    merged_requests: HashMap<String, GooseRequest>,
+    merged_requests: GooseRequestStats,
+    /// When the load test started.
+    started: Option<time::Instant>,
 }
 /// Goose's internal global state.
 impl GooseAttack {
@@ -409,6 +439,7 @@ impl GooseAttack {
             users: 0,
             active_users: 0,
             merged_requests: HashMap::new(),
+            started: None,
         };
         goose_attack.setup()
     }
@@ -438,6 +469,7 @@ impl GooseAttack {
             users: 0,
             active_users: 0,
             merged_requests: HashMap::new(),
+            started: None,
         }
     }
 
@@ -770,7 +802,7 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    ///     let _stats = GooseAttack::initialize()
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2))
     ///             .register_task(task!(another_example_task).set_weight(3))
@@ -787,7 +819,7 @@ impl GooseAttack {
     ///       Ok(())
     ///     }
     /// ```
-    pub fn execute(mut self) {
+    pub fn execute(mut self) -> Result<GooseAttack, GooseError> {
         // At least one task set is required.
         if self.task_sets.is_empty() {
             error!("No task sets defined.");
@@ -977,7 +1009,7 @@ impl GooseAttack {
         debug!("task_sets_hash: {}", self.task_sets_hash);
 
         // Our load test is officially starting.
-        let started = time::Instant::now();
+        self.started = Some(time::Instant::now());
         // Spawn users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_float = 1.0 / hatch_rate as f32;
         let sleep_duration = time::Duration::from_secs_f32(sleep_float);
@@ -1015,11 +1047,41 @@ impl GooseAttack {
         // Start goose in single-process mode.
         else {
             let mut rt = tokio::runtime::Runtime::new().unwrap();
-            self = rt.block_on(self.launch_users(started, sleep_duration, None));
+            self = rt.block_on(self.launch_users(sleep_duration, None));
         }
 
+        Ok(self)
+    }
+
+    /// Display the statistics optionally collected during a load test.
+    ///
+    /// @TODO: put GooseAttack in a function, so we don't have to use `.map()`.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::prelude::*;
+    ///
+    ///     GooseAttack::initialize()
+    ///         .register_taskset(taskset!("ExampleTasks")
+    ///             .register_task(task!(example_task).set_weight(2))
+    ///             .register_task(task!(another_example_task).set_weight(3))
+    ///         )
+    ///         .execute()
+    ///         .map(|attack| attack.display_stats());
+    ///
+    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///       let _goose = user.get("/foo").await?;
+    ///       Ok(())
+    ///     }
+    ///
+    ///     async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
+    ///       let _goose = user.get("/bar").await?;
+    ///       Ok(())
+    ///     }
+    /// ```
+    pub fn display_stats(self) {
         if !self.configuration.no_stats && !self.configuration.worker {
-            stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
+            stats::print_final_stats(&self, self.started.unwrap().elapsed().as_secs() as usize);
         }
     }
 
@@ -1150,16 +1212,16 @@ impl GooseAttack {
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
-        mut started: time::Instant,
         sleep_duration: time::Duration,
         socket: Option<Socket>,
     ) -> GooseAttack {
         trace!(
-            "launch users: started({:?}) sleep_duration({:?}) socket({:?})",
-            started,
+            "launch users: sleep_duration({:?}) socket({:?})",
             sleep_duration,
             socket
         );
+
+        let started = self.started.unwrap();
 
         // Initilize per-user states.
         if !self.configuration.worker {
@@ -1260,7 +1322,7 @@ impl GooseAttack {
             tokio::time::delay_for(sleep_duration).await;
         }
         // Restart the timer now that all threads are launched.
-        started = time::Instant::now();
+        self.started = Some(time::Instant::now());
         if self.configuration.worker {
             info!(
                 "[{}] launched {} users...",
@@ -1396,15 +1458,20 @@ impl GooseAttack {
                 }
             }
 
-            if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) {
+            if util::timer_expired(self.started.unwrap(), self.run_time)
+                || canceled.load(Ordering::SeqCst)
+            {
                 if self.configuration.worker {
                     info!(
                         "[{}] stopping after {} seconds...",
                         get_worker_id(),
-                        started.elapsed().as_secs()
+                        self.started.unwrap().elapsed().as_secs()
                     );
                 } else {
-                    info!("stopping after {} seconds...", started.elapsed().as_secs());
+                    info!(
+                        "stopping after {} seconds...",
+                        self.started.unwrap().elapsed().as_secs()
+                    );
                 }
                 for (index, send_to_user) in user_channels.iter().enumerate() {
                     match send_to_user.send(GooseUserCommand::EXIT) {
@@ -1483,7 +1550,10 @@ impl GooseAttack {
             // If enabled, display running statistics after sync
             if display_running_statistics {
                 display_running_statistics = false;
-                stats::print_running_stats(&self, started.elapsed().as_secs() as usize);
+                stats::print_running_stats(
+                    &self,
+                    self.started.unwrap().elapsed().as_secs() as usize,
+                );
             }
 
             let one_second = time::Duration::from_secs(1);

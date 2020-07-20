@@ -34,7 +34,7 @@ fn test_start() {
     let mock_teardown = mock(POST, TEARDOWN_PATH).return_status(205).create();
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .test_start(task!(setup))
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
@@ -62,7 +62,7 @@ fn test_stop() {
     let mock_teardown = mock(POST, TEARDOWN_PATH).return_status(205).create();
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .test_stop(task!(teardown))
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
@@ -94,7 +94,7 @@ fn test_setup_teardown() {
     configuration.users = Some(5);
     configuration.hatch_rate = 5;
 
-    crate::GooseAttack::initialize_with_config(configuration)
+    let _stats = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
         .test_start(task!(setup))
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
