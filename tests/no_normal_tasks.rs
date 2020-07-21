@@ -9,7 +9,7 @@ const LOGIN_PATH: &str = "/login";
 const LOGOUT_PATH: &str = "/logout";
 
 pub async fn login(user: &GooseUser) -> GooseTaskResult {
-    let request_builder = user.goose_post(LOGIN_PATH).await;
+    let request_builder = user.goose_post(LOGIN_PATH).await?;
     let params = [("username", "me"), ("password", "s3crET!")];
     let _goose = user.goose_send(request_builder.form(&params), None).await?;
     Ok(())

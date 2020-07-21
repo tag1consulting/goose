@@ -62,8 +62,8 @@
 //! ```rust
 //!     use goose::prelude::*;
 //!
-//!     let mut foo_tasks = taskset!("FooTasks").set_wait_time(0, 3);
-//!     let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10);
+//!     let mut foo_tasks = taskset!("FooTasks").set_wait_time(0, 3).unwrap();
+//!     let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10).unwrap();
 //! ```
 //! ## Creating Tasks
 //!
@@ -78,6 +78,7 @@
 //!     /// A very simple task that simply loads the front page.
 //!     async fn task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/").await?;
+//!
 //!       Ok(())
 //!     }
 //! ```
@@ -95,6 +96,7 @@
 //!     /// A very simple task that simply loads the front page.
 //!     async fn task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/").await?;
+//!
 //!       Ok(())
 //!     }
 //! ```
@@ -150,18 +152,21 @@
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/a/").await?;
+//!
 //!       Ok(())
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/b/").await?;
+//!
 //!       Ok(())
 //!     }
 //!
 //!     /// Another very simple task that simply loads the "c" page.
 //!     async fn c_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/c/").await?;
+//!
 //!       Ok(())
 //!     }
 //! ```
@@ -182,6 +187,7 @@
 //!     /// A very simple task that simply loads the "a" page.
 //!     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/a/").await?;
+//!
 //!       Ok(())
 //!     }
 //! ```
@@ -202,6 +208,7 @@
 //!     /// Another very simple task that simply loads the "b" page.
 //!     async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/b/").await?;
+//!
 //!       Ok(())
 //!     }
 //! ```
@@ -231,6 +238,7 @@
 //!     /// A very simple task that makes a GET request.
 //!     async  fn get_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/path/to/foo/").await?;
+//!
 //!       Ok(())
 //!     }
 //! ```
@@ -253,6 +261,7 @@
 //!     /// A very simple task that makes a POST request.
 //!     async fn post_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.post("/path/to/foo/", "string value to post").await?;
+//!
 //!       Ok(())
 //!     }
 //! ```
@@ -311,13 +320,19 @@ macro_rules! taskset {
 /// Definition of all errors Goose Tasks can return.
 #[derive(Debug)]
 pub enum GooseTaskError {
-    /// Contains any possible Reqwest library error.
     Reqwest(reqwest::Error),
+    Url(url::ParseError),
     /// The request failed.
     RequestFailed,
     /// The request was canceled (this happens when the throttle is enabled and
     /// the load test finished).
     RequestCanceled,
+    /// The request succeeded, but there was an error recording the statistics.
+    StatsFailed,
+    /// Attempt to send debug detail to logger failed.
+    LoggerFailed,
+    /// Attempted an unrecognized HTTP request method.
+    InvalidMethod,
 }
 
 /// Goose tasks return a result, which is empty on success, or contains a GooseTaskError
@@ -328,6 +343,7 @@ impl fmt::Display for GooseTaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             GooseTaskError::Reqwest(ref err) => err.fmt(f),
+            GooseTaskError::Url(ref err) => err.fmt(f),
             GooseTaskError::RequestFailed => write!(
                 f,
                 "Request failed, usually because server returned a non-200 response code."
@@ -335,16 +351,26 @@ impl fmt::Display for GooseTaskError {
             GooseTaskError::RequestCanceled => {
                 write!(f, "Request canceled because the load test ended.")
             }
+            GooseTaskError::StatsFailed => write!(f, "Failed to send statistics to parent thread."),
+            GooseTaskError::LoggerFailed => write!(f, "Failed to send debug to logger thread."),
+            GooseTaskError::InvalidMethod => write!(f, "Unrecognized HTTP method."),
         }
     }
 }
 
 impl Error for GooseTaskError {}
 
-/// Auto-wrap Reqwest errors allowing the use of `?` inside load tests.
+/// Auto-convert Reqwest errors.
 impl From<reqwest::Error> for GooseTaskError {
     fn from(err: reqwest::Error) -> GooseTaskError {
         GooseTaskError::Reqwest(err)
+    }
+}
+
+/// Auto-convert Url errors.
+impl From<url::ParseError> for GooseTaskError {
+    fn from(err: url::ParseError) -> GooseTaskError {
+        GooseTaskError::Url(err)
     }
 }
 
@@ -354,6 +380,20 @@ impl From<reqwest::Error> for GooseTaskError {
 impl From<mpsc::error::SendError<bool>> for GooseTaskError {
     fn from(_err: mpsc::error::SendError<bool>) -> GooseTaskError {
         GooseTaskError::RequestCanceled
+    }
+}
+
+/// Attempt to send statistics to the parent thread failed.
+impl From<mpsc::error::SendError<GooseRawRequest>> for GooseTaskError {
+    fn from(_err: mpsc::error::SendError<GooseRawRequest>) -> GooseTaskError {
+        GooseTaskError::StatsFailed
+    }
+}
+
+/// Attempt to send logs to the logger thread failed.
+impl From<mpsc::error::SendError<Option<GooseDebug>>> for GooseTaskError {
+    fn from(_err: mpsc::error::SendError<Option<GooseDebug>>) -> GooseTaskError {
+        GooseTaskError::LoggerFailed
     }
 }
 
@@ -420,6 +460,7 @@ impl GooseTaskSet {
     ///     /// A very simple task that simply loads the "a" page.
     ///     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/a/").await?;
+    ///
     ///       Ok(())
     ///     }
     /// ```
@@ -480,11 +521,15 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut example_tasks = taskset!("ExampleTasks").set_wait_time(0, 1);
+    /// fn main() -> Result<(), GooseError> {
+    ///     taskset!("ExampleTasks").set_wait_time(0, 1)?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn set_wait_time(mut self, min_wait: usize, max_wait: usize) -> Self {
+    pub fn set_wait_time(mut self, min_wait: usize, max_wait: usize) -> Result<Self, GooseError> {
         trace!(
             "{} set_wait time: min: {} max: {}",
             self.name,
@@ -493,14 +538,15 @@ impl GooseTaskSet {
         );
         if min_wait > max_wait {
             error!(
-                "min_wait({}) can't be larger than max_weight({})",
+                "min_wait({}) can't be larger than max_wait({})",
                 min_wait, max_wait
             );
-            std::process::exit(1);
+            return Err(GooseError::InvalidWaitTime);
         }
         self.min_wait = min_wait;
         self.max_wait = max_wait;
-        self
+
+        Ok(self)
     }
 }
 
@@ -527,8 +573,8 @@ pub enum GooseMethod {
     PUT,
 }
 
-fn goose_method_from_method(method: Method) -> GooseMethod {
-    match method {
+fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskError> {
+    Ok(match method {
         Method::DELETE => GooseMethod::DELETE,
         Method::GET => GooseMethod::GET,
         Method::HEAD => GooseMethod::HEAD,
@@ -537,9 +583,9 @@ fn goose_method_from_method(method: Method) -> GooseMethod {
         Method::PUT => GooseMethod::PUT,
         _ => {
             error!("unsupported method: {}", method);
-            std::process::exit(1);
+            return Err(GooseTaskError::InvalidMethod);
         }
-    }
+    })
 }
 
 /// The request that Goose is making. User threads send this data to the parent thread
@@ -839,53 +885,47 @@ impl GooseUser {
         max_wait: usize,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
-    ) -> Self {
+    ) -> Result<Self, GooseError> {
         trace!("new user");
-        match Client::builder()
+        let client = Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true)
-            .build()
-        {
-            Ok(c) => {
-                GooseUser {
-                    started: Instant::now(),
-                    task_sets_index,
-                    client: Arc::new(Mutex::new(c)),
-                    weighted_bucket: Arc::new(AtomicUsize::new(0)),
-                    weighted_bucket_position: Arc::new(AtomicUsize::new(0)),
-                    base_url: Arc::new(RwLock::new(base_url)),
-                    min_wait,
-                    max_wait,
-                    config: configuration.clone(),
-                    logger: None,
-                    throttle: None,
-                    is_throttled: true,
-                    parent: None,
-                    // A value of max_value() indicates this user isn't fully initialized yet.
-                    weighted_users_index: usize::max_value(),
-                    weighted_on_start_tasks: Vec::new(),
-                    weighted_tasks: Vec::new(),
-                    weighted_on_stop_tasks: Vec::new(),
-                    task_request_name: None,
-                    request_name: None,
-                    load_test_hash,
-                }
-            }
-            Err(e) => {
-                error!("failed to create web client: {}", e);
-                std::process::exit(1);
-            }
-        }
+            .build()?;
+
+        Ok(GooseUser {
+            started: Instant::now(),
+            task_sets_index,
+            client: Arc::new(Mutex::new(client)),
+            weighted_bucket: Arc::new(AtomicUsize::new(0)),
+            weighted_bucket_position: Arc::new(AtomicUsize::new(0)),
+            base_url: Arc::new(RwLock::new(base_url)),
+            min_wait,
+            max_wait,
+            config: configuration.clone(),
+            logger: None,
+            throttle: None,
+            is_throttled: true,
+            parent: None,
+            // A value of max_value() indicates this user isn't fully initialized yet.
+            weighted_users_index: usize::max_value(),
+            weighted_on_start_tasks: Vec::new(),
+            weighted_tasks: Vec::new(),
+            weighted_on_stop_tasks: Vec::new(),
+            task_request_name: None,
+            request_name: None,
+            load_test_hash,
+        })
     }
 
     /// Create a new single-use user.
-    pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Self {
-        let mut single_user = GooseUser::new(0, base_url, 0, 0, configuration, 0);
+    pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
+        let mut single_user = GooseUser::new(0, base_url, 0, 0, configuration, 0)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle test_start (setup) and test_stop (teardown) tasks.
         single_user.is_throttled = false;
-        single_user
+
+        Ok(single_user)
     }
 
     /// A helper that prepends a base_url to all relative paths.
@@ -895,25 +935,16 @@ impl GooseUser {
     ///  1. `--host` (host specified on the command line when running load test)
     ///  2. `GooseTaskSet.host` (default host defined for the current task set)
     ///  3. `GooseAttack.host` (default host defined for the current load test)
-    pub async fn build_url(&self, path: &str) -> String {
+    pub async fn build_url(&self, path: &str) -> Result<String, GooseTaskError> {
         // If URL includes a host, simply use it.
         if let Ok(parsed_path) = Url::parse(path) {
             if let Some(_host) = parsed_path.host() {
-                return path.to_string();
+                return Ok(path.to_string());
             }
         }
+
         // Otherwise use the base_url.
-        let base_url = self.base_url.read().await;
-        match base_url.join(path) {
-            Ok(url) => url.to_string(),
-            Err(e) => {
-                error!(
-                    "failed to build url from base {:?} and path {} for task {}: {}",
-                    &base_url, &path, self.task_sets_index, e
-                );
-                std::process::exit(1);
-            }
-        }
+        Ok(self.base_url.read().await.join(path)?.to_string())
     }
 
     /// A helper to make a `GET` request of a path and collect relevant statistics.
@@ -931,18 +962,20 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(get_function);
+    /// let mut task = task!(get_function);
     ///
-    ///     /// A very simple task that makes a GET request.
-    ///     async fn get_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/path/to/foo/").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a GET request.
+    /// async fn get_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/path/to/foo/").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn get(&self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_get(path).await;
+        let request_builder = self.goose_get(path).await?;
+
         Ok(self.goose_send(request_builder, None).await?)
     }
 
@@ -957,22 +990,24 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(get_function);
+    /// let mut task = task!(get_function);
     ///
-    ///     /// A very simple task that makes a GET request.
-    ///     async fn get_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get_named("/path/to/foo/", "foo").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a GET request.
+    /// async fn get_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get_named("/path/to/foo/", "foo").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn get_named(
         &self,
         path: &str,
         request_name: &str,
     ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_get(path).await;
+        let request_builder = self.goose_get(path).await?;
+
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
@@ -991,18 +1026,20 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(post_function);
+    /// let mut task = task!(post_function);
     ///
-    ///     /// A very simple task that makes a POST request.
-    ///     async fn post_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.post("/path/to/foo/", "BODY BEING POSTED").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a POST request.
+    /// async fn post_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.post("/path/to/foo/", "BODY BEING POSTED").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn post(&self, path: &str, body: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_post(path).await.body(body.to_string());
+        let request_builder = self.goose_post(path).await?.body(body.to_string());
+
         Ok(self.goose_send(request_builder, None).await?)
     }
 
@@ -1017,15 +1054,16 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(post_function);
+    /// let mut task = task!(post_function);
     ///
-    ///     /// A very simple task that makes a POST request.
-    ///     async fn post_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.post_named("/path/to/foo/", "foo", "BODY BEING POSTED").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a POST request.
+    /// async fn post_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.post_named("/path/to/foo/", "foo", "BODY BEING POSTED").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn post_named(
         &self,
@@ -1033,7 +1071,8 @@ impl GooseUser {
         request_name: &str,
         body: &str,
     ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_post(path).await.body(body.to_string());
+        let request_builder = self.goose_post(path).await?.body(body.to_string());
+
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
@@ -1052,18 +1091,20 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(head_function);
+    /// let mut task = task!(head_function);
     ///
-    ///     /// A very simple task that makes a HEAD request.
-    ///     async fn head_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.head("/path/to/foo/").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a HEAD request.
+    /// async fn head_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.head("/path/to/foo/").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn head(&self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_head(path).await;
+        let request_builder = self.goose_head(path).await?;
+
         Ok(self.goose_send(request_builder, None).await?)
     }
 
@@ -1078,22 +1119,24 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(head_function);
+    /// let mut task = task!(head_function);
     ///
-    ///     /// A very simple task that makes a HEAD request.
-    ///     async fn head_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.head_named("/path/to/foo/", "foo").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a HEAD request.
+    /// async fn head_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.head_named("/path/to/foo/", "foo").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn head_named(
         &self,
         path: &str,
         request_name: &str,
     ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_head(path).await;
+        let request_builder = self.goose_head(path).await?;
+
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
@@ -1112,18 +1155,20 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(delete_function);
+    /// let mut task = task!(delete_function);
     ///
-    ///     /// A very simple task that makes a DELETE request.
-    ///     async fn delete_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.delete("/path/to/foo/").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a DELETE request.
+    /// async fn delete_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.delete("/path/to/foo/").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn delete(&self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_delete(path).await;
+        let request_builder = self.goose_delete(path).await?;
+
         Ok(self.goose_send(request_builder, None).await?)
     }
 
@@ -1138,22 +1183,24 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(delete_function);
+    /// let mut task = task!(delete_function);
     ///
-    ///     /// A very simple task that makes a DELETE request.
-    ///     async fn delete_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.delete_named("/path/to/foo/", "foo").await?;
-    ///       Ok(())
-    ///     }
+    /// /// A very simple task that makes a DELETE request.
+    /// async fn delete_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.delete_named("/path/to/foo/", "foo").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn delete_named(
         &self,
         path: &str,
         request_name: &str,
     ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_delete(path).await;
+        let request_builder = self.goose_delete(path).await?;
+
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
@@ -1165,21 +1212,23 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(get_function);
+    /// let mut task = task!(get_function);
     ///
-    ///     /// A simple task that makes a GET request, exposing the Reqwest
-    ///     /// request builder.
-    ///     async fn get_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let request_builder = user.goose_get("/path/to/foo").await;
-    ///       let _goose = user.goose_send(request_builder, None).await?;
-    ///       Ok(())
-    ///     }
+    /// /// A simple task that makes a GET request, exposing the Reqwest
+    /// /// request builder.
+    /// async fn get_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let request_builder = user.goose_get("/path/to/foo").await?;
+    ///     let _goose = user.goose_send(request_builder, None).await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub async fn goose_get(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path).await;
-        self.client.lock().await.get(&url)
+    pub async fn goose_get(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
+        let url = self.build_url(path).await?;
+
+        Ok(self.client.lock().await.get(&url))
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1190,21 +1239,23 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(post_function);
+    /// let mut task = task!(post_function);
     ///
-    ///     /// A simple task that makes a POST request, exposing the Reqwest
-    ///     /// request builder.
-    ///     async fn post_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let request_builder = user.goose_post("/path/to/foo").await;
-    ///       let _goose = user.goose_send(request_builder, None).await?;
-    ///       Ok(())
-    ///     }
+    /// /// A simple task that makes a POST request, exposing the Reqwest
+    /// /// request builder.
+    /// async fn post_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let request_builder = user.goose_post("/path/to/foo").await?;
+    ///     let _goose = user.goose_send(request_builder, None).await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub async fn goose_post(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path).await;
-        self.client.lock().await.post(&url)
+    pub async fn goose_post(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
+        let url = self.build_url(path).await?;
+
+        Ok(self.client.lock().await.post(&url))
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1215,21 +1266,23 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(head_function);
+    /// let mut task = task!(head_function);
     ///
-    ///     /// A simple task that makes a HEAD request, exposing the Reqwest
-    ///     /// request builder.
-    ///     async fn head_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let request_builder = user.goose_head("/path/to/foo").await;
-    ///       let _goose = user.goose_send(request_builder, None).await?;
-    ///       Ok(())
-    ///     }
+    /// /// A simple task that makes a HEAD request, exposing the Reqwest
+    /// /// request builder.
+    /// async fn head_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let request_builder = user.goose_head("/path/to/foo").await?;
+    ///     let _goose = user.goose_send(request_builder, None).await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub async fn goose_head(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path).await;
-        self.client.lock().await.head(&url)
+    pub async fn goose_head(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
+        let url = self.build_url(path).await?;
+
+        Ok(self.client.lock().await.head(&url))
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1240,21 +1293,23 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(put_function);
+    /// let mut task = task!(put_function);
     ///
-    ///     /// A simple task that makes a PUT request, exposing the Reqwest
-    ///     /// request builder.
-    ///     async fn put_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let request_builder = user.goose_put("/path/to/foo").await;
-    ///       let _goose = user.goose_send(request_builder, None).await?;
-    ///       Ok(())
-    ///     }
+    /// /// A simple task that makes a PUT request, exposing the Reqwest
+    /// /// request builder.
+    /// async fn put_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let request_builder = user.goose_put("/path/to/foo").await?;
+    ///     let _goose = user.goose_send(request_builder, None).await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub async fn goose_put(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path).await;
-        self.client.lock().await.put(&url)
+    pub async fn goose_put(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
+        let url = self.build_url(path).await?;
+
+        Ok(self.client.lock().await.put(&url))
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1265,21 +1320,23 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(patch_function);
+    /// let mut task = task!(patch_function);
     ///
-    ///     /// A simple task that makes a PUT request, exposing the Reqwest
-    ///     /// request builder.
-    ///     async fn patch_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let request_builder = user.goose_patch("/path/to/foo").await;
-    ///       let _goose = user.goose_send(request_builder, None).await?;
-    ///       Ok(())
-    ///     }
+    /// /// A simple task that makes a PUT request, exposing the Reqwest
+    /// /// request builder.
+    /// async fn patch_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let request_builder = user.goose_patch("/path/to/foo").await?;
+    ///     let _goose = user.goose_send(request_builder, None).await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub async fn goose_patch(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path).await;
-        self.client.lock().await.patch(&url)
+    pub async fn goose_patch(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
+        let url = self.build_url(path).await?;
+
+        Ok(self.client.lock().await.patch(&url))
     }
 
     /// Prepends the correct host on the path, then prepares a
@@ -1290,21 +1347,23 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(delete_function);
+    /// let mut task = task!(delete_function);
     ///
-    ///     /// A simple task that makes a DELETE request, exposing the Reqwest
-    ///     /// request builder.
-    ///     async fn delete_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let request_builder = user.goose_delete("/path/to/foo").await;
-    ///       let _goose = user.goose_send(request_builder, None).await?;
-    ///       Ok(())
-    ///     }
+    /// /// A simple task that makes a DELETE request, exposing the Reqwest
+    /// /// request builder.
+    /// async fn delete_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let request_builder = user.goose_delete("/path/to/foo").await?;
+    ///     let _goose = user.goose_send(request_builder, None).await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub async fn goose_delete(&self, path: &str) -> RequestBuilder {
-        let url = self.build_url(path).await;
-        self.client.lock().await.delete(&url)
+    pub async fn goose_delete(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
+        let url = self.build_url(path).await?;
+
+        Ok(self.client.lock().await.delete(&url))
     }
 
     /// Builds the provided
@@ -1332,10 +1391,11 @@ impl GooseUser {
     ///     /// A simple task that makes a GET request, exposing the Reqwest
     ///     /// request builder.
     ///     async fn get_function(user: &GooseUser) -> GooseTaskResult {
-    ///         let request_builder = user.goose_get("/path/to/foo").await;
+    ///         let request_builder = user.goose_get("/path/to/foo").await?;
     ///         let goose = user.goose_send(request_builder, None).await?;
     ///
     ///         // Do stuff with goose.request and/or goose.response here.
+    ///
     ///         Ok(())
     ///     }
     /// ```
@@ -1353,13 +1413,7 @@ impl GooseUser {
         };
 
         let started = Instant::now();
-        let request = match request_builder.build() {
-            Ok(r) => r,
-            Err(e) => {
-                error!("goose_send failed to build request: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let request = request_builder.build()?;
 
         // String version of request path.
         let path = match Url::parse(&request.url().to_string()) {
@@ -1369,7 +1423,7 @@ impl GooseUser {
                 "".to_string()
             }
         };
-        let method = goose_method_from_method(request.method().clone());
+        let method = goose_method_from_method(request.method().clone())?;
         let request_name = self.get_request_name(&path, request_name);
 
         // Record information about the request.
@@ -1401,21 +1455,16 @@ impl GooseUser {
                     let base_url = self.base_url.read().await.to_string();
                     // Check if the URL redirected started with the load test base_url.
                     if !raw_request.final_url.starts_with(&base_url) {
-                        let redirected_base_url = match Url::parse(&raw_request.final_url) {
-                            // Use URL to grab base_url, which is everything up to the path.
-                            Ok(base_url) => base_url[..url::Position::BeforePath].to_string(),
-                            Err(e) => {
-                                error!("goose_send failed to parse redirected URL: {}", e);
-                                std::process::exit(1);
-                            }
-                        };
+                        let redirected_url = Url::parse(&raw_request.final_url)?;
+                        let redirected_base_url =
+                            redirected_url[..url::Position::BeforePath].to_string();
                         info!(
                             "base_url for user {} redirected from {} to {}",
                             self.weighted_users_index + 1,
                             &base_url,
                             &redirected_base_url
                         );
-                        self.set_base_url(&redirected_base_url).await;
+                        self.set_base_url(&redirected_base_url).await?;
                     }
                 }
             }
@@ -1429,24 +1478,20 @@ impl GooseUser {
 
         // Send raw request object to parent if we're tracking statistics.
         if !self.config.no_stats {
-            self.send_to_parent(&raw_request);
+            self.send_to_parent(&raw_request)?;
         }
 
         Ok(GooseResponse::new(raw_request, response))
     }
 
-    fn send_to_parent(&self, raw_request: &GooseRawRequest) {
+    fn send_to_parent(&self, raw_request: &GooseRawRequest) -> GooseTaskResult {
         // Parent is not defined when running test_start_task, test_stop_task,
         // and during testing.
         if let Some(parent) = self.parent.clone() {
-            match parent.send(raw_request.clone()) {
-                Ok(_) => (),
-                Err(e) => {
-                    info!("unable to communicate with parent thread, exiting: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            parent.send(raw_request.clone())?;
         }
+
+        Ok(())
     }
 
     /// If `request_name` is set, unwrap and use this. Otherwise, if `task_request_name`
@@ -1470,31 +1515,33 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(get_function);
+    /// let mut task = task!(get_function);
     ///
-    ///     /// A simple task that makes a GET request.
-    ///     async fn get_function(user: &GooseUser) -> GooseTaskResult {
-    ///         let mut goose = user.get("/404").await?;
+    /// /// A simple task that makes a GET request.
+    /// async fn get_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let mut goose = user.get("/404").await?;
     ///
-    ///         if let Ok(response) = &goose.response {
-    ///             // We expect a 404 here.
-    ///             if response.status() == 404 {
-    ///                 user.set_success(&mut goose.request);
-    ///                 return Ok(());
-    ///             }
+    ///     if let Ok(response) = &goose.response {
+    ///         // We expect a 404 here.
+    ///         if response.status() == 404 {
+    ///             return user.set_success(&mut goose.request);
     ///         }
-    ///         Err(GooseTaskError::RequestFailed)
     ///     }
+    ///
+    ///     Err(GooseTaskError::RequestFailed)
+    /// }
     /// ````
-    pub fn set_success(&self, request: &mut GooseRawRequest) {
+    pub fn set_success(&self, request: &mut GooseRawRequest) -> GooseTaskResult {
         // Only send update if this was previously not a success.
         if !request.success {
             request.success = true;
             request.update = true;
-            self.send_to_parent(&request);
+            self.send_to_parent(&request)?;
         }
+
+        Ok(())
     }
 
     /// Manually mark a request as a failure.
@@ -1558,12 +1605,12 @@ impl GooseUser {
         if request.success {
             request.success = false;
             request.update = true;
-            self.send_to_parent(&request);
+            self.send_to_parent(&request)?;
         }
-        // Log failure, converting `&mut request` to `&request` as needed by `log_debug()`.
-        self.log_debug(tag, Some(&*request), headers, body);
+        // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
+        self.log_debug(tag, Some(&*request), headers, body)?;
 
-        // Log to stdout if `-v` is enabled.
+        // Print log to stdout if `-v` is enabled.
         info!("set_failure: {}", tag);
 
         Err(GooseTaskError::RequestFailed)
@@ -1634,6 +1681,7 @@ impl GooseUser {
     ///                 );
     ///             }
     ///         }
+    ///
     ///         Ok(())
     ///     }
     /// ````
@@ -1643,20 +1691,16 @@ impl GooseUser {
         request: Option<&GooseRawRequest>,
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
-    ) {
+    ) -> GooseTaskResult {
         if !self.config.debug_log_file.is_empty() {
             // Logger is not defined when running test_start_task, test_stop_task,
             // and during testing.
             if let Some(logger) = self.logger.clone() {
-                match logger.send(Some(GooseDebug::new(tag, request, headers, body))) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        info!("unable to communicate with logger thread, exiting: {}", e);
-                        std::process::exit(1);
-                    }
-                }
+                logger.send(Some(GooseDebug::new(tag, request, headers, body)))?;
             }
         }
+
+        Ok(())
     }
 
     /// Manually build a Reqwest client.
@@ -1709,29 +1753,26 @@ impl GooseUser {
     /// task!(setup_custom_client).set_on_start();
     ///
     /// async fn setup_custom_client(user: &GooseUser) -> GooseTaskResult {
-    ///   use reqwest::{Client, header};
+    ///     use reqwest::{Client, header};
     ///
-    ///   // Build a custom HeaderMap to include with all requests made by this client.
-    ///   let mut headers = header::HeaderMap::new();
-    ///   headers.insert("X-Custom-Header", header::HeaderValue::from_str("custom value").unwrap());
+    ///     // Build a custom HeaderMap to include with all requests made by this client.
+    ///     let mut headers = header::HeaderMap::new();
+    ///     headers.insert("X-Custom-Header", header::HeaderValue::from_str("custom value").unwrap());
     ///
-    ///   let builder = Client::builder()
-    ///     .default_headers(headers)
-    ///     .user_agent("custom user agent")
-    ///     .cookie_store(true);
+    ///     let builder = Client::builder()
+    ///         .default_headers(headers)
+    ///         .user_agent("custom user agent")
+    ///         .cookie_store(true);
     ///
-    ///   user.set_client_builder(builder);
-    ///   Ok(())
+    ///     user.set_client_builder(builder).await?;
+    ///
+    ///     Ok(())
     /// }
     /// ```
-    pub async fn set_client_builder(&self, builder: ClientBuilder) {
-        match builder.build() {
-            Ok(c) => *self.client.lock().await = c,
-            Err(e) => {
-                error!("failed to build web client: {}", e);
-                std::process::exit(1);
-            }
-        };
+    pub async fn set_client_builder(&self, builder: ClientBuilder) -> Result<(), GooseTaskError> {
+        *self.client.lock().await = builder.build()?;
+
+        Ok(())
     }
 
     /// Some websites use multiple domains to serve traffic, redirecting depending on
@@ -1765,16 +1806,18 @@ impl GooseUser {
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
-    ///             .set_wait_time(0, 3)
+    ///             .set_wait_time(0, 3)?
     ///             .register_task(task!(task_foo).set_weight(10)?)
     ///             .register_task(task!(task_bar))
     ///         )
     ///         .execute()?;
+    ///
     ///     Ok(())
     /// }
     ///
     /// async fn task_foo(user: &GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/").await?;
+    ///
     ///     Ok(())
     /// }
     ///
@@ -1784,16 +1827,15 @@ impl GooseUser {
     ///     // requests are made against http://bar.example.com/.
     ///     user.set_base_url("http://bar.example.com/");
     ///     let _goose = user.get("/").await?;
+    ///
     ///     Ok(())
     /// }
     /// ```
-    pub async fn set_base_url(&self, host: &str) {
-        match Url::parse(host) {
-            Ok(url) => *self.base_url.write().await = url,
-            Err(e) => {
-                error!("failed to set_base_url({}): {}", host, e);
-            }
-        }
+    pub async fn set_base_url(&self, host: &str) -> Result<(), GooseTaskError> {
+        let url = Url::parse(host)?;
+        *self.base_url.write().await = url;
+
+        Ok(())
     }
 }
 
@@ -1875,6 +1917,7 @@ impl GooseTask {
     ///
     ///     async fn my_task_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/").await?;
+    ///
     ///       Ok(())
     ///     }
     /// ```
@@ -1902,6 +1945,7 @@ impl GooseTask {
     ///
     ///     async fn my_on_start_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/").await?;
+    ///
     ///       Ok(())
     ///     }
     /// ```
@@ -1929,6 +1973,7 @@ impl GooseTask {
     ///
     ///     async fn my_on_stop_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/").await?;
+    ///
     ///       Ok(())
     ///     }
     /// ```
@@ -1993,16 +2038,19 @@ impl GooseTask {
     ///
     ///     async fn first_task_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/1").await?;
+    ///
     ///       Ok(())
     ///     }
     ///
     ///     async fn second_task_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/2").await?;
+    ///
     ///       Ok(())
     ///     }
     ///
     ///     async fn third_task_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/3").await?;
+    ///
     ///       Ok(())
     ///     }
     /// ```
@@ -2036,6 +2084,7 @@ impl GooseTask {
     ///
     ///     async fn second_task_function_b(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/2b").await?;
+    ///
     ///       Ok(())
     ///     }
     /// ```
@@ -2074,7 +2123,7 @@ mod tests {
     use httpmock::Method::{GET, POST};
     use httpmock::{mock, with_mock_server};
 
-    async fn setup_user() -> GooseUser {
+    async fn setup_user() -> Result<GooseUser, GooseError> {
         let configuration = GooseConfiguration::default();
         let base_url = get_base_url(Some("http://127.0.0.1:5000".to_string()), None, None);
         GooseUser::single(base_url, &configuration)
@@ -2085,11 +2134,13 @@ mod tests {
         // Simplistic test task functions.
         async fn test_function_a(user: &GooseUser) -> GooseTaskResult {
             let _goose = user.get("/a/").await?;
+
             Ok(())
         }
 
         async fn test_function_b(user: &GooseUser) -> GooseTaskResult {
             let _goose = user.get("/b/").await?;
+
             Ok(())
         }
 
@@ -2164,7 +2215,7 @@ mod tests {
         assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
 
         // Wait time only affects wait time fields.
-        task_set = task_set.set_wait_time(1, 10);
+        task_set = task_set.set_wait_time(1, 10).unwrap();
         assert_eq!(task_set.min_wait, 1);
         assert_eq!(task_set.max_wait, 10);
         assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
@@ -2174,7 +2225,7 @@ mod tests {
         assert_eq!(task_set.task_sets_index, usize::max_value());
 
         // Wait time can be changed.
-        task_set = task_set.set_wait_time(3, 9);
+        task_set = task_set.set_wait_time(3, 9).unwrap();
         assert_eq!(task_set.min_wait, 3);
         assert_eq!(task_set.max_wait, 9);
     }
@@ -2184,6 +2235,7 @@ mod tests {
         // Simplistic test task functions.
         async fn test_function_a(user: &GooseUser) -> GooseTaskResult {
             let _goose = user.get("/a/").await?;
+
             Ok(())
         }
 
@@ -2502,7 +2554,7 @@ mod tests {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::default();
         let base_url = get_base_url(Some(HOST.to_string()), None, None);
-        let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0);
+        let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0).unwrap();
         assert_eq!(user.task_sets_index, 0);
         assert_eq!(user.min_wait, 0);
         assert_eq!(user.max_wait, 0);
@@ -2514,20 +2566,21 @@ mod tests {
         assert_eq!(user.request_name, None);
 
         // Confirm the URLs are correctly built using the default_host.
-        let url = user.build_url("/foo").await;
+        let url = user.build_url("/foo").await.unwrap();
         eprintln!("url: {}", url);
         assert_eq!(&url, &[HOST, "foo"].concat());
-        let url = user.build_url("bar/").await;
+        let url = user.build_url("bar/").await.unwrap();
         assert_eq!(&url, &[HOST, "bar/"].concat());
-        let url = user.build_url("/foo/bar").await;
+        let url = user.build_url("/foo/bar").await.unwrap();
         assert_eq!(&url, &[HOST, "foo/bar"].concat());
 
         // Confirm the URLs are built with their own specified host.
-        let url = user.build_url("https://example.com/foo").await;
+        let url = user.build_url("https://example.com/foo").await.unwrap();
         assert_eq!(url, "https://example.com/foo");
         let url = user
             .build_url("https://www.example.com/path/to/resource")
-            .await;
+            .await
+            .unwrap();
         assert_eq!(url, "https://www.example.com/path/to/resource");
 
         // Create a second user, this time setting a task_set_host.
@@ -2536,31 +2589,31 @@ mod tests {
             Some("http://www2.example.com/".to_string()),
             Some("http://www.example.com/".to_string()),
         );
-        let user2 = GooseUser::new(0, base_url, 1, 3, &configuration, 0);
+        let user2 = GooseUser::new(0, base_url, 1, 3, &configuration, 0).unwrap();
         assert_eq!(user2.min_wait, 1);
         assert_eq!(user2.max_wait, 3);
 
         // Confirm the URLs are correctly built using the task_set_host.
-        let url = user2.build_url("/foo").await;
+        let url = user2.build_url("/foo").await.unwrap();
         assert_eq!(url, "http://www2.example.com/foo");
 
         // Confirm URLs are still built with their own specified host.
-        let url = user2.build_url("https://example.com/foo").await;
+        let url = user2.build_url("https://example.com/foo").await.unwrap();
         assert_eq!(url, "https://example.com/foo");
 
         // Recreate user2.
-        let user2 = setup_user().await;
+        let user2 = setup_user().await.unwrap();
         const MOCKHOST: &str = "http://127.0.0.1:5000/";
 
         // Create a GET request.
-        let mut goose_request = user2.goose_get("/foo").await;
+        let mut goose_request = user2.goose_get("/foo").await.unwrap();
         let mut built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::GET);
         assert_eq!(built_request.url().as_str(), &[MOCKHOST, "foo"].concat());
         assert_eq!(built_request.timeout(), None);
 
         // Create a POST request.
-        goose_request = user2.goose_post("/path/to/post").await;
+        goose_request = user2.goose_post("/path/to/post").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::POST);
         assert_eq!(
@@ -2570,7 +2623,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a PUT request.
-        goose_request = user2.goose_put("/path/to/put").await;
+        goose_request = user2.goose_put("/path/to/put").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PUT);
         assert_eq!(
@@ -2580,7 +2633,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a PATCH request.
-        goose_request = user2.goose_patch("/path/to/patch").await;
+        goose_request = user2.goose_patch("/path/to/patch").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PATCH);
         assert_eq!(
@@ -2590,7 +2643,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a DELETE request.
-        goose_request = user2.goose_delete("/path/to/delete").await;
+        goose_request = user2.goose_delete("/path/to/delete").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::DELETE);
         assert_eq!(
@@ -2600,7 +2653,7 @@ mod tests {
         assert_eq!(built_request.timeout(), None);
 
         // Create a HEAD request.
-        goose_request = user2.goose_head("/path/to/head").await;
+        goose_request = user2.goose_head("/path/to/head").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::HEAD);
         assert_eq!(
@@ -2613,7 +2666,7 @@ mod tests {
     #[tokio::test]
     #[with_mock_server]
     async fn manual_requests() {
-        let user = setup_user().await;
+        let user = setup_user().await.unwrap();
 
         // Set up a mock http server endpoint.
         let mock_index = mock(GET, "/").return_status(200).create();

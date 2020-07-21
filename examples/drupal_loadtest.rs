@@ -78,7 +78,7 @@ fn main() -> Result<(), GooseError> {
                 ),
         )
         .execute()?
-        .display_stats();
+        .display();
 
     Ok(())
 }
@@ -128,6 +128,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
             );
         }
     }
+
     Ok(())
 }
 
@@ -135,6 +136,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
 async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
     let nid = rand::thread_rng().gen_range(1, 10_000);
     let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
+
     Ok(())
 }
 
@@ -142,6 +144,7 @@ async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
 async fn drupal_loadtest_profile_page(user: &GooseUser) -> GooseTaskResult {
     let uid = rand::thread_rng().gen_range(2, 5_001);
     let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
+
     Ok(())
 }
 
@@ -180,7 +183,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let request_builder = user.goose_post("/user").await;
+                    let request_builder = user.goose_post("/user").await?;
                     let _goose = user.goose_send(request_builder.form(&params), None).await;
                     // @TODO: verify that we actually logged in.
                 }
@@ -208,6 +211,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
             );
         }
     }
+
     Ok(())
 }
 
@@ -296,7 +300,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     ];
 
                     // Post the comment.
-                    let request_builder = user.goose_post(&comment_path).await;
+                    let request_builder = user.goose_post(&comment_path).await?;
                     let mut goose = user.goose_send(request_builder.form(&params), None).await?;
 
                     // Verify that the comment posted.
@@ -373,5 +377,6 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
             );
         }
     }
+
     Ok(())
 }

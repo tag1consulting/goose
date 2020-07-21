@@ -80,19 +80,30 @@ async fn loadtest_index(user: &GooseUser) -> GooseTaskResult {
 }
 ```
 
-Finally, edit the `main()` function, setting a return type so we can use `?` to unwrap
-results, and replacing the hello world text as follows:
+Finally, edit the `main()` function, setting a return type and replacing the hello
+world text as follows:
 
 ```rust
 fn main() -> Result<(), GooseError> {
-    GooseAttack::initialize()
+    GooseAttack::initialize()?
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))
         )
         .execute()?
-        .display_stats();
+        .display();
+    
+    Ok(())
 }
 ```
+
+If you're new to Rust, `main()`'s return type of `Result<(), GooseError>` may look
+strange. It essentially says that `main` will return nothing (`()`) on success, and
+will return a `GooseError` on failure. This is helpful as several of `GooseAttack`'s
+methods can fail, returning an error. In our example, `initialize()` and `execute()`
+each may fail. The `?` that follows the method's name tells our program to exit and
+return an error on failure, otherwise continue on. The `display()` method consumes
+the everything returned by `GooseAttack` and prints a summary if statistics are
+enabled. The final line, `Ok(())` returns the empty result expected on success.
 
 And that's it, you've created your first load test! Let's run it and see what
 happens.

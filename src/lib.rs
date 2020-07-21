@@ -54,6 +54,7 @@
 //!
 //! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
 //!   let _goose = user.get("/path/to/foo").await?;
+//!
 //!   Ok(())
 //! }   
 //! ```
@@ -70,9 +71,10 @@
 //! use goose::prelude::*;
 //!
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
-//!   let request_builder = user.goose_get("/path/to/bar").await;
-//!   let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
-//!   Ok(())
+//!     let request_builder = user.goose_get("/path/to/bar").await?;
+//!     let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
+//!
+//!     Ok(())
 //! }   
 //! ```
 //!
@@ -90,7 +92,7 @@
 //! fn main() -> Result<(), GooseError> {
 //!     GooseAttack::initialize()?
 //!         .register_taskset(taskset!("LoadtestTasks")
-//!             .set_wait_time(0, 3)
+//!             .set_wait_time(0, 3)?
 //!             // Register the foo task, assigning it a weight of 10.
 //!             .register_task(task!(loadtest_foo).set_weight(10)?)
 //!             // Register the bar task, assigning it a weight of 2 (so it
@@ -322,14 +324,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::hash::{Hash, Hasher};
-use std::io;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use std::time;
-use std::{f32, fmt};
+use std::{f32, fmt, io, time};
 use structopt::StructOpt;
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -338,8 +338,7 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
-    GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskError, GooseTaskSet, GooseUser,
-    GooseUserCommand,
+    GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
 };
 
 /// Constant defining how often statistics should be displayed while load test is running.
@@ -372,33 +371,41 @@ pub type GooseRequestStats = HashMap<String, GooseRequest>;
 /// Definition of all errors Goose can return.
 #[derive(Debug)]
 pub enum GooseError {
-    /// Contains any possible GooseTask error.
-    GooseTask(GooseTaskError),
-    NoTaskSets,
-    InvalidOption,
-    InvalidHost,
-    InvalidWeight,
-    FeatureNotEnabled,
     Io(io::Error),
+    Reqwest(reqwest::Error),
+    FeatureNotEnabled,
+    InvalidHost,
+    InvalidOption,
+    InvalidWaitTime,
+    InvalidWeight,
+    NoTaskSets,
 }
 
 impl fmt::Display for GooseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            GooseError::GooseTask(ref err) => err.fmt(f),
-            GooseError::NoTaskSets => write!(f, "No task sets defined."),
-            GooseError::InvalidOption => write!(f, "Invalid option specified."),
-            GooseError::InvalidHost => write!(f, "Host is not in valid format."),
-            GooseError::InvalidWeight => write!(f, "Invalid weight specified."),
-            GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
             GooseError::Io(ref err) => err.fmt(f),
+            GooseError::Reqwest(ref err) => err.fmt(f),
+            GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
+            GooseError::InvalidHost => write!(f, "Unable to parse host."),
+            GooseError::InvalidOption => write!(f, "Invalid option specified."),
+            GooseError::InvalidWaitTime => write!(f, "Invalid wait time specified."),
+            GooseError::InvalidWeight => write!(f, "Invalid weight specified."),
+            GooseError::NoTaskSets => write!(f, "No task sets defined."),
         }
     }
 }
 
 impl Error for GooseError {}
 
-/// Auto-wrap IO errors.
+/// Auto-convert Reqwest errors.
+impl From<reqwest::Error> for GooseError {
+    fn from(err: reqwest::Error) -> GooseError {
+        GooseError::Reqwest(err)
+    }
+}
+
+/// Auto-convert IO errors.
 impl From<io::Error> for GooseError {
     fn from(err: io::Error) -> GooseError {
         GooseError::Io(err)
@@ -672,11 +679,13 @@ impl GooseAttack {
     ///
     /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/foo").await?;
+    ///
     ///     Ok(())
     /// }
     ///
     /// async fn other_task(user: &GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/bar").await?;
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -772,7 +781,7 @@ impl GooseAttack {
     }
 
     /// Allocate a vector of weighted GooseUser.
-    fn weight_task_set_users(&mut self) -> Vec<GooseUser> {
+    fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
         trace!("weight_task_set_users");
 
         let mut u: usize = 0;
@@ -824,11 +833,11 @@ impl GooseAttack {
                     self.task_sets[*task_sets_index].max_wait,
                     &self.configuration,
                     self.task_sets_hash,
-                ));
+                )?);
                 user_count += 1;
                 if user_count >= self.users {
                     trace!("created {} weighted_users", user_count);
-                    return weighted_users;
+                    return Ok(weighted_users);
                 }
             }
         }
@@ -1043,7 +1052,7 @@ impl GooseAttack {
 
         // Allocate a state for each of the users we are about to start.
         if !self.configuration.worker {
-            self.weighted_users = self.weight_task_set_users();
+            self.weighted_users = self.weight_task_set_users()?;
         }
 
         // Calculate a unique hash for the current load test.
@@ -1110,7 +1119,7 @@ impl GooseAttack {
     ///             .register_task(task!(another_example_task).set_weight(3)?)
     ///         )
     ///         .execute()?
-    ///         .display_stats();
+    ///         .display();
     ///
     ///     Ok(())
     /// }
@@ -1123,10 +1132,11 @@ impl GooseAttack {
     ///
     /// async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/bar").await?;
+    ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn display_stats(self) {
+    pub fn display(self) {
         if !self.configuration.no_stats && !self.configuration.worker {
             stats::print_final_stats(&self, self.started.unwrap().elapsed().as_secs() as usize);
         }
@@ -1277,7 +1287,7 @@ impl GooseAttack {
                     // Create a one-time-use User to run the test_start_task.
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
-                    let user = GooseUser::single(base_url, &self.configuration);
+                    let user = GooseUser::single(base_url, &self.configuration)?;
                     let function = t.function;
                     let _ = function(&user).await;
                 }
@@ -1609,7 +1619,7 @@ impl GooseAttack {
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
                     // Create a one-time-use user to run the test_stop_task.
-                    let user = GooseUser::single(base_url, &self.configuration);
+                    let user = GooseUser::single(base_url, &self.configuration)?;
                     let function = t.function;
                     let _ = function(&user).await;
                 }

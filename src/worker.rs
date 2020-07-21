@@ -133,14 +133,20 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
             if worker_id == 0 {
                 worker_id = initializer.worker_id;
             }
-            let user = GooseUser::new(
+            let user = match GooseUser::new(
                 initializer.task_sets_index,
                 Url::parse(&initializer.base_url).unwrap(),
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
                 goose_attack.task_sets_hash,
-            );
+            ) {
+                Ok(u) => u,
+                Err(e) => {
+                    error!("[{}] failed to create GooseUser: {}", get_worker_id(), e);
+                    std::process::exit(1);
+                }
+            };
             weighted_users.push(user);
             if hatch_rate == None {
                 hatch_rate = Some(
