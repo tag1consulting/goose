@@ -5,10 +5,11 @@
  - properly support setting host when registering task set 
  - rename `response` wrapper to `goose`, so we end up with `goose.request` and `goose.response`
  - add `--throttle-requests` to optionally limit the maximum requests per second (api change)
+ - introduce `GooseError` and `GooseTaskError`
  - change task function signature, tasks must return a `GooseTaskResult`
- - introduce `GooseTaskError`
- - change `GooseAttack.execute()` to return `Result<GooseAttack, GooseError>`
- - introduce `GooseAttack.display_stats()` which consumes the execute Result and displays statistics
+ - change `GooseAttack` method signatures where an error is possible
+ - where possible, passs error up the stack instead of calling `exit(1)`
+ - introduce `GooseAttack.display()` which consumes the load test state and displays statistics
 
 ## 0.8.2 July 2, 2020
  - `client.log_debug()` will write debug logs to file when specified with `--debug-log-file=`
