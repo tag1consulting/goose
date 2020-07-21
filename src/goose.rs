@@ -26,10 +26,14 @@
 //! assigned to `BarTasks` for the same weighting:
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut foo_tasks = taskset!("FooTasks").set_weight(10);
-//!     let mut bar_tasks = taskset!("BarTasks").set_weight(5);
+//! fn main() -> Result<(), GooseError> {
+//!     let mut foo_tasks = taskset!("FooTasks").set_weight(10)?;
+//!     let mut bar_tasks = taskset!("BarTasks").set_weight(5)?;
+//!
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ### Task Set Host
@@ -102,22 +106,28 @@
 //! runs 3 times as often as `b_task`:
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut a_task = task!(a_task_function).set_weight(9);
-//!     let mut b_task = task!(b_task_function).set_weight(3);
+//! fn main() -> Result<(), GooseError> {
+//!     let mut a_task = task!(a_task_function).set_weight(9)?;
+//!     let mut b_task = task!(b_task_function).set_weight(3)?;
 //!
-//!     /// A very simple task that simply loads the "a" page.
-//!     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/a/").await?;
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //!
-//!     /// Another very simple task that simply loads the "b" page.
-//!     async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/b/").await?;
-//!       Ok(())
-//!     }
+//! /// A very simple task that simply loads the "a" page.
+//! async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/a/").await?;
+//!
+//!     Ok(())
+//! }
+//!
+//! /// Another very simple task that simply loads the "b" page.
+//! async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/b/").await?;
+//!
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ### Task Sequence
@@ -278,7 +288,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
-use crate::GooseConfiguration;
+use crate::{GooseConfiguration, GooseError};
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -427,19 +437,23 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut example_tasks = taskset!("ExampleTasks").set_weight(3);
+    /// fn main() -> Result<(), GooseError> {
+    ///     let mut example_tasks = taskset!("ExampleTasks").set_weight(3)?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn set_weight(mut self, weight: usize) -> Self {
+    pub fn set_weight(mut self, weight: usize) -> Result<Self, GooseError> {
         trace!("{} set_weight: {}", self.name, weight);
         if weight < 1 {
             error!("{} weight of {} not allowed", self.name, weight);
-            std::process::exit(1);
+            return Err(GooseError::InvalidWeight);
         } else {
             self.weight = weight;
         }
-        self
+        Ok(self)
     }
 
     /// Set a default host for the task set. If no `--host` flag is set when running the load test, this
@@ -1752,7 +1766,7 @@ impl GooseUser {
     ///     GooseAttack::initialize()?
     ///         .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
     ///             .set_wait_time(0, 3)
-    ///             .register_task(task!(task_foo).set_weight(10))
+    ///             .register_task(task!(task_foo).set_weight(10)?)
     ///             .register_task(task!(task_bar))
     ///         )
     ///         .execute()?;
@@ -1930,16 +1944,21 @@ impl GooseTask {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     task!(task_function).set_weight(3);
+    /// fn main() -> Result<(), GooseError> {
+    ///     task!(task_function).set_weight(3)?;
     ///
-    ///     async fn task_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/").await?;
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn task_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn set_weight(mut self, weight: usize) -> Self {
+    pub fn set_weight(mut self, weight: usize) -> Result<Self, GooseError> {
         trace!(
             "{} [{}] set_weight: {}",
             self.name,
@@ -1948,11 +1967,11 @@ impl GooseTask {
         );
         if weight < 1 {
             error!("{} weight of {} not allowed", self.name, weight);
-            std::process::exit(1);
+            return Err(GooseError::InvalidWeight);
         } else {
             self.weight = weight;
         }
-        self
+        Ok(self)
     }
 
     /// Defines the sequence value of an individual tasks. Tasks are run in order of their sequence value,
@@ -1993,21 +2012,27 @@ impl GooseTask {
     /// the entire time it runs, with `runs_first` always running first, then the other tasks being
     /// run in a random and weighted order:
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let runs_first = task!(first_task_function).set_sequence(1).set_weight(2);
+    /// fn main() -> Result<(), GooseError> {
+    ///     let runs_first = task!(first_task_function).set_sequence(1).set_weight(2)?;
     ///     let runs_second = task!(second_task_function_a).set_sequence(2);
-    ///     let also_runs_second = task!(second_task_function_b).set_sequence(2).set_weight(2);
+    ///     let also_runs_second = task!(second_task_function_b).set_sequence(2).set_weight(2)?;
     ///
-    ///     async fn first_task_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/1").await?;
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn second_task_function_a(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/2a").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn first_task_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/1").await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn second_task_function_a(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/2a").await?;
+    ///
+    ///     Ok(())
+    /// }
     ///
     ///     async fn second_task_function_b(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/2b").await?;
@@ -2111,7 +2136,7 @@ mod tests {
         assert_eq!(task_set.host, None);
 
         // Setting weight only affects weight field.
-        task_set = task_set.set_weight(50);
+        task_set = task_set.set_weight(50).unwrap();
         assert_eq!(task_set.weight, 50);
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
@@ -2121,7 +2146,7 @@ mod tests {
         assert_eq!(task_set.host, None);
 
         // Weight can be changed.
-        task_set = task_set.set_weight(5);
+        task_set = task_set.set_weight(5).unwrap();
         assert_eq!(task_set.weight, 5);
 
         // Setting host only affects host field.
@@ -2209,7 +2234,7 @@ mod tests {
         assert_eq!(task.on_stop, true);
 
         // Setting weight doesn't change anything else.
-        task = task.set_weight(2);
+        task = task.set_weight(2).unwrap();
         assert_eq!(task.weight, 2);
         assert_eq!(task.on_stop, true);
         assert_eq!(task.on_start, true);
@@ -2217,7 +2242,7 @@ mod tests {
         assert_eq!(task.sequence, 0);
 
         // Weight field can be changed multiple times.
-        task = task.set_weight(3);
+        task = task.set_weight(3).unwrap();
         assert_eq!(task.weight, 3);
 
         // Setting sequence doesn't change anything else.

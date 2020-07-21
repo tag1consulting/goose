@@ -92,11 +92,11 @@
 //!         .register_taskset(taskset!("LoadtestTasks")
 //!             .set_wait_time(0, 3)
 //!             // Register the foo task, assigning it a weight of 10.
-//!             .register_task(task!(loadtest_foo).set_weight(10))
+//!             .register_task(task!(loadtest_foo).set_weight(10)?)
 //!             // Register the bar task, assigning it a weight of 2 (so it
 //!             // runs 1/5 as often as bar). Apply a task name which shows up
 //!             // in statistics.
-//!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2))
+//!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2)?)
 //!         )
 //!         // You could also set a default host here, for example:
 //!         //.set_host("http://dev.local/")
@@ -377,6 +377,7 @@ pub enum GooseError {
     NoTaskSets,
     InvalidOption,
     InvalidHost,
+    InvalidWeight,
     FeatureNotEnabled,
     Io(io::Error),
 }
@@ -388,6 +389,7 @@ impl fmt::Display for GooseError {
             GooseError::NoTaskSets => write!(f, "No task sets defined."),
             GooseError::InvalidOption => write!(f, "Invalid option specified."),
             GooseError::InvalidHost => write!(f, "Host is not in valid format."),
+            GooseError::InvalidWeight => write!(f, "Invalid weight specified."),
             GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
             GooseError::Io(ref err) => err.fmt(f),
         }
@@ -841,8 +843,8 @@ impl GooseAttack {
     /// fn main() -> Result<(), GooseError> {
     ///     let _stats = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
-    ///             .register_task(task!(example_task).set_weight(2))
-    ///             .register_task(task!(another_example_task).set_weight(3))
+    ///             .register_task(task!(example_task).set_weight(2)?)
+    ///             .register_task(task!(another_example_task).set_weight(3)?)
     ///         )
     ///         .execute()?;
     ///
@@ -1104,8 +1106,8 @@ impl GooseAttack {
     /// fn main() -> Result<(), GooseError> {
     ///     let _stats = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
-    ///             .register_task(task!(example_task).set_weight(2))
-    ///             .register_task(task!(another_example_task).set_weight(3))
+    ///             .register_task(task!(example_task).set_weight(2)?)
+    ///             .register_task(task!(another_example_task).set_weight(3)?)
     ///         )
     ///         .execute()?
     ///         .display_stats();

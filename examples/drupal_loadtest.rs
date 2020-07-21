@@ -31,26 +31,26 @@ fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
         .register_taskset(
             taskset!("AnonBrowsingUser")
-                .set_weight(4)
+                .set_weight(4)?
                 .register_task(
                     task!(drupal_loadtest_front_page)
-                        .set_weight(15)
+                        .set_weight(15)?
                         .set_name("(Anon) front page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_node_page)
-                        .set_weight(10)
+                        .set_weight(10)?
                         .set_name("(Anon) node page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_profile_page)
-                        .set_weight(3)
+                        .set_weight(3)?
                         .set_name("(Anon) user page"),
                 ),
         )
         .register_taskset(
             taskset!("AuthBrowsingUser")
-                .set_weight(1)
+                .set_weight(1)?
                 .register_task(
                     task!(drupal_loadtest_login)
                         .set_on_start()
@@ -58,22 +58,22 @@ fn main() -> Result<(), GooseError> {
                 )
                 .register_task(
                     task!(drupal_loadtest_front_page)
-                        .set_weight(15)
+                        .set_weight(15)?
                         .set_name("(Auth) front page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_node_page)
-                        .set_weight(10)
+                        .set_weight(10)?
                         .set_name("(Auth) node page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_profile_page)
-                        .set_weight(3)
+                        .set_weight(3)?
                         .set_name("(Auth) user page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_post_comment)
-                        .set_weight(3)
+                        .set_weight(3)?
                         .set_name("(Auth) comment form"),
                 ),
         )

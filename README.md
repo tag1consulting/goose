@@ -80,11 +80,11 @@ async fn loadtest_index(user: &GooseUser) -> GooseTaskResult {
 }
 ```
 
-Finally, edit the `main()` function, removing the hello world text and replacing
-it as follows:
+Finally, edit the `main()` function, setting a return type so we can use `?` to unwrap
+results, and replacing the hello world text as follows:
 
 ```rust
-fn main() {
+fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))

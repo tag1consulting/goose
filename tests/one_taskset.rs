@@ -32,8 +32,8 @@ fn test_single_taskset() {
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9))
-                .register_task(task!(get_about).set_weight(3)),
+                .register_task(task!(get_index).set_weight(9).unwrap())
+                .register_task(task!(get_about).set_weight(3).unwrap()),
         )
         .execute()
         .unwrap();
@@ -68,8 +68,8 @@ fn test_single_taskset_empty_config_host() {
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9))
-                .register_task(task!(get_about).set_weight(3)),
+                .register_task(task!(get_index).set_weight(9).unwrap())
+                .register_task(task!(get_about).set_weight(3).unwrap()),
         )
         .set_host(&host)
         .execute()

@@ -38,7 +38,9 @@ fn test_start() {
         .setup()
         .unwrap()
         .test_start(task!(setup))
-        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
+        .register_taskset(
+            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
+        )
         .execute()
         .unwrap();
 
@@ -68,7 +70,9 @@ fn test_stop() {
         .setup()
         .unwrap()
         .test_stop(task!(teardown))
-        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
+        .register_taskset(
+            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
+        )
         .execute()
         .unwrap();
 
@@ -102,7 +106,9 @@ fn test_setup_teardown() {
         .setup()
         .unwrap()
         .test_start(task!(setup))
-        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
+        .register_taskset(
+            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
+        )
         .test_stop(task!(teardown))
         .execute()
         .unwrap();
