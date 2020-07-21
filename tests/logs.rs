@@ -48,7 +48,7 @@ fn test_stat_logs_json() {
     let mut config = common::build_configuration();
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.no_stats = false;
-    let _stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
@@ -78,7 +78,7 @@ fn test_stat_logs_csv() {
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.stats_log_format = "csv".to_string();
     config.no_stats = false;
-    let _stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
@@ -108,7 +108,7 @@ fn test_stat_logs_raw() {
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.stats_log_format = "raw".to_string();
     config.no_stats = false;
-    let _stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
@@ -138,7 +138,7 @@ fn test_debug_logs_raw() {
     let mut config = common::build_configuration();
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
     config.debug_log_format = "raw".to_string();
-    let _stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -173,7 +173,7 @@ fn test_debug_logs_json() {
 
     let mut config = common::build_configuration();
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
-    let _stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -211,7 +211,7 @@ fn test_stats_and_debug_logs() {
     config.stats_log_format = "raw".to_string();
     config.no_stats = false;
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
-    let _stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(

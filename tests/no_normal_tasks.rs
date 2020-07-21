@@ -26,7 +26,7 @@ fn test_no_normal_tasks() {
     let mock_login = mock(POST, LOGIN_PATH).return_status(200).create();
     let mock_logout = mock(GET, LOGOUT_PATH).return_status(200).create();
 
-    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .unwrap()
         .register_taskset(

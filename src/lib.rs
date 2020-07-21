@@ -850,7 +850,7 @@ impl GooseAttack {
     /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
-    ///     let _stats = GooseAttack::initialize()?
+    ///     let _goose_attack = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2)?)
     ///             .register_task(task!(another_example_task).set_weight(3)?)
@@ -1113,7 +1113,7 @@ impl GooseAttack {
     ///     use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
-    ///     let _stats = GooseAttack::initialize()?
+    ///     let _goose_attack = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2)?)
     ///             .register_task(task!(another_example_task).set_weight(3)?)

@@ -102,8 +102,8 @@ will return a `GooseError` on failure. This is helpful as several of `GooseAttac
 methods can fail, returning an error. In our example, `initialize()` and `execute()`
 each may fail. The `?` that follows the method's name tells our program to exit and
 return an error on failure, otherwise continue on. The `display()` method consumes
-the everything returned by `GooseAttack` and prints a summary if statistics are
-enabled. The final line, `Ok(())` returns the empty result expected on success.
+everything returned by `GooseAttack` and prints a summary if statistics are enabled.
+The final line, `Ok(())` returns the empty result expected on success.
 
 And that's it, you've created your first load test! Let's run it and see what
 happens.

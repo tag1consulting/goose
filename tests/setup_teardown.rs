@@ -34,7 +34,7 @@ fn test_start() {
     let mock_teardown = mock(POST, TEARDOWN_PATH).return_status(205).create();
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
 
-    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .unwrap()
         .test_start(task!(setup))
@@ -66,7 +66,7 @@ fn test_stop() {
     let mock_teardown = mock(POST, TEARDOWN_PATH).return_status(205).create();
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
 
-    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .unwrap()
         .test_stop(task!(teardown))
@@ -102,7 +102,7 @@ fn test_setup_teardown() {
     configuration.users = Some(5);
     configuration.hatch_rate = 5;
 
-    let _stats = crate::GooseAttack::initialize_with_config(configuration)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
         .unwrap()
         .test_start(task!(setup))

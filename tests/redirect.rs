@@ -85,7 +85,7 @@ fn test_redirect() {
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create();
 
-    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .unwrap()
         .register_taskset(
@@ -146,7 +146,7 @@ fn test_domain_redirect() {
         .expect(0)
         .create();
 
-    let _stats = crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
         .unwrap()
         .register_taskset(
@@ -204,7 +204,7 @@ fn test_sticky_domain_redirect() {
     // Enable sticky_follow option.
     let mut configuration = common::build_configuration();
     configuration.sticky_follow = true;
-    let _stats = crate::GooseAttack::initialize_with_config(configuration)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
         .unwrap()
         .register_taskset(
