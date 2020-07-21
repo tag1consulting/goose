@@ -322,6 +322,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::hash::{Hash, Hasher};
+use std::io;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -375,9 +376,9 @@ pub enum GooseError {
     GooseTask(GooseTaskError),
     NoTaskSets,
     InvalidOption,
+    InvalidHost,
     FeatureNotEnabled,
-    #[cfg(feature = "gaggle")]
-    Nng(nng::Error),
+    Io(io::Error),
 }
 
 impl fmt::Display for GooseError {
@@ -386,20 +387,19 @@ impl fmt::Display for GooseError {
             GooseError::GooseTask(ref err) => err.fmt(f),
             GooseError::NoTaskSets => write!(f, "No task sets defined."),
             GooseError::InvalidOption => write!(f, "Invalid option specified."),
+            GooseError::InvalidHost => write!(f, "Host is not in valid format."),
             GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
-            #[cfg(feature = "gaggle")]
-            GooseError::Nng(ref err) => err.fmt(f),
+            GooseError::Io(ref err) => err.fmt(f),
         }
     }
 }
 
 impl Error for GooseError {}
 
-/// Auto-wrap Nng errors.
-#[cfg(feature = "gaggle")]
-impl From<nng::Error> for GooseError {
-    fn from(err: nng::Error) -> GooseError {
-        GooseError::Nng(err)
+/// Auto-wrap IO errors.
+impl From<io::Error> for GooseError {
+    fn from(err: io::Error) -> GooseError {
+        GooseError::Io(err)
     }
 }
 
@@ -543,25 +543,25 @@ impl GooseAttack {
             // Don't allow overhead of collecting statistics unless we're printing them.
             if self.configuration.status_codes {
                 error!("You must not enable --no-stats when enabling --status-codes.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // Don't allow overhead of collecting statistics unless we're printing them.
             if self.configuration.only_summary {
                 error!("You must not enable --no-stats when enabling --only-summary.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // There is nothing to log if statistics are disabled.
             if !self.configuration.stats_log_file.is_empty() {
                 error!("You must not enable --no-stats when enabling --stats-log-file.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // There is nothing to log if statistics are disabled.
             if !self.configuration.stats_log_file.is_empty() {
                 error!("You must not enable --no-stats when enabling --stats-log-format.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -569,7 +569,7 @@ impl GooseAttack {
             // Log format isn't relevant if log not enabled.
             if self.configuration.stats_log_file.is_empty() {
                 error!("You must enable --stats-log-file when setting --stats-log-format.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // All of these options must be defined below, search for formatted_log.
@@ -579,7 +579,7 @@ impl GooseAttack {
                     "The --stats-log-format must be set to one of: {}.",
                     options.join(", ")
                 );
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -587,7 +587,7 @@ impl GooseAttack {
             // Log format isn't relevant if log not enabled.
             if self.configuration.debug_log_file.is_empty() {
                 error!("You must enable --debug-log-file when setting --debug-log-format.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // All of these options must be defined below, search for formatted_log.
@@ -597,7 +597,7 @@ impl GooseAttack {
                     "The --debug-log-format must be set to one of: {}.",
                     options.join(", ")
                 );
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -605,7 +605,7 @@ impl GooseAttack {
         if self.configuration.worker {
             if self.configuration.run_time != "" {
                 error!("The --run-time option is only available to the manager.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             self.run_time = 0;
         } else if self.configuration.run_time != "" {
@@ -621,14 +621,14 @@ impl GooseAttack {
                 if u == 0 {
                     if self.configuration.worker {
                         error!("At least 1 user is required.");
-                        std::process::exit(1);
+                        return Err(GooseError::InvalidOption);
                     } else {
                         0
                     }
                 } else {
                     if self.configuration.worker {
                         error!("The --users option is only available to the manager.");
-                        std::process::exit(1);
+                        return Err(GooseError::InvalidOption);
                     }
                     u
                 }
@@ -1000,13 +1000,13 @@ impl GooseAttack {
             for task_set in &self.task_sets {
                 match &task_set.host {
                     Some(h) => {
-                        if is_valid_host(h) {
+                        if is_valid_host(h).is_ok() {
                             info!("host for {} configured: {}", task_set.name, h);
                         }
                     }
                     None => match &self.host {
                         Some(h) => {
-                            if is_valid_host(h) {
+                            if is_valid_host(h).is_ok() {
                                 info!("host for {} configured: {}", task_set.name, h);
                             }
                         }
@@ -1019,7 +1019,7 @@ impl GooseAttack {
                     },
                 }
             }
-        } else if is_valid_host(&self.configuration.host) {
+        } else if is_valid_host(&self.configuration.host).is_ok() {
             info!("global host configured: {}", self.configuration.host);
         }
 
@@ -1089,7 +1089,7 @@ impl GooseAttack {
         // Start goose in single-process mode.
         else {
             let mut rt = tokio::runtime::Runtime::new().unwrap();
-            self = rt.block_on(self.launch_users(sleep_duration, None));
+            self = rt.block_on(self.launch_users(sleep_duration, None))?;
         }
 
         Ok(self)
@@ -1259,7 +1259,7 @@ impl GooseAttack {
         mut self,
         sleep_duration: time::Duration,
         socket: Option<Socket>,
-    ) -> GooseAttack {
+    ) -> Result<GooseAttack, GooseError> {
         trace!(
             "launch users: sleep_duration({:?}) socket({:?})",
             sleep_duration,
@@ -1390,16 +1390,12 @@ impl GooseAttack {
         // Prepare an asynchronous buffered file writer for stats_log_file (if enabled).
         let mut stats_log_file = None;
         if !self.configuration.no_stats && !self.configuration.stats_log_file.is_empty() {
-            stats_log_file = match File::create(&self.configuration.stats_log_file).await {
-                Ok(f) => Some(BufWriter::new(f)),
-                Err(e) => {
-                    error!(
-                        "failed to create stats_log_file ({}): {}",
-                        self.configuration.stats_log_file, e
-                    );
-                    std::process::exit(1);
-                }
-            }
+            info!(
+                "opening file to log statistics: {}",
+                self.configuration.stats_log_file
+            );
+            let file = File::create(&self.configuration.stats_log_file).await?;
+            stats_log_file = Some(BufWriter::new(file));
         }
 
         // If logging stats to CSV, use this flag to write header; otherwise it's ignored.
@@ -1629,7 +1625,7 @@ impl GooseAttack {
             let _ = file.flush().await;
         };
 
-        self
+        Ok(self)
     }
 }
 
@@ -1937,27 +1933,40 @@ fn weight_tasks(
     )
 }
 
-fn is_valid_host(host: &str) -> bool {
+fn is_valid_host(host: &str) -> Result<bool, GooseError> {
     match Url::parse(host) {
-        Ok(_) => true,
+        Ok(_) => Ok(true),
         Err(e) => {
             error!("invalid host '{}': {}", host, e);
-            std::process::exit(1);
+            Err(GooseError::InvalidHost)
         }
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
     fn valid_host() {
-        // We can only test valid domains, as we exit on failure.
-        // @TODO: rework so we don't exit on failure
-        assert_eq!(is_valid_host("http://example.com"), true);
-        assert_eq!(is_valid_host("http://example.com/"), true);
-        assert_eq!(is_valid_host("https://www.example.com/and/with/path"), true);
-        assert_eq!(is_valid_host("foo://example.com"), true);
-        assert_eq!(is_valid_host("file:///path/to/file"), true);
+        assert_eq!(is_valid_host("http://example.com").is_ok(), true);
+        assert_eq!(is_valid_host("example.com").is_ok(), false);
+        assert_eq!(is_valid_host("http://example.com/").is_ok(), true);
+        assert_eq!(is_valid_host("example.com/").is_ok(), false);
+        assert_eq!(
+            is_valid_host("https://www.example.com/and/with/path").is_ok(),
+            true
+        );
+        assert_eq!(
+            is_valid_host("www.example.com/and/with/path").is_ok(),
+            false
+        );
+        assert_eq!(is_valid_host("foo://example.com").is_ok(), true);
+        assert_eq!(is_valid_host("file:///path/to/file").is_ok(), true);
+        assert_eq!(is_valid_host("/path/to/file").is_ok(), false);
+        assert_eq!(is_valid_host("http://").is_ok(), false);
+        assert_eq!(is_valid_host("http://foo").is_ok(), true);
+        assert_eq!(is_valid_host("http:///example.com").is_ok(), true);
+        assert_eq!(is_valid_host("http:// example.com").is_ok(), false);
     }
 }

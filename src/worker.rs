@@ -232,9 +232,16 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     }
     worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
-    worker_goose_attack
+    match worker_goose_attack
         .launch_users(sleep_duration, Some(manager))
         .await
+    {
+        Ok(w) => w,
+        Err(e) => {
+            error!("[{}] failed to launch GooseAttack: {}", get_worker_id(), e);
+            std::process::exit(1);
+        }
+    }
 }
 
 pub fn push_stats_to_manager(
