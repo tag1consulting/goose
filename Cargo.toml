@@ -40,5 +40,4 @@ gaggle = ["nng"]
 rustls = ["reqwest/rustls-tls"]
 
 [dev-dependencies]
-httpmock = "0.3"
-mockito = "0.25"
+httpmock = "0.4"
