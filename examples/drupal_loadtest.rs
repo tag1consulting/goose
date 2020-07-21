@@ -27,30 +27,30 @@ use goose::prelude::*;
 use rand::Rng;
 use regex::Regex;
 
-fn main() {
-    GooseAttack::initialize()
+fn main() -> Result<(), GooseError> {
+    GooseAttack::initialize()?
         .register_taskset(
             taskset!("AnonBrowsingUser")
-                .set_weight(4)
+                .set_weight(4)?
                 .register_task(
                     task!(drupal_loadtest_front_page)
-                        .set_weight(15)
+                        .set_weight(15)?
                         .set_name("(Anon) front page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_node_page)
-                        .set_weight(10)
+                        .set_weight(10)?
                         .set_name("(Anon) node page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_profile_page)
-                        .set_weight(3)
+                        .set_weight(3)?
                         .set_name("(Anon) user page"),
                 ),
         )
         .register_taskset(
             taskset!("AuthBrowsingUser")
-                .set_weight(1)
+                .set_weight(1)?
                 .register_task(
                     task!(drupal_loadtest_login)
                         .set_on_start()
@@ -58,26 +58,29 @@ fn main() {
                 )
                 .register_task(
                     task!(drupal_loadtest_front_page)
-                        .set_weight(15)
+                        .set_weight(15)?
                         .set_name("(Auth) front page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_node_page)
-                        .set_weight(10)
+                        .set_weight(10)?
                         .set_name("(Auth) node page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_profile_page)
-                        .set_weight(3)
+                        .set_weight(3)?
                         .set_name("(Auth) user page"),
                 )
                 .register_task(
                     task!(drupal_loadtest_post_comment)
-                        .set_weight(3)
+                        .set_weight(3)?
                         .set_name("(Auth) comment form"),
                 ),
         )
-        .execute();
+        .execute()?
+        .display();
+
+    Ok(())
 }
 
 /// View the front page.
@@ -125,6 +128,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
             );
         }
     }
+
     Ok(())
 }
 
@@ -132,6 +136,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
 async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
     let nid = rand::thread_rng().gen_range(1, 10_000);
     let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
+
     Ok(())
 }
 
@@ -139,6 +144,7 @@ async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
 async fn drupal_loadtest_profile_page(user: &GooseUser) -> GooseTaskResult {
     let uid = rand::thread_rng().gen_range(2, 5_001);
     let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
+
     Ok(())
 }
 
@@ -177,7 +183,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let request_builder = user.goose_post("/user").await;
+                    let request_builder = user.goose_post("/user").await?;
                     let _goose = user.goose_send(request_builder.form(&params), None).await;
                     // @TODO: verify that we actually logged in.
                 }
@@ -205,6 +211,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
             );
         }
     }
+
     Ok(())
 }
 
@@ -293,7 +300,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     ];
 
                     // Post the comment.
-                    let request_builder = user.goose_post(&comment_path).await;
+                    let request_builder = user.goose_post(&comment_path).await?;
                     let mut goose = user.goose_send(request_builder.form(&params), None).await?;
 
                     // Verify that the comment posted.
@@ -370,5 +377,6 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
             );
         }
     }
+
     Ok(())
 }

@@ -34,11 +34,15 @@ fn test_start() {
     let mock_teardown = mock(POST, TEARDOWN_PATH).return_status(205).create();
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .test_start(task!(setup))
-        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
-        .execute();
+        .register_taskset(
+            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
+        )
+        .execute()
+        .unwrap();
 
     let called_setup = mock_setup.times_called();
     let called_index = mock_index.times_called();
@@ -62,11 +66,15 @@ fn test_stop() {
     let mock_teardown = mock(POST, TEARDOWN_PATH).return_status(205).create();
     let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .test_stop(task!(teardown))
-        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
-        .execute();
+        .register_taskset(
+            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
+        )
+        .execute()
+        .unwrap();
 
     let called_setup = mock_setup.times_called();
     let called_index = mock_index.times_called();
@@ -94,12 +102,16 @@ fn test_setup_teardown() {
     configuration.users = Some(5);
     configuration.hatch_rate = 5;
 
-    crate::GooseAttack::initialize_with_config(configuration)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
+        .unwrap()
         .test_start(task!(setup))
-        .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9)))
+        .register_taskset(
+            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
+        )
         .test_stop(task!(teardown))
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_setup = mock_setup.times_called();
     let called_index = mock_index.times_called();

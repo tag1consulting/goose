@@ -54,6 +54,7 @@
 //!
 //! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
 //!   let _goose = user.get("/path/to/foo").await?;
+//!
 //!   Ok(())
 //! }   
 //! ```
@@ -70,9 +71,10 @@
 //! use goose::prelude::*;
 //!
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
-//!   let request_builder = user.goose_get("/path/to/bar").await;
-//!   let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
-//!   Ok(())
+//!     let request_builder = user.goose_get("/path/to/bar").await?;
+//!     let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
+//!
+//!     Ok(())
 //! }   
 //! ```
 //!
@@ -87,28 +89,34 @@
 //! ```rust,no_run
 //! use goose::prelude::*;
 //!
-//! GooseAttack::initialize()
-//!     .register_taskset(taskset!("LoadtestTasks")
-//!         .set_wait_time(0, 3)
-//!         // Register the foo task, assigning it a weight of 10.
-//!         .register_task(task!(loadtest_foo).set_weight(10))
-//!         // Register the bar task, assigning it a weight of 2 (so it
-//!         // runs 1/5 as often as bar). Apply a task name which shows up
-//!         // in statistics.
-//!         .register_task(task!(loadtest_bar).set_name("bar").set_weight(2))
-//!     )
-//!     // You could also set a default host here, for example:
-//!     //.set_host("http://dev.local/")
-//!     .execute();
+//! fn main() -> Result<(), GooseError> {
+//!     GooseAttack::initialize()?
+//!         .register_taskset(taskset!("LoadtestTasks")
+//!             .set_wait_time(0, 3)?
+//!             // Register the foo task, assigning it a weight of 10.
+//!             .register_task(task!(loadtest_foo).set_weight(10)?)
+//!             // Register the bar task, assigning it a weight of 2 (so it
+//!             // runs 1/5 as often as bar). Apply a task name which shows up
+//!             // in statistics.
+//!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2)?)
+//!         )
+//!         // You could also set a default host here, for example:
+//!         //.set_host("http://dev.local/")
+//!         .execute()?;
+//!
+//!     Ok(())
+//! }
 //!
 //! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
-//!   let _goose = user.get("/path/to/foo").await?;
-//!   Ok(())
+//!     let _goose = user.get("/path/to/foo").await?;
+//!
+//!     Ok(())
 //! }   
 //!
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
-//!   let _goose = user.get("/path/to/bar").await?;
-//!   Ok(())
+//!     let _goose = user.get("/path/to/bar").await?;
+//!
+//!     Ok(())
 //! }   
 //! ```
 //!
@@ -314,14 +322,14 @@ use serde_json::json;
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
-use std::f32;
+use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use std::time;
+use std::{f32, fmt, io, time};
 use structopt::StructOpt;
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -357,6 +365,53 @@ pub fn get_worker_id() -> usize {
 /// Socket used for coordinating a Gaggle, a distributed load test.
 pub struct Socket {}
 
+/// Goose optionally tracks statistics about requests made during a load test.
+pub type GooseRequestStats = HashMap<String, GooseRequest>;
+
+/// Definition of all errors Goose can return.
+#[derive(Debug)]
+pub enum GooseError {
+    Io(io::Error),
+    Reqwest(reqwest::Error),
+    FeatureNotEnabled,
+    InvalidHost,
+    InvalidOption,
+    InvalidWaitTime,
+    InvalidWeight,
+    NoTaskSets,
+}
+
+impl fmt::Display for GooseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            GooseError::Io(ref err) => err.fmt(f),
+            GooseError::Reqwest(ref err) => err.fmt(f),
+            GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
+            GooseError::InvalidHost => write!(f, "Unable to parse host."),
+            GooseError::InvalidOption => write!(f, "Invalid option specified."),
+            GooseError::InvalidWaitTime => write!(f, "Invalid wait time specified."),
+            GooseError::InvalidWeight => write!(f, "Invalid weight specified."),
+            GooseError::NoTaskSets => write!(f, "No task sets defined."),
+        }
+    }
+}
+
+impl Error for GooseError {}
+
+/// Auto-convert Reqwest errors.
+impl From<reqwest::Error> for GooseError {
+    fn from(err: reqwest::Error) -> GooseError {
+        GooseError::Reqwest(err)
+    }
+}
+
+/// Auto-convert IO errors.
+impl From<io::Error> for GooseError {
+    fn from(err: io::Error) -> GooseError {
+        GooseError::Io(err)
+    }
+}
+
 /// Internal global state for load test.
 #[derive(Clone)]
 pub struct GooseAttack {
@@ -383,7 +438,9 @@ pub struct GooseAttack {
     /// Track how many users are already loaded.
     active_users: usize,
     /// All requests statistics merged together.
-    merged_requests: HashMap<String, GooseRequest>,
+    merged_requests: GooseRequestStats,
+    /// When the load test started.
+    started: Option<time::Instant>,
 }
 /// Goose's internal global state.
 impl GooseAttack {
@@ -395,7 +452,7 @@ impl GooseAttack {
     ///
     ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
-    pub fn initialize() -> GooseAttack {
+    pub fn initialize() -> Result<GooseAttack, GooseError> {
         let goose_attack = GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -409,8 +466,9 @@ impl GooseAttack {
             users: 0,
             active_users: 0,
             merged_requests: HashMap::new(),
+            started: None,
         };
-        goose_attack.setup()
+        Ok(goose_attack.setup()?)
     }
 
     /// Initialize a GooseAttack with an already loaded configuration.
@@ -438,6 +496,7 @@ impl GooseAttack {
             users: 0,
             active_users: 0,
             merged_requests: HashMap::new(),
+            started: None,
         }
     }
 
@@ -485,7 +544,7 @@ impl GooseAttack {
         info!("Writing to log file: {}", log_file.display());
     }
 
-    pub fn setup(mut self) -> Self {
+    pub fn setup(mut self) -> Result<Self, GooseError> {
         self.initialize_logger();
 
         // Collecting statistics is required for the following options.
@@ -493,25 +552,25 @@ impl GooseAttack {
             // Don't allow overhead of collecting statistics unless we're printing them.
             if self.configuration.status_codes {
                 error!("You must not enable --no-stats when enabling --status-codes.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // Don't allow overhead of collecting statistics unless we're printing them.
             if self.configuration.only_summary {
                 error!("You must not enable --no-stats when enabling --only-summary.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // There is nothing to log if statistics are disabled.
             if !self.configuration.stats_log_file.is_empty() {
                 error!("You must not enable --no-stats when enabling --stats-log-file.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // There is nothing to log if statistics are disabled.
             if !self.configuration.stats_log_file.is_empty() {
                 error!("You must not enable --no-stats when enabling --stats-log-format.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -519,7 +578,7 @@ impl GooseAttack {
             // Log format isn't relevant if log not enabled.
             if self.configuration.stats_log_file.is_empty() {
                 error!("You must enable --stats-log-file when setting --stats-log-format.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // All of these options must be defined below, search for formatted_log.
@@ -529,7 +588,7 @@ impl GooseAttack {
                     "The --stats-log-format must be set to one of: {}.",
                     options.join(", ")
                 );
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -537,7 +596,7 @@ impl GooseAttack {
             // Log format isn't relevant if log not enabled.
             if self.configuration.debug_log_file.is_empty() {
                 error!("You must enable --debug-log-file when setting --debug-log-format.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             // All of these options must be defined below, search for formatted_log.
@@ -547,7 +606,7 @@ impl GooseAttack {
                     "The --debug-log-format must be set to one of: {}.",
                     options.join(", ")
                 );
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -555,7 +614,7 @@ impl GooseAttack {
         if self.configuration.worker {
             if self.configuration.run_time != "" {
                 error!("The --run-time option is only available to the manager.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             self.run_time = 0;
         } else if self.configuration.run_time != "" {
@@ -571,14 +630,14 @@ impl GooseAttack {
                 if u == 0 {
                     if self.configuration.worker {
                         error!("At least 1 user is required.");
-                        std::process::exit(1);
+                        return Err(GooseError::InvalidOption);
                     } else {
                         0
                     }
                 } else {
                     if self.configuration.worker {
                         error!("The --users option is only available to the manager.");
-                        std::process::exit(1);
+                        return Err(GooseError::InvalidOption);
                     }
                     u
                 }
@@ -596,7 +655,7 @@ impl GooseAttack {
             debug!("users = {}", self.users);
         }
 
-        self
+        Ok(self)
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
@@ -606,7 +665,8 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task))
     ///         )
@@ -614,15 +674,20 @@ impl GooseAttack {
     ///             .register_task(task!(other_task))
     ///         );
     ///
-    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/foo").await?;
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn other_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/bar").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn other_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/bar").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
         taskset.task_sets_index = self.task_sets.len();
@@ -641,13 +706,18 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .test_start(task!(setup));
     ///
-    ///     async fn setup(user: &GooseUser) -> GooseTaskResult {
-    ///         // do stuff to set up load test ...
-    ///         Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn setup(user: &GooseUser) -> GooseTaskResult {
+    ///     // do stuff to set up load test ...
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn test_start(mut self, task: GooseTask) -> Self {
         self.test_start_task = Some(task);
@@ -665,13 +735,18 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .test_stop(task!(teardown));
     ///
-    ///     async fn teardown(user: &GooseUser) -> GooseTaskResult {
-    ///         // do stuff to tear down the load test ...
-    ///         Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn teardown(user: &GooseUser) -> GooseTaskResult {
+    ///     // do stuff to tear down the load test ...
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn test_stop(mut self, task: GooseTask) -> Self {
         self.test_stop_task = Some(task);
@@ -691,8 +766,12 @@ impl GooseAttack {
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
     ///         .set_host("local.dev");
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("set_host: {}", host);
@@ -702,7 +781,7 @@ impl GooseAttack {
     }
 
     /// Allocate a vector of weighted GooseUser.
-    fn weight_task_set_users(&mut self) -> Vec<GooseUser> {
+    fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
         trace!("weight_task_set_users");
 
         let mut u: usize = 0;
@@ -754,11 +833,11 @@ impl GooseAttack {
                     self.task_sets[*task_sets_index].max_wait,
                     &self.configuration,
                     self.task_sets_hash,
-                ));
+                )?);
                 user_count += 1;
                 if user_count >= self.users {
                     trace!("created {} weighted_users", user_count);
-                    return weighted_users;
+                    return Ok(weighted_users);
                 }
             }
         }
@@ -768,30 +847,36 @@ impl GooseAttack {
     ///
     /// # Example
     /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     GooseAttack::initialize()
+    /// fn main() -> Result<(), GooseError> {
+    ///     let _goose_attack = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
-    ///             .register_task(task!(example_task).set_weight(2))
-    ///             .register_task(task!(another_example_task).set_weight(3))
+    ///             .register_task(task!(example_task).set_weight(2)?)
+    ///             .register_task(task!(another_example_task).set_weight(3)?)
     ///         )
-    ///         .execute();
+    ///         .execute()?;
     ///
-    ///     async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/foo").await?;
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/bar").await?;
-    ///       Ok(())
-    ///     }
+    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/bar").await?;
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn execute(mut self) {
+    pub fn execute(mut self) -> Result<GooseAttack, GooseError> {
         // At least one task set is required.
         if self.task_sets.is_empty() {
             error!("No task sets defined.");
-            std::process::exit(1);
+            return Err(GooseError::NoTaskSets);
         }
 
         if self.configuration.list {
@@ -811,29 +896,29 @@ impl GooseAttack {
             // @TODO: support running in both manager and worker mode.
             if self.configuration.worker {
                 error!("You can only run in manager or worker mode, not both.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.expect_workers < 1 {
                 error!("You must set --expect-workers to 1 or more.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             if self.configuration.expect_workers as usize > self.users {
                 error!(
                     "You must enable at least as many users ({}) as workers ({}).",
                     self.users, self.configuration.expect_workers
                 );
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if !self.configuration.debug_log_file.is_empty() {
                 error!("You can only enable --debug-log-file in stand-alone or worker mode, not as manager.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.throttle_requests.is_some() {
                 error!("You can only configure --throttle-requests in stand-alone mode or per worker, not as manager.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -841,11 +926,11 @@ impl GooseAttack {
         match self.configuration.throttle_requests {
             Some(throttle) if throttle == 0 => {
                 error!("Throttle must be at least 1 request per second.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             Some(throttle) if throttle > 1_000_000 => {
                 error!("Throttle can not be more than 1,000,000 requests per second.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
             // Everything else is valid.
             _ => (),
@@ -856,48 +941,48 @@ impl GooseAttack {
             // @TODO: support running in both manager and worker mode.
             if self.configuration.manager {
                 error!("You can only run in manager or worker mode, not both.");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.expect_workers > 0 {
                 error!("The --expect-workers option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.host != "" {
                 error!("The --host option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.manager_bind_host != "0.0.0.0" {
                 error!("The --manager-bind-host option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
             if self.configuration.manager_bind_port != default_port {
                 error!("The --manager-bind-port option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.no_stats {
                 error!("The --no-stats option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.only_summary {
                 error!("The --only-summary option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.status_codes {
                 error!("The --status-codes option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
 
             if self.configuration.no_hash_check {
                 error!("The --no-hash-check option is only available to the manager");
-                std::process::exit(1);
+                return Err(GooseError::InvalidOption);
             }
         }
 
@@ -906,18 +991,18 @@ impl GooseAttack {
             && self.configuration.no_hash_check
         {
             error!("The --no-hash-check option is only available when running in manager mode");
-            std::process::exit(1);
+            return Err(GooseError::InvalidOption);
         }
 
         // Configure number of user threads to launch per second, defaults to 1.
         let hatch_rate = self.configuration.hatch_rate;
         if hatch_rate < 1 {
             error!("Hatch rate must be greater than 0, or no users will launch.");
-            std::process::exit(1);
+            return Err(GooseError::InvalidOption);
         }
         if hatch_rate > 1 && self.configuration.worker {
             error!("The --hatch-rate option is only available to the manager");
-            std::process::exit(1);
+            return Err(GooseError::InvalidOption);
         }
         debug!("hatch_rate = {}", hatch_rate);
 
@@ -926,26 +1011,26 @@ impl GooseAttack {
             for task_set in &self.task_sets {
                 match &task_set.host {
                     Some(h) => {
-                        if is_valid_host(h) {
+                        if is_valid_host(h).is_ok() {
                             info!("host for {} configured: {}", task_set.name, h);
                         }
                     }
                     None => match &self.host {
                         Some(h) => {
-                            if is_valid_host(h) {
+                            if is_valid_host(h).is_ok() {
                                 info!("host for {} configured: {}", task_set.name, h);
                             }
                         }
                         None => {
                             if !self.configuration.worker {
                                 error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
-                                std::process::exit(1);
+                                return Err(GooseError::InvalidOption);
                             }
                         }
                     },
                 }
             }
-        } else if is_valid_host(&self.configuration.host) {
+        } else if is_valid_host(&self.configuration.host).is_ok() {
             info!("global host configured: {}", self.configuration.host);
         }
 
@@ -967,7 +1052,7 @@ impl GooseAttack {
 
         // Allocate a state for each of the users we are about to start.
         if !self.configuration.worker {
-            self.weighted_users = self.weight_task_set_users();
+            self.weighted_users = self.weight_task_set_users()?;
         }
 
         // Calculate a unique hash for the current load test.
@@ -977,7 +1062,7 @@ impl GooseAttack {
         debug!("task_sets_hash: {}", self.task_sets_hash);
 
         // Our load test is officially starting.
-        let started = time::Instant::now();
+        self.started = Some(time::Instant::now());
         // Spawn users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_float = 1.0 / hatch_rate as f32;
         let sleep_duration = time::Duration::from_secs_f32(sleep_float);
@@ -995,7 +1080,7 @@ impl GooseAttack {
                 error!(
                     "goose must be recompiled with `--features gaggle` to start in manager mode"
                 );
-                std::process::exit(1);
+                return Err(GooseError::FeatureNotEnabled);
             }
         }
         // Start goose in worker mode.
@@ -1009,17 +1094,51 @@ impl GooseAttack {
             #[cfg(not(feature = "gaggle"))]
             {
                 error!("goose must be recompiled with `--features gaggle` to start in worker mode");
-                std::process::exit(1);
+                return Err(GooseError::FeatureNotEnabled);
             }
         }
         // Start goose in single-process mode.
         else {
             let mut rt = tokio::runtime::Runtime::new().unwrap();
-            self = rt.block_on(self.launch_users(started, sleep_duration, None));
+            self = rt.block_on(self.launch_users(sleep_duration, None))?;
         }
 
+        Ok(self)
+    }
+
+    /// Display the statistics optionally collected during a load test.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::prelude::*;
+    ///
+    /// fn main() -> Result<(), GooseError> {
+    ///     let _goose_attack = GooseAttack::initialize()?
+    ///         .register_taskset(taskset!("ExampleTasks")
+    ///             .register_task(task!(example_task).set_weight(2)?)
+    ///             .register_task(task!(another_example_task).set_weight(3)?)
+    ///         )
+    ///         .execute()?
+    ///         .display();
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/bar").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn display(self) {
         if !self.configuration.no_stats && !self.configuration.worker {
-            stats::print_final_stats(&self, started.elapsed().as_secs() as usize);
+            stats::print_final_stats(&self, self.started.unwrap().elapsed().as_secs() as usize);
         }
     }
 
@@ -1150,13 +1269,11 @@ impl GooseAttack {
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
-        mut started: time::Instant,
         sleep_duration: time::Duration,
         socket: Option<Socket>,
-    ) -> GooseAttack {
+    ) -> Result<GooseAttack, GooseError> {
         trace!(
-            "launch users: started({:?}) sleep_duration({:?}) socket({:?})",
-            started,
+            "launch users: sleep_duration({:?}) socket({:?})",
             sleep_duration,
             socket
         );
@@ -1170,7 +1287,7 @@ impl GooseAttack {
                     // Create a one-time-use User to run the test_start_task.
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
-                    let user = GooseUser::single(base_url, &self.configuration);
+                    let user = GooseUser::single(base_url, &self.configuration)?;
                     let function = t.function;
                     let _ = function(&user).await;
                 }
@@ -1196,8 +1313,8 @@ impl GooseAttack {
         ) = mpsc::unbounded_channel();
         // Spawn users, each with their own weighted task_set.
         for mut thread_user in self.weighted_users.clone() {
-            // Stop launching threads if the run_timer has expired.
-            if util::timer_expired(started, self.run_time) {
+            // Stop launching threads if the run_timer has expired, unwrap is safe as we only get here if we started.
+            if util::timer_expired(self.started.unwrap(), self.run_time) {
                 break;
             }
 
@@ -1260,7 +1377,7 @@ impl GooseAttack {
             tokio::time::delay_for(sleep_duration).await;
         }
         // Restart the timer now that all threads are launched.
-        started = time::Instant::now();
+        self.started = Some(time::Instant::now());
         if self.configuration.worker {
             info!(
                 "[{}] launched {} users...",
@@ -1285,16 +1402,12 @@ impl GooseAttack {
         // Prepare an asynchronous buffered file writer for stats_log_file (if enabled).
         let mut stats_log_file = None;
         if !self.configuration.no_stats && !self.configuration.stats_log_file.is_empty() {
-            stats_log_file = match File::create(&self.configuration.stats_log_file).await {
-                Ok(f) => Some(BufWriter::new(f)),
-                Err(e) => {
-                    error!(
-                        "failed to create stats_log_file ({}): {}",
-                        self.configuration.stats_log_file, e
-                    );
-                    std::process::exit(1);
-                }
-            }
+            info!(
+                "opening file to log statistics: {}",
+                self.configuration.stats_log_file
+            );
+            let file = File::create(&self.configuration.stats_log_file).await?;
+            stats_log_file = Some(BufWriter::new(file));
         }
 
         // If logging stats to CSV, use this flag to write header; otherwise it's ignored.
@@ -1396,15 +1509,20 @@ impl GooseAttack {
                 }
             }
 
-            if util::timer_expired(started, self.run_time) || canceled.load(Ordering::SeqCst) {
+            if util::timer_expired(self.started.unwrap(), self.run_time)
+                || canceled.load(Ordering::SeqCst)
+            {
                 if self.configuration.worker {
                     info!(
                         "[{}] stopping after {} seconds...",
                         get_worker_id(),
-                        started.elapsed().as_secs()
+                        self.started.unwrap().elapsed().as_secs()
                     );
                 } else {
-                    info!("stopping after {} seconds...", started.elapsed().as_secs());
+                    info!(
+                        "stopping after {} seconds...",
+                        self.started.unwrap().elapsed().as_secs()
+                    );
                 }
                 for (index, send_to_user) in user_channels.iter().enumerate() {
                     match send_to_user.send(GooseUserCommand::EXIT) {
@@ -1483,7 +1601,10 @@ impl GooseAttack {
             // If enabled, display running statistics after sync
             if display_running_statistics {
                 display_running_statistics = false;
-                stats::print_running_stats(&self, started.elapsed().as_secs() as usize);
+                stats::print_running_stats(
+                    &self,
+                    self.started.unwrap().elapsed().as_secs() as usize,
+                );
             }
 
             let one_second = time::Duration::from_secs(1);
@@ -1498,7 +1619,7 @@ impl GooseAttack {
                     let base_url =
                         goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
                     // Create a one-time-use user to run the test_stop_task.
-                    let user = GooseUser::single(base_url, &self.configuration);
+                    let user = GooseUser::single(base_url, &self.configuration)?;
                     let function = t.function;
                     let _ = function(&user).await;
                 }
@@ -1516,7 +1637,7 @@ impl GooseAttack {
             let _ = file.flush().await;
         };
 
-        self
+        Ok(self)
     }
 }
 
@@ -1824,27 +1945,40 @@ fn weight_tasks(
     )
 }
 
-fn is_valid_host(host: &str) -> bool {
+fn is_valid_host(host: &str) -> Result<bool, GooseError> {
     match Url::parse(host) {
-        Ok(_) => true,
+        Ok(_) => Ok(true),
         Err(e) => {
             error!("invalid host '{}': {}", host, e);
-            std::process::exit(1);
+            Err(GooseError::InvalidHost)
         }
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
     fn valid_host() {
-        // We can only test valid domains, as we exit on failure.
-        // @TODO: rework so we don't exit on failure
-        assert_eq!(is_valid_host("http://example.com"), true);
-        assert_eq!(is_valid_host("http://example.com/"), true);
-        assert_eq!(is_valid_host("https://www.example.com/and/with/path"), true);
-        assert_eq!(is_valid_host("foo://example.com"), true);
-        assert_eq!(is_valid_host("file:///path/to/file"), true);
+        assert_eq!(is_valid_host("http://example.com").is_ok(), true);
+        assert_eq!(is_valid_host("example.com").is_ok(), false);
+        assert_eq!(is_valid_host("http://example.com/").is_ok(), true);
+        assert_eq!(is_valid_host("example.com/").is_ok(), false);
+        assert_eq!(
+            is_valid_host("https://www.example.com/and/with/path").is_ok(),
+            true
+        );
+        assert_eq!(
+            is_valid_host("www.example.com/and/with/path").is_ok(),
+            false
+        );
+        assert_eq!(is_valid_host("foo://example.com").is_ok(), true);
+        assert_eq!(is_valid_host("file:///path/to/file").is_ok(), true);
+        assert_eq!(is_valid_host("/path/to/file").is_ok(), false);
+        assert_eq!(is_valid_host("http://").is_ok(), false);
+        assert_eq!(is_valid_host("http://foo").is_ok(), true);
+        assert_eq!(is_valid_host("http:///example.com").is_ok(), true);
+        assert_eq!(is_valid_host("http:// example.com").is_ok(), false);
     }
 }

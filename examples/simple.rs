@@ -19,41 +19,47 @@
 
 use goose::prelude::*;
 
-fn main() {
-    GooseAttack::initialize()
+fn main() -> Result<(), GooseError> {
+    GooseAttack::initialize()?
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(
             taskset!("WebsiteUser")
                 // After each task runs, sleep randomly from 5 to 15 seconds.
-                .set_wait_time(5, 15)
+                .set_wait_time(5, 15)?
                 // This task only runs one time when the user first starts.
                 .register_task(task!(website_login).set_on_start())
                 // These next two tasks run repeatedly as long as the load test is running.
                 .register_task(task!(website_index))
                 .register_task(task!(website_about)),
         )
-        .execute();
+        .execute()?
+        .display();
+
+    Ok(())
 }
 
 /// Demonstrates how to log in when a user starts. We flag this task as an
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
 async fn website_login(user: &GooseUser) -> GooseTaskResult {
-    let request_builder = user.goose_post("/login").await;
+    let request_builder = user.goose_post("/login").await?;
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
     let _goose = user.goose_send(request_builder.form(&params), None).await?;
+
     Ok(())
 }
 
 /// A very simple task that simply loads the front page.
 async fn website_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get("/").await?;
+
     Ok(())
 }
 
 /// A very simple task that simply loads the about page.
 async fn website_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get("/about/").await?;
+
     Ok(())
 }

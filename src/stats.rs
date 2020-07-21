@@ -3,8 +3,7 @@ use num_format::{Locale, ToFormattedString};
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
 
-use crate::goose::GooseRequest;
-use crate::{util, GooseAttack};
+use crate::{util, GooseAttack, GooseRequestStats};
 
 /// A helper function that merges together response times.
 ///
@@ -75,7 +74,7 @@ fn calculate_response_time_percentile(
 }
 
 /// Display a table of requests and fails.
-pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapsed: usize) {
+pub fn print_requests_and_fails(requests: &GooseRequestStats, elapsed: usize) {
     debug!("entering print_requests_and_fails");
     // Display stats from merged HashMap
     println!("------------------------------------------------------------------------------ ");
@@ -162,7 +161,7 @@ pub fn print_requests_and_fails(requests: &HashMap<String, GooseRequest>, elapse
     }
 }
 
-fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percentiles: bool) {
+fn print_response_times(requests: &GooseRequestStats, display_percentiles: bool) {
     debug!("entering print_response_times");
     let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
     let mut aggregate_total_response_time: usize = 0;
@@ -340,7 +339,7 @@ fn print_response_times(requests: &HashMap<String, GooseRequest>, display_percen
     }
 }
 
-fn print_status_codes(requests: &HashMap<String, GooseRequest>) {
+fn print_status_codes(requests: &GooseRequestStats) {
     debug!("entering print_status_codes");
     println!("-------------------------------------------------------------------------------");
     println!(" {:<23} | {:<25} ", "Name", "Status codes");

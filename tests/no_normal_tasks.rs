@@ -9,7 +9,7 @@ const LOGIN_PATH: &str = "/login";
 const LOGOUT_PATH: &str = "/logout";
 
 pub async fn login(user: &GooseUser) -> GooseTaskResult {
-    let request_builder = user.goose_post(LOGIN_PATH).await;
+    let request_builder = user.goose_post(LOGIN_PATH).await?;
     let params = [("username", "me"), ("password", "s3crET!")];
     let _goose = user.goose_send(request_builder.form(&params), None).await?;
     Ok(())
@@ -26,14 +26,16 @@ fn test_no_normal_tasks() {
     let mock_login = mock(POST, LOGIN_PATH).return_status(200).create();
     let mock_logout = mock(GET, LOGOUT_PATH).return_status(200).create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(login).set_on_start())
                 .register_task(task!(logout).set_on_stop()),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_login = mock_login.times_called();
     let called_logout = mock_logout.times_called();

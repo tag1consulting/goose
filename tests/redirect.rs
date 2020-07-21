@@ -85,8 +85,9 @@ fn test_redirect() {
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 // Load index directly.
@@ -95,7 +96,8 @@ fn test_redirect() {
                 // redirect3 path, redirect to about.
                 .register_task(task!(get_redirect)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_redirect = mock_redirect.times_called();
@@ -144,8 +146,9 @@ fn test_domain_redirect() {
         .expect(0)
         .create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 // First load redirect, takes this request only to another domain.
@@ -155,7 +158,8 @@ fn test_domain_redirect() {
                 // Load about directly, always on original domain.
                 .register_task(task!(get_about)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();
@@ -200,8 +204,9 @@ fn test_sticky_domain_redirect() {
     // Enable sticky_follow option.
     let mut configuration = common::build_configuration();
     configuration.sticky_follow = true;
-    crate::GooseAttack::initialize_with_config(configuration)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 // First load redirect, due to stick_follow the load test stays on the
@@ -212,7 +217,8 @@ fn test_sticky_domain_redirect() {
                 // Due to sticky follow, we should always load the alternative about.
                 .register_task(task!(get_about)),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();

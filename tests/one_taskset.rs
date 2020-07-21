@@ -27,14 +27,16 @@ fn test_single_taskset() {
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create();
 
-    crate::GooseAttack::initialize_with_config(common::build_configuration())
+    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9))
-                .register_task(task!(get_about).set_weight(3)),
+                .register_task(task!(get_index).set_weight(9).unwrap())
+                .register_task(task!(get_about).set_weight(3).unwrap()),
         )
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();
@@ -61,15 +63,17 @@ fn test_single_taskset_empty_config_host() {
     let mut config = common::build_configuration();
     // this will leave an empty string in config.host
     let host = std::mem::take(&mut config.host);
-    crate::GooseAttack::initialize_with_config(config)
+    let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
+        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9))
-                .register_task(task!(get_about).set_weight(3)),
+                .register_task(task!(get_index).set_weight(9).unwrap())
+                .register_task(task!(get_about).set_weight(3).unwrap()),
         )
         .set_host(&host)
-        .execute();
+        .execute()
+        .unwrap();
 
     let called_index = mock_index.times_called();
     let called_about = mock_about.times_called();
