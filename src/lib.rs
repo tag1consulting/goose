@@ -628,7 +628,7 @@ impl GooseAttack {
             if self.configuration.stats_log_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--stats-log-format".to_string(),
-                    value: self.configuration.stats_log_format.to_string(),
+                    value: self.configuration.stats_log_format,
                     detail: Some(
                         "--stats-log-file must be enabled when setting --stats-log-format."
                             .to_string(),
@@ -641,7 +641,7 @@ impl GooseAttack {
             if !options.contains(&self.configuration.stats_log_format.as_str()) {
                 return Err(GooseError::InvalidOption {
                     option: "--stats-log-format".to_string(),
-                    value: self.configuration.stats_log_format.to_string(),
+                    value: self.configuration.stats_log_format,
                     detail: Some(format!(
                         "--stats-log-format must be set to one of: {}.",
                         options.join(", ")
@@ -655,7 +655,7 @@ impl GooseAttack {
             if self.configuration.debug_log_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-log-format".to_string(),
-                    value: self.configuration.debug_log_format.to_string(),
+                    value: self.configuration.debug_log_format,
                     detail: Some(
                         "--debug-log-file must be enabled when setting --debug-log-format."
                             .to_string(),
@@ -668,7 +668,7 @@ impl GooseAttack {
             if !options.contains(&self.configuration.debug_log_format.as_str()) {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-log-format".to_string(),
-                    value: self.configuration.debug_log_format.to_string(),
+                    value: self.configuration.debug_log_format,
                     detail: Some(format!(
                         "--debug-log-format must be set to one of: {}.",
                         options.join(", ")
@@ -1001,7 +1001,7 @@ impl GooseAttack {
             if !self.configuration.debug_log_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-log-file".to_string(),
-                    value: self.configuration.debug_log_file.to_string(),
+                    value: self.configuration.debug_log_file,
                     detail: Some(
                         "--debug-log-file can only be enabled in stand-alone or worker mode"
                             .to_string(),
@@ -1065,7 +1065,7 @@ impl GooseAttack {
             if !self.configuration.host.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--host".to_string(),
-                    value: self.configuration.host.to_string(),
+                    value: self.configuration.host,
                     detail: Some("--host is only available to the manager".to_string()),
                 });
             }
@@ -1073,7 +1073,7 @@ impl GooseAttack {
             if self.configuration.manager_bind_host != "0.0.0.0" {
                 return Err(GooseError::InvalidOption {
                     option: "--manager-bind-host".to_string(),
-                    value: self.configuration.manager_bind_host.to_string(),
+                    value: self.configuration.manager_bind_host,
                     detail: Some(
                         "--manager-bind-host is only available to the manager".to_string(),
                     ),
