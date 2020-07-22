@@ -706,9 +706,8 @@ impl GooseAttack {
                             value: self.users.to_string(),
                             detail: Some("at least 1 user is required.".to_string()),
                         });
-                    } else {
-                        0
                     }
+                    0
                 } else {
                     if self.configuration.worker {
                         return Err(GooseError::InvalidOption {

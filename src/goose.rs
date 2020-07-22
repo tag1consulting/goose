@@ -493,9 +493,9 @@ impl GooseTaskSet {
                 weight,
                 detail: Some("weight of 0 not allowed".to_string()),
             });
-        } else {
-            self.weight = weight;
         }
+        self.weight = weight;
+
         Ok(self)
     }
 
@@ -1881,7 +1881,16 @@ pub fn get_base_url(
                 None => {
                     // Host is required, if we get here it's safe to unwrap this variable.
                     let default_host = default_host.unwrap();
-                    Ok(Url::parse(&default_host).map_err(|parse_error| GooseError::InvalidHost { host: default_host.to_string(), detail: Some("failure parsing host specified globally with GooseAttack.set_host()".to_string()), parse_error })?)
+                    Ok(
+                        Url::parse(&default_host).map_err(|parse_error| GooseError::InvalidHost {
+                            host: default_host.to_string(),
+                            detail: Some(
+                                "failure parsing host specified globally with GooseAttack.set_host()"
+                                    .to_string(),
+                            ),
+                            parse_error,
+                        })?,
+                    )
                 }
             }
         }
@@ -2038,9 +2047,9 @@ impl GooseTask {
                 weight,
                 detail: Some("weight of 0 not allowed".to_string()),
             });
-        } else {
-            self.weight = weight;
         }
+        self.weight = weight;
+
         Ok(self)
     }
 
