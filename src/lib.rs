@@ -374,7 +374,11 @@ pub enum GooseError {
     Io(io::Error),
     Reqwest(reqwest::Error),
     FeatureNotEnabled,
-    InvalidHost,
+    InvalidHost {
+        host: String,
+        detail: Option<String>,
+        parse_error: url::ParseError,
+    },
     InvalidOption,
     InvalidWaitTime,
     InvalidWeight,
@@ -387,8 +391,8 @@ impl fmt::Display for GooseError {
             GooseError::Io(ref err) => err.fmt(f),
             GooseError::Reqwest(ref err) => err.fmt(f),
             GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
-            GooseError::InvalidHost => write!(f, "Unable to parse host."),
-            GooseError::InvalidOption => write!(f, "Invalid option specified."),
+            GooseError::InvalidHost { .. } => write!(f, "Unable to parse host"),
+            GooseError::InvalidOption => write!(f, "Invalid option."),
             GooseError::InvalidWaitTime => write!(f, "Invalid wait time specified."),
             GooseError::InvalidWeight => write!(f, "Invalid weight specified."),
             GooseError::NoTaskSets => write!(f, "No task sets defined."),
@@ -825,7 +829,7 @@ impl GooseAttack {
                     self.get_configuration_host(),
                     self.task_sets[*task_sets_index].host.clone(),
                     self.host.clone(),
-                );
+                )?;
                 weighted_users.push(GooseUser::new(
                     self.task_sets[*task_sets_index].task_sets_index,
                     base_url,
@@ -1285,8 +1289,11 @@ impl GooseAttack {
                 Some(t) => {
                     info!("running test_start_task");
                     // Create a one-time-use User to run the test_start_task.
-                    let base_url =
-                        goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
+                    let base_url = goose::get_base_url(
+                        self.get_configuration_host(),
+                        None,
+                        self.host.clone(),
+                    )?;
                     let user = GooseUser::single(base_url, &self.configuration)?;
                     let function = t.function;
                     let _ = function(&user).await;
@@ -1616,8 +1623,11 @@ impl GooseAttack {
             match &self.test_stop_task {
                 Some(t) => {
                     info!("running test_stop_task");
-                    let base_url =
-                        goose::get_base_url(self.get_configuration_host(), None, self.host.clone());
+                    let base_url = goose::get_base_url(
+                        self.get_configuration_host(),
+                        None,
+                        self.host.clone(),
+                    )?;
                     // Create a one-time-use user to run the test_stop_task.
                     let user = GooseUser::single(base_url, &self.configuration)?;
                     let function = t.function;
@@ -1946,13 +1956,12 @@ fn weight_tasks(
 }
 
 fn is_valid_host(host: &str) -> Result<bool, GooseError> {
-    match Url::parse(host) {
-        Ok(_) => Ok(true),
-        Err(e) => {
-            error!("invalid host '{}': {}", host, e);
-            Err(GooseError::InvalidHost)
-        }
-    }
+    Url::parse(host).map_err(|parse_error| GooseError::InvalidHost {
+        host: host.to_string(),
+        detail: None,
+        parse_error,
+    })?;
+    Ok(true)
 }
 
 #[cfg(test)]

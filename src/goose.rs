@@ -1850,16 +1850,37 @@ pub fn get_base_url(
     config_host: Option<String>,
     task_set_host: Option<String>,
     default_host: Option<String>,
-) -> Url {
+) -> Result<Url, GooseError> {
     // If the `--host` CLI option is set, build the URL with it.
     match config_host {
-        Some(host) => Url::parse(&host).unwrap(),
+        Some(host) => Ok(
+            Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
+                host,
+                detail: Some("Failure parsing host specified with --host".to_string()),
+                parse_error,
+            })?,
+        ),
         None => {
             match task_set_host {
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
-                Some(host) => Url::parse(&host).unwrap(),
+                Some(host) => {
+                    Ok(
+                        Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
+                            host,
+                            detail: Some(
+                                "Failure parsing host specified with GooseTaskSet.set_host()"
+                                    .to_string(),
+                            ),
+                            parse_error,
+                        })?,
+                    )
+                }
                 // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
-                None => Url::parse(&default_host.unwrap()).unwrap(),
+                None => {
+                    // Host is required, if we get here it's safe to unwrap this variable.
+                    let default_host = default_host.unwrap();
+                    Ok(Url::parse(&default_host).map_err(|parse_error| GooseError::InvalidHost { host: default_host.to_string(), detail: Some("Failure parsing host specified globally with GooseAttack.set_host()".to_string()), parse_error })?)
+                }
             }
         }
     }
@@ -2125,7 +2146,7 @@ mod tests {
 
     async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
         let configuration = GooseConfiguration::default();
-        let base_url = get_base_url(Some(server.url("/")), None, None);
+        let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
         GooseUser::single(base_url, &configuration)
     }
 
@@ -2553,7 +2574,7 @@ mod tests {
     async fn goose_user() {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::default();
-        let base_url = get_base_url(Some(HOST.to_string()), None, None);
+        let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
         let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0).unwrap();
         assert_eq!(user.task_sets_index, 0);
         assert_eq!(user.min_wait, 0);
@@ -2588,7 +2609,8 @@ mod tests {
             None,
             Some("http://www2.example.com/".to_string()),
             Some("http://www.example.com/".to_string()),
-        );
+        )
+        .unwrap();
         let user2 = GooseUser::new(0, base_url, 1, 3, &configuration, 0).unwrap();
         assert_eq!(user2.min_wait, 1);
         assert_eq!(user2.max_wait, 3);
