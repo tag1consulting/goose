@@ -76,6 +76,9 @@ fn test_throttle() {
     // Requests are made while GooseUsers are hatched, and then for run_time seconds.
     assert!(test1_lines <= (run_time + 1) * throttle_requests);
 
+    // Cleanup log file.
+    std::fs::remove_file(STATS_LOG_FILE).expect("failed to delete stats log file");
+
     // Increase the throttle and run a second load test, so we can compare the difference
     // and confirm the throttle is actually working.
     throttle_requests *= 5;
@@ -116,4 +119,9 @@ fn test_throttle() {
     assert!(lines <= (run_time + 1) * throttle_requests);
     // Verify the second load test generated more than 4x the load of the first test.
     assert!(lines > test1_lines * 4);
+    // Verify the second load test generated less than 6x the load of the first test.
+    assert!(lines < test1_lines * 6);
+
+    // Cleanup log file.
+    std::fs::remove_file(STATS_LOG_FILE).expect("failed to delete stats log file");
 }
