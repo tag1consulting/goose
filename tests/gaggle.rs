@@ -1,7 +1,7 @@
 mod common;
 
 use httpmock::Method::GET;
-use httpmock::{mock, with_mock_server};
+use httpmock::{Mock, MockServer};
 use std::thread;
 
 use goose::prelude::*;
@@ -21,12 +21,21 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 
 /// Test test_start alone.
 #[test]
-#[with_mock_server]
 fn test_gaggle() {
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_about = mock(GET, ABOUT_PATH).return_status(200).create();
+    let server = MockServer::start();
 
-    let mut configuration = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut configuration = common::build_configuration(&server);
 
     // Start manager instance of the load test.
     let mut master_configuration = configuration.clone();
@@ -65,10 +74,7 @@ fn test_gaggle() {
     let _ = worker_handle.join();
     let _ = master_handle.join();
 
-    let called_index = mock_index.times_called();
-    let called_about = mock_about.times_called();
-
     // Confirm the load test ran both tasksets.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_about, 0);
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
 }

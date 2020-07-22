@@ -1,5 +1,5 @@
 use httpmock::Method::GET;
-use httpmock::{mock, with_mock_server};
+use httpmock::{Mock, MockServer};
 
 mod common;
 
@@ -20,18 +20,27 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 }
 
 #[test]
-#[with_mock_server]
 fn test_throttle() {
     use std::io::{self, BufRead};
 
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_about = mock(GET, ABOUT_PATH).return_status(200).create();
+    let server = MockServer::start();
+
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
 
     let mut throttle_requests = 25;
     let users = 5;
     let run_time = 3;
 
-    let mut config = common::build_configuration();
+    let mut config = common::build_configuration(&server);
     // Record all requests so we can confirm throttle is working.
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.no_stats = false;
@@ -53,12 +62,9 @@ fn test_throttle() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-    let called_about = mock_about.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_about, 0);
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
 
     let test1_lines: usize;
     if let Ok(stats_log) = std::fs::File::open(std::path::Path::new(STATS_LOG_FILE)) {
@@ -74,7 +80,7 @@ fn test_throttle() {
     // and confirm the throttle is actually working.
     throttle_requests *= 5;
 
-    let mut config = common::build_configuration();
+    let mut config = common::build_configuration(&server);
     // Record all requests so we can confirm throttle is working.
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.no_stats = false;
@@ -95,12 +101,9 @@ fn test_throttle() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-    let called_about = mock_about.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_about, 0);
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
 
     let lines: usize;
     if let Ok(stats_log) = std::fs::File::open(std::path::Path::new(STATS_LOG_FILE)) {

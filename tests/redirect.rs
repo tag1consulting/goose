@@ -95,27 +95,28 @@ fn test_redirect() {
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create_on(&server1);
 
-    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
-        .setup()
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                // Load index directly.
-                .register_task(task!(get_index))
-                // Load redirect path, redirect to redirect2 path, redirect to
-                // redirect3 path, redirect to about.
-                .register_task(task!(get_redirect)),
-        )
-        .execute()
-        .unwrap();
+    let _goose_attack =
+        crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
+            .setup()
+            .unwrap()
+            .register_taskset(
+                taskset!("LoadTest")
+                    // Load index directly.
+                    .register_task(task!(get_index))
+                    // Load redirect path, redirect to redirect2 path, redirect to
+                    // redirect3 path, redirect to about.
+                    .register_task(task!(get_redirect)),
+            )
+            .execute()
+            .unwrap();
 
     // Confirm that we loaded the mock endpoints; while we never load the about page
     // directly, we should follow the redirects and load it.
-    assert_ne!(server1_index.times_called(), 0);
-    assert_ne!(server1_redirect.times_called(), 0);
-    assert_ne!(server1_redirect2.times_called(), 0);
-    assert_ne!(server1_redirect3.times_called(), 0);
-    assert_ne!(server1_about.times_called(), 0);
+    assert!(server1_index.times_called() > 0);
+    assert!(server1_redirect.times_called() > 0);
+    assert!(server1_redirect2.times_called() > 0);
+    assert!(server1_redirect3.times_called() > 0);
+    assert!(server1_about.times_called() > 0);
 
     // We should have called all redirects the same number of times as we called the
     // final about page.
@@ -146,10 +147,7 @@ fn test_domain_redirect() {
         .expect_method(GET)
         .expect_path(REDIRECT_PATH)
         .return_status(301)
-        .return_header(
-            "Location",
-            &server2.url(INDEX_PATH),
-        )
+        .return_header("Location", &server2.url(INDEX_PATH))
         .create_on(&server1);
 
     let server2_index = Mock::new()
@@ -163,32 +161,33 @@ fn test_domain_redirect() {
         .return_status(200)
         .create_on(&server2);
 
-    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
-        .setup()
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                // First load redirect, takes this request only to another domain.
-                .register_task(task!(get_domain_redirect).set_on_start())
-                // Load index directly.
-                .register_task(task!(get_index))
-                // Load about directly, always on original domain.
-                .register_task(task!(get_about)),
-        )
-        .execute()
-        .unwrap();
+    let _goose_attack =
+        crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
+            .setup()
+            .unwrap()
+            .register_taskset(
+                taskset!("LoadTest")
+                    // First load redirect, takes this request only to another domain.
+                    .register_task(task!(get_domain_redirect).set_on_start())
+                    // Load index directly.
+                    .register_task(task!(get_index))
+                    // Load about directly, always on original domain.
+                    .register_task(task!(get_about)),
+            )
+            .execute()
+            .unwrap();
 
     // Confirm that we load the index, about and redirect pages on the orginal domain.
-    assert_ne!(server1_index.times_called(), 0);
-    assert_ne!(server1_redirect.times_called(), 0);
-    assert_ne!(server1_about.times_called(), 0);
+    assert!(server1_index.times_called() > 0);
+    assert!(server1_redirect.times_called() > 0);
+    assert!(server1_about.times_called() > 0);
 
     // Confirm that the redirect sends us to the second domain (mocked using a
     // server on a different port).
-    assert_ne!(server2_index.times_called(), 0);
+    assert!(server2_index.times_called() > 0);
 
     // Confirm the we never loaded the about page on the second domain.
-    assert_eq!(server2_about.times_called(), 0);
+    assert!(server2_about.times_called() == 0);
 }
 
 #[test]
@@ -210,10 +209,7 @@ fn test_sticky_domain_redirect() {
         .expect_method(GET)
         .expect_path(REDIRECT_PATH)
         .return_status(301)
-        .return_header(
-            "Location",
-            &server2.url(INDEX_PATH),
-        )
+        .return_header("Location", &server2.url(INDEX_PATH))
         .create_on(&server1);
 
     let server2_index = Mock::new()
@@ -228,7 +224,7 @@ fn test_sticky_domain_redirect() {
         .create_on(&server2);
 
     // Enable sticky_follow option.
-    let mut configuration = common::build_configuration();
+    let mut configuration = common::build_configuration(&server1);
     configuration.sticky_follow = true;
     let _goose_attack = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
@@ -247,12 +243,12 @@ fn test_sticky_domain_redirect() {
         .unwrap();
 
     // Confirm we redirect on startup, and never load index or about.
-    assert_eq!(server1_index.times_called(), 1);
-    assert_eq!(server1_redirect.times_called(), 0);
-    assert_eq!(server1_about.times_called(), 0);
+    assert!(server1_redirect.times_called() == 1);
+    assert!(server1_index.times_called() == 0);
+    assert!(server1_about.times_called() == 0);
 
     // Confirm that we load the alternative index and about pages (mocked using
     // a server on a different port).
-    assert_ne!(server2_index.times_called(), 0);
-    assert_eq!(server2_about.times_called(), 0);
+    assert!(server2_index.times_called() > 0);
+    assert!(server2_about.times_called() > 0);
 }
