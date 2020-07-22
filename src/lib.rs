@@ -373,7 +373,10 @@ pub type GooseRequestStats = HashMap<String, GooseRequest>;
 pub enum GooseError {
     Io(io::Error),
     Reqwest(reqwest::Error),
-    FeatureNotEnabled,
+    FeatureNotEnabled {
+        feature: String,
+        detail: Option<String>,
+    },
     InvalidHost {
         host: String,
         detail: Option<String>,
@@ -390,7 +393,7 @@ impl fmt::Display for GooseError {
         match *self {
             GooseError::Io(ref err) => err.fmt(f),
             GooseError::Reqwest(ref err) => err.fmt(f),
-            GooseError::FeatureNotEnabled => write!(f, "Compile time feature not enabled."),
+            GooseError::FeatureNotEnabled { .. } => write!(f, "Compile time feature not enabled."),
             GooseError::InvalidHost { .. } => write!(f, "Unable to parse host"),
             GooseError::InvalidOption => write!(f, "Invalid option."),
             GooseError::InvalidWaitTime => write!(f, "Invalid wait time specified."),
@@ -1081,10 +1084,7 @@ impl GooseAttack {
 
             #[cfg(not(feature = "gaggle"))]
             {
-                error!(
-                    "goose must be recompiled with `--features gaggle` to start in manager mode"
-                );
-                return Err(GooseError::FeatureNotEnabled);
+                return Err(GooseError::FeatureNotEnabled { feature: "gaggle".to_string(), detail: Some("goose must be recompiled with `--features gaggle` to start in manager mode".to_string()) });
             }
         }
         // Start goose in worker mode.
@@ -1097,8 +1097,13 @@ impl GooseAttack {
 
             #[cfg(not(feature = "gaggle"))]
             {
-                error!("goose must be recompiled with `--features gaggle` to start in worker mode");
-                return Err(GooseError::FeatureNotEnabled);
+                return Err(GooseError::FeatureNotEnabled {
+                    feature: "gaggle".to_string(),
+                    detail: Some(
+                        "goose must be recompiled with `--features gaggle` to start in worker mode"
+                            .to_string(),
+                    ),
+                });
             }
         }
         // Start goose in single-process mode.
