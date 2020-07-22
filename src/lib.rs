@@ -383,7 +383,11 @@ pub enum GooseError {
         parse_error: url::ParseError,
     },
     InvalidOption,
-    InvalidWaitTime,
+    InvalidWaitTime {
+        min_wait: usize,
+        max_wait: usize,
+        detail: Option<String>,
+    },
     InvalidWeight,
     NoTaskSets,
 }
@@ -396,7 +400,7 @@ impl fmt::Display for GooseError {
             GooseError::FeatureNotEnabled { .. } => write!(f, "Compile time feature not enabled."),
             GooseError::InvalidHost { .. } => write!(f, "Unable to parse host"),
             GooseError::InvalidOption => write!(f, "Invalid option."),
-            GooseError::InvalidWaitTime => write!(f, "Invalid wait time specified."),
+            GooseError::InvalidWaitTime { .. } => write!(f, "Invalid wait time specified."),
             GooseError::InvalidWeight => write!(f, "Invalid weight specified."),
             GooseError::NoTaskSets => write!(f, "No task sets defined."),
         }

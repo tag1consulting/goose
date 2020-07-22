@@ -537,11 +537,11 @@ impl GooseTaskSet {
             max_wait
         );
         if min_wait > max_wait {
-            error!(
-                "min_wait({}) can't be larger than max_wait({})",
-                min_wait, max_wait
-            );
-            return Err(GooseError::InvalidWaitTime);
+            return Err(GooseError::InvalidWaitTime {
+                min_wait,
+                max_wait,
+                detail: Some("min_wait can not be larger than max_wait".to_string()),
+            });
         }
         self.min_wait = min_wait;
         self.max_wait = max_wait;
