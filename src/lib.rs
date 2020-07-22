@@ -392,7 +392,9 @@ pub enum GooseError {
         weight: usize,
         detail: Option<String>,
     },
-    NoTaskSets,
+    NoTaskSets {
+        detail: Option<String>,
+    },
 }
 
 impl fmt::Display for GooseError {
@@ -405,7 +407,7 @@ impl fmt::Display for GooseError {
             GooseError::InvalidOption => write!(f, "Invalid option."),
             GooseError::InvalidWaitTime { .. } => write!(f, "Invalid wait time specified."),
             GooseError::InvalidWeight { .. } => write!(f, "Invalid weight specified."),
-            GooseError::NoTaskSets => write!(f, "No task sets defined."),
+            GooseError::NoTaskSets { .. } => write!(f, "No task sets defined."),
         }
     }
 }
@@ -889,8 +891,9 @@ impl GooseAttack {
     pub fn execute(mut self) -> Result<GooseAttack, GooseError> {
         // At least one task set is required.
         if self.task_sets.is_empty() {
-            error!("No task sets defined.");
-            return Err(GooseError::NoTaskSets);
+            return Err(GooseError::NoTaskSets {
+                detail: Some("no task sets defined".to_string()),
+            });
         }
 
         if self.configuration.list {
