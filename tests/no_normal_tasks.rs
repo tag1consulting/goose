@@ -1,5 +1,5 @@
 use httpmock::Method::{GET, POST};
-use httpmock::{mock, with_mock_server};
+use httpmock::{Mock, MockServer};
 
 mod common;
 
@@ -21,26 +21,33 @@ pub async fn logout(user: &GooseUser) -> GooseTaskResult {
 }
 
 #[test]
-#[with_mock_server]
 fn test_no_normal_tasks() {
-    let mock_login = mock(POST, LOGIN_PATH).return_status(200).create();
-    let mock_logout = mock(GET, LOGOUT_PATH).return_status(200).create();
+    let server = MockServer::start();
 
-    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
-        .setup()
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(login).set_on_start())
-                .register_task(task!(logout).set_on_stop()),
-        )
-        .execute()
-        .unwrap();
+    let login_path = Mock::new()
+        .expect_method(POST)
+        .expect_path(LOGIN_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let logout_path = Mock::new()
+        .expect_method(GET)
+        .expect_path(LOGOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
 
-    let called_login = mock_login.times_called();
-    let called_logout = mock_logout.times_called();
+    let _goose_attack =
+        crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
+            .setup()
+            .unwrap()
+            .register_taskset(
+                taskset!("LoadTest")
+                    .register_task(task!(login).set_on_start())
+                    .register_task(task!(logout).set_on_stop()),
+            )
+            .execute()
+            .unwrap();
 
     // Confirm that the on_start and on_exit tasks actually ran.
-    assert_eq!(called_login, 1);
-    assert_eq!(called_logout, 1);
+    assert!(login_path.times_called() == 1);
+    assert!(logout_path.times_called() == 1);
 }

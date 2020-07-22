@@ -2121,11 +2121,11 @@ mod tests {
     use super::*;
 
     use httpmock::Method::{GET, POST};
-    use httpmock::{mock, with_mock_server};
+    use httpmock::{Mock, MockServer};
 
-    async fn setup_user() -> Result<GooseUser, GooseError> {
+    async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
         let configuration = GooseConfiguration::default();
-        let base_url = get_base_url(Some("http://127.0.0.1:5000".to_string()), None, None);
+        let base_url = get_base_url(Some(server.url("/")), None, None);
         GooseUser::single(base_url, &configuration)
     }
 
@@ -2602,92 +2602,91 @@ mod tests {
         assert_eq!(url, "https://example.com/foo");
 
         // Recreate user2.
-        let user2 = setup_user().await.unwrap();
-        const MOCKHOST: &str = "http://127.0.0.1:5000/";
+        let server = MockServer::start();
+        let user2 = setup_user(&server).await.unwrap();
 
         // Create a GET request.
         let mut goose_request = user2.goose_get("/foo").await.unwrap();
         let mut built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::GET);
-        assert_eq!(built_request.url().as_str(), &[MOCKHOST, "foo"].concat());
+        assert_eq!(built_request.url().as_str(), server.url("/foo"));
         assert_eq!(built_request.timeout(), None);
 
         // Create a POST request.
         goose_request = user2.goose_post("/path/to/post").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::POST);
-        assert_eq!(
-            built_request.url().as_str(),
-            &[MOCKHOST, "path/to/post"].concat()
-        );
+        assert_eq!(built_request.url().as_str(), server.url("/path/to/post"));
         assert_eq!(built_request.timeout(), None);
 
         // Create a PUT request.
         goose_request = user2.goose_put("/path/to/put").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PUT);
-        assert_eq!(
-            built_request.url().as_str(),
-            &[MOCKHOST, "path/to/put"].concat()
-        );
+        assert_eq!(built_request.url().as_str(), server.url("/path/to/put"));
         assert_eq!(built_request.timeout(), None);
 
         // Create a PATCH request.
         goose_request = user2.goose_patch("/path/to/patch").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::PATCH);
-        assert_eq!(
-            built_request.url().as_str(),
-            &[MOCKHOST, "path/to/patch"].concat()
-        );
+        assert_eq!(built_request.url().as_str(), server.url("/path/to/patch"));
         assert_eq!(built_request.timeout(), None);
 
         // Create a DELETE request.
         goose_request = user2.goose_delete("/path/to/delete").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::DELETE);
-        assert_eq!(
-            built_request.url().as_str(),
-            &[MOCKHOST, "path/to/delete"].concat()
-        );
+        assert_eq!(built_request.url().as_str(), server.url("/path/to/delete"));
         assert_eq!(built_request.timeout(), None);
 
         // Create a HEAD request.
         goose_request = user2.goose_head("/path/to/head").await.unwrap();
         built_request = goose_request.build().unwrap();
         assert_eq!(built_request.method(), &Method::HEAD);
-        assert_eq!(
-            built_request.url().as_str(),
-            &[MOCKHOST, "path/to/head"].concat()
-        );
+        assert_eq!(built_request.url().as_str(), server.url("/path/to/head"));
         assert_eq!(built_request.timeout(), None);
     }
 
     #[tokio::test]
-    #[with_mock_server]
     async fn manual_requests() {
-        let user = setup_user().await.unwrap();
+        let server = MockServer::start();
+
+        let user = setup_user(&server).await.unwrap();
 
         // Set up a mock http server endpoint.
-        let mock_index = mock(GET, "/").return_status(200).create();
+        const INDEX_PATH: &str = "/";
+        let index = Mock::new()
+            .expect_method(GET)
+            .expect_path(INDEX_PATH)
+            .return_status(200)
+            .create_on(&server);
 
         // Make a GET request to the mock http server and confirm we get a 200 response.
-        assert_eq!(mock_index.times_called(), 0);
-        let goose = user.get("/").await.expect("get returned unexpected error");
+        assert_eq!(index.times_called(), 0);
+        let goose = user
+            .get(INDEX_PATH)
+            .await
+            .expect("get returned unexpected error");
         let status = goose.response.unwrap().status();
         assert_eq!(status, 200);
         assert_eq!(goose.request.method, GooseMethod::GET);
-        assert_eq!(goose.request.name, "/");
+        assert_eq!(goose.request.name, INDEX_PATH);
         assert_eq!(goose.request.success, true);
         assert_eq!(goose.request.update, false);
         assert_eq!(goose.request.status_code, 200);
-        assert_eq!(mock_index.times_called(), 1);
+        assert_eq!(index.times_called(), 1);
 
         const NO_SUCH_PATH: &str = "/no/such/path";
-        let mock_404 = mock(GET, NO_SUCH_PATH).return_status(404).create();
+        // Set up a mock http server endpoint.
+        let not_found = Mock::new()
+            .expect_method(GET)
+            .expect_path(NO_SUCH_PATH)
+            .return_status(404)
+            .create_on(&server);
 
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
-        assert_eq!(mock_404.times_called(), 0);
+        assert_eq!(not_found.times_called(), 0);
         let goose = user
             .get(NO_SUCH_PATH)
             .await
@@ -2699,18 +2698,20 @@ mod tests {
         assert_eq!(goose.request.success, false);
         assert_eq!(goose.request.update, false);
         assert_eq!(goose.request.status_code, 404,);
-        assert_eq!(mock_404.times_called(), 1);
+        assert_eq!(not_found.times_called(), 1);
 
         // Set up a mock http server endpoint.
         const COMMENT_PATH: &str = "/comment";
-        let mock_comment = mock(POST, COMMENT_PATH)
+        let comment = Mock::new()
+            .expect_method(POST)
+            .expect_path(COMMENT_PATH)
             .return_status(200)
             .expect_body("foo")
             .return_body("foo")
-            .create();
+            .create_on(&server);
 
         // Make a POST request to the mock http server and confirm we get a 200 OK response.
-        assert_eq!(mock_comment.times_called(), 0);
+        assert_eq!(comment.times_called(), 0);
         let goose = user
             .post(COMMENT_PATH, "foo")
             .await
@@ -2725,6 +2726,6 @@ mod tests {
         assert_eq!(goose.request.success, true);
         assert_eq!(goose.request.update, false);
         assert_eq!(goose.request.status_code, 200);
-        assert_eq!(mock_comment.times_called(), 1);
+        assert_eq!(comment.times_called(), 1);
     }
 }

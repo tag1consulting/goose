@@ -1,5 +1,5 @@
 use httpmock::Method::GET;
-use httpmock::{mock, with_mock_server};
+use httpmock::{Mock, MockServer};
 
 mod common;
 
@@ -19,48 +19,58 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 }
 
 #[test]
-#[with_mock_server]
 fn test_single_taskset() {
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_about = mock(GET, ABOUT_PATH)
+    let server = MockServer::start();
+
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
         .return_status(200)
-        .return_body("<HTML><BODY>about page</BODY></HTML>")
-        .create();
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
 
-    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
-        .setup()
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9).unwrap())
-                .register_task(task!(get_about).set_weight(3).unwrap()),
-        )
-        .execute()
-        .unwrap();
-
-    let called_index = mock_index.times_called();
-    let called_about = mock_about.times_called();
+    let _goose_attack =
+        crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
+            .setup()
+            .unwrap()
+            .register_taskset(
+                taskset!("LoadTest")
+                    .register_task(task!(get_index).set_weight(9).unwrap())
+                    .register_task(task!(get_about).set_weight(3).unwrap()),
+            )
+            .execute()
+            .unwrap();
 
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_about, 0);
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
 
     // Confirm that we loaded the index roughly three times as much as the about page.
-    let one_third_index = called_index / 3;
-    let difference = called_about as i32 - one_third_index as i32;
+    let one_third_index = index.times_called() / 3;
+    let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 }
 
 #[test]
-#[with_mock_server]
 fn test_single_taskset_empty_config_host() {
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_about = mock(GET, ABOUT_PATH)
-        .return_status(200)
-        .return_body("<HTML><BODY>about page</BODY></HTML>")
-        .create();
+    let server = MockServer::start();
 
-    let mut config = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
     // this will leave an empty string in config.host
     let host = std::mem::take(&mut config.host);
     let _goose_attack = crate::GooseAttack::initialize_with_config(config)
@@ -75,15 +85,12 @@ fn test_single_taskset_empty_config_host() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-    let called_about = mock_about.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_about, 0);
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
 
     // Confirm that we loaded the index roughly three times as much as the about page.
-    let one_third_index = called_index / 3;
-    let difference = called_about as i32 - one_third_index as i32;
+    let one_third_index = index.times_called() / 3;
+    let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 }

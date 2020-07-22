@@ -1,5 +1,5 @@
 use httpmock::Method::GET;
-use httpmock::{mock, with_mock_server};
+use httpmock::{Mock, MockServer};
 
 mod common;
 
@@ -60,149 +60,171 @@ pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
 }
 
 #[test]
-#[with_mock_server]
 /// Simulate a load test which includes a page with a redirect chain, confirms
 /// all redirects are correctly followed.
 fn test_redirect() {
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_redirect = mock(GET, REDIRECT_PATH)
-        // Moved Permanently
+    let server1 = MockServer::start();
+
+    let server1_index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server1);
+    let server1_redirect = Mock::new()
+        .expect_method(GET)
+        .expect_path(REDIRECT_PATH)
         .return_status(301)
-        .return_header("Location", "/redirect2")
-        .create();
-    let mock_redirect2 = mock(GET, REDIRECT2_PATH)
-        // Found (Moved Temporarily)
+        .return_header("Location", REDIRECT2_PATH)
+        .create_on(&server1);
+    let server1_redirect2 = Mock::new()
+        .expect_method(GET)
+        .expect_path(REDIRECT2_PATH)
         .return_status(302)
-        .return_header("Location", "/redirect3")
-        .create();
-    let mock_redirect3 = mock(GET, REDIRECT3_PATH)
-        // See Other
+        .return_header("Location", REDIRECT3_PATH)
+        .create_on(&server1);
+    let server1_redirect3 = Mock::new()
+        .expect_method(GET)
+        .expect_path(REDIRECT3_PATH)
         .return_status(303)
-        .return_header("Location", "/about.php")
-        .create();
-    let mock_about = mock(GET, ABOUT_PATH)
+        .return_header("Location", ABOUT_PATH)
+        .create_on(&server1);
+    let server1_about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
         .return_status(200)
         .return_body("<HTML><BODY>about page</BODY></HTML>")
-        .create();
+        .create_on(&server1);
 
-    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
-        .setup()
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                // Load index directly.
-                .register_task(task!(get_index))
-                // Load redirect path, redirect to redirect2 path, redirect to
-                // redirect3 path, redirect to about.
-                .register_task(task!(get_redirect)),
-        )
-        .execute()
-        .unwrap();
-
-    let called_index = mock_index.times_called();
-    let called_redirect = mock_redirect.times_called();
-    let called_redirect2 = mock_redirect2.times_called();
-    let called_redirect3 = mock_redirect3.times_called();
-    let called_about = mock_about.times_called();
+    let _goose_attack =
+        crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
+            .setup()
+            .unwrap()
+            .register_taskset(
+                taskset!("LoadTest")
+                    // Load index directly.
+                    .register_task(task!(get_index))
+                    // Load redirect path, redirect to redirect2 path, redirect to
+                    // redirect3 path, redirect to about.
+                    .register_task(task!(get_redirect)),
+            )
+            .execute()
+            .unwrap();
 
     // Confirm that we loaded the mock endpoints; while we never load the about page
     // directly, we should follow the redirects and load it.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_redirect, 0);
-    assert_ne!(called_redirect2, 0);
-    assert_ne!(called_redirect3, 0);
-    assert_ne!(called_about, 0);
+    assert!(server1_index.times_called() > 0);
+    assert!(server1_redirect.times_called() > 0);
+    assert!(server1_redirect2.times_called() > 0);
+    assert!(server1_redirect3.times_called() > 0);
+    assert!(server1_about.times_called() > 0);
 
     // We should have called all redirects the same number of times as we called the
     // final about page.
-    assert!(called_redirect == called_redirect2);
-    assert!(called_redirect == called_redirect3);
-    assert!(called_redirect == called_about);
+    assert!(server1_redirect.times_called() == server1_redirect2.times_called());
+    assert!(server1_redirect.times_called() == server1_redirect3.times_called());
+    assert!(server1_redirect.times_called() == server1_about.times_called());
 }
 
 #[test]
-#[with_mock_server]
 /// Simulate a load test which includes a page with a redirect to another domain
 /// (which in this case is a second mock server running on a different path).
 /// all redirects are correctly followed.
 fn test_domain_redirect() {
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_about = mock(GET, ABOUT_PATH).return_status(200).create();
-    let alternate_domain = &mockito::server_url();
-    let mock_redirect = mock(GET, REDIRECT_PATH)
-        // Moved Permanently
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+
+    let server1_index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server1);
+    let server1_about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server1);
+    let server1_redirect = Mock::new()
+        .expect_method(GET)
+        .expect_path(REDIRECT_PATH)
         .return_status(301)
-        .return_header(
-            "Location",
-            format!("{}{}", alternate_domain, INDEX_PATH).as_str(),
-        )
-        .create();
-    let mock_index_alt = mockito::mock("GET", INDEX_PATH)
-        .with_status(200)
-        .expect_at_least(1)
-        .create();
-    let mock_about_alt = mockito::mock("GET", ABOUT_PATH)
-        .with_status(200)
-        .expect(0)
-        .create();
+        .return_header("Location", &server2.url(INDEX_PATH))
+        .create_on(&server1);
 
-    let _goose_attack = crate::GooseAttack::initialize_with_config(common::build_configuration())
-        .setup()
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                // First load redirect, takes this request only to another domain.
-                .register_task(task!(get_domain_redirect).set_on_start())
-                // Load index directly.
-                .register_task(task!(get_index))
-                // Load about directly, always on original domain.
-                .register_task(task!(get_about)),
-        )
-        .execute()
-        .unwrap();
+    let server2_index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server2);
+    let server2_about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server2);
 
-    let called_index = mock_index.times_called();
-    let called_about = mock_about.times_called();
-    let called_redirect = mock_redirect.times_called();
+    let _goose_attack =
+        crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
+            .setup()
+            .unwrap()
+            .register_taskset(
+                taskset!("LoadTest")
+                    // First load redirect, takes this request only to another domain.
+                    .register_task(task!(get_domain_redirect).set_on_start())
+                    // Load index directly.
+                    .register_task(task!(get_index))
+                    // Load about directly, always on original domain.
+                    .register_task(task!(get_about)),
+            )
+            .execute()
+            .unwrap();
 
     // Confirm that we load the index, about and redirect pages on the orginal domain.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_about, 0);
-    assert_ne!(called_redirect, 0);
+    assert!(server1_index.times_called() > 0);
+    assert!(server1_redirect.times_called() > 0);
+    assert!(server1_about.times_called() > 0);
 
     // Confirm that the redirect sends us to the second domain (mocked using a
     // server on a different port).
-    mock_index_alt.assert();
+    assert!(server2_index.times_called() > 0);
 
     // Confirm the we never loaded the about page on the second domain.
-    mock_about_alt.assert();
+    assert!(server2_about.times_called() == 0);
 }
 
 #[test]
-#[with_mock_server]
 fn test_sticky_domain_redirect() {
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_about = mock(GET, ABOUT_PATH).return_status(200).create();
-    let alternate_domain = &mockito::server_url();
-    eprintln!("alternate_domain: {}", &alternate_domain);
-    let mock_redirect = mock(GET, REDIRECT_PATH)
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+
+    let server1_index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server1);
+    let server1_about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server1);
+    let server1_redirect = Mock::new()
+        .expect_method(GET)
+        .expect_path(REDIRECT_PATH)
         .return_status(301)
-        .return_header(
-            "Location",
-            format!("{}{}", alternate_domain, INDEX_PATH).as_str(),
-        )
-        .create();
-    let mock_index_alt = mockito::mock("GET", INDEX_PATH)
-        .with_status(200)
-        .expect_at_least(1)
-        .create();
-    let mock_about_alt = mockito::mock("GET", ABOUT_PATH)
-        .with_status(200)
-        .expect_at_least(1)
-        .create();
+        .return_header("Location", &server2.url(INDEX_PATH))
+        .create_on(&server1);
+
+    let server2_index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server2);
+    let server2_about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server2);
 
     // Enable sticky_follow option.
-    let mut configuration = common::build_configuration();
+    let mut configuration = common::build_configuration(&server1);
     configuration.sticky_follow = true;
     let _goose_attack = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
@@ -220,17 +242,13 @@ fn test_sticky_domain_redirect() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-    let called_about = mock_about.times_called();
-    let called_redirect = mock_redirect.times_called();
-
     // Confirm we redirect on startup, and never load index or about.
-    assert_eq!(called_redirect, 1);
-    assert_eq!(called_index, 0);
-    assert_eq!(called_about, 0);
+    assert!(server1_redirect.times_called() == 1);
+    assert!(server1_index.times_called() == 0);
+    assert!(server1_about.times_called() == 0);
 
     // Confirm that we load the alternative index and about pages (mocked using
-    // a server on a different port).)
-    mock_index_alt.assert();
-    mock_about_alt.assert();
+    // a server on a different port).
+    assert!(server2_index.times_called() > 0);
+    assert!(server2_about.times_called() > 0);
 }

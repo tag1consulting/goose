@@ -1,10 +1,12 @@
+use httpmock::MockServer;
+
 use goose::GooseConfiguration;
 
-pub fn build_configuration() -> GooseConfiguration {
+pub fn build_configuration(server: &MockServer) -> GooseConfiguration {
     // Manually specify configuration for test, normally this is provided as
     // CLI options.
     GooseConfiguration {
-        host: "http://127.0.0.1:5000".to_string(),
+        host: server.url("/"),
         users: Some(1),
         hatch_rate: 1,
         run_time: "1".to_string(),

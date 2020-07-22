@@ -1,5 +1,5 @@
 use httpmock::Method::GET;
-use httpmock::{mock, with_mock_server};
+use httpmock::{Mock, MockServer};
 
 mod common;
 
@@ -7,9 +7,6 @@ use goose::prelude::*;
 
 const INDEX_PATH: &str = "/";
 const ERROR_PATH: &str = "/error";
-
-const STATS_LOG_FILE: &str = "stats.log";
-const DEBUG_LOG_FILE: &str = "debug.log";
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -33,19 +30,29 @@ pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-fn cleanup_files() {
-    let _ = std::fs::remove_file(STATS_LOG_FILE);
-    let _ = std::fs::remove_file(DEBUG_LOG_FILE);
+fn cleanup_files(stats_log_file: &str, debug_log_file: &str) {
+    if std::path::Path::new(stats_log_file).exists() {
+        std::fs::remove_file(stats_log_file).expect("failed to delete stats log file");
+    }
+    if std::path::Path::new(debug_log_file).exists() {
+        std::fs::remove_file(debug_log_file).expect("failed to delete debug log file");
+    }
 }
 
 #[test]
-#[with_mock_server]
 fn test_stat_logs_json() {
-    cleanup_files();
+    const STATS_LOG_FILE: &str = "stats-json.log";
+    const DEBUG_LOG_FILE: &str = "debug-json.log";
 
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
+    let server = MockServer::start();
 
-    let mut config = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.no_stats = false;
     let _goose_attack = crate::GooseAttack::initialize_with_config(config)
@@ -55,26 +62,30 @@ fn test_stat_logs_json() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
+    assert!(index.times_called() > 0);
 
     // Confirm only the stats log file exists.
-    let stats_log_exists = std::path::Path::new(STATS_LOG_FILE).exists();
-    let debug_log_exists = std::path::Path::new(DEBUG_LOG_FILE).exists();
-    assert_eq!(stats_log_exists, true);
-    assert_eq!(debug_log_exists, false);
+    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
+
+    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-#[with_mock_server]
 fn test_stat_logs_csv() {
-    cleanup_files();
+    const STATS_LOG_FILE: &str = "stats-csv.log";
+    const DEBUG_LOG_FILE: &str = "debug-csv.log";
 
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
+    let server = MockServer::start();
 
-    let mut config = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.stats_log_format = "csv".to_string();
     config.no_stats = false;
@@ -85,26 +96,30 @@ fn test_stat_logs_csv() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
+    assert!(index.times_called() > 0);
 
     // Confirm only the stats log file exists.
-    let stats_log_exists = std::path::Path::new(STATS_LOG_FILE).exists();
-    let debug_log_exists = std::path::Path::new(DEBUG_LOG_FILE).exists();
-    assert_eq!(stats_log_exists, true);
-    assert_eq!(debug_log_exists, false);
+    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
+
+    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-#[with_mock_server]
 fn test_stat_logs_raw() {
-    cleanup_files();
+    const STATS_LOG_FILE: &str = "stats-raw.log";
+    const DEBUG_LOG_FILE: &str = "debug-raw.log";
 
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
+    let server = MockServer::start();
 
-    let mut config = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.stats_log_format = "raw".to_string();
     config.no_stats = false;
@@ -115,27 +130,35 @@ fn test_stat_logs_raw() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
+    assert!(index.times_called() > 0);
 
     // Confirm only the stats log file exists.
-    let stats_log_exists = std::path::Path::new(STATS_LOG_FILE).exists();
-    let debug_log_exists = std::path::Path::new(DEBUG_LOG_FILE).exists();
-    assert_eq!(stats_log_exists, true);
-    assert_eq!(debug_log_exists, false);
+    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
+
+    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-#[with_mock_server]
 fn test_debug_logs_raw() {
-    cleanup_files();
+    const STATS_LOG_FILE: &str = "stats-raw2.log";
+    const DEBUG_LOG_FILE: &str = "debug-raw2.log";
 
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_error = mock(GET, ERROR_PATH).return_status(503).create();
+    let server = MockServer::start();
 
-    let mut config = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let error = Mock::new()
+        .expect_method(GET)
+        .expect_path(ERROR_PATH)
+        .return_status(503)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
     config.debug_log_format = "raw".to_string();
     let _goose_attack = crate::GooseAttack::initialize_with_config(config)
@@ -149,29 +172,36 @@ fn test_debug_logs_raw() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-    let called_error = mock_error.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_error, 0);
+    assert!(index.times_called() > 0);
+    assert!(error.times_called() > 0);
 
     // Confirm only the debug log file exists.
-    let stats_log_exists = std::path::Path::new(STATS_LOG_FILE).exists();
-    let debug_log_exists = std::path::Path::new(DEBUG_LOG_FILE).exists();
-    assert_eq!(stats_log_exists, false);
-    assert_eq!(debug_log_exists, true);
+    assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
+    assert!(!std::path::Path::new(STATS_LOG_FILE).exists());
+
+    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-#[with_mock_server]
 fn test_debug_logs_json() {
-    cleanup_files();
+    const STATS_LOG_FILE: &str = "stats-json2.log";
+    const DEBUG_LOG_FILE: &str = "debug-json2.log";
 
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_error = mock(GET, ERROR_PATH).return_status(503).create();
+    let server = MockServer::start();
 
-    let mut config = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let error = Mock::new()
+        .expect_method(GET)
+        .expect_path(ERROR_PATH)
+        .return_status(503)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
     let _goose_attack = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -184,29 +214,36 @@ fn test_debug_logs_json() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-    let called_error = mock_error.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_error, 0);
+    assert!(index.times_called() > 0);
+    assert!(error.times_called() > 0);
 
     // Confirm only the debug log file exists.
-    let stats_log_exists = std::path::Path::new(STATS_LOG_FILE).exists();
-    let debug_log_exists = std::path::Path::new(DEBUG_LOG_FILE).exists();
-    assert_eq!(stats_log_exists, false);
-    assert_eq!(debug_log_exists, true);
+    assert!(!std::path::Path::new(STATS_LOG_FILE).exists());
+    assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
+
+    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-#[with_mock_server]
 fn test_stats_and_debug_logs() {
-    cleanup_files();
+    const STATS_LOG_FILE: &str = "stats-both.log";
+    const DEBUG_LOG_FILE: &str = "debug-both.log";
 
-    let mock_index = mock(GET, INDEX_PATH).return_status(200).create();
-    let mock_error = mock(GET, ERROR_PATH).return_status(503).create();
+    let server = MockServer::start();
 
-    let mut config = common::build_configuration();
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let error = Mock::new()
+        .expect_method(GET)
+        .expect_path(ERROR_PATH)
+        .return_status(503)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.stats_log_format = "raw".to_string();
     config.no_stats = false;
@@ -222,16 +259,13 @@ fn test_stats_and_debug_logs() {
         .execute()
         .unwrap();
 
-    let called_index = mock_index.times_called();
-    let called_error = mock_error.times_called();
-
     // Confirm that we loaded the mock endpoints.
-    assert_ne!(called_index, 0);
-    assert_ne!(called_error, 0);
+    assert!(index.times_called() > 0);
+    assert!(error.times_called() > 0);
 
     // Confirm both the stats and debug logs exist.
-    let stats_log_exists = std::path::Path::new(STATS_LOG_FILE).exists();
-    let debug_log_exists = std::path::Path::new(DEBUG_LOG_FILE).exists();
-    assert_eq!(stats_log_exists, true);
-    assert_eq!(debug_log_exists, true);
+    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
+
+    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
 }
