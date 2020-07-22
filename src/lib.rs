@@ -367,34 +367,51 @@ pub struct Socket {}
 /// Goose optionally tracks statistics about requests made during a load test.
 pub type GooseRequestStats = HashMap<String, GooseRequest>;
 
-/// Definition of all errors Goose can return.
+/// Definition of all errors a GooseAttack can return.
 #[derive(Debug)]
 pub enum GooseError {
+    /// Contains an io::Error.
     Io(io::Error),
+    /// Contains a reqwest::Error.
     Reqwest(reqwest::Error),
+    /// Failed attempt to use code that requires a compile-time feature be enabled. The missing
+    /// feature is named in `.feature`. An optional explanation may be found in `.detail`.
     FeatureNotEnabled {
         feature: String,
         detail: Option<String>,
     },
+    /// Failed to parse hostname. The invalid hostname that caused this error is found in
+    /// `.host`. An optional explanation may be found in `.detail`. The lower level
+    /// `url::ParseError` is contained in `.parse_error`.
     InvalidHost {
         host: String,
         detail: Option<String>,
         parse_error: url::ParseError,
     },
+    /// Invalid option or value specified, may only be invalid in context. The invalid option
+    /// is found in `.option`, while the invalid value is found in `.value`. An optional
+    /// explanation providing context may be found in `.detail`.
     InvalidOption {
         option: String,
         value: String,
         detail: Option<String>,
     },
+    /// Invalid wait time specified. The minimum wait time and maximum wait time are found in
+    /// `.min_wait` and `.max_wait` respectively. An optional explanation providing context may
+    /// be found in `.detail`.
     InvalidWaitTime {
         min_wait: usize,
         max_wait: usize,
         detail: Option<String>,
     },
+    /// Invalid weight specified. The invalid weight value is found in `.weight`. An optional
+    // explanation providing context may be found in `.detail`.
     InvalidWeight {
         weight: usize,
         detail: Option<String>,
     },
+    /// `GooseAttack` has no `GooseTaskSet` defined. An optional explanation may be found in
+    /// `.detail`.
     NoTaskSets {
         detail: Option<String>,
     },
