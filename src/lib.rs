@@ -388,7 +388,10 @@ pub enum GooseError {
         max_wait: usize,
         detail: Option<String>,
     },
-    InvalidWeight,
+    InvalidWeight {
+        weight: usize,
+        detail: Option<String>,
+    },
     NoTaskSets,
 }
 
@@ -401,7 +404,7 @@ impl fmt::Display for GooseError {
             GooseError::InvalidHost { .. } => write!(f, "Unable to parse host"),
             GooseError::InvalidOption => write!(f, "Invalid option."),
             GooseError::InvalidWaitTime { .. } => write!(f, "Invalid wait time specified."),
-            GooseError::InvalidWeight => write!(f, "Invalid weight specified."),
+            GooseError::InvalidWeight { .. } => write!(f, "Invalid weight specified."),
             GooseError::NoTaskSets => write!(f, "No task sets defined."),
         }
     }

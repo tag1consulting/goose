@@ -488,9 +488,11 @@ impl GooseTaskSet {
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Result<Self, GooseError> {
         trace!("{} set_weight: {}", self.name, weight);
-        if weight < 1 {
-            error!("{} weight of {} not allowed", self.name, weight);
-            return Err(GooseError::InvalidWeight);
+        if weight == 0 {
+            return Err(GooseError::InvalidWeight {
+                weight,
+                detail: Some("weight of 0 not allowed".to_string()),
+            });
         } else {
             self.weight = weight;
         }
@@ -2031,9 +2033,11 @@ impl GooseTask {
             self.tasks_index,
             weight
         );
-        if weight < 1 {
-            error!("{} weight of {} not allowed", self.name, weight);
-            return Err(GooseError::InvalidWeight);
+        if weight == 0 {
+            return Err(GooseError::InvalidWeight {
+                weight,
+                detail: Some("weight of 0 not allowed".to_string()),
+            });
         } else {
             self.weight = weight;
         }
