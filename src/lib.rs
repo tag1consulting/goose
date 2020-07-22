@@ -382,7 +382,11 @@ pub enum GooseError {
         detail: Option<String>,
         parse_error: url::ParseError,
     },
-    InvalidOption,
+    InvalidOption {
+        option: String,
+        value: String,
+        detail: Option<String>,
+    },
     InvalidWaitTime {
         min_wait: usize,
         max_wait: usize,
@@ -404,7 +408,7 @@ impl fmt::Display for GooseError {
             GooseError::Reqwest(ref err) => err.fmt(f),
             GooseError::FeatureNotEnabled { .. } => write!(f, "Compile time feature not enabled."),
             GooseError::InvalidHost { .. } => write!(f, "Unable to parse host"),
-            GooseError::InvalidOption => write!(f, "Invalid option."),
+            GooseError::InvalidOption { .. } => write!(f, "Invalid option."),
             GooseError::InvalidWaitTime { .. } => write!(f, "Invalid wait time specified."),
             GooseError::InvalidWeight { .. } => write!(f, "Invalid weight specified."),
             GooseError::NoTaskSets { .. } => write!(f, "No task sets defined."),
@@ -567,70 +571,115 @@ impl GooseAttack {
         if self.configuration.no_stats {
             // Don't allow overhead of collecting statistics unless we're printing them.
             if self.configuration.status_codes {
-                error!("You must not enable --no-stats when enabling --status-codes.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--no-stats".to_string(),
+                    value: "true".to_string(),
+                    detail: Some(
+                        "--no-stats must not be enabled when enabling --status-codes.".to_string(),
+                    ),
+                });
             }
 
             // Don't allow overhead of collecting statistics unless we're printing them.
             if self.configuration.only_summary {
-                error!("You must not enable --no-stats when enabling --only-summary.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--no-stats".to_string(),
+                    value: "true".to_string(),
+                    detail: Some(
+                        "--no-stats must not be enabled when enabling --only-summary.".to_string(),
+                    ),
+                });
             }
 
             // There is nothing to log if statistics are disabled.
             if !self.configuration.stats_log_file.is_empty() {
-                error!("You must not enable --no-stats when enabling --stats-log-file.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--no-stats".to_string(),
+                    value: "true".to_string(),
+                    detail: Some(
+                        "--no-stats must not be enabled when enabling --stats-log-file."
+                            .to_string(),
+                    ),
+                });
             }
 
             // There is nothing to log if statistics are disabled.
             if !self.configuration.stats_log_file.is_empty() {
-                error!("You must not enable --no-stats when enabling --stats-log-format.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--no-stats".to_string(),
+                    value: "true".to_string(),
+                    detail: Some(
+                        "--no-stats must not be enabled when enabling --stats-log-format."
+                            .to_string(),
+                    ),
+                });
             }
         }
 
         if self.configuration.stats_log_format != "json" {
             // Log format isn't relevant if log not enabled.
             if self.configuration.stats_log_file.is_empty() {
-                error!("You must enable --stats-log-file when setting --stats-log-format.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--stats-log-format".to_string(),
+                    value: self.configuration.stats_log_format.to_string(),
+                    detail: Some(
+                        "--stats-log-file must be enabled when setting --stats-log-format."
+                            .to_string(),
+                    ),
+                });
             }
 
             // All of these options must be defined below, search for formatted_log.
             let options = vec!["json", "csv", "raw"];
             if !options.contains(&self.configuration.stats_log_format.as_str()) {
-                error!(
-                    "The --stats-log-format must be set to one of: {}.",
-                    options.join(", ")
-                );
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--stats-log-format".to_string(),
+                    value: self.configuration.stats_log_format.to_string(),
+                    detail: Some(format!(
+                        "--stats-log-format must be set to one of: {}.",
+                        options.join(", ")
+                    )),
+                });
             }
         }
 
         if self.configuration.debug_log_format != "json" {
             // Log format isn't relevant if log not enabled.
             if self.configuration.debug_log_file.is_empty() {
-                error!("You must enable --debug-log-file when setting --debug-log-format.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--debug-log-format".to_string(),
+                    value: self.configuration.debug_log_format.to_string(),
+                    detail: Some(
+                        "--debug-log-file must be enabled when setting --debug-log-format."
+                            .to_string(),
+                    ),
+                });
             }
 
             // All of these options must be defined below, search for formatted_log.
             let options = vec!["json", "raw"];
             if !options.contains(&self.configuration.debug_log_format.as_str()) {
-                error!(
-                    "The --debug-log-format must be set to one of: {}.",
-                    options.join(", ")
-                );
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--debug-log-format".to_string(),
+                    value: self.configuration.debug_log_format.to_string(),
+                    detail: Some(format!(
+                        "--debug-log-format must be set to one of: {}.",
+                        options.join(", ")
+                    )),
+                });
             }
         }
 
         // Configure maximum run time if specified, otherwise run until canceled.
         if self.configuration.worker {
             if self.configuration.run_time != "" {
-                error!("The --run-time option is only available to the manager.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--run-time".to_string(),
+                    value: "true".to_string(),
+                    detail: Some(
+                        "The --run-time option is only available to the manager.".to_string(),
+                    ),
+                });
             }
             self.run_time = 0;
         } else if self.configuration.run_time != "" {
@@ -645,15 +694,23 @@ impl GooseAttack {
             Some(u) => {
                 if u == 0 {
                     if self.configuration.worker {
-                        error!("At least 1 user is required.");
-                        return Err(GooseError::InvalidOption);
+                        return Err(GooseError::InvalidOption {
+                            option: "--users".to_string(),
+                            value: self.users.to_string(),
+                            detail: Some("at least 1 user is required.".to_string()),
+                        });
                     } else {
                         0
                     }
                 } else {
                     if self.configuration.worker {
-                        error!("The --users option is only available to the manager.");
-                        return Err(GooseError::InvalidOption);
+                        return Err(GooseError::InvalidOption {
+                            option: "--users".to_string(),
+                            value: self.users.to_string(),
+                            detail: Some(
+                                "--users option only available to manager process".to_string(),
+                            ),
+                        });
                     }
                     u
                 }
@@ -912,42 +969,68 @@ impl GooseAttack {
         if self.configuration.manager {
             // @TODO: support running in both manager and worker mode.
             if self.configuration.worker {
-                error!("You can only run in manager or worker mode, not both.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--worker".to_string(),
+                    value: "true".to_string(),
+                    detail: Some("enable manager or worker mode, not both".to_string()),
+                });
             }
 
             if self.configuration.expect_workers < 1 {
-                error!("You must set --expect-workers to 1 or more.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: Some("--expect-workers must be at least 1".to_string()),
+                });
             }
             if self.configuration.expect_workers as usize > self.users {
-                error!(
-                    "You must enable at least as many users ({}) as workers ({}).",
-                    self.users, self.configuration.expect_workers
-                );
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: Some("--expect-workers can not be larger than --users".to_string()),
+                });
             }
 
             if !self.configuration.debug_log_file.is_empty() {
-                error!("You can only enable --debug-log-file in stand-alone or worker mode, not as manager.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--debug-log-file".to_string(),
+                    value: self.configuration.debug_log_file.to_string(),
+                    detail: Some(
+                        "--debug-log-file can only be enabled in stand-alone or worker mode"
+                            .to_string(),
+                    ),
+                });
             }
 
             if self.configuration.throttle_requests.is_some() {
-                error!("You can only configure --throttle-requests in stand-alone mode or per worker, not as manager.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--throttle-requests".to_string(),
+                    value: self.configuration.throttle_requests.unwrap().to_string(),
+                    detail: Some("--throttle-requests can only be enabled in stand-alone mode or worker mode".to_string()),
+                });
             }
         }
 
         // Validate throttle_requests, which must be a value from 1 to 1,000,000.
         match self.configuration.throttle_requests {
             Some(throttle) if throttle == 0 => {
-                error!("Throttle must be at least 1 request per second.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--throttle-requests".to_string(),
+                    value: throttle.to_string(),
+                    detail: Some(
+                        "--throttle-requests must be at least 1 request per second".to_string(),
+                    ),
+                });
             }
             Some(throttle) if throttle > 1_000_000 => {
-                error!("Throttle can not be more than 1,000,000 requests per second.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--throttle-requests".to_string(),
+                    value: throttle.to_string(),
+                    detail: Some(
+                        "--throttle-requests can not be more than 1,000,000 request per second"
+                            .to_string(),
+                    ),
+                });
             }
             // Everything else is valid.
             _ => (),
@@ -957,71 +1040,125 @@ impl GooseAttack {
         if self.configuration.worker {
             // @TODO: support running in both manager and worker mode.
             if self.configuration.manager {
-                error!("You can only run in manager or worker mode, not both.");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--manager".to_string(),
+                    value: "true".to_string(),
+                    detail: Some("enable manager or worker mode, not both".to_string()),
+                });
             }
 
             if self.configuration.expect_workers > 0 {
-                error!("The --expect-workers option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: Some("--expect-workers is only available to the manager".to_string()),
+                });
             }
 
-            if self.configuration.host != "" {
-                error!("The --host option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+            if !self.configuration.host.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--host".to_string(),
+                    value: self.configuration.host.to_string(),
+                    detail: Some("--host is only available to the manager".to_string()),
+                });
             }
 
             if self.configuration.manager_bind_host != "0.0.0.0" {
-                error!("The --manager-bind-host option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-bind-host".to_string(),
+                    value: self.configuration.manager_bind_host.to_string(),
+                    detail: Some(
+                        "--manager-bind-host is only available to the manager".to_string(),
+                    ),
+                });
             }
 
             let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
             if self.configuration.manager_bind_port != default_port {
-                error!("The --manager-bind-port option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-bind-port".to_string(),
+                    value: self.configuration.manager_bind_port.to_string(),
+                    detail: Some(
+                        "--manager-bind-port is only available to the manager".to_string(),
+                    ),
+                });
             }
 
             if self.configuration.no_stats {
-                error!("The --no-stats option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--no-stats".to_string(),
+                    value: self.configuration.no_stats.to_string(),
+                    detail: Some("--no-stats is only available to the manager".to_string()),
+                });
             }
 
             if self.configuration.only_summary {
-                error!("The --only-summary option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--only-summary".to_string(),
+                    value: self.configuration.only_summary.to_string(),
+                    detail: Some("--only-summary is only available to the manager".to_string()),
+                });
             }
 
             if self.configuration.status_codes {
-                error!("The --status-codes option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--status-codes".to_string(),
+                    value: self.configuration.status_codes.to_string(),
+                    detail: Some("--status-codes is only available to the manager".to_string()),
+                });
             }
 
             if self.configuration.no_hash_check {
-                error!("The --no-hash-check option is only available to the manager");
-                return Err(GooseError::InvalidOption);
+                return Err(GooseError::InvalidOption {
+                    option: "--no-hash-check".to_string(),
+                    value: self.configuration.no_hash_check.to_string(),
+                    detail: Some("--no-hash-check is only available to the manager".to_string()),
+                });
             }
         }
 
-        if !self.configuration.manager
-            && !self.configuration.worker
-            && self.configuration.no_hash_check
-        {
-            error!("The --no-hash-check option is only available when running in manager mode");
-            return Err(GooseError::InvalidOption);
+        if !self.configuration.manager && !self.configuration.worker {
+            if self.configuration.no_hash_check {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-hash-check".to_string(),
+                    value: self.configuration.no_hash_check.to_string(),
+                    detail: Some(
+                        "--no-hash-check is only available when running in manager mode"
+                            .to_string(),
+                    ),
+                });
+            }
+
+            if self.configuration.expect_workers > 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: Some(
+                        "--expect-workers is only available when running in manager mode"
+                            .to_string(),
+                    ),
+                });
+            }
         }
 
         // Configure number of user threads to launch per second, defaults to 1.
-        let hatch_rate = self.configuration.hatch_rate;
-        if hatch_rate < 1 {
-            error!("Hatch rate must be greater than 0, or no users will launch.");
-            return Err(GooseError::InvalidOption);
+        if self.configuration.hatch_rate == 0 {
+            return Err(GooseError::InvalidOption {
+                option: "--hatch-rate".to_string(),
+                value: self.configuration.hatch_rate.to_string(),
+                detail: Some(
+                    "--hatch-rate must be greater than 0, or no users can launch".to_string(),
+                ),
+            });
         }
-        if hatch_rate > 1 && self.configuration.worker {
-            error!("The --hatch-rate option is only available to the manager");
-            return Err(GooseError::InvalidOption);
+        if self.configuration.hatch_rate > 1 && self.configuration.worker {
+            return Err(GooseError::InvalidOption {
+                option: "--hatch-rate".to_string(),
+                value: self.configuration.hatch_rate.to_string(),
+                detail: Some("--hatch-rate is only available to the manager".to_string()),
+            });
         }
-        debug!("hatch_rate = {}", hatch_rate);
+        debug!("hatch_rate = {}", self.configuration.hatch_rate);
 
         // Confirm there's either a global host, or each task set has a host defined.
         if self.configuration.host.is_empty() {
@@ -1040,8 +1177,11 @@ impl GooseAttack {
                         }
                         None => {
                             if !self.configuration.worker {
-                                error!("Host must be defined globally or per-TaskSet. No host defined for {}.", task_set.name);
-                                return Err(GooseError::InvalidOption);
+                                return Err(GooseError::InvalidOption {
+                                    option: "--host".to_string(),
+                                    value: "".to_string(),
+                                    detail: Some(format!("host must be defined via --host, GooseAttack.set_host() or GooseTaskSet.set_host() (no host defined for {})", task_set.name))
+                                });
                             }
                         }
                     },
@@ -1081,7 +1221,7 @@ impl GooseAttack {
         // Our load test is officially starting.
         self.started = Some(time::Instant::now());
         // Spawn users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
-        let sleep_float = 1.0 / hatch_rate as f32;
+        let sleep_float = 1.0 / self.configuration.hatch_rate as f32;
         let sleep_duration = time::Duration::from_secs_f32(sleep_float);
 
         // Start goose in manager mode.
