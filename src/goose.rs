@@ -288,7 +288,6 @@ use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicUsize;
@@ -317,48 +316,65 @@ macro_rules! taskset {
     };
 }
 
-/// Definition of all errors Goose Tasks can return.
-#[derive(Debug)]
-pub enum GooseTaskError {
-    Reqwest(reqwest::Error),
-    Url(url::ParseError),
-    /// The request failed.
-    RequestFailed,
-    /// The request was canceled (this happens when the throttle is enabled and
-    /// the load test finished).
-    RequestCanceled,
-    /// The request succeeded, but there was an error recording the statistics.
-    StatsFailed,
-    /// Attempt to send debug detail to logger failed.
-    LoggerFailed,
-    /// Attempted an unrecognized HTTP request method.
-    InvalidMethod,
-}
-
 /// Goose tasks return a result, which is empty on success, or contains a GooseTaskError
 /// on error.
 pub type GooseTaskResult = Result<(), GooseTaskError>;
 
+/// Definition of all errors Goose Tasks can return.
+#[derive(Debug)]
+pub enum GooseTaskError {
+    /// Contains a reqwest::Error.
+    Reqwest(reqwest::Error),
+    /// Contains a url::ParseError.
+    Url(url::ParseError),
+    /// The request failed. The `GooseRawRequest` that failed can be found in
+    /// `.raw_request`.
+    RequestFailed { raw_request: GooseRawRequest },
+    /// The request was canceled (this happens when the throttle is enabled and
+    /// the load test finished). The mpsc SendError can be found in `.source`.
+    /// A `GooseRawRequest` has not yet been constructed, so is not available in
+    /// this error.
+    RequestCanceled {
+        source: mpsc::error::SendError<bool>,
+    },
+    /// There was an error sending the statistics for a request to the parent thread.
+    /// The `GooseRawRequest` that was not recorded can be extracted from the error
+    /// chain, available inside `.source`.
+    StatsFailed {
+        source: mpsc::error::SendError<GooseRawRequest>,
+    },
+    /// Attempt to send debug detail to logger failed.
+    /// There was an error sending debug information to the logger thread. The
+    /// `GooseDebug` that was not logged can be extracted from the error chain,
+    /// available inside `.source`.
+    LoggerFailed {
+        source: mpsc::error::SendError<Option<GooseDebug>>,
+    },
+    /// Attempted an unrecognized HTTP request method. The unrecognized method
+    /// is available in `.method`.
+    InvalidMethod { method: Method },
+}
+
+// Define how to display errors.
 impl fmt::Display for GooseTaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            GooseTaskError::Reqwest(ref err) => err.fmt(f),
-            GooseTaskError::Url(ref err) => err.fmt(f),
-            GooseTaskError::RequestFailed => write!(
-                f,
-                "Request failed, usually because server returned a non-200 response code."
-            ),
-            GooseTaskError::RequestCanceled => {
-                write!(f, "Request canceled because the load test ended.")
-            }
-            GooseTaskError::StatsFailed => write!(f, "Failed to send statistics to parent thread."),
-            GooseTaskError::LoggerFailed => write!(f, "Failed to send debug to logger thread."),
-            GooseTaskError::InvalidMethod => write!(f, "Unrecognized HTTP method."),
-        }
+        fmt::Display::fmt(&self, f)
     }
 }
 
-impl Error for GooseTaskError {}
+// Define the lower level source of this error, if any.
+impl std::error::Error for GooseTaskError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match *self {
+            GooseTaskError::Reqwest(ref source) => Some(source),
+            GooseTaskError::Url(ref source) => Some(source),
+            GooseTaskError::RequestCanceled { ref source } => Some(source),
+            GooseTaskError::StatsFailed { ref source } => Some(source),
+            GooseTaskError::LoggerFailed { ref source } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 /// Auto-convert Reqwest errors.
 impl From<reqwest::Error> for GooseTaskError {
@@ -378,22 +394,22 @@ impl From<url::ParseError> for GooseTaskError {
 /// shut down. This causes mpsc SendError, which gets automatically converted to
 /// `RequestCanceled`.
 impl From<mpsc::error::SendError<bool>> for GooseTaskError {
-    fn from(_err: mpsc::error::SendError<bool>) -> GooseTaskError {
-        GooseTaskError::RequestCanceled
+    fn from(source: mpsc::error::SendError<bool>) -> GooseTaskError {
+        GooseTaskError::RequestCanceled { source }
     }
 }
 
 /// Attempt to send statistics to the parent thread failed.
 impl From<mpsc::error::SendError<GooseRawRequest>> for GooseTaskError {
-    fn from(_err: mpsc::error::SendError<GooseRawRequest>) -> GooseTaskError {
-        GooseTaskError::StatsFailed
+    fn from(source: mpsc::error::SendError<GooseRawRequest>) -> GooseTaskError {
+        GooseTaskError::StatsFailed { source }
     }
 }
 
 /// Attempt to send logs to the logger thread failed.
 impl From<mpsc::error::SendError<Option<GooseDebug>>> for GooseTaskError {
-    fn from(_err: mpsc::error::SendError<Option<GooseDebug>>) -> GooseTaskError {
-        GooseTaskError::LoggerFailed
+    fn from(source: mpsc::error::SendError<Option<GooseDebug>>) -> GooseTaskError {
+        GooseTaskError::LoggerFailed { source }
     }
 }
 
@@ -584,8 +600,7 @@ fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskErro
         Method::POST => GooseMethod::POST,
         Method::PUT => GooseMethod::PUT,
         _ => {
-            error!("unsupported method: {}", method);
-            return Err(GooseTaskError::InvalidMethod);
+            return Err(GooseTaskError::InvalidMethod { method });
         }
     })
 }
@@ -1532,7 +1547,9 @@ impl GooseUser {
     ///         }
     ///     }
     ///
-    ///     Err(GooseTaskError::RequestFailed)
+    ///     Err(GooseTaskError::RequestFailed {
+    ///         raw_request: goose.request.clone(),
+    ///     })
     /// }
     /// ````
     pub fn set_success(&self, request: &mut GooseRawRequest) -> GooseTaskResult {
@@ -1615,7 +1632,9 @@ impl GooseUser {
         // Print log to stdout if `-v` is enabled.
         info!("set_failure: {}", tag);
 
-        Err(GooseTaskError::RequestFailed)
+        Err(GooseTaskError::RequestFailed {
+            raw_request: request.clone(),
+        })
     }
 
     /// Write to debug_log_file if enabled.

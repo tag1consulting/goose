@@ -412,9 +412,7 @@ pub enum GooseError {
     },
     /// `GooseAttack` has no `GooseTaskSet` defined. An optional explanation may be found in
     /// `.detail`.
-    NoTaskSets {
-        detail: Option<String>,
-    },
+    NoTaskSets { detail: Option<String> },
 }
 
 // Define how to display errors.
@@ -430,14 +428,10 @@ impl std::error::Error for GooseError {
         match *self {
             GooseError::Io(ref source) => Some(source),
             GooseError::Reqwest(ref source) => Some(source),
-            GooseError::FeatureNotEnabled { .. } => None,
             GooseError::InvalidHost {
                 ref parse_error, ..
             } => Some(parse_error),
-            GooseError::InvalidOption { .. } => None,
-            GooseError::InvalidWaitTime { .. } => None,
-            GooseError::InvalidWeight { .. } => None,
-            GooseError::NoTaskSets { .. } => None,
+            _ => None,
         }
     }
 }
