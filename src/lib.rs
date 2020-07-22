@@ -322,7 +322,6 @@ use serde_json::json;
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{
@@ -401,13 +400,30 @@ pub enum GooseError {
     },
 }
 
+// Define how to display errors.
 impl fmt::Display for GooseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self, f)
     }
 }
 
-impl Error for GooseError {}
+// Define the lower level source of this error, if any.
+impl std::error::Error for GooseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match *self {
+            GooseError::Io(ref source) => Some(source),
+            GooseError::Reqwest(ref source) => Some(source),
+            GooseError::FeatureNotEnabled { .. } => None,
+            GooseError::InvalidHost {
+                ref parse_error, ..
+            } => Some(parse_error),
+            GooseError::InvalidOption { .. } => None,
+            GooseError::InvalidWaitTime { .. } => None,
+            GooseError::InvalidWeight { .. } => None,
+            GooseError::NoTaskSets { .. } => None,
+        }
+    }
+}
 
 /// Auto-convert Reqwest errors.
 impl From<reqwest::Error> for GooseError {
