@@ -25,11 +25,10 @@ pub async fn logger_main(
                 Some(BufWriter::new(f))
             }
             Err(e) => {
-                error!(
+                panic!(
                     "failed to create debug_log_file ({}): {}",
                     configuration.debug_log_file, e
                 );
-                std::process::exit(1);
             }
         }
     }

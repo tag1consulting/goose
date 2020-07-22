@@ -288,7 +288,6 @@ use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicUsize;
@@ -317,48 +316,65 @@ macro_rules! taskset {
     };
 }
 
-/// Definition of all errors Goose Tasks can return.
-#[derive(Debug)]
-pub enum GooseTaskError {
-    Reqwest(reqwest::Error),
-    Url(url::ParseError),
-    /// The request failed.
-    RequestFailed,
-    /// The request was canceled (this happens when the throttle is enabled and
-    /// the load test finished).
-    RequestCanceled,
-    /// The request succeeded, but there was an error recording the statistics.
-    StatsFailed,
-    /// Attempt to send debug detail to logger failed.
-    LoggerFailed,
-    /// Attempted an unrecognized HTTP request method.
-    InvalidMethod,
-}
-
 /// Goose tasks return a result, which is empty on success, or contains a GooseTaskError
 /// on error.
 pub type GooseTaskResult = Result<(), GooseTaskError>;
 
+/// Definition of all errors Goose Tasks can return.
+#[derive(Debug)]
+pub enum GooseTaskError {
+    /// Contains a reqwest::Error.
+    Reqwest(reqwest::Error),
+    /// Contains a url::ParseError.
+    Url(url::ParseError),
+    /// The request failed. The `GooseRawRequest` that failed can be found in
+    /// `.raw_request`.
+    RequestFailed { raw_request: GooseRawRequest },
+    /// The request was canceled (this happens when the throttle is enabled and
+    /// the load test finished). The mpsc SendError can be found in `.source`.
+    /// A `GooseRawRequest` has not yet been constructed, so is not available in
+    /// this error.
+    RequestCanceled {
+        source: mpsc::error::SendError<bool>,
+    },
+    /// There was an error sending the statistics for a request to the parent thread.
+    /// The `GooseRawRequest` that was not recorded can be extracted from the error
+    /// chain, available inside `.source`.
+    StatsFailed {
+        source: mpsc::error::SendError<GooseRawRequest>,
+    },
+    /// Attempt to send debug detail to logger failed.
+    /// There was an error sending debug information to the logger thread. The
+    /// `GooseDebug` that was not logged can be extracted from the error chain,
+    /// available inside `.source`.
+    LoggerFailed {
+        source: mpsc::error::SendError<Option<GooseDebug>>,
+    },
+    /// Attempted an unrecognized HTTP request method. The unrecognized method
+    /// is available in `.method`.
+    InvalidMethod { method: Method },
+}
+
+// Define how to display errors.
 impl fmt::Display for GooseTaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            GooseTaskError::Reqwest(ref err) => err.fmt(f),
-            GooseTaskError::Url(ref err) => err.fmt(f),
-            GooseTaskError::RequestFailed => write!(
-                f,
-                "Request failed, usually because server returned a non-200 response code."
-            ),
-            GooseTaskError::RequestCanceled => {
-                write!(f, "Request canceled because the load test ended.")
-            }
-            GooseTaskError::StatsFailed => write!(f, "Failed to send statistics to parent thread."),
-            GooseTaskError::LoggerFailed => write!(f, "Failed to send debug to logger thread."),
-            GooseTaskError::InvalidMethod => write!(f, "Unrecognized HTTP method."),
-        }
+        fmt::Display::fmt(&self, f)
     }
 }
 
-impl Error for GooseTaskError {}
+// Define the lower level source of this error, if any.
+impl std::error::Error for GooseTaskError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match *self {
+            GooseTaskError::Reqwest(ref source) => Some(source),
+            GooseTaskError::Url(ref source) => Some(source),
+            GooseTaskError::RequestCanceled { ref source } => Some(source),
+            GooseTaskError::StatsFailed { ref source } => Some(source),
+            GooseTaskError::LoggerFailed { ref source } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 /// Auto-convert Reqwest errors.
 impl From<reqwest::Error> for GooseTaskError {
@@ -378,22 +394,22 @@ impl From<url::ParseError> for GooseTaskError {
 /// shut down. This causes mpsc SendError, which gets automatically converted to
 /// `RequestCanceled`.
 impl From<mpsc::error::SendError<bool>> for GooseTaskError {
-    fn from(_err: mpsc::error::SendError<bool>) -> GooseTaskError {
-        GooseTaskError::RequestCanceled
+    fn from(source: mpsc::error::SendError<bool>) -> GooseTaskError {
+        GooseTaskError::RequestCanceled { source }
     }
 }
 
 /// Attempt to send statistics to the parent thread failed.
 impl From<mpsc::error::SendError<GooseRawRequest>> for GooseTaskError {
-    fn from(_err: mpsc::error::SendError<GooseRawRequest>) -> GooseTaskError {
-        GooseTaskError::StatsFailed
+    fn from(source: mpsc::error::SendError<GooseRawRequest>) -> GooseTaskError {
+        GooseTaskError::StatsFailed { source }
     }
 }
 
 /// Attempt to send logs to the logger thread failed.
 impl From<mpsc::error::SendError<Option<GooseDebug>>> for GooseTaskError {
-    fn from(_err: mpsc::error::SendError<Option<GooseDebug>>) -> GooseTaskError {
-        GooseTaskError::LoggerFailed
+    fn from(source: mpsc::error::SendError<Option<GooseDebug>>) -> GooseTaskError {
+        GooseTaskError::LoggerFailed { source }
     }
 }
 
@@ -488,12 +504,14 @@ impl GooseTaskSet {
     /// ```
     pub fn set_weight(mut self, weight: usize) -> Result<Self, GooseError> {
         trace!("{} set_weight: {}", self.name, weight);
-        if weight < 1 {
-            error!("{} weight of {} not allowed", self.name, weight);
-            return Err(GooseError::InvalidWeight);
-        } else {
-            self.weight = weight;
+        if weight == 0 {
+            return Err(GooseError::InvalidWeight {
+                weight,
+                detail: Some("weight of 0 not allowed".to_string()),
+            });
         }
+        self.weight = weight;
+
         Ok(self)
     }
 
@@ -537,11 +555,11 @@ impl GooseTaskSet {
             max_wait
         );
         if min_wait > max_wait {
-            error!(
-                "min_wait({}) can't be larger than max_wait({})",
-                min_wait, max_wait
-            );
-            return Err(GooseError::InvalidWaitTime);
+            return Err(GooseError::InvalidWaitTime {
+                min_wait,
+                max_wait,
+                detail: Some("min_wait can not be larger than max_wait".to_string()),
+            });
         }
         self.min_wait = min_wait;
         self.max_wait = max_wait;
@@ -582,8 +600,7 @@ fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskErro
         Method::POST => GooseMethod::POST,
         Method::PUT => GooseMethod::PUT,
         _ => {
-            error!("unsupported method: {}", method);
-            return Err(GooseTaskError::InvalidMethod);
+            return Err(GooseTaskError::InvalidMethod { method });
         }
     })
 }
@@ -1530,7 +1547,9 @@ impl GooseUser {
     ///         }
     ///     }
     ///
-    ///     Err(GooseTaskError::RequestFailed)
+    ///     Err(GooseTaskError::RequestFailed {
+    ///         raw_request: goose.request.clone(),
+    ///     })
     /// }
     /// ````
     pub fn set_success(&self, request: &mut GooseRawRequest) -> GooseTaskResult {
@@ -1613,7 +1632,9 @@ impl GooseUser {
         // Print log to stdout if `-v` is enabled.
         info!("set_failure: {}", tag);
 
-        Err(GooseTaskError::RequestFailed)
+        Err(GooseTaskError::RequestFailed {
+            raw_request: request.clone(),
+        })
     }
 
     /// Write to debug_log_file if enabled.
@@ -1850,16 +1871,46 @@ pub fn get_base_url(
     config_host: Option<String>,
     task_set_host: Option<String>,
     default_host: Option<String>,
-) -> Url {
+) -> Result<Url, GooseError> {
     // If the `--host` CLI option is set, build the URL with it.
     match config_host {
-        Some(host) => Url::parse(&host).unwrap(),
+        Some(host) => Ok(
+            Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
+                host,
+                detail: Some("failure parsing host specified with --host".to_string()),
+                parse_error,
+            })?,
+        ),
         None => {
             match task_set_host {
                 // Otherwise, if `GooseTaskSet.host` is defined, usee this
-                Some(host) => Url::parse(&host).unwrap(),
+                Some(host) => {
+                    Ok(
+                        Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
+                            host,
+                            detail: Some(
+                                "failure parsing host specified with GooseTaskSet.set_host()"
+                                    .to_string(),
+                            ),
+                            parse_error,
+                        })?,
+                    )
+                }
                 // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
-                None => Url::parse(&default_host.unwrap()).unwrap(),
+                None => {
+                    // Host is required, if we get here it's safe to unwrap this variable.
+                    let default_host = default_host.unwrap();
+                    Ok(
+                        Url::parse(&default_host).map_err(|parse_error| GooseError::InvalidHost {
+                            host: default_host.to_string(),
+                            detail: Some(
+                                "failure parsing host specified globally with GooseAttack.set_host()"
+                                    .to_string(),
+                            ),
+                            parse_error,
+                        })?,
+                    )
+                }
             }
         }
     }
@@ -2010,12 +2061,14 @@ impl GooseTask {
             self.tasks_index,
             weight
         );
-        if weight < 1 {
-            error!("{} weight of {} not allowed", self.name, weight);
-            return Err(GooseError::InvalidWeight);
-        } else {
-            self.weight = weight;
+        if weight == 0 {
+            return Err(GooseError::InvalidWeight {
+                weight,
+                detail: Some("weight of 0 not allowed".to_string()),
+            });
         }
+        self.weight = weight;
+
         Ok(self)
     }
 
@@ -2125,7 +2178,7 @@ mod tests {
 
     async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
         let configuration = GooseConfiguration::default();
-        let base_url = get_base_url(Some(server.url("/")), None, None);
+        let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
         GooseUser::single(base_url, &configuration)
     }
 
@@ -2553,7 +2606,7 @@ mod tests {
     async fn goose_user() {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::default();
-        let base_url = get_base_url(Some(HOST.to_string()), None, None);
+        let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
         let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0).unwrap();
         assert_eq!(user.task_sets_index, 0);
         assert_eq!(user.min_wait, 0);
@@ -2588,7 +2641,8 @@ mod tests {
             None,
             Some("http://www2.example.com/".to_string()),
             Some("http://www.example.com/".to_string()),
-        );
+        )
+        .unwrap();
         let user2 = GooseUser::new(0, base_url, 1, 3, &configuration, 0).unwrap();
         assert_eq!(user2.min_wait, 1);
         assert_eq!(user2.max_wait, 3);

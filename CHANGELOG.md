@@ -10,6 +10,7 @@
  - change `GooseAttack` method signatures where an error is possible
  - where possible, passs error up the stack instead of calling `exit(1)`
  - introduce `GooseAttack.display()` which consumes the load test state and displays statistics
+ - `panic!()` on unexpected errors instead of `exit(1)`
 
 ## 0.8.2 July 2, 2020
  - `client.log_debug()` will write debug logs to file when specified with `--debug-log-file=`

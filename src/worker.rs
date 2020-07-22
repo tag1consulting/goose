@@ -12,8 +12,7 @@ use crate::{get_worker_id, GooseAttack, GooseConfiguration, WORKER_ID};
 // If pipe closes unexpectedly, exit.
 fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     if event == PipeEvent::RemovePost {
-        warn!("[{}] manager went away, exiting", get_worker_id());
-        std::process::exit(1);
+        panic!("[{}] manager went away, exiting", get_worker_id());
     }
 }
 
@@ -33,20 +32,14 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     info!("worker connecting to manager at {}", &address);
 
     // Create a request socket.
-    let manager = match Socket::new(Protocol::Req0) {
-        Ok(c) => c,
-        Err(e) => {
-            error!("failed to create socket {}: {}.", &address, e);
-            std::process::exit(1);
-        }
-    };
-    match manager.pipe_notify(pipe_closed) {
-        Ok(_) => (),
-        Err(e) => {
-            error!("failed to set up pipe handler: {}", e);
-            std::process::exit(1);
-        }
-    }
+    let manager = Socket::new(Protocol::Req0)
+        .map_err(|error| eprintln!("{:?} address({})", error, address))
+        .expect("failed to create socket");
+
+    manager
+        .pipe_notify(pipe_closed)
+        .map_err(|error| eprintln!("{:?}", error))
+        .expect("failed to set up pipe handler");
 
     // Pause 1/10 of a second in case we're blocking on a cargo lock.
     thread::sleep(time::Duration::from_millis(100));
@@ -57,8 +50,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
             Ok(_) => break,
             Err(e) => {
                 if retries >= 5 {
-                    error!("failed to communicate with manager at {}: {}.", &address, e);
-                    std::process::exit(1);
+                    panic!("failed to communicate with manager at {}: {}.", &address, e);
                 }
                 debug!("failed to communicate with manager at {}: {}.", &address, e);
                 let sleep_duration = time::Duration::from_millis(500);
@@ -95,13 +87,11 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // Wait for the manager to send user parameters.
     loop {
         info!("waiting for instructions from manager");
-        let msg = match manager.recv() {
-            Ok(m) => m,
-            Err(e) => {
-                error!("unexpected error receiving manager message: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let msg = manager
+            .recv()
+            .map_err(|error| eprintln!("{:?}", error))
+            .expect("error receiving manager message");
+
         let initializers: Vec<GooseUserInitializer> = match serde_cbor::from_reader(msg.as_slice())
         {
             Ok(i) => i,
@@ -133,20 +123,17 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
             if worker_id == 0 {
                 worker_id = initializer.worker_id;
             }
-            let user = match GooseUser::new(
+            let user = GooseUser::new(
                 initializer.task_sets_index,
                 Url::parse(&initializer.base_url).unwrap(),
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
                 goose_attack.task_sets_hash,
-            ) {
-                Ok(u) => u,
-                Err(e) => {
-                    error!("[{}] failed to create GooseUser: {}", get_worker_id(), e);
-                    std::process::exit(1);
-                }
-            };
+            )
+            .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+            .expect("failed to create socket");
+
             weighted_users.push(user);
             if hatch_rate == None {
                 hatch_rate = Some(
@@ -176,24 +163,14 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     loop {
         // Push statistics to manager to force a reply, waiting for RUN.
         push_stats_to_manager(&manager, &requests, false);
-        let msg = match manager.recv() {
-            Ok(m) => m,
-            Err(e) => {
-                error!(
-                    "[{}] unexpected error receiving manager message: {}",
-                    get_worker_id(),
-                    e
-                );
-                std::process::exit(1);
-            }
-        };
-        let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
-            Ok(c) => c,
-            Err(e) => {
-                error!("[{}] invalid message received: {}", get_worker_id(), e);
-                continue;
-            }
-        };
+        let msg = manager
+            .recv()
+            .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+            .expect("error receiving manager message");
+
+        let command: GooseUserCommand = serde_cbor::from_reader(msg.as_slice())
+            .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+            .expect("invalid message received");
 
         match command {
             // Break out of loop and start the load test.
@@ -238,16 +215,11 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     }
     worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
-    match worker_goose_attack
+    worker_goose_attack
         .launch_users(sleep_duration, Some(manager))
         .await
-    {
-        Ok(w) => w,
-        Err(e) => {
-            error!("[{}] failed to launch GooseAttack: {}", get_worker_id(), e);
-            std::process::exit(1);
-        }
-    }
+        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+        .expect("failed to launch GooseAttack")
 }
 
 pub fn push_stats_to_manager(
@@ -261,56 +233,33 @@ pub fn push_stats_to_manager(
         requests.len()
     );
     let mut message = Message::new().unwrap();
-    match serde_cbor::to_writer(&mut message, requests) {
-        Ok(_) => (),
-        Err(e) => {
-            error!(
-                "[{}] failed to serialize empty Vec<GooseRequest>: {}",
-                get_worker_id(),
-                e
-            );
-            std::process::exit(1);
-        }
-    }
-    match manager.try_send(message) {
-        Ok(m) => m,
-        Err(e) => {
-            error!("[{}] communication failure: {:?}.", get_worker_id(), e);
-            std::process::exit(1);
-        }
-    }
+    serde_cbor::to_writer(&mut message, requests)
+        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+        .expect("failed to serialize empty Vec<GooseRequest>");
+
+    manager
+        .try_send(message)
+        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+        .expect("communication failure");
 
     if get_response {
         // Wait for server to reply.
-        let msg = match manager.recv() {
-            Ok(m) => m,
-            Err(e) => {
-                error!(
-                    "[{}] unexpected error receiving manager message: {}",
-                    get_worker_id(),
-                    e
-                );
-                std::process::exit(1);
-            }
-        };
-        let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
-            Ok(c) => c,
-            Err(e) => {
-                error!("[{}] invalid message received: {}", get_worker_id(), e);
-                std::process::exit(1);
-            }
-        };
+        let msg = manager
+            .recv()
+            .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+            .expect("error receiving manager message");
+
+        let command: GooseUserCommand = serde_cbor::from_reader(msg.as_slice())
+            .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+            .expect("invalid message");
 
         if command == GooseUserCommand::EXIT {
             info!("[{}] received EXIT command from manager", get_worker_id());
             // Shutting down, register shutdown pipe handler.
-            match manager.pipe_notify(pipe_closed_during_shutdown) {
-                Ok(_) => (),
-                Err(e) => {
-                    error!("failed to set up new pipe handler: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            manager
+                .pipe_notify(pipe_closed_during_shutdown)
+                .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+                .expect("failed to set up new pipe handler");
             return false;
         }
     }

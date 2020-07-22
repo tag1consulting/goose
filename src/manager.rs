@@ -127,31 +127,22 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     info!("worker connecting to manager at {}", &address);
 
     // Create a Rep0 reply socket.
-    let server = match Socket::new(Protocol::Rep0) {
-        Ok(s) => s,
-        Err(e) => {
-            error!("failed to create socket: {}.", e);
-            std::process::exit(1);
-        }
-    };
+    let server = Socket::new(Protocol::Rep0)
+        .map_err(|error| eprintln!("{:?}", error))
+        .expect("failed to create socket");
 
     // Set up callback function to receive pipe event notifications.
-    match server.pipe_notify(pipe_closed) {
-        Ok(_) => (),
-        Err(e) => {
-            error!("failed to set up pipe handler: {}", e);
-            std::process::exit(1);
-        }
-    }
+    server
+        .pipe_notify(pipe_closed)
+        .map_err(|error| eprintln!("{:?}", error))
+        .expect("failed to set up pipe handler");
 
     // Listen for connections.
-    match server.listen(&address) {
-        Ok(s) => (s),
-        Err(e) => {
-            error!("failed to bind to socket {}: {}.", address, e);
-            std::process::exit(1);
-        }
-    }
+    server
+        .listen(&address)
+        .map_err(|error| eprintln!("{:?} (address = {})", error, address))
+        .expect("failed to bind to socket");
+
     info!(
         "manager listening on {}, waiting for {} workers",
         &address, goose_attack.configuration.expect_workers
@@ -234,13 +225,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         match server.try_recv() {
             Ok(mut msg) => {
                 // Message received, grab the pipe to determine which worker it is.
-                let pipe = match msg.pipe() {
-                    Some(p) => p,
-                    None => {
-                        error!("unexpected fatal error reading worker pipe");
-                        std::process::exit(1);
-                    }
-                };
+                let pipe = msg.pipe().expect("fatal error getting worker pipe");
 
                 // Workers always send a HashMap<String, GooseRequest>.
                 let requests: HashMap<String, GooseRequest> =
@@ -278,34 +263,22 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         // Notify the worker that the load test is over and to exit.
                         if load_test_finished {
                             debug!("telling worker to exit");
-                            match serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT) {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    error!("failed to serialize user command: {}", e);
-                                    std::process::exit(1);
-                                }
-                            }
+                            serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
+                                .map_err(|error| eprintln!("{:?}", error))
+                                .expect("failed to serialize user command");
                         }
                         // Notify the worker that the load test is still running.
                         else {
-                            match serde_cbor::to_writer(&mut message, &GooseUserCommand::RUN) {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    error!("failed to serialize user command: {}", e);
-                                    std::process::exit(1);
-                                }
-                            }
+                            serde_cbor::to_writer(&mut message, &GooseUserCommand::RUN)
+                                .map_err(|error| eprintln!("{:?}", error))
+                                .expect("failed to serialize user command");
                         }
                     }
                     // All workers are not yet running, tell worker to wait.
                     else {
-                        match serde_cbor::to_writer(&mut message, &GooseUserCommand::WAIT) {
-                            Ok(_) => (),
-                            Err(e) => {
-                                error!("failed to serialize user command: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::WAIT)
+                            .map_err(|error| eprintln!("{:?}", error))
+                            .expect("failed to serialize user command");
                     }
                     match server.try_send(message) {
                         Ok(_) => (),
@@ -320,10 +293,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                     }
                                 }
                                 // An unexpected error.
-                                _ => {
-                                    error!("communication failure: {:?}", e);
-                                    std::process::exit(1);
-                                }
+                                _ => panic!("communication failure: {:?}", e),
                             }
                         }
                     }
@@ -334,13 +304,9 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     if workers.len() >= goose_attack.configuration.expect_workers as usize {
                         // We already have enough workers, tell this extra one to EXIT.
                         let mut message = Message::new().unwrap();
-                        match serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT) {
-                            Ok(_) => (),
-                            Err(e) => {
-                                error!("failed to serialize user command: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
+                            .map_err(|error| eprintln!("{:?}", error))
+                            .expect("failed to serialize user command");
                         match server.try_send(message) {
                             Ok(_) => (),
                             // Determine why our send failed.
@@ -352,8 +318,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                     }
                                 }
                                 _ => {
-                                    error!("communication failure: {:?}", e);
-                                    std::process::exit(1);
+                                    panic!("communication failure: {:?}", e);
                                 }
                             },
                         }
@@ -367,8 +332,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                     if goose_attack.configuration.no_hash_check {
                                         warn!("worker is running a different load test, ignoring")
                                     } else {
-                                        error!("worker is running a different load test, set --no-hash-check to ignore");
-                                        std::process::exit(1);
+                                        panic!("worker is running a different load test, set --no-hash-check to ignore");
                                     }
                                 }
                             }
@@ -376,8 +340,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 if goose_attack.configuration.no_hash_check {
                                     warn!("worker is running a different load test, ignoring")
                                 } else {
-                                    error!("worker is running a different load test, set --no-hash-check to ignore");
-                                    std::process::exit(1);
+                                    panic!("worker is running a different load test, set --no-hash-check to ignore");
                                 }
                             }
                         };
@@ -403,8 +366,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             let user = match available_users.pop() {
                                 Some(u) => u,
                                 None => {
-                                    error!("not enough available users!?");
-                                    std::process::exit(1);
+                                    panic!("not enough available users!?");
                                 }
                             };
                             // Build a vector of GooseUser initializers for next worker.
@@ -420,13 +382,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
                         // Send vector of user initializers to worker.
                         let mut message = Message::new().unwrap();
-                        match serde_cbor::to_writer(&mut message, &users) {
-                            Ok(_) => (),
-                            Err(e) => {
-                                error!("failed to serialize user initializers: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
+                        serde_cbor::to_writer(&mut message, &users)
+                            .map_err(|error| eprintln!("{:?}", error))
+                            .expect("failed to serialize user initializers");
+
                         info!("sending {} users to worker {}", users.len(), workers.len());
                         match server.try_send(message) {
                             Ok(_) => (),
@@ -438,8 +397,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                     }
                                 }
                                 _ => {
-                                    error!("communication failure: {:?}", e);
-                                    std::process::exit(1);
+                                    panic!("communication failure: {:?}", e);
                                 }
                             },
                         }
@@ -465,8 +423,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         thread::sleep(time::Duration::from_millis(500));
                     }
                 } else {
-                    error!("unexpected error receiving user message: {}", e);
-                    std::process::exit(1);
+                    panic!("error receiving user message: {}", e);
                 }
             }
         }
