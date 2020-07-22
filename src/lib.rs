@@ -403,16 +403,7 @@ pub enum GooseError {
 
 impl fmt::Display for GooseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            GooseError::Io(ref err) => err.fmt(f),
-            GooseError::Reqwest(ref err) => err.fmt(f),
-            GooseError::FeatureNotEnabled { .. } => write!(f, "Compile time feature not enabled."),
-            GooseError::InvalidHost { .. } => write!(f, "Unable to parse host"),
-            GooseError::InvalidOption { .. } => write!(f, "Invalid option."),
-            GooseError::InvalidWaitTime { .. } => write!(f, "Invalid wait time specified."),
-            GooseError::InvalidWeight { .. } => write!(f, "Invalid weight specified."),
-            GooseError::NoTaskSets { .. } => write!(f, "No task sets defined."),
-        }
+        fmt::Display::fmt(&self, f)
     }
 }
 
