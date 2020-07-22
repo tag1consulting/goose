@@ -113,7 +113,7 @@ $ cargo run
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 3.56s
      Running `target/debug/loadtest`
-12:09:56 [ERROR] Host must be defined globally or per-TaskSet. No host defined for LoadtestTasks.
+Error: InvalidOption { option: "--host", value: "", detail: Some("host must be defined via --host, GooseAttack.set_host() or GooseTaskSet.set_host() (no host defined for WebsiteUser)") }
 ```
 
 Goose is unable to run, as it doesn't know the domain you want to load test. So,
