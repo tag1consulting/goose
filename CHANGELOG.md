@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.1-dev
+
 ## 0.9.0 July 23, 2020
  - fix code documentation, requests are async and require await
  - properly support setting host when registering task set 
