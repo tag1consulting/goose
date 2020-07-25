@@ -454,31 +454,31 @@ impl From<io::Error> for GooseError {
 #[derive(Clone)]
 pub struct GooseAttack {
     /// An optional task to run one time before starting users and running task sets.
-    test_start_task: Option<GooseTask>,
+    pub test_start_task: Option<GooseTask>,
     /// An optional task to run one time after users have finished running task sets.
-    test_stop_task: Option<GooseTask>,
+    pub test_stop_task: Option<GooseTask>,
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
-    task_sets: Vec<GooseTaskSet>,
+    pub task_sets: Vec<GooseTaskSet>,
     /// A checksum of the task_sets vector to be sure all workers are running the same load test.
-    task_sets_hash: u64,
+    pub task_sets_hash: u64,
     /// A weighted vector containing a GooseUser object for each user that will run during this load test.
-    weighted_users: Vec<GooseUser>,
+    pub weighted_users: Vec<GooseUser>,
     /// An optional default host to run this load test against.
-    host: Option<String>,
+    pub host: Option<String>,
     /// Configuration object managed by StructOpt.
-    configuration: GooseConfiguration,
+    pub configuration: GooseConfiguration,
     /// By default launch 1 user per number of CPUs.
-    number_of_cpus: usize,
+    pub number_of_cpus: usize,
     /// Track how long the load test should run.
-    run_time: usize,
+    pub run_time: usize,
     /// Track total number of users to run for this load test.
-    users: usize,
+    pub users: usize,
     /// Track how many users are already loaded.
-    active_users: usize,
+    pub active_users: usize,
     /// All requests statistics merged together.
-    merged_requests: GooseRequestStats,
+    pub statistics: GooseRequestStats,
     /// When the load test started.
-    started: Option<time::Instant>,
+    pub started: Option<time::Instant>,
 }
 /// Goose's internal global state.
 impl GooseAttack {
@@ -503,7 +503,7 @@ impl GooseAttack {
             run_time: 0,
             users: 0,
             active_users: 0,
-            merged_requests: HashMap::new(),
+            statistics: HashMap::new(),
             started: None,
         };
         Ok(goose_attack.setup()?)
@@ -533,7 +533,7 @@ impl GooseAttack {
             run_time: 0,
             users: 0,
             active_users: 0,
-            merged_requests: HashMap::new(),
+            statistics: HashMap::new(),
             started: None,
         }
     }
@@ -1633,7 +1633,7 @@ impl GooseAttack {
                     }
 
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
-                    let mut merge_request = match self.merged_requests.get(&key) {
+                    let mut merge_request = match self.statistics.get(&key) {
                         Some(m) => m.clone(),
                         None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
                     };
@@ -1658,7 +1658,7 @@ impl GooseAttack {
                         }
                     }
 
-                    self.merged_requests.insert(key.to_string(), merge_request);
+                    self.statistics.insert(key.to_string(), merge_request);
                     message = parent_receiver.try_recv();
                 }
 
@@ -1669,21 +1669,21 @@ impl GooseAttack {
                         // Push all statistics to manager process.
                         if !worker::push_stats_to_manager(
                             &socket.clone().unwrap(),
-                            &self.merged_requests.clone(),
+                            &self.statistics.clone(),
                             true,
                         ) {
                             // EXIT received, cancel.
                             canceled.store(true, Ordering::SeqCst);
                         }
                         // The manager has all our statistics, reset locally.
-                        self.merged_requests = HashMap::new();
+                        self.statistics = HashMap::new();
                     }
                 }
 
                 // Flush statistics collected prior to all user threads running
                 if self.configuration.reset_stats && !statistics_reset {
                     info!("statistics reset...");
-                    self.merged_requests = HashMap::new();
+                    self.statistics = HashMap::new();
                     statistics_reset = true;
                 }
             }
@@ -1742,7 +1742,7 @@ impl GooseAttack {
                     while message.is_ok() {
                         let raw_request = message.unwrap();
                         let key = format!("{:?} {}", raw_request.method, raw_request.name);
-                        let mut merge_request = match self.merged_requests.get(&key) {
+                        let mut merge_request = match self.statistics.get(&key) {
                             Some(m) => m.clone(),
                             None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
                         };
@@ -1754,7 +1754,7 @@ impl GooseAttack {
                             merge_request.fail_count += 1;
                         }
 
-                        self.merged_requests.insert(key.to_string(), merge_request);
+                        self.statistics.insert(key.to_string(), merge_request);
                         message = parent_receiver.try_recv();
                     }
                 }
@@ -1766,7 +1766,7 @@ impl GooseAttack {
                         // Push all statistics to manager process.
                         worker::push_stats_to_manager(
                             &socket.clone().unwrap(),
-                            &self.merged_requests.clone(),
+                            &self.statistics.clone(),
                             true,
                         );
                         // No need to reset local stats, the worker is exiting.

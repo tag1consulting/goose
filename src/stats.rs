@@ -404,23 +404,23 @@ pub fn print_final_stats(goose_attack: &GooseAttack, elapsed: usize) {
     if !goose_attack.configuration.worker {
         info!("printing final statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
-        print_requests_and_fails(&goose_attack.merged_requests, elapsed);
+        print_requests_and_fails(&goose_attack.statistics, elapsed);
         // 2) print respones time statistics, with percentiles
-        print_response_times(&goose_attack.merged_requests, true);
+        print_response_times(&goose_attack.statistics, true);
         // 3) print status_codes
         if goose_attack.configuration.status_codes {
-            print_status_codes(&goose_attack.merged_requests);
+            print_status_codes(&goose_attack.statistics);
         }
     }
 }
 
 pub fn print_running_stats(goose_attack: &GooseAttack, elapsed: usize) {
-    if !goose_attack.configuration.worker && !goose_attack.merged_requests.is_empty() {
+    if !goose_attack.configuration.worker && !goose_attack.statistics.is_empty() {
         info!("printing running statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
-        print_requests_and_fails(&goose_attack.merged_requests, elapsed);
+        print_requests_and_fails(&goose_attack.statistics, elapsed);
         // 2) print respones time statistics, without percentiles
-        print_response_times(&goose_attack.merged_requests, false);
+        print_response_times(&goose_attack.statistics, false);
         println!();
     }
 }

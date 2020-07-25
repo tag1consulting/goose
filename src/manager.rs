@@ -244,7 +244,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 trace!("request_key: {}", request_key);
                                 let merged_request;
                                 if let Some(parent_request) =
-                                    goose_attack.merged_requests.get(&request_key)
+                                    goose_attack.statistics.get(&request_key)
                                 {
                                     merged_request = merge_from_worker(
                                         parent_request,
@@ -256,7 +256,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                     merged_request = request.clone();
                                 }
                                 goose_attack
-                                    .merged_requests
+                                    .statistics
                                     .insert(request_key.to_string(), merged_request);
                             }
                         }
