@@ -41,6 +41,9 @@ fn test_single_taskset() {
 
     let mut config = common::build_configuration(&server);
     config.no_stats = false;
+    // Start users in .5 seconds.
+    config.users = Some(2);
+    config.hatch_rate = 4;
     let goose_attack = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
@@ -93,10 +96,19 @@ fn test_single_taskset() {
     assert!(goose_attack.configuration.users.unwrap() == config.users.unwrap());
     assert!(goose_attack.users == config.users.unwrap());
     assert!(goose_attack.users == goose_attack.active_users);
+    assert!(goose_attack.weighted_users.len() == config.users.unwrap());
+
+    // Verify that Goose correctly shares 1 task_set among all users.
+    assert!(goose_attack.task_sets.len() == 1);
+    assert!(goose_attack.test_start_task.is_none());
+    assert!(goose_attack.test_stop_task.is_none());
 
     // Verify Goose properly tracks time.
     assert!(before < goose_attack.started.unwrap());
     assert!(after > goose_attack.started.unwrap());
+    assert!(before < goose_attack.weighted_users[0].started);
+    assert!(before < goose_attack.weighted_users[1].started);
+    assert!(after > goose_attack.weighted_users[1].started);
 }
 
 #[test]
