@@ -22,8 +22,6 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 // Load test with a single task set containing two weighted tasks. Validate
 // weighting and statistics.
 fn test_single_taskset() {
-    use std::time;
-
     let server = MockServer::start();
 
     let index = Mock::new()
@@ -37,14 +35,12 @@ fn test_single_taskset() {
         .return_status(200)
         .create_on(&server);
 
-    let before = time::Instant::now();
-
     let mut config = common::build_configuration(&server);
     config.no_stats = false;
     // Start users in .5 seconds.
     config.users = Some(2);
     config.hatch_rate = 4;
-    let goose_attack = crate::GooseAttack::initialize_with_config(config.clone())
+    let stats = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
         .register_taskset(
@@ -53,9 +49,8 @@ fn test_single_taskset() {
                 .register_task(task!(get_about).set_weight(3).unwrap()),
         )
         .execute()
-        .unwrap();
-
-    let after = time::Instant::now();
+        .unwrap()
+        .get_stats();
 
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
@@ -66,11 +61,11 @@ fn test_single_taskset() {
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 
-    let index_stats = goose_attack
+    let index_stats = stats
         .statistics
         .get(&format!("GET {}", INDEX_PATH))
         .unwrap();
-    let about_stats = goose_attack
+    let about_stats = stats
         .statistics
         .get(&format!("GET {}", ABOUT_PATH))
         .unwrap();
@@ -93,22 +88,7 @@ fn test_single_taskset() {
     assert!(about_stats.fail_count == 0);
 
     // Verify that Goose started the correct number of users.
-    assert!(goose_attack.configuration.users.unwrap() == config.users.unwrap());
-    assert!(goose_attack.users == config.users.unwrap());
-    assert!(goose_attack.users == goose_attack.active_users);
-    assert!(goose_attack.weighted_users.len() == config.users.unwrap());
-
-    // Verify that Goose correctly shares 1 task_set among all users.
-    assert!(goose_attack.task_sets.len() == 1);
-    assert!(goose_attack.test_start_task.is_none());
-    assert!(goose_attack.test_stop_task.is_none());
-
-    // Verify Goose properly tracks time.
-    assert!(before < goose_attack.started.unwrap());
-    assert!(after > goose_attack.started.unwrap());
-    assert!(before < goose_attack.weighted_users[0].started);
-    assert!(before < goose_attack.weighted_users[1].started);
-    assert!(after > goose_attack.weighted_users[1].started);
+    assert!(stats.users == config.users.unwrap());
 }
 
 #[test]
@@ -134,7 +114,7 @@ fn test_single_taskset_empty_config_host() {
     let host = std::mem::take(&mut config.host);
     // Enable statistics to confirm Goose and web server agree.
     config.no_stats = false;
-    let goose_attack = crate::GooseAttack::initialize_with_config(config)
+    let stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -144,7 +124,8 @@ fn test_single_taskset_empty_config_host() {
         )
         .set_host(&host)
         .execute()
-        .unwrap();
+        .unwrap()
+        .get_stats();
 
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
@@ -157,7 +138,7 @@ fn test_single_taskset_empty_config_host() {
 
     // Confirm that Goose and the server saw the same number of page loads.
     assert!(
-        goose_attack
+        stats
             .statistics
             .get(&format!("GET {}", INDEX_PATH))
             .unwrap()
@@ -165,7 +146,7 @@ fn test_single_taskset_empty_config_host() {
             == index.times_called()
     );
     assert!(
-        goose_attack
+        stats
             .statistics
             .get(&format!("GET {}", ABOUT_PATH))
             .unwrap()

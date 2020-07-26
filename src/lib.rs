@@ -450,35 +450,74 @@ impl From<io::Error> for GooseError {
     }
 }
 
+/// Statistics collected during a Goose load test.
+///
+/// # Example
+/// ```rust,no_run
+///     use goose::prelude::*;
+///
+/// fn main() -> Result<(), GooseError> {
+///     let stats = GooseAttack::initialize()?
+///         .register_taskset(taskset!("ExampleUsers")
+///             .register_task(task!(example_task))
+///         )
+///         .execute()?
+///         .get_stats();
+///
+///     // Do something with stats ...
+///     println!("{:#?}", stats);
+///
+///     Ok(())
+/// }
+///
+/// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+///     let _goose = user.get("/").await?;
+///
+///     Ok(())
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub struct GooseStats {
+    /// A hash of the load test, useful to verify if different statistics are from
+    /// the same load test.
+    pub hash: u64,
+    /// How many seconds the load test ran.
+    pub run_time: usize,
+    /// Total number of users simulated during this load test.
+    pub users: usize,
+    /// Goose request statistics.
+    pub statistics: GooseRequestStats,
+}
+
 /// Internal global state for load test.
 #[derive(Clone)]
 pub struct GooseAttack {
     /// An optional task to run one time before starting users and running task sets.
-    pub test_start_task: Option<GooseTask>,
+    test_start_task: Option<GooseTask>,
     /// An optional task to run one time after users have finished running task sets.
-    pub test_stop_task: Option<GooseTask>,
+    test_stop_task: Option<GooseTask>,
     /// A vector containing one copy of each GooseTaskSet that will run during this load test.
-    pub task_sets: Vec<GooseTaskSet>,
+    task_sets: Vec<GooseTaskSet>,
     /// A checksum of the task_sets vector to be sure all workers are running the same load test.
-    pub task_sets_hash: u64,
+    task_sets_hash: u64,
     /// A weighted vector containing a GooseUser object for each user that will run during this load test.
-    pub weighted_users: Vec<GooseUser>,
+    weighted_users: Vec<GooseUser>,
     /// An optional default host to run this load test against.
-    pub host: Option<String>,
+    host: Option<String>,
     /// Configuration object managed by StructOpt.
-    pub configuration: GooseConfiguration,
+    configuration: GooseConfiguration,
     /// By default launch 1 user per number of CPUs.
-    pub number_of_cpus: usize,
+    number_of_cpus: usize,
     /// Track how long the load test should run.
-    pub run_time: usize,
+    run_time: usize,
     /// Track total number of users to run for this load test.
-    pub users: usize,
+    users: usize,
     /// Track how many users are already loaded.
-    pub active_users: usize,
+    active_users: usize,
     /// All requests statistics merged together.
-    pub statistics: GooseRequestStats,
+    statistics: GooseRequestStats,
     /// When the load test started.
-    pub started: Option<time::Instant>,
+    started: Option<time::Instant>,
 }
 /// Goose's internal global state.
 impl GooseAttack {
@@ -1315,6 +1354,40 @@ impl GooseAttack {
     pub fn display(self) {
         if !self.configuration.no_stats && !self.configuration.worker {
             stats::print_final_stats(&self, self.started.unwrap().elapsed().as_secs() as usize);
+        }
+    }
+
+    /// Get statistics from Goose's internal GooseAttack structure.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::prelude::*;
+    ///
+    /// fn main() -> Result<(), GooseError> {
+    ///     let _stats = GooseAttack::initialize()?
+    ///         .register_taskset(taskset!("ExampleUsers")
+    ///             .register_task(task!(example_task))
+    ///         )
+    ///         .execute()?
+    ///         .get_stats();
+    ///
+    ///     // Do something with _stats ...
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn get_stats(self) -> GooseStats {
+        GooseStats {
+            hash: self.task_sets_hash,
+            run_time: self.run_time,
+            users: self.active_users,
+            statistics: self.statistics,
         }
     }
 
