@@ -41,3 +41,8 @@ rustls = ["reqwest/rustls-tls"]
 
 [dev-dependencies]
 httpmock = "0.4"
+criterion = "0.3"
+
+[[bench]]
+name = "create_clients"
+harness = false

@@ -884,7 +884,7 @@ impl GooseAttack {
     }
 
     /// Allocate a vector of weighted GooseUser.
-    fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
+    pub fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
         trace!("weight_task_set_users");
 
         let mut u: usize = 0;
