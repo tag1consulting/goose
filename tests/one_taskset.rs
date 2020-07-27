@@ -50,7 +50,7 @@ fn test_single_taskset() {
         )
         .execute()
         .unwrap()
-        .get_stats();
+        .get();
 
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
@@ -61,14 +61,8 @@ fn test_single_taskset() {
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 
-    let index_stats = stats
-        .statistics
-        .get(&format!("GET {}", INDEX_PATH))
-        .unwrap();
-    let about_stats = stats
-        .statistics
-        .get(&format!("GET {}", ABOUT_PATH))
-        .unwrap();
+    let index_stats = stats.requests.get(&format!("GET {}", INDEX_PATH)).unwrap();
+    let about_stats = stats.requests.get(&format!("GET {}", ABOUT_PATH)).unwrap();
 
     // Confirm that the path and method are correct in the statistics.
     assert!(index_stats.path == INDEX_PATH);
@@ -125,7 +119,7 @@ fn test_single_taskset_empty_config_host() {
         .set_host(&host)
         .execute()
         .unwrap()
-        .get_stats();
+        .get();
 
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
@@ -139,7 +133,7 @@ fn test_single_taskset_empty_config_host() {
     // Confirm that Goose and the server saw the same number of page loads.
     assert!(
         stats
-            .statistics
+            .requests
             .get(&format!("GET {}", INDEX_PATH))
             .unwrap()
             .response_time_counter
@@ -147,7 +141,7 @@ fn test_single_taskset_empty_config_host() {
     );
     assert!(
         stats
-            .statistics
+            .requests
             .get(&format!("GET {}", ABOUT_PATH))
             .unwrap()
             .response_time_counter

@@ -462,7 +462,7 @@ impl From<io::Error> for GooseError {
 ///             .register_task(task!(example_task))
 ///         )
 ///         .execute()?
-///         .get_stats();
+///         .get();
 ///
 ///     // Do something with stats ...
 ///     println!("{:#?}", stats);
@@ -482,11 +482,11 @@ pub struct GooseStats {
     /// the same load test.
     pub hash: u64,
     /// How many seconds the load test ran.
-    pub run_time: usize,
+    pub duration: usize,
     /// Total number of users simulated during this load test.
     pub users: usize,
     /// Goose request statistics.
-    pub statistics: GooseRequestStats,
+    pub requests: GooseRequestStats,
 }
 
 /// Internal global state for load test.
@@ -1321,17 +1321,51 @@ impl GooseAttack {
         Ok(self)
     }
 
-    /// Display the statistics optionally collected during a load test.
+    /// Get public GooseStats object from private GooseAttack object.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use goose::prelude::*;
+    ///
+    /// fn main() -> Result<(), GooseError> {
+    ///     let stats = GooseAttack::initialize()?
+    ///         .register_taskset(taskset!("ExampleTaskset")
+    ///             .register_task(task!(a_task))
+    ///         )
+    ///         .execute()?
+    ///         .get();
+    ///
+    ///     // Do something with the stats from running a GooseAttack.
+    ///     println!("{:#?}", stats);
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn a_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn get(self) -> GooseStats {
+        GooseStats {
+            hash: self.task_sets_hash,
+            duration: self.run_time,
+            users: self.active_users,
+            requests: self.statistics,
+        }
+    }
+
+    /// Consume and display the statistics optionally collected during a load test.
     ///
     /// # Example
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
-    ///     let _goose_attack = GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("ExampleTasks")
-    ///             .register_task(task!(example_task).set_weight(2)?)
-    ///             .register_task(task!(another_example_task).set_weight(3)?)
+    ///     GooseAttack::initialize()?
+    ///         .register_taskset(taskset!("ExampleTaskset")
+    ///             .register_task(task!(a_task))
     ///         )
     ///         .execute()?
     ///         .display();
@@ -1339,56 +1373,46 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/foo").await?;
-    ///
-    ///     Ok(())
-    /// }
-    ///
-    /// async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/bar").await?;
+    /// async fn a_task(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn display(self) {
-        if !self.configuration.no_stats && !self.configuration.worker {
-            stats::print_final_stats(&self, self.started.unwrap().elapsed().as_secs() as usize);
-        }
+        let stats = GooseAttack::get(self);
+        stats::print_final_stats(&stats);
     }
 
-    /// Get statistics from Goose's internal GooseAttack structure.
+    /// Get and display the statistics optionally collected during a load test.
     ///
     /// # Example
     /// ```rust,no_run
     ///     use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
-    ///     let _stats = GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("ExampleUsers")
-    ///             .register_task(task!(example_task))
+    ///     let stats = GooseAttack::initialize()?
+    ///         .register_taskset(taskset!("ExampleTaskset")
+    ///             .register_task(task!(a_task))
     ///         )
     ///         .execute()?
-    ///         .get_stats();
+    ///         .display_and_get();
     ///
-    ///     // Do something with _stats ...
+    ///     // Also do something with the stats that were returned.
+    ///     println!("{:#?}", stats);
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn a_task(user: &GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_stats(self) -> GooseStats {
-        GooseStats {
-            hash: self.task_sets_hash,
-            run_time: self.run_time,
-            users: self.active_users,
-            statistics: self.statistics,
-        }
+    pub fn display_and_get(self) -> GooseStats {
+        GooseAttack::display(self.clone());
+        GooseAttack::get(self)
     }
 
     /// Helper to wrap configured host in Option<> if set.

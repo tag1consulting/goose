@@ -3,7 +3,7 @@ use num_format::{Locale, ToFormattedString};
 use std::collections::{BTreeMap, HashMap};
 use std::f32;
 
-use crate::{util, GooseAttack, GooseRequestStats};
+use crate::{util, GooseAttack, GooseStats};
 
 /// A helper function that merges together response times.
 ///
@@ -74,7 +74,7 @@ fn calculate_response_time_percentile(
 }
 
 /// Display a table of requests and fails.
-pub fn print_requests_and_fails(requests: &GooseRequestStats, elapsed: usize) {
+pub fn print_requests_and_fails(stats: &GooseStats) {
     debug!("entering print_requests_and_fails");
     // Display stats from merged HashMap
     println!("------------------------------------------------------------------------------ ");
@@ -85,7 +85,7 @@ pub fn print_requests_and_fails(requests: &GooseRequestStats, elapsed: usize) {
     println!(" ----------------------------------------------------------------------------- ");
     let mut aggregate_fail_count = 0;
     let mut aggregate_total_count = 0;
-    for (request_key, request) in requests.iter().sorted() {
+    for (request_key, request) in stats.requests.iter().sorted() {
         let total_count = request.success_count + request.fail_count;
         let fail_percent = if request.fail_count > 0 {
             request.fail_count as f32 / total_count as f32 * 100.0
@@ -103,8 +103,8 @@ pub fn print_requests_and_fails(requests: &GooseRequestStats, elapsed: usize) {
                     request.fail_count.to_formatted_string(&Locale::en),
                     fail_percent as usize
                 ),
-                (total_count / elapsed).to_formatted_string(&Locale::en),
-                (request.fail_count / elapsed).to_formatted_string(&Locale::en),
+                (total_count / stats.duration).to_formatted_string(&Locale::en),
+                (request.fail_count / stats.duration).to_formatted_string(&Locale::en),
             );
         } else {
             println!(
@@ -116,14 +116,14 @@ pub fn print_requests_and_fails(requests: &GooseRequestStats, elapsed: usize) {
                     request.fail_count.to_formatted_string(&Locale::en),
                     fail_percent
                 ),
-                (total_count / elapsed).to_formatted_string(&Locale::en),
-                (request.fail_count / elapsed).to_formatted_string(&Locale::en),
+                (total_count / stats.duration).to_formatted_string(&Locale::en),
+                (request.fail_count / stats.duration).to_formatted_string(&Locale::en),
             );
         }
         aggregate_total_count += total_count;
         aggregate_fail_count += request.fail_count;
     }
-    if requests.len() > 1 {
+    if stats.requests.len() > 1 {
         let aggregate_fail_percent = if aggregate_fail_count > 0 {
             aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
         } else {
@@ -141,8 +141,8 @@ pub fn print_requests_and_fails(requests: &GooseRequestStats, elapsed: usize) {
                     aggregate_fail_count.to_formatted_string(&Locale::en),
                     aggregate_fail_percent as usize
                 ),
-                (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
-                (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+                (aggregate_total_count / stats.duration).to_formatted_string(&Locale::en),
+                (aggregate_fail_count / stats.duration).to_formatted_string(&Locale::en),
             );
         } else {
             println!(
@@ -154,14 +154,14 @@ pub fn print_requests_and_fails(requests: &GooseRequestStats, elapsed: usize) {
                     aggregate_fail_count.to_formatted_string(&Locale::en),
                     aggregate_fail_percent
                 ),
-                (aggregate_total_count / elapsed).to_formatted_string(&Locale::en),
-                (aggregate_fail_count / elapsed).to_formatted_string(&Locale::en),
+                (aggregate_total_count / stats.duration).to_formatted_string(&Locale::en),
+                (aggregate_fail_count / stats.duration).to_formatted_string(&Locale::en),
             );
         }
     }
 }
 
-fn print_response_times(requests: &GooseRequestStats, display_percentiles: bool) {
+fn print_response_times(stats: &GooseStats, display_percentiles: bool) {
     debug!("entering print_response_times");
     let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
     let mut aggregate_total_response_time: usize = 0;
@@ -174,7 +174,7 @@ fn print_response_times(requests: &GooseRequestStats, display_percentiles: bool)
         "Name", "Avg (ms)", "Min", "Max", "Median"
     );
     println!(" ----------------------------------------------------------------------------- ");
-    for (request_key, request) in requests.iter().sorted() {
+    for (request_key, request) in stats.requests.iter().sorted() {
         // Iterate over user response times, and merge into global response times.
         aggregate_response_times =
             merge_response_times(aggregate_response_times, request.response_times.clone());
@@ -207,7 +207,7 @@ fn print_response_times(requests: &GooseRequestStats, display_percentiles: bool)
             ),
         );
     }
-    if requests.len() > 1 {
+    if stats.requests.len() > 1 {
         println!(" ------------------------+------------+------------+------------+------------- ");
         if aggregate_response_time_counter == 0 {
             aggregate_response_time_counter = 1;
@@ -236,7 +236,7 @@ fn print_response_times(requests: &GooseRequestStats, display_percentiles: bool)
             "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%"
         );
         println!(" ----------------------------------------------------------------------------- ");
-        for (request_key, request) in requests.iter().sorted() {
+        for (request_key, request) in stats.requests.iter().sorted() {
             // Sort response times so we can calculate a mean.
             println!(
                 " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
@@ -285,7 +285,7 @@ fn print_response_times(requests: &GooseRequestStats, display_percentiles: bool)
                 ),
             );
         }
-        if requests.len() > 1 {
+        if stats.requests.len() > 1 {
             println!(
                 " ------------------------+--------+--------+--------+--------+--------+------- "
             );
@@ -339,13 +339,13 @@ fn print_response_times(requests: &GooseRequestStats, display_percentiles: bool)
     }
 }
 
-fn print_status_codes(requests: &GooseRequestStats) {
+fn print_status_codes(stats: &GooseStats) {
     debug!("entering print_status_codes");
     println!("-------------------------------------------------------------------------------");
     println!(" {:<23} | {:<25} ", "Name", "Status codes");
     println!(" ----------------------------------------------------------------------------- ");
     let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
-    for (request_key, request) in requests.iter().sorted() {
+    for (request_key, request) in stats.requests.iter().sorted() {
         let mut codes: String = "".to_string();
         for (status_code, count) in &request.status_code_counts {
             if codes.is_empty() {
@@ -400,27 +400,27 @@ fn print_status_codes(requests: &GooseRequestStats) {
 }
 
 /// Display running and ending statistics
-pub fn print_final_stats(goose_attack: &GooseAttack, elapsed: usize) {
-    if !goose_attack.configuration.worker {
-        info!("printing final statistics after {} seconds...", elapsed);
-        // 1) print request and fail statistics.
-        print_requests_and_fails(&goose_attack.statistics, elapsed);
-        // 2) print respones time statistics, with percentiles
-        print_response_times(&goose_attack.statistics, true);
-        // 3) print status_codes
-        if goose_attack.configuration.status_codes {
-            print_status_codes(&goose_attack.statistics);
-        }
-    }
+pub fn print_final_stats(stats: &GooseStats) {
+    info!(
+        "printing final statistics after {} seconds...",
+        stats.duration
+    );
+    // 1) print request and fail statistics.
+    print_requests_and_fails(stats);
+    // 2) print respones time statistics, with percentiles
+    print_response_times(stats, true);
+    // 3) print status_codes
+    print_status_codes(stats);
 }
 
 pub fn print_running_stats(goose_attack: &GooseAttack, elapsed: usize) {
+    let stats = GooseAttack::get(goose_attack.clone());
     if !goose_attack.configuration.worker && !goose_attack.statistics.is_empty() {
         info!("printing running statistics after {} seconds...", elapsed);
         // 1) print request and fail statistics.
-        print_requests_and_fails(&goose_attack.statistics, elapsed);
+        print_requests_and_fails(&stats);
         // 2) print respones time statistics, without percentiles
-        print_response_times(&goose_attack.statistics, false);
+        print_response_times(&stats, false);
         println!();
     }
 }

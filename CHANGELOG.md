@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.9.1-dev
- - expose statistics from load test via `.get_stats()` as `GooseStats`
+ - expose stats from load test via `display_and_get()` and `.get()` as `GooseStats`
 
 ## 0.9.0 July 23, 2020
  - fix code documentation, requests are async and require await
