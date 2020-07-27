@@ -14,7 +14,7 @@ pub type GooseRequestStats = HashMap<String, GooseRequest>;
 ///
 /// # Example
 /// ```rust,no_run
-///     use goose::prelude::*;
+/// use goose::prelude::*;
 ///
 /// fn main() -> Result<(), GooseError> {
 ///     let goose_stats: GooseStats = GooseAttack::initialize()?
@@ -54,7 +54,7 @@ impl GooseStats {
     ///
     /// # Example
     /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
@@ -459,9 +459,9 @@ impl GooseStats {
                     new_count = *count;
                 }
                 aggregated_status_code_counts.insert(*status_code, new_count);
-                // If the exit_early flag is still true, there are no status codes in
-                // the request stats, so exit early.
             }
+            // If the exit_early flag is still true, there are no status codes in
+            // the request stats, exit.
             if exit_early {
                 return Ok(self);
             }
