@@ -36,7 +36,7 @@ pub type GooseRequestStats = HashMap<String, GooseRequest>;
 ///     Ok(())
 /// }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct GooseStats {
     /// A hash of the load test, useful to verify if different statistics are from
     /// the same load test.
@@ -50,16 +50,6 @@ pub struct GooseStats {
 }
 
 impl GooseStats {
-    /// Create a new, empty GooseStats object.
-    pub fn new() -> Self {
-        GooseStats {
-            hash: 0,
-            duration: 0,
-            users: 0,
-            requests: HashMap::new(),
-        }
-    }
-
     /// Consumes and display all statistics from a completed load test.
     ///
     /// # Example
@@ -109,7 +99,7 @@ impl GooseStats {
     /// Display a table of requests and fails.
     pub fn print_requests(&self) -> &GooseStats {
         // If there's nothing to display, exit immediately.
-        if self.requests.len() == 0 {
+        if self.requests.is_empty() {
             return self;
         }
 
@@ -205,7 +195,7 @@ impl GooseStats {
     // Display a table of response times.
     pub fn print_response_times(&self) -> &GooseStats {
         // If there's nothing to display, exit immediately.
-        if self.requests.len() == 0 {
+        if self.requests.is_empty() {
             return self;
         }
 
@@ -281,7 +271,7 @@ impl GooseStats {
     // Display slowest response times within several percentiles.
     pub fn print_percentiles(&self) -> &GooseStats {
         // If there's nothing to display, exit immediately.
-        if self.requests.len() == 0 {
+        if self.requests.is_empty() {
             return self;
         }
 
@@ -422,7 +412,7 @@ impl GooseStats {
     // Display a table of response status codes.
     pub fn print_status_codes(&self) -> Result<&GooseStats> {
         // If there's nothing to display, exit immediately.
-        if self.requests.len() == 0 {
+        if self.requests.is_empty() {
             return Ok(self);
         }
 

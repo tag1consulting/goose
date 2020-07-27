@@ -496,7 +496,7 @@ impl GooseAttack {
             run_time: 0,
             users: 0,
             started: None,
-            stats: GooseStats::new(),
+            stats: GooseStats::default(),
         };
         Ok(goose_attack.setup()?)
     }
@@ -524,7 +524,7 @@ impl GooseAttack {
             run_time: 0,
             users: 0,
             started: None,
-            stats: GooseStats::new(),
+            stats: GooseStats::default(),
         }
     }
 
