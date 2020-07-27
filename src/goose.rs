@@ -1825,7 +1825,7 @@ impl GooseUser {
     /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
-    ///     GooseAttack::initialize()?
+    ///     let goose_stats = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
     ///             .set_wait_time(0, 3)?
     ///             .register_task(task!(task_foo).set_weight(10)?)

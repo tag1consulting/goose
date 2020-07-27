@@ -214,7 +214,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
             {
                 // Reset timer each time we display statistics.
                 running_statistics_timer = time::Instant::now();
-                stats::print_running_stats(&goose_attack, started.elapsed().as_secs() as usize);
+                goose_attack.stats.duration = goose_attack.started.unwrap().elapsed().as_secs() as usize;
+                goose_attack.stats.print_running();
             }
         } else if canceled.load(Ordering::SeqCst) {
             info!("load test canceled, exiting");
@@ -244,7 +245,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 trace!("request_key: {}", request_key);
                                 let merged_request;
                                 if let Some(parent_request) =
-                                    goose_attack.statistics.get(&request_key)
+                                    goose_attack.stats.requests.get(&request_key)
                                 {
                                     merged_request = merge_from_worker(
                                         parent_request,
@@ -256,7 +257,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                     merged_request = request.clone();
                                 }
                                 goose_attack
-                                    .statistics
+                                    .stats
+                                    .requests
                                     .insert(request_key.to_string(), merged_request);
                             }
                         }
@@ -328,7 +330,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         // Validate worker load test hash.
                         match requests.get("load_test_hash") {
                             Some(r) => {
-                                if r.load_test_hash != goose_attack.task_sets_hash {
+                                if r.load_test_hash != goose_attack.stats.hash {
                                     if goose_attack.configuration.no_hash_check {
                                         warn!("worker is running a different load test, ignoring")
                                     } else {

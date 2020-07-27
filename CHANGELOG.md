@@ -1,7 +1,9 @@
 # Changelog
 
 ## 0.9.1-dev
- - expose stats from load test via `display_and_get()` and `.get()` as `GooseStats`
+ - return `GooseStats` from `GooseAttack` `.execute()`
+ - rework as methods of `GooseStats`: `.print()`, `.print_running()`, `print_requests()`,
+   `print_response_times()`, `print_percentiles()`, and `print_status_codes()`
 
 ## 0.9.0 July 23, 2020
  - fix code documentation, requests are async and require await

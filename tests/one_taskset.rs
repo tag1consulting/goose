@@ -40,7 +40,8 @@ fn test_single_taskset() {
     // Start users in .5 seconds.
     config.users = Some(2);
     config.hatch_rate = 4;
-    let stats = crate::GooseAttack::initialize_with_config(config.clone())
+    config.status_codes = true;
+    let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
         .register_taskset(
@@ -49,8 +50,7 @@ fn test_single_taskset() {
                 .register_task(task!(get_about).set_weight(3).unwrap()),
         )
         .execute()
-        .unwrap()
-        .get();
+        .unwrap();
 
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
@@ -61,8 +61,14 @@ fn test_single_taskset() {
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 
-    let index_stats = stats.requests.get(&format!("GET {}", INDEX_PATH)).unwrap();
-    let about_stats = stats.requests.get(&format!("GET {}", ABOUT_PATH)).unwrap();
+    let index_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", INDEX_PATH))
+        .unwrap();
+    let about_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", ABOUT_PATH))
+        .unwrap();
 
     // Confirm that the path and method are correct in the statistics.
     assert!(index_stats.path == INDEX_PATH);
@@ -82,7 +88,7 @@ fn test_single_taskset() {
     assert!(about_stats.fail_count == 0);
 
     // Verify that Goose started the correct number of users.
-    assert!(stats.users == config.users.unwrap());
+    assert!(goose_stats.users == config.users.unwrap());
 }
 
 #[test]
@@ -108,7 +114,7 @@ fn test_single_taskset_empty_config_host() {
     let host = std::mem::take(&mut config.host);
     // Enable statistics to confirm Goose and web server agree.
     config.no_stats = false;
-    let stats = crate::GooseAttack::initialize_with_config(config)
+    let goose_stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -118,8 +124,7 @@ fn test_single_taskset_empty_config_host() {
         )
         .set_host(&host)
         .execute()
-        .unwrap()
-        .get();
+        .unwrap();
 
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
@@ -132,7 +137,7 @@ fn test_single_taskset_empty_config_host() {
 
     // Confirm that Goose and the server saw the same number of page loads.
     assert!(
-        stats
+        goose_stats
             .requests
             .get(&format!("GET {}", INDEX_PATH))
             .unwrap()
@@ -140,7 +145,7 @@ fn test_single_taskset_empty_config_host() {
             == index.times_called()
     );
     assert!(
-        stats
+        goose_stats
             .requests
             .get(&format!("GET {}", ABOUT_PATH))
             .unwrap()
