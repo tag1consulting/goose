@@ -1,7 +1,8 @@
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use std::collections::{BTreeMap, HashMap};
-use std::f32;
+use std::io::{Result, Write};
+use std::{f32, str};
 
 use crate::goose::GooseRequest;
 use crate::util;
@@ -71,7 +72,7 @@ impl GooseStats {
     ///             .register_task(task!(example_task))
     ///         )
     ///         .execute()?
-    ///         .print();
+    ///         .print()?;
     ///
     ///     Ok(())
     /// }
@@ -82,13 +83,15 @@ impl GooseStats {
     ///     Ok(())
     /// }
     /// ```
-    pub fn print(&self) {
+    pub fn print(&self) -> Result<()> {
         info!("printing statistics after {} seconds...", self.duration);
 
         self.print_requests()
             .print_response_times()
             .print_percentiles()
-            .print_status_codes();
+            .print_status_codes()?;
+
+        Ok(())
     }
 
     /// Consumes and displays statistics from a running load test.
@@ -105,6 +108,11 @@ impl GooseStats {
 
     /// Display a table of requests and fails.
     pub fn print_requests(&self) -> &GooseStats {
+        // If there's nothing to display, exit immediately.
+        if self.requests.len() == 0 {
+            return self;
+        }
+
         // Display stats from merged HashMap
         println!("------------------------------------------------------------------------------ ");
         println!(
@@ -196,6 +204,11 @@ impl GooseStats {
 
     // Display a table of response times.
     pub fn print_response_times(&self) -> &GooseStats {
+        // If there's nothing to display, exit immediately.
+        if self.requests.len() == 0 {
+            return self;
+        }
+
         let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
         let mut aggregate_total_response_time: usize = 0;
         let mut aggregate_response_time_counter: usize = 0;
@@ -267,6 +280,11 @@ impl GooseStats {
 
     // Display slowest response times within several percentiles.
     pub fn print_percentiles(&self) -> &GooseStats {
+        // If there's nothing to display, exit immediately.
+        if self.requests.len() == 0 {
+            return self;
+        }
+
         let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
         let mut aggregate_total_response_time: usize = 0;
         let mut aggregate_response_time_counter: usize = 0;
@@ -402,15 +420,32 @@ impl GooseStats {
     }
 
     // Display a table of response status codes.
-    fn print_status_codes(&self) -> &GooseStats {
-        // @TODO: only display if enabled
-        println!("-------------------------------------------------------------------------------");
-        println!(" {:<23} | {:<25} ", "Name", "Status codes");
-        println!(" ----------------------------------------------------------------------------- ");
+    pub fn print_status_codes(&self) -> Result<&GooseStats> {
+        // If there's nothing to display, exit immediately.
+        if self.requests.len() == 0 {
+            return Ok(self);
+        }
+
+        // Write to buffer, we may be tracking requests but not status codes. If during
+        // processing it's found that there's no status codes in the requests, we exit
+        // early.
+        let mut buffer = Vec::new();
+        writeln!(
+            &mut buffer,
+            "-------------------------------------------------------------------------------"
+        )?;
+        writeln!(&mut buffer, " {:<23} | {:<25} ", "Name", "Status codes")?;
+        writeln!(
+            &mut buffer,
+            " ----------------------------------------------------------------------------- "
+        )?;
         let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
+        // This flag will get set to false if there are status codes in the request stats.
+        let mut exit_early = true;
         for (request_key, request) in self.requests.iter().sorted() {
             let mut codes: String = "".to_string();
             for (status_code, count) in &request.status_code_counts {
+                exit_early = false;
                 if codes.is_empty() {
                     codes = format!(
                         "{} [{}]",
@@ -434,14 +469,24 @@ impl GooseStats {
                     new_count = *count;
                 }
                 aggregated_status_code_counts.insert(*status_code, new_count);
+                // If the exit_early flag is still true, there are no status codes in
+                // the request stats, so exit early.
             }
-            println!(
+            if exit_early {
+                return Ok(self);
+            }
+
+            writeln!(
+                &mut buffer,
                 " {:<23} | {:<25}",
                 util::truncate_string(&request_key, 23),
                 codes,
-            );
+            )?;
         }
-        println!("-------------------------------------------------------------------------------");
+        writeln!(
+            &mut buffer,
+            "-------------------------------------------------------------------------------"
+        )?;
         let mut codes: String = "".to_string();
         for (status_code, count) in &aggregated_status_code_counts {
             if codes.is_empty() {
@@ -459,9 +504,12 @@ impl GooseStats {
                 );
             }
         }
-        println!(" {:<23} | {:<25} ", "Aggregated", codes);
+        writeln!(&mut buffer, " {:<23} | {:<25} ", "Aggregated", codes)?;
 
-        self
+        // If we got here, display the contents of the buffer.
+        print!("{}", str::from_utf8(&buffer).unwrap());
+
+        Ok(self)
     }
 }
 

@@ -214,7 +214,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
             {
                 // Reset timer each time we display statistics.
                 running_statistics_timer = time::Instant::now();
-                goose_attack.stats.duration = goose_attack.started.unwrap().elapsed().as_secs() as usize;
+                goose_attack.stats.duration =
+                    goose_attack.started.unwrap().elapsed().as_secs() as usize;
                 goose_attack.stats.print_running();
             }
         } else if canceled.load(Ordering::SeqCst) {

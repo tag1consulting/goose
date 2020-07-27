@@ -78,7 +78,7 @@ fn main() -> Result<(), GooseError> {
                 ),
         )
         .execute()?
-        .print();
+        .print()?;
 
     Ok(())
 }
