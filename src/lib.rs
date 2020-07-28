@@ -1522,6 +1522,9 @@ impl GooseAttack {
             info!("launched {} users...", self.stats.users);
         }
 
+        // Only display status codes if enabled.
+        self.stats.display_status_codes = self.configuration.status_codes;
+
         // Track whether or not we've (optionally) reset the statistics after all users started.
         let mut statistics_reset: bool = false;
 
@@ -1777,6 +1780,8 @@ impl GooseAttack {
             );
             let _ = file.flush().await;
         };
+        // Only display percentile once the load test is finished.
+        self.stats.display_percentile = true;
 
         Ok(self)
     }
