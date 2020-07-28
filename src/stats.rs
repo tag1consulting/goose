@@ -96,7 +96,7 @@ impl GooseStats {
     }
 
     /// Optionally prepares a table of requests and fails.
-    pub fn fmt_requests(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn fmt_requests(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(());
@@ -104,16 +104,16 @@ impl GooseStats {
 
         // Display stats from merged HashMap
         writeln!(
-            f,
+            fmt,
             "------------------------------------------------------------------------------ "
         )?;
         writeln!(
-            f,
+            fmt,
             " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
             "Name", "# reqs", "# fails", "req/s", "fail/s"
         )?;
         writeln!(
-            f,
+            fmt,
             " ----------------------------------------------------------------------------- "
         )?;
         let mut aggregate_fail_count = 0;
@@ -128,7 +128,7 @@ impl GooseStats {
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if fail_percent as usize == 100 || fail_percent as usize == 0 {
                 writeln!(
-                    f,
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     util::truncate_string(&request_key, 23),
                     total_count.to_formatted_string(&Locale::en),
@@ -142,7 +142,7 @@ impl GooseStats {
                 )?;
             } else {
                 writeln!(
-                    f,
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     util::truncate_string(&request_key, 23),
                     total_count.to_formatted_string(&Locale::en),
@@ -165,13 +165,13 @@ impl GooseStats {
                 0.0
             };
             writeln!(
-                f,
+                fmt,
                 " ------------------------+----------------+----------------+--------+--------- "
             )?;
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
                 writeln!(
-                    f,
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
@@ -185,7 +185,7 @@ impl GooseStats {
                 )?;
             } else {
                 writeln!(
-                    f,
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
@@ -204,7 +204,7 @@ impl GooseStats {
     }
 
     // Optionally prepares a table of response times.
-    pub fn fmt_response_times(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(());
@@ -216,16 +216,16 @@ impl GooseStats {
         let mut aggregate_min_response_time: usize = 0;
         let mut aggregate_max_response_time: usize = 0;
         writeln!(
-            f,
+            fmt,
             "-------------------------------------------------------------------------------"
         )?;
         writeln!(
-            f,
+            fmt,
             " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
             "Name", "Avg (ms)", "Min", "Max", "Median"
         )?;
         writeln!(
-            f,
+            fmt,
             " ----------------------------------------------------------------------------- "
         )?;
         for (request_key, request) in self.requests.iter().sorted() {
@@ -248,7 +248,7 @@ impl GooseStats {
                 update_max_response_time(aggregate_max_response_time, request.max_response_time);
 
             writeln!(
-                f,
+                fmt,
                 " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
                 util::truncate_string(&request_key, 23),
                 request.total_response_time / request.response_time_counter,
@@ -264,14 +264,14 @@ impl GooseStats {
         }
         if self.requests.len() > 1 {
             writeln!(
-                f,
+                fmt,
                 " ------------------------+------------+------------+------------+------------- "
             )?;
             if aggregate_response_time_counter == 0 {
                 aggregate_response_time_counter = 1;
             }
             writeln!(
-                f,
+                fmt,
                 " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
                 "Aggregated",
                 aggregate_total_response_time / aggregate_response_time_counter,
@@ -290,7 +290,7 @@ impl GooseStats {
     }
 
     // Optionallyl prepares a table of slowest response times within several percentiles.
-    pub fn fmt_percentiles(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_percentile {
             return Ok(());
@@ -302,24 +302,24 @@ impl GooseStats {
         let mut aggregate_min_response_time: usize = 0;
         let mut aggregate_max_response_time: usize = 0;
         writeln!(
-            f,
+            fmt,
             "-------------------------------------------------------------------------------"
         )?;
         writeln!(
-            f,
+            fmt,
             " Slowest page load within specified percentile of requests (in ms):"
         )?;
         writeln!(
-            f,
+            fmt,
             " ------------------------------------------------------------------------------"
         )?;
         writeln!(
-            f,
+            fmt,
             " {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}",
             "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%"
         )?;
         writeln!(
-            f,
+            fmt,
             " ----------------------------------------------------------------------------- "
         )?;
         for (request_key, request) in self.requests.iter().sorted() {
@@ -342,7 +342,7 @@ impl GooseStats {
                 update_max_response_time(aggregate_max_response_time, request.max_response_time);
             // Sort response times so we can calculate a mean.
             writeln!(
-                f,
+                fmt,
                 " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
                 util::truncate_string(&request_key, 23),
                 calculate_response_time_percentile(
@@ -391,11 +391,11 @@ impl GooseStats {
         }
         if self.requests.len() > 1 {
             writeln!(
-                f,
+                fmt,
                 " ------------------------+--------+--------+--------+--------+--------+------- "
             )?;
             writeln!(
-                f,
+                fmt,
                 " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
                 "Aggregated",
                 calculate_response_time_percentile(
@@ -447,19 +447,19 @@ impl GooseStats {
     }
 
     // Optionally prepares a table of response status codes.
-    pub fn fmt_status_codes(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn fmt_status_codes(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_status_codes {
             return Ok(());
         }
 
         writeln!(
-            f,
+            fmt,
             "-------------------------------------------------------------------------------"
         )?;
-        writeln!(f, " {:<23} | {:<25} ", "Name", "Status codes")?;
+        writeln!(fmt, " {:<23} | {:<25} ", "Name", "Status codes")?;
         writeln!(
-            f,
+            fmt,
             " ----------------------------------------------------------------------------- "
         )?;
         let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
@@ -492,14 +492,14 @@ impl GooseStats {
             }
 
             writeln!(
-                f,
+                fmt,
                 " {:<23} | {:<25}",
                 util::truncate_string(&request_key, 23),
                 codes,
             )?;
         }
         writeln!(
-            f,
+            fmt,
             "-------------------------------------------------------------------------------"
         )?;
         let mut codes: String = "".to_string();
@@ -519,20 +519,20 @@ impl GooseStats {
                 );
             }
         }
-        writeln!(f, " {:<23} | {:<25} ", "Aggregated", codes)?;
+        writeln!(fmt, " {:<23} | {:<25} ", "Aggregated", codes)?;
 
         Ok(())
     }
 }
 
 impl fmt::Display for GooseStats {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         // Formats from zero to four tables of data, depending on what data is contained
         // and which contained flags are set.
-        self.fmt_requests(f)?;
-        self.fmt_response_times(f)?;
-        self.fmt_percentiles(f)?;
-        self.fmt_status_codes(f)
+        self.fmt_requests(fmt)?;
+        self.fmt_response_times(fmt)?;
+        self.fmt_percentiles(fmt)?;
+        self.fmt_status_codes(fmt)
     }
 }
 
