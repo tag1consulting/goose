@@ -532,18 +532,24 @@ impl fmt::Display for GooseStats {
         let mut buffer = Vec::new();
 
         self.fmt_requests(&mut buffer)
+            .map_err(|error| eprintln!("{:?}", error))
             .expect("unexpected formatting error");
         self.fmt_response_times(&mut buffer)
+            .map_err(|error| eprintln!("{:?}", error))
             .expect("unexpected formatting error");
         self.fmt_percentiles(&mut buffer)
+            .map_err(|error| eprintln!("{:?}", error))
             .expect("unexpected formatting error");
         self.fmt_status_codes(&mut buffer)
+            .map_err(|error| eprintln!("{:?}", error))
             .expect("unexpected formatting error");
 
         write!(
             f,
             "{}",
-            str::from_utf8(&buffer).expect("unexpected formatting error")
+            str::from_utf8(&buffer)
+                .map_err(|error| eprintln!("{:?}", error))
+                .expect("unexpected formatting error")
         )
     }
 }
