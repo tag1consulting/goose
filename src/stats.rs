@@ -1,8 +1,8 @@
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use std::collections::{BTreeMap, HashMap};
+use std::io::{Result, Write};
 use std::{f32, fmt, str};
-use std::io::{Write, Result};
 
 use crate::goose::GooseRequest;
 use crate::util;
@@ -94,8 +94,8 @@ impl GooseStats {
         println!("{}", self);
     }
 
-    /// Display a table of requests and fails.
-    pub fn print_requests(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
+    /// Prepares a table of requests and fails.
+    pub fn fmt_requests(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(self);
@@ -202,8 +202,8 @@ impl GooseStats {
         Ok(self)
     }
 
-    // Display a table of response times.
-    pub fn print_response_times(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
+    // Prepares a table of response times.
+    pub fn fmt_response_times(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(self);
@@ -288,8 +288,8 @@ impl GooseStats {
         Ok(self)
     }
 
-    // Display slowest response times within several percentiles.
-    pub fn print_percentiles(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
+    // Prepares a table of slowest response times within several percentiles.
+    pub fn fmt_percentiles(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
         // If there's nothing to display, exit immediately.
         if !self.display_percentile {
             return Ok(self);
@@ -445,8 +445,8 @@ impl GooseStats {
         Ok(self)
     }
 
-    // Display a table of response status codes.
-    pub fn print_status_codes(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
+    // Prepares a table of response status codes.
+    pub fn fmt_status_codes(&self, buffer: &mut Vec<u8>) -> Result<&GooseStats> {
         // If there's nothing to display, exit immediately.
         if !self.display_status_codes {
             return Ok(self);
@@ -531,12 +531,20 @@ impl fmt::Display for GooseStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut buffer = Vec::new();
 
-        self.print_requests(&mut buffer).expect("unexpected formatting error");
-        self.print_response_times(&mut buffer).expect("unexpected formatting error");
-        self.print_percentiles(&mut buffer).expect("unexpected formatting error");
-        self.print_status_codes(&mut buffer).expect("unexpected formatting error");
+        self.fmt_requests(&mut buffer)
+            .expect("unexpected formatting error");
+        self.fmt_response_times(&mut buffer)
+            .expect("unexpected formatting error");
+        self.fmt_percentiles(&mut buffer)
+            .expect("unexpected formatting error");
+        self.fmt_status_codes(&mut buffer)
+            .expect("unexpected formatting error");
 
-        write!(f, "{}", str::from_utf8(&buffer).expect("unexpected formatting error"))
+        write!(
+            f,
+            "{}",
+            str::from_utf8(&buffer).expect("unexpected formatting error")
+        )
     }
 }
 
