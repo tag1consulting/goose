@@ -69,11 +69,11 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // "Fake" request for manager to validate this worker's load test hash.
     requests.insert(
         "load_test_hash".to_string(),
-        GooseRequest::new("none", GooseMethod::GET, goose_attack.task_sets_hash),
+        GooseRequest::new("none", GooseMethod::GET, goose_attack.stats.hash),
     );
     debug!(
         "sending load test hash to manager: {}",
-        goose_attack.task_sets_hash
+        goose_attack.stats.hash
     );
     push_stats_to_manager(&manager, &requests, false);
 
@@ -129,7 +129,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                 initializer.min_wait,
                 initializer.max_wait,
                 &initializer.config,
-                goose_attack.task_sets_hash,
+                goose_attack.stats.hash,
             )
             .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
             .expect("failed to create socket");

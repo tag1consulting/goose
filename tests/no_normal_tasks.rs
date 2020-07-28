@@ -35,7 +35,7 @@ fn test_no_normal_tasks() {
         .return_status(200)
         .create_on(&server);
 
-    let _goose_attack =
+    let _goose_stats =
         crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
             .setup()
             .unwrap()
