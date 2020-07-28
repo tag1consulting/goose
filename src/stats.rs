@@ -1,8 +1,7 @@
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Result, Write};
-use std::{f32, str};
+use std::{f32, fmt};
 
 use crate::goose::GooseRequest;
 use crate::util;
@@ -47,6 +46,12 @@ pub struct GooseStats {
     pub users: usize,
     /// Goose request statistics.
     pub requests: GooseRequestStats,
+    /// Flag indicating whether or not to display percentile. Because we're deriving Default,
+    /// this defaults to false.
+    pub display_percentile: bool,
+    /// Flag indicating whether or not to display status_codes. Because we're deriving Default,
+    /// this defaults to false.
+    pub display_status_codes: bool,
 }
 
 impl GooseStats {
@@ -62,7 +67,7 @@ impl GooseStats {
     ///             .register_task(task!(example_task))
     ///         )
     ///         .execute()?
-    ///         .print()?;
+    ///         .print();
     ///
     ///     Ok(())
     /// }
@@ -73,15 +78,10 @@ impl GooseStats {
     ///     Ok(())
     /// }
     /// ```
-    pub fn print(&self) -> Result<()> {
+    pub fn print(&self) {
         info!("printing statistics after {} seconds...", self.duration);
 
-        self.print_requests()
-            .print_response_times()
-            .print_percentiles()
-            .print_status_codes()?;
-
-        Ok(())
+        print!("{}", self);
     }
 
     /// Consumes and displays statistics from a running load test.
@@ -91,25 +91,31 @@ impl GooseStats {
             self.duration
         );
 
-        self.print_requests().print_response_times();
-
-        println!();
+        // Include a blank line after printing running statistics.
+        println!("{}", self);
     }
 
-    /// Display a table of requests and fails.
-    pub fn print_requests(&self) -> &GooseStats {
+    /// Optionally prepares a table of requests and fails.
+    pub fn fmt_requests(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
-            return self;
+            return Ok(());
         }
 
         // Display stats from merged HashMap
-        println!("------------------------------------------------------------------------------ ");
-        println!(
+        writeln!(
+            fmt,
+            "------------------------------------------------------------------------------ "
+        )?;
+        writeln!(
+            fmt,
             " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
             "Name", "# reqs", "# fails", "req/s", "fail/s"
-        );
-        println!(" ----------------------------------------------------------------------------- ");
+        )?;
+        writeln!(
+            fmt,
+            " ----------------------------------------------------------------------------- "
+        )?;
         let mut aggregate_fail_count = 0;
         let mut aggregate_total_count = 0;
         for (request_key, request) in self.requests.iter().sorted() {
@@ -121,7 +127,8 @@ impl GooseStats {
             };
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if fail_percent as usize == 100 || fail_percent as usize == 0 {
-                println!(
+                writeln!(
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     util::truncate_string(&request_key, 23),
                     total_count.to_formatted_string(&Locale::en),
@@ -132,9 +139,10 @@ impl GooseStats {
                     ),
                     (total_count / self.duration).to_formatted_string(&Locale::en),
                     (request.fail_count / self.duration).to_formatted_string(&Locale::en),
-                );
+                )?;
             } else {
-                println!(
+                writeln!(
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     util::truncate_string(&request_key, 23),
                     total_count.to_formatted_string(&Locale::en),
@@ -145,7 +153,7 @@ impl GooseStats {
                     ),
                     (total_count / self.duration).to_formatted_string(&Locale::en),
                     (request.fail_count / self.duration).to_formatted_string(&Locale::en),
-                );
+                )?;
             }
             aggregate_total_count += total_count;
             aggregate_fail_count += request.fail_count;
@@ -156,12 +164,14 @@ impl GooseStats {
             } else {
                 0.0
             };
-            println!(
+            writeln!(
+                fmt,
                 " ------------------------+----------------+----------------+--------+--------- "
-            );
+            )?;
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
-                println!(
+                writeln!(
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
@@ -172,9 +182,10 @@ impl GooseStats {
                     ),
                     (aggregate_total_count / self.duration).to_formatted_string(&Locale::en),
                     (aggregate_fail_count / self.duration).to_formatted_string(&Locale::en),
-                );
+                )?;
             } else {
-                println!(
+                writeln!(
+                    fmt,
                     " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
@@ -185,18 +196,18 @@ impl GooseStats {
                     ),
                     (aggregate_total_count / self.duration).to_formatted_string(&Locale::en),
                     (aggregate_fail_count / self.duration).to_formatted_string(&Locale::en),
-                );
+                )?;
             }
         }
 
-        self
+        Ok(())
     }
 
-    // Display a table of response times.
-    pub fn print_response_times(&self) -> &GooseStats {
+    // Optionally prepares a table of response times.
+    pub fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
-            return self;
+            return Ok(());
         }
 
         let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
@@ -204,12 +215,19 @@ impl GooseStats {
         let mut aggregate_response_time_counter: usize = 0;
         let mut aggregate_min_response_time: usize = 0;
         let mut aggregate_max_response_time: usize = 0;
-        println!("-------------------------------------------------------------------------------");
-        println!(
+        writeln!(
+            fmt,
+            "-------------------------------------------------------------------------------"
+        )?;
+        writeln!(
+            fmt,
             " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
             "Name", "Avg (ms)", "Min", "Max", "Median"
-        );
-        println!(" ----------------------------------------------------------------------------- ");
+        )?;
+        writeln!(
+            fmt,
+            " ----------------------------------------------------------------------------- "
+        )?;
         for (request_key, request) in self.requests.iter().sorted() {
             // Iterate over user response times, and merge into global response times.
             aggregate_response_times =
@@ -229,7 +247,8 @@ impl GooseStats {
             aggregate_max_response_time =
                 update_max_response_time(aggregate_max_response_time, request.max_response_time);
 
-            println!(
+            writeln!(
+                fmt,
                 " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
                 util::truncate_string(&request_key, 23),
                 request.total_response_time / request.response_time_counter,
@@ -241,16 +260,18 @@ impl GooseStats {
                     request.min_response_time,
                     request.max_response_time
                 ),
-            );
+            )?;
         }
         if self.requests.len() > 1 {
-            println!(
+            writeln!(
+                fmt,
                 " ------------------------+------------+------------+------------+------------- "
-            );
+            )?;
             if aggregate_response_time_counter == 0 {
                 aggregate_response_time_counter = 1;
             }
-            println!(
+            writeln!(
+                fmt,
                 " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
                 "Aggregated",
                 aggregate_total_response_time / aggregate_response_time_counter,
@@ -262,17 +283,17 @@ impl GooseStats {
                     aggregate_min_response_time,
                     aggregate_max_response_time
                 ),
-            );
+            )?;
         }
 
-        self
+        Ok(())
     }
 
-    // Display slowest response times within several percentiles.
-    pub fn print_percentiles(&self) -> &GooseStats {
+    // Optionallyl prepares a table of slowest response times within several percentiles.
+    pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if self.requests.is_empty() {
-            return self;
+        if !self.display_percentile {
+            return Ok(());
         }
 
         let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
@@ -280,14 +301,27 @@ impl GooseStats {
         let mut aggregate_response_time_counter: usize = 0;
         let mut aggregate_min_response_time: usize = 0;
         let mut aggregate_max_response_time: usize = 0;
-        println!("-------------------------------------------------------------------------------");
-        println!(" Slowest page load within specified percentile of requests (in ms):");
-        println!(" ------------------------------------------------------------------------------");
-        println!(
+        writeln!(
+            fmt,
+            "-------------------------------------------------------------------------------"
+        )?;
+        writeln!(
+            fmt,
+            " Slowest page load within specified percentile of requests (in ms):"
+        )?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        writeln!(
+            fmt,
             " {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}",
             "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%"
-        );
-        println!(" ----------------------------------------------------------------------------- ");
+        )?;
+        writeln!(
+            fmt,
+            " ----------------------------------------------------------------------------- "
+        )?;
         for (request_key, request) in self.requests.iter().sorted() {
             // Iterate over user response times, and merge into global response times.
             aggregate_response_times =
@@ -307,7 +341,8 @@ impl GooseStats {
             aggregate_max_response_time =
                 update_max_response_time(aggregate_max_response_time, request.max_response_time);
             // Sort response times so we can calculate a mean.
-            println!(
+            writeln!(
+                fmt,
                 " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
                 util::truncate_string(&request_key, 23),
                 calculate_response_time_percentile(
@@ -352,13 +387,15 @@ impl GooseStats {
                     request.max_response_time,
                     0.999
                 ),
-            );
+            )?;
         }
         if self.requests.len() > 1 {
-            println!(
+            writeln!(
+                fmt,
                 " ------------------------+--------+--------+--------+--------+--------+------- "
-            );
-            println!(
+            )?;
+            writeln!(
+                fmt,
                 " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
                 "Aggregated",
                 calculate_response_time_percentile(
@@ -403,39 +440,32 @@ impl GooseStats {
                     aggregate_max_response_time,
                     0.9999
                 ),
-            );
+            )?;
         }
 
-        self
+        Ok(())
     }
 
-    // Display a table of response status codes.
-    pub fn print_status_codes(&self) -> Result<&GooseStats> {
+    // Optionally prepares a table of response status codes.
+    pub fn fmt_status_codes(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if self.requests.is_empty() {
-            return Ok(self);
+        if !self.display_status_codes {
+            return Ok(());
         }
 
-        // Write to buffer, we may be tracking requests but not status codes. If during
-        // processing it's found that there's no status codes in the requests, we exit
-        // early.
-        let mut buffer = Vec::new();
         writeln!(
-            &mut buffer,
+            fmt,
             "-------------------------------------------------------------------------------"
         )?;
-        writeln!(&mut buffer, " {:<23} | {:<25} ", "Name", "Status codes")?;
+        writeln!(fmt, " {:<23} | {:<25} ", "Name", "Status codes")?;
         writeln!(
-            &mut buffer,
+            fmt,
             " ----------------------------------------------------------------------------- "
         )?;
         let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
-        // This flag will get set to false if there are status codes in the request stats.
-        let mut exit_early = true;
         for (request_key, request) in self.requests.iter().sorted() {
             let mut codes: String = "".to_string();
             for (status_code, count) in &request.status_code_counts {
-                exit_early = false;
                 if codes.is_empty() {
                     codes = format!(
                         "{} [{}]",
@@ -460,21 +490,16 @@ impl GooseStats {
                 }
                 aggregated_status_code_counts.insert(*status_code, new_count);
             }
-            // If the exit_early flag is still true, there are no status codes in
-            // the request stats, exit.
-            if exit_early {
-                return Ok(self);
-            }
 
             writeln!(
-                &mut buffer,
+                fmt,
                 " {:<23} | {:<25}",
                 util::truncate_string(&request_key, 23),
                 codes,
             )?;
         }
         writeln!(
-            &mut buffer,
+            fmt,
             "-------------------------------------------------------------------------------"
         )?;
         let mut codes: String = "".to_string();
@@ -494,12 +519,20 @@ impl GooseStats {
                 );
             }
         }
-        writeln!(&mut buffer, " {:<23} | {:<25} ", "Aggregated", codes)?;
+        writeln!(fmt, " {:<23} | {:<25} ", "Aggregated", codes)?;
 
-        // If we got here, display the contents of the buffer.
-        print!("{}", str::from_utf8(&buffer).unwrap());
+        Ok(())
+    }
+}
 
-        Ok(self)
+impl fmt::Display for GooseStats {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        // Formats from zero to four tables of data, depending on what data is contained
+        // and which contained flags are set.
+        self.fmt_requests(fmt)?;
+        self.fmt_response_times(fmt)?;
+        self.fmt_percentiles(fmt)?;
+        self.fmt_status_codes(fmt)
     }
 }
 

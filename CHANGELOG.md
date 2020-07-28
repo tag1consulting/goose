@@ -2,8 +2,9 @@
 
 ## 0.9.1-dev
  - return `GooseStats` from `GooseAttack` `.execute()`
- - rework as methods of `GooseStats`: `.print()`, `.print_running()`, `print_requests()`,
-   `print_response_times()`, `print_percentiles()`, and `print_status_codes()`
+ - rework as methods of `GooseStats`: `.print()`, `.print_running()`, `fmt_requests()`,
+   `fmt_response_times()`, `fmt_percentiles()`, and `fmt_status_codes()`
+ - display `GooseStats` with fmt::Display (ie `print!("{}", goose_stats);`)
 
 ## 0.9.0 July 23, 2020
  - fix code documentation, requests are async and require await
