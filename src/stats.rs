@@ -46,9 +46,11 @@ pub struct GooseStats {
     pub users: usize,
     /// Goose request statistics.
     pub requests: GooseRequestStats,
-    /// Flag indicating whether or not to display percentile.
+    /// Flag indicating whether or not to display percentile. Because we're deriving Default,
+    /// this defaults to false.
     pub display_percentile: bool,
-    /// Flag indicating whether or not to display status_codes.
+    /// Flag indicating whether or not to display status_codes. Because we're deriving Default,
+    /// this defaults to false.
     pub display_status_codes: bool,
 }
 
