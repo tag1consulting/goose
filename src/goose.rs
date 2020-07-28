@@ -304,7 +304,9 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
-        GooseTask::new(move |s| std::boxed::Box::pin($task_func(s)))
+        GooseTask::new(std::sync::Arc::new(move |s| {
+            std::boxed::Box::pin($task_func(s))
+        }))
     };
 }
 
@@ -1916,6 +1918,13 @@ pub fn get_base_url(
     }
 }
 
+/// The function type of a goose task function.
+type GooseTaskFunction = Arc<
+    dyn for<'r> Fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = GooseTaskResult> + Send + 'r>>
+        + Send
+        + Sync,
+>;
+
 /// An individual task within a `GooseTaskSet`.
 #[derive(Clone)]
 pub struct GooseTask {
@@ -1932,15 +1941,10 @@ pub struct GooseTask {
     /// A flag indicating that this task runs when the user stops.
     pub on_stop: bool,
     /// A required function that is executed each time this task runs.
-    pub function:
-        for<'r> fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = GooseTaskResult> + Send + 'r>>,
+    pub function: GooseTaskFunction,
 }
 impl GooseTask {
-    pub fn new(
-        function: for<'r> fn(
-            &'r GooseUser,
-        ) -> Pin<Box<dyn Future<Output = GooseTaskResult> + Send + 'r>>,
-    ) -> Self {
+    pub fn new(function: GooseTaskFunction) -> Self {
         trace!("new task");
         GooseTask {
             tasks_index: usize::max_value(),

@@ -38,7 +38,7 @@ pub async fn user_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = &thread_task_set.tasks[*task_index].function;
+                let function = &thread_task_set.tasks[*task_index].function.clone();
                 debug!(
                     "launching on_start {} task from {}",
                     thread_task_name, thread_task_set.name
@@ -88,7 +88,7 @@ pub async fn user_main(
         let thread_weighted_task =
             thread_user.weighted_tasks[weighted_bucket][weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
-        let function = &thread_task_set.tasks[thread_weighted_task].function;
+        let function = &thread_task_set.tasks[thread_weighted_task].function.clone();
         debug!(
             "launching {} task from {}",
             thread_task_name, thread_task_set.name
@@ -158,7 +158,7 @@ pub async fn user_main(
             for task_index in &sequence {
                 // Determine which task we're going to run next.
                 let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = &thread_task_set.tasks[*task_index].function;
+                let function = &thread_task_set.tasks[*task_index].function.clone();
                 debug!(
                     "launching on_stop {} task from {}",
                     thread_task_name, thread_task_set.name
