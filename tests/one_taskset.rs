@@ -164,7 +164,7 @@ fn test_single_taskset_closure() {
     struct LoadtestEndpoint<'a> {
         pub method: &'a str,
         pub path: &'a str,
-        pub status: usize,
+        pub status_code: u16,
         pub weight: usize,
     };
 
@@ -173,13 +173,13 @@ fn test_single_taskset_closure() {
         LoadtestEndpoint {
             method: "GET",
             path: INDEX_PATH,
-            status: 200,
+            status_code: 200,
             weight: 9,
         },
         LoadtestEndpoint {
             method: "GET",
             path: ABOUT_PATH,
-            status: 200,
+            status_code: 200,
             weight: 3,
         },
     ];
@@ -193,7 +193,7 @@ fn test_single_taskset_closure() {
         let mock_endpoint = Mock::new()
             .expect_method(GET) // @todo Make dynamic
             .expect_path(path)
-            .return_status(item.status)
+            .return_status(item.status_code.into())
             .create_on(&server);
 
         // Ensure the index matches.
@@ -266,7 +266,7 @@ fn test_single_taskset_closure() {
         assert!(endpoint_stats.method == GooseMethod::GET);
 
         // Confirm that Goose and the server saw the same number of page loads.
-        let status_code: u16 = 200;
+        let status_code: u16 = item.status_code;
 
         assert!(
             endpoint_stats.response_time_counter == mock_endpoint.times_called(),
