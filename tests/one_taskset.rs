@@ -159,32 +159,60 @@ fn test_single_taskset_empty_config_host() {
 // Load test with a single task set containing two weighted tasks setup via closure.
 // Validate weighting and statistics.
 fn test_single_taskset_closure() {
+    // @todo Move out to common.rs.
+    struct LoadtestEndpoint<'a> {
+        pub method: &'a str,
+        pub path: &'a str,
+        pub status: usize,
+        pub weight: usize,
+    };
+
+    // Configure endpoints to test.
+    let test_endpoints = vec![
+        LoadtestEndpoint {
+            method: "GET",
+            path: INDEX_PATH,
+            status: 200,
+            weight: 9,
+        },
+        LoadtestEndpoint {
+            method: "GET",
+            path: ABOUT_PATH,
+            status: 200,
+            weight: 3,
+        },
+    ];
+
+    // Setup mock endpoints.
     let server = MockServer::start();
 
-    let index = Mock::new()
-        .expect_method(GET)
-        .expect_path(INDEX_PATH)
-        .return_status(200)
-        .create_on(&server);
-    let about = Mock::new()
-        .expect_method(GET)
-        .expect_path(ABOUT_PATH)
-        .return_status(200)
-        .create_on(&server);
+    let mut mock_endpoints = Vec::with_capacity(test_endpoints.len());
+    for (idx, item) in test_endpoints.iter().enumerate() {
+        let path = item.path;
+        let mock_endpoint = Mock::new()
+            .expect_method(GET) // @todo Make dynamic
+            .expect_path(path)
+            .return_status(item.status)
+            .create_on(&server);
 
+        // Ensure the index matches.
+        assert!(idx == mock_endpoints.len());
+        mock_endpoints.push(mock_endpoint);
+    }
+
+    // Build configuration.
     let mut config = common::build_configuration(&server);
     config.no_stats = false;
     // Start users in .5 seconds.
-    config.users = Some(2);
+    config.users = Some(test_endpoints.len());
     config.hatch_rate = 4;
     config.status_codes = true;
 
-    let mut paths_and_weights = vec![(INDEX_PATH, 9), (ABOUT_PATH, 3)];
+    // Build taskset.
     let mut taskset = GooseTaskSet::new("LoadTest");
-
-    while let Some(item) = paths_and_weights.pop() {
-        let path = item.0;
-        let weight = item.1;
+    for item in &test_endpoints {
+        let path = item.path;
+        let weight = item.weight;
 
         let closure: GooseTaskFunction = Arc::new(move |user| {
             Box::pin(async move {
@@ -202,6 +230,7 @@ fn test_single_taskset_closure() {
         taskset = new_taskset;
     }
 
+    // Run the loadtest.
     let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
@@ -209,40 +238,37 @@ fn test_single_taskset_closure() {
         .execute()
         .unwrap();
 
-    // Confirm that we loaded the mock endpoints.
-    assert!(index.times_called() > 0);
-    assert!(about.times_called() > 0);
+    // Ensure that the right paths have been called.
+    for (idx, item) in test_endpoints.iter().enumerate() {
+        let mock_endpoint = &mock_endpoints[idx];
+
+        // Confirm that we loaded the mock endpoint.
+        assert!(mock_endpoint.times_called() > 0);
+        let endpoint_stats = goose_stats
+            .requests
+            .get(&format!("{} {}", item.method, item.path))
+            .unwrap();
+
+        assert!(endpoint_stats.path == item.path);
+        assert!(endpoint_stats.method == GooseMethod::GET);
+
+        // Confirm that Goose and the server saw the same number of page loads.
+        let status_code: u16 = 200;
+
+        assert!(endpoint_stats.response_time_counter == mock_endpoint.times_called());
+        assert!(endpoint_stats.status_code_counts[&status_code] == mock_endpoint.times_called());
+        assert!(endpoint_stats.success_count == mock_endpoint.times_called());
+        assert!(endpoint_stats.fail_count == 0);
+    }
+
+    // Test specific things directly access the mock endpoints here.
+    let index = &mock_endpoints[0];
+    let about = &mock_endpoints[1];
 
     // Confirm that we loaded the index roughly three times as much as the about page.
     let one_third_index = index.times_called() / 3;
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
-
-    let index_stats = goose_stats
-        .requests
-        .get(&format!("GET {}", INDEX_PATH))
-        .unwrap();
-    let about_stats = goose_stats
-        .requests
-        .get(&format!("GET {}", ABOUT_PATH))
-        .unwrap();
-
-    // Confirm that the path and method are correct in the statistics.
-    assert!(index_stats.path == INDEX_PATH);
-    assert!(index_stats.method == GooseMethod::GET);
-    assert!(about_stats.path == ABOUT_PATH);
-    assert!(about_stats.method == GooseMethod::GET);
-
-    // Confirm that Goose and the server saw the same number of page loads.
-    let status_code: u16 = 200;
-    assert!(index_stats.response_time_counter == index.times_called());
-    assert!(index_stats.status_code_counts[&status_code] == index.times_called());
-    assert!(index_stats.success_count == index.times_called());
-    assert!(index_stats.fail_count == 0);
-    assert!(about_stats.response_time_counter == about.times_called());
-    assert!(about_stats.status_code_counts[&status_code] == about.times_called());
-    assert!(about_stats.success_count == about.times_called());
-    assert!(about_stats.fail_count == 0);
 
     // Verify that Goose started the correct number of users.
     assert!(goose_stats.users == config.users.unwrap());
