@@ -375,7 +375,11 @@ impl GooseTaskError {
 // Define how to display errors.
 impl fmt::Display for GooseTaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GooseTaskError: {}", self.describe())
+        match *self {
+            GooseTaskError::Reqwest(ref source) => write!(f, "GooseTaskError: {} ({})", self.describe(), source),
+            GooseTaskError::Url(ref source) => write!(f, "GooseTaskError: {} ({})", self.describe(), source),
+            _ => write!(f, "GooseTaskError: {}", self.describe())
+        }
     }
 }
 
