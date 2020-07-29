@@ -13,7 +13,7 @@ pub fn build_configuration(server: &MockServer) -> GooseConfiguration {
         no_stats: true,
         status_codes: false,
         only_summary: false,
-        reset_stats: false,
+        no_reset_stats: false,
         list: false,
         verbose: 0,
         log_level: 0,

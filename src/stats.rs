@@ -125,6 +125,15 @@ impl GooseStats {
             } else {
                 0.0
             };
+            let req_s;
+            let fail_s;
+            if self.duration == 0 {
+                req_s = 0.to_formatted_string(&Locale::en);
+                fail_s = 0.to_formatted_string(&Locale::en);
+            } else {
+                req_s = (total_count / self.duration).to_formatted_string(&Locale::en);
+                fail_s = (request.fail_count / self.duration).to_formatted_string(&Locale::en);
+            }
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if fail_percent as usize == 100 || fail_percent as usize == 0 {
                 writeln!(
@@ -137,8 +146,8 @@ impl GooseStats {
                         request.fail_count.to_formatted_string(&Locale::en),
                         fail_percent as usize
                     ),
-                    (total_count / self.duration).to_formatted_string(&Locale::en),
-                    (request.fail_count / self.duration).to_formatted_string(&Locale::en),
+                    req_s,
+                    fail_s,
                 )?;
             } else {
                 writeln!(
@@ -151,8 +160,8 @@ impl GooseStats {
                         request.fail_count.to_formatted_string(&Locale::en),
                         fail_percent
                     ),
-                    (total_count / self.duration).to_formatted_string(&Locale::en),
-                    (request.fail_count / self.duration).to_formatted_string(&Locale::en),
+                    req_s,
+                    fail_s,
                 )?;
             }
             aggregate_total_count += total_count;

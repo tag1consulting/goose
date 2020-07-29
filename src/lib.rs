@@ -1419,6 +1419,7 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
+
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -1533,8 +1534,6 @@ impl GooseAttack {
             debug!("sleeping {:?} milliseconds...", sleep_duration);
             tokio::time::delay_for(sleep_duration).await;
         }
-        // Restart the timer now that all threads are launched.
-        self.started = Some(time::Instant::now());
         if self.configuration.worker {
             info!(
                 "[{}] launched {} users...",
@@ -1646,6 +1645,7 @@ impl GooseAttack {
                     message = parent_receiver.try_recv();
                 }
 
+
                 // As worker, push request statistics up to manager.
                 if self.configuration.worker && received_message {
                     #[cfg(feature = "gaggle")]
@@ -1665,10 +1665,18 @@ impl GooseAttack {
                 }
 
                 // Flush request statistics collected prior to all user threads running
-                if self.configuration.reset_stats && !statistics_reset {
-                    info!("statistics reset...");
+                if !self.configuration.no_reset_stats && !statistics_reset {
+                    self.stats.duration = self.started.unwrap().elapsed().as_secs() as usize;
+                    self.stats.print_running();
+
+                    println!(
+                        "All users hatched, resetting statistics (disable with —no-reset-stats)"
+                    );
+
                     self.stats.requests = HashMap::new();
                     statistics_reset = true;
+                    // Restart the timer now that all threads are launched.
+                    self.started = Some(time::Instant::now());
                 }
             }
 
@@ -1844,7 +1852,7 @@ pub struct GooseConfiguration {
 
     /// Resets statistics once hatching has been completed
     #[structopt(long)]
-    pub reset_stats: bool,
+    pub no_reset_stats: bool,
 
     /// Shows list of all possible Goose tasks and exits
     #[structopt(short, long)]

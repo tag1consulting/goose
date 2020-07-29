@@ -40,7 +40,7 @@ fn cleanup_files(stats_log_file: &str, debug_log_file: &str) {
 }
 
 #[test]
-fn test_stat_logs_json() {
+fn test_stats_logs_json() {
     const STATS_LOG_FILE: &str = "stats-json.log";
     const DEBUG_LOG_FILE: &str = "debug-json.log";
 
@@ -55,7 +55,7 @@ fn test_stat_logs_json() {
     let mut config = common::build_configuration(&server);
     config.stats_log_file = STATS_LOG_FILE.to_string();
     config.no_stats = false;
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    let goose_stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
@@ -65,6 +65,9 @@ fn test_stat_logs_json() {
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
 
+    // Confirm that the test duration was correct.
+    assert!(goose_stats.duration == 1);
+
     // Confirm only the stats log file exists.
     assert!(std::path::Path::new(STATS_LOG_FILE).exists());
     assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
@@ -73,7 +76,7 @@ fn test_stat_logs_json() {
 }
 
 #[test]
-fn test_stat_logs_csv() {
+fn test_stats_logs_csv() {
     const STATS_LOG_FILE: &str = "stats-csv.log";
     const DEBUG_LOG_FILE: &str = "debug-csv.log";
 
@@ -107,7 +110,7 @@ fn test_stat_logs_csv() {
 }
 
 #[test]
-fn test_stat_logs_raw() {
+fn test_stats_logs_raw() {
     const STATS_LOG_FILE: &str = "stats-raw.log";
     const DEBUG_LOG_FILE: &str = "debug-raw.log";
 
