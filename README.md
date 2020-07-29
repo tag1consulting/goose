@@ -90,7 +90,7 @@ fn main() -> Result<(), GooseError> {
             .register_task(task!(loadtest_index))
         )
         .execute()?
-        .display();
+        .print();
     
     Ok(())
 }
@@ -101,9 +101,9 @@ strange. It essentially says that `main` will return nothing (`()`) on success, 
 will return a `GooseError` on failure. This is helpful as several of `GooseAttack`'s
 methods can fail, returning an error. In our example, `initialize()` and `execute()`
 each may fail. The `?` that follows the method's name tells our program to exit and
-return an error on failure, otherwise continue on. The `display()` method consumes
-everything returned by `GooseAttack` and prints a summary if statistics are enabled.
-The final line, `Ok(())` returns the empty result expected on success.
+return an error on failure, otherwise continue on. The `print()` method consumes
+the `GooseStats` object returned by `GooseAttack` and prints a summary if statistics
+are enabled. The final line, `Ok(())` returns the empty result expected on success.
 
 And that's it, you've created your first load test! Let's run it and see what
 happens.
