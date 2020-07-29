@@ -1919,7 +1919,7 @@ pub fn get_base_url(
 }
 
 /// The function type of a goose task function.
-type GooseTaskFunction = Arc<
+pub type GooseTaskFunction = Arc<
     dyn for<'r> Fn(&'r GooseUser) -> Pin<Box<dyn Future<Output = GooseTaskResult> + Send + 'r>>
         + Send
         + Sync,
