@@ -4,6 +4,7 @@ use httpmock::{Mock, MockServer};
 mod common;
 
 use goose::prelude::*;
+use std::sync::Arc;
 
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
@@ -41,14 +42,31 @@ fn test_single_taskset() {
     config.users = Some(2);
     config.hatch_rate = 4;
     config.status_codes = true;
+
+    let mut paths_and_weights = vec![(INDEX_PATH, 9), (ABOUT_PATH, 3)];
+    let mut taskset = GooseTaskSet::new("LoadTest");
+
+    while let Some(item) = paths_and_weights.pop() {
+        let path = item.0;
+        let weight = item.1;
+
+        let closure: GooseTaskFunction = Arc::new(move |user| {
+            Box::pin(async move {
+                let _goose = user.get(path).await?;
+                Ok(())
+            })
+        });
+
+        let mut task = GooseTask::new(closure).set_weight(weight).unwrap();
+        // @todo Cannot use taskset.register_task as that won't work in a loop.
+        task.tasks_index = taskset.tasks.len();
+        taskset.tasks.push(task);
+    }
+
     let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9).unwrap())
-                .register_task(task!(get_about).set_weight(3).unwrap()),
-        )
+        .register_taskset(taskset)
         .execute()
         .unwrap();
 
