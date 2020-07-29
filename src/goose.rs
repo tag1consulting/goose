@@ -356,11 +356,26 @@ pub enum GooseTaskError {
     /// is available in `.method`.
     InvalidMethod { method: Method },
 }
+impl GooseTaskError {
+    fn describe(&self) -> &str {
+        match *self {
+            GooseTaskError::Reqwest(_) => "reqwest::Error",
+            GooseTaskError::Url(_) => "url::ParseError",
+            GooseTaskError::RequestFailed { .. } => "Request failed",
+            GooseTaskError::RequestCanceled { .. } => {
+                "Request canceled because throttled load test ended"
+            }
+            GooseTaskError::StatsFailed { .. } => "Failed to send stats to parent thread",
+            GooseTaskError::LoggerFailed { .. } => "Failed to send log message to logger thread",
+            GooseTaskError::InvalidMethod { .. } => "Unrecognized HTTP request method",
+        }
+    }
+}
 
 // Define how to display errors.
 impl fmt::Display for GooseTaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self, f)
+        write!(f, "GooseTaskError: {}", self.describe())
     }
 }
 

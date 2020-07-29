@@ -412,11 +412,25 @@ pub enum GooseError {
     /// `.detail`.
     NoTaskSets { detail: Option<String> },
 }
+impl GooseError {
+    fn describe(&self) -> &str {
+        match *self {
+            GooseError::Io(_) => "io::Error",
+            GooseError::Reqwest(_) => "reqwest::Error",
+            GooseError::FeatureNotEnabled { .. } => "Required compile-time feature not enabled",
+            GooseError::InvalidHost { .. } => "Failed to parse hostname",
+            GooseError::InvalidOption { .. } => "Invalid option or value specified",
+            GooseError::InvalidWaitTime { .. } => "Invalid wait_time specified",
+            GooseError::InvalidWeight { .. } => "Invalid weight specified",
+            GooseError::NoTaskSets { .. } => "No task sets defined",
+        }
+    }
+}
 
 // Define how to display errors.
 impl fmt::Display for GooseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self, f)
+        write!(f, "GooseError: {}", self.describe())
     }
 }
 
