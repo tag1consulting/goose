@@ -162,7 +162,6 @@ fn test_single_taskset_closure() {
     // @todo Move out to common.rs.
     #[derive(Debug)]
     struct LoadtestEndpoint<'a> {
-        pub method: &'a str,
         pub path: &'a str,
         pub status_code: u16,
         pub weight: usize,
@@ -171,13 +170,11 @@ fn test_single_taskset_closure() {
     // Configure endpoints to test.
     let test_endpoints = vec![
         LoadtestEndpoint {
-            method: "GET",
             path: INDEX_PATH,
             status_code: 200,
             weight: 9,
         },
         LoadtestEndpoint {
-            method: "GET",
             path: ABOUT_PATH,
             status_code: 200,
             weight: 3,
@@ -191,7 +188,7 @@ fn test_single_taskset_closure() {
     for (idx, item) in test_endpoints.iter().enumerate() {
         let path = item.path;
         let mock_endpoint = Mock::new()
-            .expect_method(GET) // @todo Make dynamic
+            .expect_method(GET)
             .expect_path(path)
             .return_status(item.status_code.into())
             .create_on(&server);
@@ -255,14 +252,13 @@ fn test_single_taskset_closure() {
         let expect_error = format_item("Item does not exist in goose_stats", &item);
         let endpoint_stats = goose_stats
             .requests
-            .get(&format!("{} {}", item.method, item.path))
+            .get(&format!("GET {}", item.path))
             .expect(&expect_error);
 
         assert!(
             endpoint_stats.path == item.path,
             format_item(&format!("{} != {}", endpoint_stats.path, item.path), &item)
         );
-        // @todo Remove hardcoded GET
         assert!(endpoint_stats.method == GooseMethod::GET);
 
         // Confirm that Goose and the server saw the same number of page loads.
