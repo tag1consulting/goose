@@ -4,6 +4,7 @@ use httpmock::{Mock, MockServer};
 mod common;
 
 use goose::prelude::*;
+use std::sync::Arc;
 
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
@@ -152,4 +153,97 @@ fn test_single_taskset_empty_config_host() {
             .response_time_counter
             == about.times_called()
     );
+}
+
+#[test]
+// Load test with a single task set containing two weighted tasks setup via closure.
+// Validate weighting and statistics.
+fn test_single_taskset_closure() {
+    let server = MockServer::start();
+
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
+    config.no_stats = false;
+    // Start users in .5 seconds.
+    config.users = Some(2);
+    config.hatch_rate = 4;
+    config.status_codes = true;
+
+    let mut paths_and_weights = vec![(INDEX_PATH, 9), (ABOUT_PATH, 3)];
+    let mut taskset = GooseTaskSet::new("LoadTest");
+
+    while let Some(item) = paths_and_weights.pop() {
+        let path = item.0;
+        let weight = item.1;
+
+        let closure: GooseTaskFunction = Arc::new(move |user| {
+            Box::pin(async move {
+                let _goose = user.get(path).await?;
+
+                Ok(())
+            })
+        });
+
+        let task = GooseTask::new(closure).set_weight(weight).unwrap();
+        // We need to do the variable dance as taskset.register_task returns self and hence moves
+        // self out of `taskset`. By storing it in a new local variable and then moving it over
+        // we can avoid that error.
+        let new_taskset = taskset.register_task(task);
+        taskset = new_taskset;
+    }
+
+    let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
+        .setup()
+        .unwrap()
+        .register_taskset(taskset)
+        .execute()
+        .unwrap();
+
+    // Confirm that we loaded the mock endpoints.
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
+
+    // Confirm that we loaded the index roughly three times as much as the about page.
+    let one_third_index = index.times_called() / 3;
+    let difference = about.times_called() as i32 - one_third_index as i32;
+    assert!(difference >= -2 && difference <= 2);
+
+    let index_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", INDEX_PATH))
+        .unwrap();
+    let about_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", ABOUT_PATH))
+        .unwrap();
+
+    // Confirm that the path and method are correct in the statistics.
+    assert!(index_stats.path == INDEX_PATH);
+    assert!(index_stats.method == GooseMethod::GET);
+    assert!(about_stats.path == ABOUT_PATH);
+    assert!(about_stats.method == GooseMethod::GET);
+
+    // Confirm that Goose and the server saw the same number of page loads.
+    let status_code: u16 = 200;
+    assert!(index_stats.response_time_counter == index.times_called());
+    assert!(index_stats.status_code_counts[&status_code] == index.times_called());
+    assert!(index_stats.success_count == index.times_called());
+    assert!(index_stats.fail_count == 0);
+    assert!(about_stats.response_time_counter == about.times_called());
+    assert!(about_stats.status_code_counts[&status_code] == about.times_called());
+    assert!(about_stats.success_count == about.times_called());
+    assert!(about_stats.fail_count == 0);
+
+    // Verify that Goose started the correct number of users.
+    assert!(goose_stats.users == config.users.unwrap());
 }
