@@ -57,10 +57,12 @@ fn test_single_taskset() {
             })
         });
 
-        let mut task = GooseTask::new(closure).set_weight(weight).unwrap();
-        // @todo Cannot use taskset.register_task as that won't work in a loop.
-        task.tasks_index = taskset.tasks.len();
-        taskset.tasks.push(task);
+        let task = GooseTask::new(closure).set_weight(weight).unwrap();
+        // We need to do the variable dance as taskset.register_task returns self and hence moves
+        // self out of `taskset`. By storing it in a new local variable and then moving it over
+        // we can avoid that error.
+        let new_taskset = taskset.register_task(task);
+        taskset = new_taskset;
     }
 
     let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
