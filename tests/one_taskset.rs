@@ -160,6 +160,7 @@ fn test_single_taskset_empty_config_host() {
 // Validate weighting and statistics.
 fn test_single_taskset_closure() {
     // @todo Move out to common.rs.
+    #[derive(Debug)]
     struct LoadtestEndpoint<'a> {
         pub method: &'a str,
         pub path: &'a str,
@@ -242,23 +243,47 @@ fn test_single_taskset_closure() {
     for (idx, item) in test_endpoints.iter().enumerate() {
         let mock_endpoint = &mock_endpoints[idx];
 
+        let format_item = |message, assert_item| {
+            return format!("{} for item = {:#?}", message, assert_item);
+        };
+
         // Confirm that we loaded the mock endpoint.
-        assert!(mock_endpoint.times_called() > 0);
+        assert!(
+            mock_endpoint.times_called() > 0,
+            format_item("Endpoint was not called > 0", &item)
+        );
+        let expect_error = format_item("Item does not exist in goose_stats", &item);
         let endpoint_stats = goose_stats
             .requests
             .get(&format!("{} {}", item.method, item.path))
-            .unwrap();
+            .expect(&expect_error);
 
-        assert!(endpoint_stats.path == item.path);
+        assert!(
+            endpoint_stats.path == item.path,
+            format_item(&format!("{} != {}", endpoint_stats.path, item.path), &item)
+        );
+        // @todo Remove hardcoded GET
         assert!(endpoint_stats.method == GooseMethod::GET);
 
         // Confirm that Goose and the server saw the same number of page loads.
         let status_code: u16 = 200;
 
-        assert!(endpoint_stats.response_time_counter == mock_endpoint.times_called());
-        assert!(endpoint_stats.status_code_counts[&status_code] == mock_endpoint.times_called());
-        assert!(endpoint_stats.success_count == mock_endpoint.times_called());
-        assert!(endpoint_stats.fail_count == 0);
+        assert!(
+            endpoint_stats.response_time_counter == mock_endpoint.times_called(),
+            format_item("response_time_counter != times_called()", &item)
+        );
+        assert!(
+            endpoint_stats.status_code_counts[&status_code] == mock_endpoint.times_called(),
+            format_item("status_code_counts != times_called()", &item)
+        );
+        assert!(
+            endpoint_stats.success_count == mock_endpoint.times_called(),
+            format_item("success_count != times_called()", &item)
+        );
+        assert!(
+            endpoint_stats.fail_count == 0,
+            format_item("fail_count != 0", &item)
+        );
     }
 
     // Test specific things directly access the mock endpoints here.
