@@ -431,9 +431,9 @@ impl GooseError {
 impl fmt::Display for GooseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            GooseError::Io(ref source) => write!(f, "GooseTaskError: {} ({})", self.describe(), source),
-            GooseError::Reqwest(ref source) => write!(f, "GooseTaskError: {} ({})", self.describe(), source),
-            _ => write!(f, "GooseTaskError: {}", self.describe())
+            GooseError::Io(ref source) => write!(f, "GooseError: {} ({})", self.describe(), source),
+            GooseError::Reqwest(ref source) => write!(f, "GooseError: {} ({})", self.describe(), source),
+            _ => write!(f, "GooseError: {}", self.describe())
         }
     }
 }
