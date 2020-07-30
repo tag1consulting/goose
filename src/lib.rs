@@ -432,8 +432,13 @@ impl fmt::Display for GooseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             GooseError::Io(ref source) => write!(f, "GooseError: {} ({})", self.describe(), source),
-            GooseError::Reqwest(ref source) => write!(f, "GooseError: {} ({})", self.describe(), source),
-            _ => write!(f, "GooseError: {}", self.describe())
+            GooseError::Reqwest(ref source) => {
+                write!(f, "GooseError: {} ({})", self.describe(), source)
+            }
+            GooseError::InvalidHost {
+                ref parse_error, ..
+            } => write!(f, "GooseError: {} ({})", self.describe(), parse_error),
+            _ => write!(f, "GooseError: {}", self.describe()),
         }
     }
 }

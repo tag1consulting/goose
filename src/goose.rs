@@ -376,9 +376,22 @@ impl GooseTaskError {
 impl fmt::Display for GooseTaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            GooseTaskError::Reqwest(ref source) => write!(f, "GooseTaskError: {} ({})", self.describe(), source),
-            GooseTaskError::Url(ref source) => write!(f, "GooseTaskError: {} ({})", self.describe(), source),
-            _ => write!(f, "GooseTaskError: {}", self.describe())
+            GooseTaskError::Reqwest(ref source) => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::Url(ref source) => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::RequestCanceled { ref source } => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::StatsFailed { ref source } => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::LoggerFailed { ref source } => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            _ => write!(f, "GooseTaskError: {}", self.describe()),
         }
     }
 }
