@@ -9,6 +9,7 @@
  - display `GooseStats` with fmt::Display (ie `print!("{}", goose_stats);`)
  - make it possible to pass a closure to GooseTask::new
  - fix display of `GooseError` and `GooseTaskError`
+ - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistcs before resetting
 
 ## 0.9.0 July 23, 2020
  - fix code documentation, requests are async and require await

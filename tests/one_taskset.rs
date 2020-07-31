@@ -42,6 +42,7 @@ fn test_single_taskset() {
     config.users = Some(2);
     config.hatch_rate = 4;
     config.status_codes = true;
+    config.no_reset_stats = true;
     let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
@@ -115,6 +116,7 @@ fn test_single_taskset_empty_config_host() {
     let host = std::mem::take(&mut config.host);
     // Enable statistics to confirm Goose and web server agree.
     config.no_stats = false;
+    config.no_reset_stats = true;
     let goose_stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
@@ -191,6 +193,7 @@ fn test_single_taskset_closure() {
     config.users = Some(test_endpoints.len());
     config.hatch_rate = 2 * test_endpoints.len();
     config.status_codes = true;
+    config.no_reset_stats = true;
 
     // Setup mock endpoints.
     let mut mock_endpoints = Vec::with_capacity(test_endpoints.len());

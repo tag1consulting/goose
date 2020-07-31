@@ -1419,7 +1419,6 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
-
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -1547,8 +1546,8 @@ impl GooseAttack {
         // Only display status codes if enabled.
         self.stats.display_status_codes = self.configuration.status_codes;
 
-        // Track whether or not we've (optionally) reset the statistics after all users started.
-        let mut statistics_reset: bool = false;
+        // Track whether or not we've finished launching users.
+        let mut users_launched: bool = false;
 
         // Catch ctrl-c to allow clean shutdown to display statistics.
         let canceled = Arc::new(AtomicBool::new(false));
@@ -1645,7 +1644,6 @@ impl GooseAttack {
                     message = parent_receiver.try_recv();
                 }
 
-
                 // As worker, push request statistics up to manager.
                 if self.configuration.worker && received_message {
                     #[cfg(feature = "gaggle")]
@@ -1665,18 +1663,35 @@ impl GooseAttack {
                 }
 
                 // Flush request statistics collected prior to all user threads running
-                if !self.configuration.no_reset_stats && !statistics_reset {
-                    self.stats.duration = self.started.unwrap().elapsed().as_secs() as usize;
-                    self.stats.print_running();
+                if !users_launched {
+                    users_launched = true;
+                    if !self.configuration.no_reset_stats {
+                        self.stats.duration = self.started.unwrap().elapsed().as_secs() as usize;
+                        self.stats.print_running();
 
-                    println!(
-                        "All users hatched, resetting statistics (disable with —no-reset-stats)"
-                    );
+                        if self.stats.users < self.users {
+                            println!(
+                                "{} of {} users hatched, timer expired, resetting statistics (disable with —no-reset-stats)\n", self.stats.users, self.users
+                            );
+                        } else {
+                            println!(
+                                "All {} users hatched, resetting statistics (disable with —no-reset-stats)\n", self.stats.users
+                            );
+                        }
 
-                    self.stats.requests = HashMap::new();
-                    statistics_reset = true;
-                    // Restart the timer now that all threads are launched.
-                    self.started = Some(time::Instant::now());
+                        self.stats.requests = HashMap::new();
+                        // Restart the timer now that all threads are launched.
+                        self.started = Some(time::Instant::now());
+                    } else {
+                        if self.stats.users < self.users {
+                            println!(
+                                "{} of {} users hatched, timer expired\n",
+                                self.stats.users, self.users
+                            );
+                        } else {
+                            println!("All {} users hatched\n", self.stats.users);
+                        }
+                    }
                 }
             }
 
