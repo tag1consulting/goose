@@ -356,11 +356,43 @@ pub enum GooseTaskError {
     /// is available in `.method`.
     InvalidMethod { method: Method },
 }
+impl GooseTaskError {
+    fn describe(&self) -> &str {
+        match *self {
+            GooseTaskError::Reqwest(_) => "reqwest::Error",
+            GooseTaskError::Url(_) => "url::ParseError",
+            GooseTaskError::RequestFailed { .. } => "request failed",
+            GooseTaskError::RequestCanceled { .. } => {
+                "request canceled because throttled load test ended"
+            }
+            GooseTaskError::StatsFailed { .. } => "failed to send stats to parent thread",
+            GooseTaskError::LoggerFailed { .. } => "failed to send log message to logger thread",
+            GooseTaskError::InvalidMethod { .. } => "unrecognized HTTP request method",
+        }
+    }
+}
 
 // Define how to display errors.
 impl fmt::Display for GooseTaskError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self, f)
+        match *self {
+            GooseTaskError::Reqwest(ref source) => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::Url(ref source) => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::RequestCanceled { ref source } => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::StatsFailed { ref source } => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            GooseTaskError::LoggerFailed { ref source } => {
+                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            }
+            _ => write!(f, "GooseTaskError: {}", self.describe()),
+        }
     }
 }
 
