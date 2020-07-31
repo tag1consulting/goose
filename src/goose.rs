@@ -361,13 +361,13 @@ impl GooseTaskError {
         match *self {
             GooseTaskError::Reqwest(_) => "reqwest::Error",
             GooseTaskError::Url(_) => "url::ParseError",
-            GooseTaskError::RequestFailed { .. } => "Request failed",
+            GooseTaskError::RequestFailed { .. } => "request failed",
             GooseTaskError::RequestCanceled { .. } => {
-                "Request canceled because throttled load test ended"
+                "request canceled because throttled load test ended"
             }
-            GooseTaskError::StatsFailed { .. } => "Failed to send stats to parent thread",
-            GooseTaskError::LoggerFailed { .. } => "Failed to send log message to logger thread",
-            GooseTaskError::InvalidMethod { .. } => "Unrecognized HTTP request method",
+            GooseTaskError::StatsFailed { .. } => "failed to send stats to parent thread",
+            GooseTaskError::LoggerFailed { .. } => "failed to send log message to logger thread",
+            GooseTaskError::InvalidMethod { .. } => "unrecognized HTTP request method",
         }
     }
 }

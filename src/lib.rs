@@ -417,12 +417,12 @@ impl GooseError {
         match *self {
             GooseError::Io(_) => "io::Error",
             GooseError::Reqwest(_) => "reqwest::Error",
-            GooseError::FeatureNotEnabled { .. } => "Required compile-time feature not enabled",
-            GooseError::InvalidHost { .. } => "Failed to parse hostname",
-            GooseError::InvalidOption { .. } => "Invalid option or value specified",
-            GooseError::InvalidWaitTime { .. } => "Invalid wait_time specified",
-            GooseError::InvalidWeight { .. } => "Invalid weight specified",
-            GooseError::NoTaskSets { .. } => "No task sets defined",
+            GooseError::FeatureNotEnabled { .. } => "required compile-time feature not enabled",
+            GooseError::InvalidHost { .. } => "failed to parse hostname",
+            GooseError::InvalidOption { .. } => "invalid option or value specified",
+            GooseError::InvalidWaitTime { .. } => "invalid wait_time specified",
+            GooseError::InvalidWeight { .. } => "invalid weight specified",
+            GooseError::NoTaskSets { .. } => "no task sets defined",
         }
     }
 }
