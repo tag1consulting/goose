@@ -181,9 +181,18 @@ fn test_single_taskset_closure() {
         },
     ];
 
-    // Setup mock endpoints.
+    // Start mock server.
     let server = MockServer::start();
 
+    // Build configuration.
+    let mut config = common::build_configuration(&server);
+    config.no_stats = false;
+    // Start users in .5 seconds.
+    config.users = Some(test_endpoints.len());
+    config.hatch_rate = 2 * test_endpoints.len();
+    config.status_codes = true;
+
+    // Setup mock endpoints.
     let mut mock_endpoints = Vec::with_capacity(test_endpoints.len());
     for (idx, item) in test_endpoints.iter().enumerate() {
         let path = item.path;
@@ -198,15 +207,7 @@ fn test_single_taskset_closure() {
         mock_endpoints.push(mock_endpoint);
     }
 
-    // Build configuration.
-    let mut config = common::build_configuration(&server);
-    config.no_stats = false;
-    // Start users in .5 seconds.
-    config.users = Some(test_endpoints.len());
-    config.hatch_rate = 2 * test_endpoints.len();
-    config.status_codes = true;
-
-    // Build taskset.
+    // Build dynamic taskset.
     let mut taskset = GooseTaskSet::new("LoadTest");
     for item in &test_endpoints {
         let path = item.path;
