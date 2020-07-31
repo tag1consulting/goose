@@ -1138,6 +1138,14 @@ impl GooseAttack {
                 });
             }
 
+            if self.configuration.no_reset_stats {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-reset-stats".to_string(),
+                    value: self.configuration.no_reset_stats.to_string(),
+                    detail: Some("--no-reset-stats is only available to the manager".to_string()),
+                });
+            }
+
             if self.configuration.no_hash_check {
                 return Err(GooseError::InvalidOption {
                     option: "--no-hash-check".to_string(),
@@ -1682,15 +1690,13 @@ impl GooseAttack {
                         self.stats.requests = HashMap::new();
                         // Restart the timer now that all threads are launched.
                         self.started = Some(time::Instant::now());
+                    } else if self.stats.users < self.users {
+                        println!(
+                            "{} of {} users hatched, timer expired\n",
+                            self.stats.users, self.users
+                        );
                     } else {
-                        if self.stats.users < self.users {
-                            println!(
-                                "{} of {} users hatched, timer expired\n",
-                                self.stats.users, self.users
-                            );
-                        } else {
-                            println!("All {} users hatched\n", self.stats.users);
-                        }
+                        println!("All {} users hatched\n", self.stats.users);
                     }
                 }
             }

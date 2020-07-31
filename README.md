@@ -184,19 +184,19 @@ USAGE:
     simple [FLAGS] [OPTIONS]
 
 FLAGS:
-    -h, --help             Prints help information
-    -l, --list             Shows list of all possible Goose tasks and exits
-    -g, --log-level        Log level (-g, -gg, -ggg, etc.)
-        --manager          Enables manager mode
-        --no-hash-check    Ignore worker load test checksum
-        --no-stats         Don't print stats in the console
-        --only-summary     Only prints summary stats
-        --reset-stats      Resets statistics once hatching has been completed
-        --status-codes     Includes status code counts in console stats
-        --sticky-follow    User follows redirect of base_url with subsequent requests
-    -V, --version          Prints version information
-    -v, --verbose          Debug level (-v, -vv, -vvv, etc.)
-        --worker           Enables worker mode
+    -h, --help              Prints help information
+    -l, --list              Shows list of all possible Goose tasks and exits
+    -g, --log-level         Log level (-g, -gg, -ggg, etc.)
+        --manager           Enables manager mode
+        --no-hash-check     Ignore worker load test checksum
+        --no-reset-stats    Resets statistics once hatching has been completed
+        --no-stats          Don't print stats in the console
+        --only-summary      Only prints summary stats
+        --status-codes      Includes status code counts in console stats
+        --sticky-follow     User follows redirect of base_url with subsequent requests
+    -V, --version           Prints version information
+    -v, --verbose           Debug level (-v, -vv, -vvv, etc.)
+        --worker            Enables worker mode
 
 OPTIONS:
     -d, --debug-log-file <debug-log-file>          Debug log file name [default: ]
@@ -260,6 +260,9 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -u102
 18:43:25 [ INFO] launching user 1023 from WebsiteUser...
 18:43:25 [ INFO] launching user 1024 from WebsiteUser...
 18:43:25 [ INFO] launched 1024 users...
+
+All 1024 users hatched, resetting statistics (disable with —no-reset-stats)
+
 18:53:26 [ INFO] stopping after 600 seconds...
 18:53:26 [ INFO] waiting for users to exit
 ------------------------------------------------------------------------------ 
@@ -470,7 +473,7 @@ and the test will stop on all servers.
 * `--worker`: starts a Goose process in worker mode. How many workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
 * `--no-hash-check`: tells Goose to ignore if the load test applications don't match between worker(s) and manager. Not recommended.
 
-The `--no-stats`, `--only-summary`, `--reset-stats`, `--status-codes`, and `--no-hash-check` flags must be set on the manager. Workers inheret these flags from the manager
+The `--no-stats`, `--only-summary`, `--no-reset-stats`, `--status-codes`, and `--no-hash-check` flags must be set on the manager. Workers inheret these flags from the manager
 
 ### Goose Run-time Options
 
