@@ -203,7 +203,7 @@ fn test_single_taskset_closure() {
     config.no_stats = false;
     // Start users in .5 seconds.
     config.users = Some(test_endpoints.len());
-    config.hatch_rate = 4;
+    config.hatch_rate = 2 * test_endpoints.len();
     config.status_codes = true;
 
     // Build taskset.
