@@ -1679,11 +1679,11 @@ impl GooseAttack {
 
                         if self.stats.users < self.users {
                             println!(
-                                "{} of {} users hatched, timer expired, resetting statistics (disable with —no-reset-stats).\n", self.stats.users, self.users
+                                "{} of {} users hatched, timer expired, resetting statistics (disable with --no-reset-stats).\n", self.stats.users, self.users
                             );
                         } else {
                             println!(
-                                "All {} users hatched, resetting statistics (disable with —no-reset-stats).\n", self.stats.users
+                                "All {} users hatched, resetting statistics (disable with --no-reset-stats).\n", self.stats.users
                             );
                         }
 

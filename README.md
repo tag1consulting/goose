@@ -261,7 +261,7 @@ $ cargo run --release --example simple -- --host http://apache.fosciana -v -u102
 18:43:25 [ INFO] launching user 1024 from WebsiteUser...
 18:43:25 [ INFO] launched 1024 users...
 
-All 1024 users hatched, resetting statistics (disable with —no-reset-stats)
+All 1024 users hatched, resetting statistics (disable with --no-reset-stats)
 
 18:53:26 [ INFO] stopping after 600 seconds...
 18:53:26 [ INFO] waiting for users to exit
@@ -473,7 +473,7 @@ and the test will stop on all servers.
 * `--worker`: starts a Goose process in worker mode. How many workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
 * `--no-hash-check`: tells Goose to ignore if the load test applications don't match between worker(s) and manager. Not recommended.
 
-The `--no-stats`, `--only-summary`, `--no-reset-stats`, `--status-codes`, and `--no-hash-check` flags must be set on the manager. Workers inheret these flags from the manager
+The `--no-stats`, `--only-summary`, `--no-reset-stats`, `--status-codes`, and `--no-hash-check` flags must be set on the manager. Workers inherit these flags from the manager
 
 ### Goose Run-time Options
 
@@ -482,7 +482,7 @@ The `--no-stats`, `--only-summary`, `--no-reset-stats`, `--status-codes`, and `-
 * `--manager-host <manager-host>`: configures the host that the worker will talk to the manager on. By default, a Goose worker will connect to the localhost, or `127.0.0.1`. In a distributed load test, this must be set to the IP of the Goose manager.
 * `--manager-port <manager-port>`: configures the port that a worker will talk to the manager on. By default, a Goose worker will connect to port `5115`.
 
-The `--users`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the manager. Workers inheret these options from the manager.
+The `--users`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the manager. Workers inherit these options from the manager.
 
 The `--throttle-requests` option must be configured on each worker, and can be set to a different value
 on each worker if desired.
