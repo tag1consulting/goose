@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.1-dev
+## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`
  - rework as methods of `GooseStats`: `.print()`, `.print_running()`, `fmt_requests()`,
    `fmt_response_times()`, `fmt_percentiles()`, and `fmt_status_codes()`
