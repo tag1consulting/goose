@@ -125,15 +125,8 @@ impl GooseStats {
             } else {
                 0.0
             };
-            let req_s;
-            let fail_s;
-            if self.duration == 0 {
-                req_s = 0.to_formatted_string(&Locale::en);
-                fail_s = 0.to_formatted_string(&Locale::en);
-            } else {
-                req_s = (total_count / self.duration).to_formatted_string(&Locale::en);
-                fail_s = (request.fail_count / self.duration).to_formatted_string(&Locale::en);
-            }
+            let (req_s, fail_s) =
+                per_second_calculations(self.duration, total_count, request.fail_count);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if fail_percent as usize == 100 || fail_percent as usize == 0 {
                 writeln!(
@@ -177,15 +170,8 @@ impl GooseStats {
                 fmt,
                 " ------------------------+----------------+----------------+--------+--------- "
             )?;
-            let req_s;
-            let fail_s;
-            if self.duration == 0 {
-                req_s = 0.to_formatted_string(&Locale::en);
-                fail_s = 0.to_formatted_string(&Locale::en);
-            } else {
-                req_s = (aggregate_total_count / self.duration).to_formatted_string(&Locale::en);
-                fail_s = (aggregate_fail_count / self.duration).to_formatted_string(&Locale::en);
-            }
+            let (req_s, fail_s) =
+                per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
                 writeln!(
@@ -554,6 +540,20 @@ impl fmt::Display for GooseStats {
     }
 }
 
+/// Helper to calculate requests and fails per seconds.
+fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (String, String) {
+    let requests_per_second;
+    let fails_per_second;
+    if duration == 0 {
+        requests_per_second = 0.to_formatted_string(&Locale::en);
+        fails_per_second = 0.to_formatted_string(&Locale::en);
+    } else {
+        requests_per_second = (total / duration).to_formatted_string(&Locale::en);
+        fails_per_second = (fail / duration).to_formatted_string(&Locale::en);
+    }
+    (requests_per_second, fails_per_second)
+}
+
 /// A helper function that merges together response times.
 ///
 /// Used in `lib.rs` to merge together per-thread response times, and in `stats.rs`
@@ -723,5 +723,30 @@ mod test {
             calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999),
             200
         );
+    }
+
+    #[test]
+    fn calculate_per_second() {
+        // With duration of 0, requests and fails per second is always 0.
+        let mut duration = 0;
+        let mut total = 10;
+        let fail = 10;
+        let (requests_per_second, fails_per_second) =
+            per_second_calculations(duration, total, fail);
+        assert!(requests_per_second == "0");
+        assert!(fails_per_second == "0");
+        // Changing total doesn't affect requests and fails as duration is still 0.
+        total = 100;
+        let (requests_per_second, fails_per_second) =
+            per_second_calculations(duration, total, fail);
+        assert!(requests_per_second == "0");
+        assert!(fails_per_second == "0");
+
+        // With non-zero duration, requests and fails per second return properly.
+        duration = 10;
+        let (requests_per_second, fails_per_second) =
+            per_second_calculations(duration, total, fail);
+        assert!(requests_per_second == "10");
+        assert!(fails_per_second == "1");
     }
 }
