@@ -42,6 +42,7 @@ fn test_single_taskset() {
     config.users = Some(2);
     config.hatch_rate = 4;
     config.status_codes = true;
+    config.no_reset_stats = true;
     let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
@@ -115,6 +116,7 @@ fn test_single_taskset_empty_config_host() {
     let host = std::mem::take(&mut config.host);
     // Enable statistics to confirm Goose and web server agree.
     config.no_stats = false;
+    config.no_reset_stats = true;
     let goose_stats = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
@@ -191,6 +193,7 @@ fn test_single_taskset_closure() {
     config.users = Some(test_endpoints.len());
     config.hatch_rate = 2 * test_endpoints.len();
     config.status_codes = true;
+    config.no_reset_stats = true;
 
     // Setup mock endpoints.
     let mut mock_endpoints = Vec::with_capacity(test_endpoints.len());
@@ -291,6 +294,80 @@ fn test_single_taskset_closure() {
     let one_third_index = index.times_called() / 3;
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
+
+    // Verify that Goose started the correct number of users.
+    assert!(goose_stats.users == config.users.unwrap());
+}
+
+#[test]
+// Load test with a single task set containing two weighted tasks. Validate
+// weighting and statistics after resetting stats.
+fn test_single_taskset_reset_stats() {
+    let server = MockServer::start();
+
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
+    config.no_stats = false;
+    // Start users in .5 seconds.
+    config.users = Some(2);
+    config.hatch_rate = 4;
+    config.status_codes = true;
+    let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
+        .setup()
+        .unwrap()
+        .register_taskset(
+            taskset!("LoadTest")
+                .register_task(task!(get_index).set_weight(9).unwrap())
+                .register_task(task!(get_about).set_weight(3).unwrap()),
+        )
+        .execute()
+        .unwrap();
+
+    // Confirm that we loaded the mock endpoints.
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
+
+    // Confirm that we loaded the index roughly three times as much as the about page.
+    let one_third_index = index.times_called() / 3;
+    let difference = about.times_called() as i32 - one_third_index as i32;
+    assert!(difference >= -2 && difference <= 2);
+
+    let index_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", INDEX_PATH))
+        .unwrap();
+    let about_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", ABOUT_PATH))
+        .unwrap();
+
+    // Confirm that the path and method are correct in the statistics.
+    assert!(index_stats.path == INDEX_PATH);
+    assert!(index_stats.method == GooseMethod::GET);
+    assert!(about_stats.path == ABOUT_PATH);
+    assert!(about_stats.method == GooseMethod::GET);
+
+    // Confirm that Goose saw fewer page loads than the server, as the statistics
+    // were reset after .5 seconds.
+    let status_code: u16 = 200;
+    assert!(index_stats.response_time_counter < index.times_called());
+    assert!(index_stats.status_code_counts[&status_code] < index.times_called());
+    assert!(index_stats.success_count < index.times_called());
+    assert!(index_stats.fail_count == 0);
+    assert!(about_stats.response_time_counter < about.times_called());
+    assert!(about_stats.status_code_counts[&status_code] < about.times_called());
+    assert!(about_stats.success_count < about.times_called());
+    assert!(about_stats.fail_count == 0);
 
     // Verify that Goose started the correct number of users.
     assert!(goose_stats.users == config.users.unwrap());

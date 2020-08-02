@@ -1138,6 +1138,14 @@ impl GooseAttack {
                 });
             }
 
+            if self.configuration.no_reset_stats {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-reset-stats".to_string(),
+                    value: self.configuration.no_reset_stats.to_string(),
+                    detail: Some("--no-reset-stats is only available to the manager".to_string()),
+                });
+            }
+
             if self.configuration.no_hash_check {
                 return Err(GooseError::InvalidOption {
                     option: "--no-hash-check".to_string(),
@@ -1533,8 +1541,6 @@ impl GooseAttack {
             debug!("sleeping {:?} milliseconds...", sleep_duration);
             tokio::time::delay_for(sleep_duration).await;
         }
-        // Restart the timer now that all threads are launched.
-        self.started = Some(time::Instant::now());
         if self.configuration.worker {
             info!(
                 "[{}] launched {} users...",
@@ -1548,8 +1554,8 @@ impl GooseAttack {
         // Only display status codes if enabled.
         self.stats.display_status_codes = self.configuration.status_codes;
 
-        // Track whether or not we've (optionally) reset the statistics after all users started.
-        let mut statistics_reset: bool = false;
+        // Track whether or not we've finished launching users.
+        let mut users_launched: bool = false;
 
         // Catch ctrl-c to allow clean shutdown to display statistics.
         let canceled = Arc::new(AtomicBool::new(false));
@@ -1665,10 +1671,33 @@ impl GooseAttack {
                 }
 
                 // Flush request statistics collected prior to all user threads running
-                if self.configuration.reset_stats && !statistics_reset {
-                    info!("statistics reset...");
-                    self.stats.requests = HashMap::new();
-                    statistics_reset = true;
+                if !users_launched {
+                    users_launched = true;
+                    if !self.configuration.no_reset_stats {
+                        self.stats.duration = self.started.unwrap().elapsed().as_secs() as usize;
+                        self.stats.print_running();
+
+                        if self.stats.users < self.users {
+                            println!(
+                                "{} of {} users hatched, timer expired, resetting statistics (disable with --no-reset-stats).\n", self.stats.users, self.users
+                            );
+                        } else {
+                            println!(
+                                "All {} users hatched, resetting statistics (disable with --no-reset-stats).\n", self.stats.users
+                            );
+                        }
+
+                        self.stats.requests = HashMap::new();
+                        // Restart the timer now that all threads are launched.
+                        self.started = Some(time::Instant::now());
+                    } else if self.stats.users < self.users {
+                        println!(
+                            "{} of {} users hatched, timer expired.\n",
+                            self.stats.users, self.users
+                        );
+                    } else {
+                        println!("All {} users hatched.\n", self.stats.users);
+                    }
                 }
             }
 
@@ -1844,7 +1873,7 @@ pub struct GooseConfiguration {
 
     /// Resets statistics once hatching has been completed
     #[structopt(long)]
-    pub reset_stats: bool,
+    pub no_reset_stats: bool,
 
     /// Shows list of all possible Goose tasks and exits
     #[structopt(short, long)]

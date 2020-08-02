@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.9.2-dev
+ - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
 
 ## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`
