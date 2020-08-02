@@ -36,13 +36,20 @@ pub async fn throttle_main(
         tokens_per_duration, sleep_duration
     );
 
+    // Update throttle_started after each delay. This is used to prevent a time
+    // drift due to the time it takes to remove tokens from the throttle_receiver.
+    let mut throttle_started = time::Instant::now();
+
     // Loop and remove tokens from channel at controlled rate until load test ends.
     loop {
         debug!(
             "throttle removing {} token(s) from channel",
             tokens_per_duration
         );
-        time::delay_for(sleep_duration).await;
+        time::delay_for(sleep_duration - throttle_started.elapsed()).await;
+
+        // Update throttle_started after each delay.
+        throttle_started = time::Instant::now();
 
         // A message will be received when the load test is over.
         if parent_receiver.try_recv().is_ok() {

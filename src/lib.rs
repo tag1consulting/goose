@@ -1475,6 +1475,11 @@ impl GooseAttack {
             mpsc::UnboundedSender<GooseRawRequest>,
             mpsc::UnboundedReceiver<GooseRawRequest>,
         ) = mpsc::unbounded_channel();
+
+        // Update user_thread_started after each delay. This is used to prevent a time
+        // drift due to the time it takes to launch a new thread.
+        let mut user_thread_started = time::Instant::now();
+
         // Spawn users, each with their own weighted task_set.
         for mut thread_user in self.weighted_users.clone() {
             // Stop launching threads if the run_timer has expired, unwrap is safe as we only get here if we started.
@@ -1539,7 +1544,10 @@ impl GooseAttack {
             users.push(user);
             self.stats.users += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
-            tokio::time::delay_for(sleep_duration).await;
+            tokio::time::delay_for(sleep_duration - user_thread_started.elapsed()).await;
+
+            // Update user_thread_started after each delay.
+            user_thread_started = time::Instant::now();
         }
         if self.configuration.worker {
             info!(
