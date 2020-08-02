@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.9.2-dev
+ - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
 
 ## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`
@@ -9,7 +10,6 @@
  - display `GooseStats` with fmt::Display (ie `print!("{}", goose_stats);`)
  - make it possible to pass a closure to GooseTask::new
  - fix display of `GooseError` and `GooseTaskError`
- - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
 
 ## 0.9.0 July 23, 2020
  - fix code documentation, requests are async and require await
