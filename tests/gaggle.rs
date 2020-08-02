@@ -21,6 +21,7 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 
 /// Test test_start alone.
 #[test]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
 fn test_gaggle() {
     let server = MockServer::start();
 
