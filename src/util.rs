@@ -46,6 +46,20 @@ pub fn parse_timespan(time_str: &str) -> usize {
     }
 }
 
+/// Sleep for a specified duration, minus an time spent doing other things.
+pub async fn sleep_minus_drift(
+    duration: tokio::time::Duration,
+    drift: tokio::time::Instant,
+) -> tokio::time::Instant {
+    let elapsed = drift.elapsed();
+    if (duration - elapsed).as_nanos() > 0 {
+        tokio::time::delay_for(duration - elapsed).await;
+    } else {
+        warn!("sleep_minus_drift: drift was greater than or equal to duration, not sleeping");
+    }
+    tokio::time::Instant::now()
+}
+
 /// Calculate the greatest commond divisor using binary GCD (or Stein's) algorithm.
 /// More detail: https://en.wikipedia.org/wiki/Binary_GCD_algorithm
 pub fn gcd(u: usize, v: usize) -> usize {

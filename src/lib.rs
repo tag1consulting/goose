@@ -1475,6 +1475,12 @@ impl GooseAttack {
             mpsc::UnboundedSender<GooseRawRequest>,
             mpsc::UnboundedReceiver<GooseRawRequest>,
         ) = mpsc::unbounded_channel();
+
+        // A new user thread will be spawned at regular intervals. The spawning_user_drift
+        // variable tracks how much time is spent on everything else, and is subtracted from
+        // the time spent sleeping.
+        let mut spawning_user_drift = tokio::time::Instant::now();
+
         // Spawn users, each with their own weighted task_set.
         for mut thread_user in self.weighted_users.clone() {
             // Stop launching threads if the run_timer has expired, unwrap is safe as we only get here if we started.
@@ -1539,7 +1545,9 @@ impl GooseAttack {
             users.push(user);
             self.stats.users += 1;
             debug!("sleeping {:?} milliseconds...", sleep_duration);
-            tokio::time::delay_for(sleep_duration).await;
+
+            spawning_user_drift =
+                util::sleep_minus_drift(sleep_duration, spawning_user_drift).await;
         }
         if self.configuration.worker {
             info!(

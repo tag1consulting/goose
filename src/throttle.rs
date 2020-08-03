@@ -1,6 +1,8 @@
 use tokio::sync::mpsc::Receiver;
 use tokio::time;
 
+use crate::util;
+
 /// This throttle thread limits the maximum number of requests that can be made across
 /// all GooseUser threads. When enabled, GooseUser threads must add a token to the
 /// bounded channel before making a request, and this thread limits how frequently
@@ -36,13 +38,18 @@ pub async fn throttle_main(
         tokens_per_duration, sleep_duration
     );
 
+    // One or more token gets removed from the throttle_receiver bucket at regular
+    // intervals. The throttle_drift variable tracks how much time is spent on
+    // everything else, and is subtracted from the time spent sleeping.
+    let mut throttle_drift = tokio::time::Instant::now();
+
     // Loop and remove tokens from channel at controlled rate until load test ends.
     loop {
         debug!(
             "throttle removing {} token(s) from channel",
             tokens_per_duration
         );
-        time::delay_for(sleep_duration).await;
+        throttle_drift = util::sleep_minus_drift(sleep_duration, throttle_drift).await;
 
         // A message will be received when the load test is over.
         if parent_receiver.try_recv().is_ok() {
