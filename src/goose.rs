@@ -296,6 +296,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
+use crate::stats::GooseRawTask;
 use crate::{GooseConfiguration, GooseError};
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -911,7 +912,9 @@ pub struct GooseUser {
     /// Normal tasks are optionally throttled, test_start and test_stop tasks are not.
     pub is_throttled: bool,
     /// Channel to parent.
-    pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
+    pub parent_request_stats: Option<mpsc::UnboundedSender<GooseRawRequest>>,
+    /// Channel to parent.
+    pub parent_task_stats: Option<mpsc::UnboundedSender<GooseRawTask>>,
     /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
     pub weighted_users_index: usize,
     /// A weighted list of all tasks that run when the user first starts.
@@ -956,7 +959,8 @@ impl GooseUser {
             logger: None,
             throttle: None,
             is_throttled: true,
-            parent: None,
+            parent_request_stats: None,
+            parent_task_stats: None,
             // A value of max_value() indicates this user isn't fully initialized yet.
             weighted_users_index: usize::max_value(),
             weighted_on_start_tasks: Vec::new(),
@@ -1529,16 +1533,16 @@ impl GooseUser {
 
         // Send raw request object to parent if we're tracking statistics.
         if !self.config.no_stats {
-            self.send_to_parent(&raw_request)?;
+            self.send_request_stats_to_parent(&raw_request)?;
         }
 
         Ok(GooseResponse::new(raw_request, response))
     }
 
-    fn send_to_parent(&self, raw_request: &GooseRawRequest) -> GooseTaskResult {
+    fn send_request_stats_to_parent(&self, raw_request: &GooseRawRequest) -> GooseTaskResult {
         // Parent is not defined when running test_start_task, test_stop_task,
         // and during testing.
-        if let Some(parent) = self.parent.clone() {
+        if let Some(parent) = self.parent_request_stats.clone() {
             parent.send(raw_request.clone())?;
         }
 
@@ -1591,7 +1595,7 @@ impl GooseUser {
         if !request.success {
             request.success = true;
             request.update = true;
-            self.send_to_parent(&request)?;
+            self.send_request_stats_to_parent(&request)?;
         }
 
         Ok(())
@@ -1658,7 +1662,7 @@ impl GooseUser {
         if request.success {
             request.success = false;
             request.update = true;
-            self.send_to_parent(&request)?;
+            self.send_request_stats_to_parent(&request)?;
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;

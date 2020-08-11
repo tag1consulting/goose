@@ -339,7 +339,7 @@ use url::Url;
 use crate::goose::{
     GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
 };
-use crate::stats::GooseStats;
+use crate::stats::{GooseRawTask, GooseStats, GooseTaskStat};
 
 /// Constant defining how often statistics should be displayed while load test is running.
 const RUNNING_STATS_EVERY: usize = 15;
@@ -1470,10 +1470,15 @@ impl GooseAttack {
         let mut users = vec![];
         // Collect user thread channels in a vector so we can talk to the user threads.
         let mut user_channels = vec![];
-        // Create a single channel allowing all Goose child threads to sync state back to parent
-        let (all_threads_sender, mut parent_receiver): (
+        // Create a single channel allowing all Goose child threads to sync request stats back to parent
+        let (all_threads_request_sender, mut request_stats_receiver): (
             mpsc::UnboundedSender<GooseRawRequest>,
             mpsc::UnboundedReceiver<GooseRawRequest>,
+        ) = mpsc::unbounded_channel();
+        // Create a single channel allowing all Goose child threads to sync task stats back to parent
+        let (all_threads_task_sender, mut task_stats_receiver): (
+            mpsc::UnboundedSender<GooseRawTask>,
+            mpsc::UnboundedReceiver<GooseRawTask>,
         ) = mpsc::unbounded_channel();
 
         // A new user thread will be spawned at regular intervals. The spawning_user_drift
@@ -1521,8 +1526,11 @@ impl GooseAttack {
                 None => thread_user.throttle = None,
             }
 
-            // Copy the GooseUser-to-parent sender channel, used by all threads.
-            thread_user.parent = Some(all_threads_sender.clone());
+            // Copy the GooseUser-to-parent request sender channel, used by all threads.
+            thread_user.parent_request_stats = Some(all_threads_request_sender.clone());
+
+            // Copy the GooseUser-to-parent task sender channel, used by all threads.
+            thread_user.parent_task_stats = Some(all_threads_task_sender.clone());
 
             // Copy the appropriate task_set into the thread.
             let thread_task_set = self.task_sets[thread_user.task_sets_index].clone();
@@ -1598,11 +1606,11 @@ impl GooseAttack {
                     display_running_statistics = true;
                 }
 
-                // Load messages from user threads until the receiver queue is empty.
-                let mut received_message = false;
-                let mut message = parent_receiver.try_recv();
+                // Load raw_request messages from user threads until the receiver queue is empty.
+                let mut received_request_message = false;
+                let mut message = request_stats_receiver.try_recv();
                 while message.is_ok() {
-                    received_message = true;
+                    received_request_message = true;
                     let raw_request = message.unwrap();
 
                     // Options should appear above, search for formatted_log.
@@ -1657,15 +1665,15 @@ impl GooseAttack {
                     }
 
                     self.stats.requests.insert(key.to_string(), merge_request);
-                    message = parent_receiver.try_recv();
+                    message = request_stats_receiver.try_recv();
                 }
 
                 // As worker, push request statistics up to manager.
-                if self.configuration.worker && received_message {
+                if self.configuration.worker && received_request_message {
                     #[cfg(feature = "gaggle")]
                     {
                         // Push request statistics to manager process.
-                        if !worker::push_stats_to_manager(
+                        if !worker::push_request_stats_to_manager(
                             &socket.clone().unwrap(),
                             &self.stats.requests.clone(),
                             true,
@@ -1675,6 +1683,51 @@ impl GooseAttack {
                         }
                         // The manager has all our request statistics, reset locally.
                         self.stats.requests = HashMap::new();
+                    }
+                }
+
+                // Load raw_task messages from user threads until the receiver queue is empty.
+                let mut received_task_message = false;
+                let mut message = task_stats_receiver.try_recv();
+                while message.is_ok() {
+                    received_task_message = true;
+                    let raw_task = message.unwrap();
+
+                    let key = format!("{:?} {}", raw_task.index, raw_task.name);
+                    let mut merge_stat = match self.stats.tasks.get(&key) {
+                        Some(m) => m.clone(),
+                        None => GooseTaskStat::new(raw_task.index, &raw_task.name, 0),
+                    };
+                    // Store a new statistic.
+                    merge_stat.set_time(raw_task.run_time, raw_task.success);
+                    if raw_task.success {
+                        merge_stat.success_count += 1;
+                    } else {
+                        merge_stat.fail_count += 1;
+                    }
+
+                    self.stats.tasks.insert(key.to_string(), merge_stat);
+                    message = task_stats_receiver.try_recv();
+                }
+
+                // As worker, push task statistics up to manager.
+                if self.configuration.worker && received_task_message {
+                    #[cfg(feature = "gaggle")]
+                    {
+                        /*
+                        @TODO: implement gaggle support for task statistics.
+                        // Push request statistics to manager process.
+                        if !worker::push_task_stats_to_manager(
+                            &socket.clone().unwrap(),
+                            &self.stats.tasks.clone(),
+                            true,
+                        ) {
+                            // EXIT received, cancel.
+                            canceled.store(true, Ordering::SeqCst);
+                        }
+                        // The manager has all our request statistics, reset locally.
+                        self.stats.tasks = HashMap::new();
+                        */
                     }
                 }
 
@@ -1696,6 +1749,7 @@ impl GooseAttack {
                         }
 
                         self.stats.requests = HashMap::new();
+                        self.stats.tasks = HashMap::new();
                         // Restart the timer now that all threads are launched.
                         self.started = Some(time::Instant::now());
                     } else if self.stats.users < self.users {
@@ -1759,7 +1813,7 @@ impl GooseAttack {
 
                 // If we're printing statistics, collect the final messages received from users.
                 if !self.configuration.no_stats {
-                    let mut message = parent_receiver.try_recv();
+                    let mut message = request_stats_receiver.try_recv();
                     while message.is_ok() {
                         let raw_request = message.unwrap();
                         let key = format!("{:?} {}", raw_request.method, raw_request.name);
@@ -1778,7 +1832,7 @@ impl GooseAttack {
                         }
 
                         self.stats.requests.insert(key.to_string(), merge_request);
-                        message = parent_receiver.try_recv();
+                        message = request_stats_receiver.try_recv();
                     }
                 }
 
@@ -1787,7 +1841,7 @@ impl GooseAttack {
                     // As worker, push request statistics up to manager.
                     if self.configuration.worker {
                         // Push request statistics to manager process.
-                        worker::push_stats_to_manager(
+                        worker::push_request_stats_to_manager(
                             &socket.clone().unwrap(),
                             &self.stats.requests.clone(),
                             true,

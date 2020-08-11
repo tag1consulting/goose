@@ -75,7 +75,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         "sending load test hash to manager: {}",
         goose_attack.stats.hash
     );
-    push_stats_to_manager(&manager, &requests, false);
+    push_request_stats_to_manager(&manager, &requests, false);
 
     // Only send load_test_hash one time.
     requests = HashMap::new();
@@ -162,7 +162,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // Wait for the manager to send go-ahead to start the load test.
     loop {
         // Push statistics to manager to force a reply, waiting for RUN.
-        push_stats_to_manager(&manager, &requests, false);
+        push_request_stats_to_manager(&manager, &requests, false);
         let msg = manager
             .recv()
             .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
@@ -222,7 +222,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         .expect("failed to launch GooseAttack")
 }
 
-pub fn push_stats_to_manager(
+pub fn push_request_stats_to_manager(
     manager: &Socket,
     requests: &HashMap<String, GooseRequest>,
     get_response: bool,

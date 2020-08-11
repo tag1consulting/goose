@@ -1,5 +1,7 @@
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::{f32, fmt};
 
@@ -8,6 +10,142 @@ use crate::util;
 
 /// Goose optionally tracks statistics about requests made during a load test.
 pub type GooseRequestStats = HashMap<String, GooseRequest>;
+
+/// Goose optionally tracks statistics about tasks run during a load test.
+pub type GooseTaskStats = HashMap<String, GooseTaskStat>;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GooseRawTask {
+    /// How many milliseconds the load test has been running.
+    pub elapsed: u64,
+    /// An index into GooseTaskSet.task, indicating which task this is.
+    pub index: usize,
+    /// The optional name of the task.
+    pub name: String,
+    /// How long task ran.
+    pub run_time: u64,
+    /// Whether or not the request was successful.
+    pub success: bool,
+    /// Which GooseUser thread processed the request.
+    pub user: usize,
+}
+impl GooseRawTask {
+    pub fn new(elapsed: u128, index: usize, name: String, user: usize) -> Self {
+        GooseRawTask {
+            elapsed: elapsed as u64,
+            index,
+            name,
+            run_time: 0,
+            success: true,
+            user,
+        }
+    }
+
+    pub fn set_time(&mut self, time: u128, success: bool) {
+        self.run_time = time as u64;
+        self.success = success;
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GooseTaskStat {
+    /// An index into GooseTaskSet.task, indicating which task this is.
+    pub index: usize,
+    /// An optional name for the task.
+    pub name: String,
+    /// Per-run-time counters, tracking how often tasks take a given time to complete.
+    pub times: BTreeMap<usize, usize>,
+    /// The shortest run-time for this task.
+    pub min_time: usize,
+    /// The longest run-time for this task.
+    pub max_time: usize,
+    /// Total combined run-times for this task.
+    pub total_time: usize,
+    /// Total number of times task has run.
+    pub counter: usize,
+    /// Total number of times task has run successfully.
+    pub success_count: usize,
+    /// Total number of times task has failed.
+    pub fail_count: usize,
+    /// Load test hash.
+    pub load_test_hash: u64,
+}
+impl GooseTaskStat {
+    pub fn new(index: usize, name: &str, load_test_hash: u64) -> Self {
+        GooseTaskStat {
+            index,
+            name: name.to_string(),
+            times: BTreeMap::new(),
+            min_time: 0,
+            max_time: 0,
+            total_time: 0,
+            counter: 0,
+            success_count: 0,
+            fail_count: 0,
+            load_test_hash,
+        }
+    }
+
+    // Track task function elapsed time.
+    pub fn set_time(&mut self, time: u64, success: bool) {
+        // Perform this conversion only once, then re-use throughout this function.
+        let time_usize = time as usize;
+
+        // Update minimum if this one is fastest yet.
+        if self.min_time == 0 || time_usize < self.min_time {
+            self.min_time = time_usize;
+        }
+
+        // Update maximum if this one is slowest yet.
+        if time_usize > self.max_time {
+            self.max_time = time_usize;
+        }
+
+        // Update total_time, adding in this one.
+        self.total_time += time_usize;
+
+        // Each time we store a new time, increment counter by one.
+        self.counter += 1;
+
+        if success {
+            self.success_count += 1;
+        } else {
+            self.fail_count += 1;
+        }
+
+        // Round the time so we can combine similar times together and
+        // minimize required memory to store and push upstream to the parent.
+        let rounded_time = match time {
+            // No rounding for times 0-100 ms.
+            0..=100 => time_usize,
+            // Round to nearest 10 for times 100-500 ms.
+            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
+            // Round to nearest 100 for times 500-1000 ms.
+            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
+            // Round to nearest 1000 for larger times.
+            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
+        };
+
+        let counter = match self.times.get(&rounded_time) {
+            // We've seen this time before, increment counter.
+            Some(c) => *c + 1,
+            // First time we've seen this time, initialize counter.
+            None => 1,
+        };
+        self.times.insert(rounded_time, counter);
+        debug!("incremented {} counter: {}", rounded_time, counter);
+    }
+}
+impl Ord for GooseTaskStat {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (&self.index, &self.name).cmp(&(&other.index, &other.name))
+    }
+}
+impl PartialOrd for GooseTaskStat {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// Statistics collected during a Goose load test.
 ///
@@ -46,6 +184,8 @@ pub struct GooseStats {
     pub users: usize,
     /// Goose request statistics.
     pub requests: GooseRequestStats,
+    /// Goose task statistics.
+    pub tasks: GooseTaskStats,
     /// Flag indicating whether or not to display percentile. Because we're deriving Default,
     /// this defaults to false.
     pub display_percentile: bool,
@@ -199,6 +339,118 @@ impl GooseStats {
                         aggregate_fail_percent
                     ),
                     req_s,
+                    fail_s,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Optionally prepares a table of tasks.
+    pub fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // If there's nothing to display, exit immediately.
+        if self.tasks.is_empty() {
+            return Ok(());
+        }
+
+        // Display stats from merged HashMap
+        writeln!(
+            fmt,
+            "------------------------------------------------------------------------------ "
+        )?;
+        writeln!(
+            fmt,
+            " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+            "Name", "# runs", "# fails", "run/s", "fail/s"
+        )?;
+        writeln!(
+            fmt,
+            " ----------------------------------------------------------------------------- "
+        )?;
+        let mut aggregate_fail_count = 0;
+        let mut aggregate_total_count = 0;
+        for (task_key, task) in self.tasks.iter().sorted() {
+            let total_count = task.success_count + task.fail_count;
+            let fail_percent = if task.fail_count > 0 {
+                task.fail_count as f32 / total_count as f32 * 100.0
+            } else {
+                0.0
+            };
+            let (run_s, fail_s) =
+                per_second_calculations(self.duration, total_count, task.fail_count);
+            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
+            if fail_percent as usize == 100 || fail_percent as usize == 0 {
+                writeln!(
+                    fmt,
+                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    util::truncate_string(&task_key, 23),
+                    total_count.to_formatted_string(&Locale::en),
+                    format!(
+                        "{} ({}%)",
+                        task.fail_count.to_formatted_string(&Locale::en),
+                        fail_percent as usize
+                    ),
+                    run_s,
+                    fail_s,
+                )?;
+            } else {
+                writeln!(
+                    fmt,
+                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    util::truncate_string(&task_key, 23),
+                    total_count.to_formatted_string(&Locale::en),
+                    format!(
+                        "{} ({:.1}%)",
+                        task.fail_count.to_formatted_string(&Locale::en),
+                        fail_percent
+                    ),
+                    run_s,
+                    fail_s,
+                )?;
+            }
+            aggregate_total_count += total_count;
+            aggregate_fail_count += task.fail_count;
+        }
+        if self.tasks.len() > 1 {
+            let aggregate_fail_percent = if aggregate_fail_count > 0 {
+                aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
+            } else {
+                0.0
+            };
+            writeln!(
+                fmt,
+                " ------------------------+----------------+----------------+--------+--------- "
+            )?;
+            let (run_s, fail_s) =
+                per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
+            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
+            if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
+                writeln!(
+                    fmt,
+                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    "Aggregated",
+                    aggregate_total_count.to_formatted_string(&Locale::en),
+                    format!(
+                        "{} ({}%)",
+                        aggregate_fail_count.to_formatted_string(&Locale::en),
+                        aggregate_fail_percent as usize
+                    ),
+                    run_s,
+                    fail_s,
+                )?;
+            } else {
+                writeln!(
+                    fmt,
+                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    "Aggregated",
+                    aggregate_total_count.to_formatted_string(&Locale::en),
+                    format!(
+                        "{} ({:.1}%)",
+                        aggregate_fail_count.to_formatted_string(&Locale::en),
+                        aggregate_fail_percent
+                    ),
+                    run_s,
                     fail_s,
                 )?;
             }
@@ -533,6 +785,7 @@ impl fmt::Display for GooseStats {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         // Formats from zero to four tables of data, depending on what data is contained
         // and which contained flags are set.
+        self.fmt_tasks(fmt)?;
         self.fmt_requests(fmt)?;
         self.fmt_response_times(fmt)?;
         self.fmt_percentiles(fmt)?;

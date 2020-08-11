@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::stats::GooseRawTask;
 
 pub async fn user_main(
     thread_number: usize,
@@ -97,8 +98,21 @@ pub async fn user_main(
         if thread_task_name != "" {
             thread_user.task_request_name = Some(thread_task_name.to_string());
         }
+
         // Invoke the task function.
-        let _ = function(&thread_user).await;
+        let started = time::Instant::now();
+        let mut raw_task = GooseRawTask::new(
+            thread_user.started.elapsed().as_millis(),
+            thread_user.task_sets_index,
+            thread_task_name.to_string(),
+            thread_user.weighted_users_index,
+        );
+        let success = match function(&thread_user).await {
+            Ok(_) => true,
+            Err(_) => false,
+        };
+        raw_task.set_time(started.elapsed().as_millis(), success);
+        send_task_stats_to_parent(&thread_user, raw_task);
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time = if thread_user.max_wait > 0 {
@@ -185,5 +199,14 @@ pub async fn user_main(
             "exiting user {} from {}...",
             thread_number, thread_task_set.name
         );
+    }
+}
+
+fn send_task_stats_to_parent(user: &GooseUser, raw_task: GooseRawTask) {
+    // Parent is not defined when running test_start_task, test_stop_task,
+    // and during testing.
+    if let Some(parent) = user.parent_task_stats.clone() {
+        // Best effort statistics.
+        let _ = parent.send(raw_task);
     }
 }
