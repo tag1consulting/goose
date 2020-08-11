@@ -89,6 +89,7 @@ pub async fn user_main(
         let thread_weighted_task =
             thread_user.weighted_tasks[weighted_bucket][weighted_bucket_position];
         let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
+        let task_id = thread_task_set.tasks[thread_weighted_task].tasks_index;
         let function = &thread_task_set.tasks[thread_weighted_task].function;
         debug!(
             "launching {} task from {}",
@@ -103,14 +104,11 @@ pub async fn user_main(
         let started = time::Instant::now();
         let mut raw_task = GooseRawTask::new(
             thread_user.started.elapsed().as_millis(),
-            thread_user.task_sets_index,
+            task_id,
             thread_task_name.to_string(),
             thread_user.weighted_users_index,
         );
-        let success = match function(&thread_user).await {
-            Ok(_) => true,
-            Err(_) => false,
-        };
+        let success = function(&thread_user).await.is_ok();
         raw_task.set_time(started.elapsed().as_millis(), success);
         send_task_stats_to_parent(&thread_user, raw_task);
 

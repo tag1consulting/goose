@@ -1700,11 +1700,6 @@ impl GooseAttack {
                     };
                     // Store a new statistic.
                     merge_stat.set_time(raw_task.run_time, raw_task.success);
-                    if raw_task.success {
-                        merge_stat.success_count += 1;
-                    } else {
-                        merge_stat.fail_count += 1;
-                    }
 
                     self.stats.tasks.insert(key.to_string(), merge_stat);
                     message = task_stats_receiver.try_recv();
