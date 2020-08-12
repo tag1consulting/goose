@@ -104,6 +104,7 @@ pub async fn user_main(
         let started = time::Instant::now();
         let mut raw_task = GooseRawTask::new(
             thread_user.started.elapsed().as_millis(),
+            thread_user.task_sets_index,
             task_id,
             thread_task_name.to_string(),
             thread_user.weighted_users_index,

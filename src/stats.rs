@@ -1,25 +1,26 @@
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::{f32, fmt};
 
-use crate::goose::GooseRequest;
+use crate::goose::{GooseRequest, GooseTaskSet};
 use crate::util;
 
 /// Goose optionally tracks statistics about requests made during a load test.
 pub type GooseRequestStats = HashMap<String, GooseRequest>;
 
 /// Goose optionally tracks statistics about tasks run during a load test.
-pub type GooseTaskStats = HashMap<String, GooseTaskStat>;
+pub type GooseTaskStats = Vec<Vec<GooseTaskStat>>;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GooseRawTask {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
+    /// An index into GooseAttack.task_sets, indicating which task set this is.
+    pub taskset_index: usize,
     /// An index into GooseTaskSet.task, indicating which task this is.
-    pub index: usize,
+    pub task_index: usize,
     /// The optional name of the task.
     pub name: String,
     /// How long task ran.
@@ -30,10 +31,17 @@ pub struct GooseRawTask {
     pub user: usize,
 }
 impl GooseRawTask {
-    pub fn new(elapsed: u128, index: usize, name: String, user: usize) -> Self {
+    pub fn new(
+        elapsed: u128,
+        taskset_index: usize,
+        task_index: usize,
+        name: String,
+        user: usize,
+    ) -> Self {
         GooseRawTask {
             elapsed: elapsed as u64,
-            index,
+            taskset_index,
+            task_index,
             name,
             run_time: 0,
             success: true,
@@ -49,10 +57,14 @@ impl GooseRawTask {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseTaskStat {
+    /// An index into GooseAttack.task_sets, indicating which task set this is.
+    pub taskset_index: usize,
+    /// The task set name.
+    pub taskset_name: String,
     /// An index into GooseTaskSet.task, indicating which task this is.
-    pub index: usize,
+    pub task_index: usize,
     /// An optional name for the task.
-    pub name: String,
+    pub task_name: String,
     /// Per-run-time counters, tracking how often tasks take a given time to complete.
     pub times: BTreeMap<usize, usize>,
     /// The shortest run-time for this task.
@@ -71,10 +83,18 @@ pub struct GooseTaskStat {
     pub load_test_hash: u64,
 }
 impl GooseTaskStat {
-    pub fn new(index: usize, name: &str, load_test_hash: u64) -> Self {
+    pub fn new(
+        taskset_index: usize,
+        taskset_name: &str,
+        task_index: usize,
+        task_name: &str,
+        load_test_hash: u64,
+    ) -> Self {
         GooseTaskStat {
-            index,
-            name: name.to_string(),
+            taskset_index,
+            taskset_name: taskset_name.to_string(),
+            task_index,
+            task_name: task_name.to_string(),
             times: BTreeMap::new(),
             min_time: 0,
             max_time: 0,
@@ -136,16 +156,6 @@ impl GooseTaskStat {
         debug!("incremented {} counter: {}", rounded_time, counter);
     }
 }
-impl Ord for GooseTaskStat {
-    fn cmp(&self, other: &Self) -> Ordering {
-        (&self.index, &self.name).cmp(&(&other.index, &other.name))
-    }
-}
-impl PartialOrd for GooseTaskStat {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
 
 /// Statistics collected during a Goose load test.
 ///
@@ -195,6 +205,23 @@ pub struct GooseStats {
 }
 
 impl GooseStats {
+    pub fn initialize_task_stats(&mut self, task_sets: &Vec<GooseTaskSet>) {
+        self.tasks = Vec::new();
+        for task_set in 0..task_sets.len() {
+            let mut task_vector = Vec::new();
+            for task in 0..task_sets[task_set].tasks.len() {
+                task_vector.push(GooseTaskStat::new(
+                    task_sets[task_set].task_sets_index,
+                    &task_sets[task_set].name,
+                    task_sets[task_set].tasks[task].tasks_index,
+                    &task_sets[task_set].tasks[task].name,
+                    0,
+                ));
+            }
+            self.tasks.push(task_vector);
+        }
+    }
+
     /// Consumes and display all statistics from a completed load test.
     ///
     /// # Example
@@ -362,7 +389,7 @@ impl GooseStats {
         writeln!(
             fmt,
             " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-            "Name", "# runs", "# fails", "run/s", "fail/s"
+            "Name", "# times run", "# fails", "task/s", "fail/s"
         )?;
         writeln!(
             fmt,
@@ -370,49 +397,73 @@ impl GooseStats {
         )?;
         let mut aggregate_fail_count = 0;
         let mut aggregate_total_count = 0;
-        for (task_key, task) in self.tasks.iter().sorted() {
-            let total_count = task.success_count + task.fail_count;
-            let fail_percent = if task.fail_count > 0 {
-                task.fail_count as f32 / total_count as f32 * 100.0
-            } else {
-                0.0
-            };
-            let (run_s, fail_s) =
-                per_second_calculations(self.duration, total_count, task.fail_count);
-            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-            if fail_percent as usize == 100 || fail_percent as usize == 0 {
-                writeln!(
-                    fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-                    util::truncate_string(&task_key, 23),
-                    total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({}%)",
-                        task.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent as usize
-                    ),
-                    run_s,
-                    fail_s,
-                )?;
-            } else {
-                writeln!(
-                    fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-                    util::truncate_string(&task_key, 23),
-                    total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({:.1}%)",
-                        task.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent
-                    ),
-                    run_s,
-                    fail_s,
-                )?;
+        let mut task_count = 0;
+        for task_set in &self.tasks {
+            let mut displayed_task_set = false;
+            for task in task_set {
+                task_count += 1;
+                let total_count = task.success_count + task.fail_count;
+                let fail_percent = if task.fail_count > 0 {
+                    task.fail_count as f32 / total_count as f32 * 100.0
+                } else {
+                    0.0
+                };
+                let (run_s, fail_s) =
+                    per_second_calculations(self.duration, total_count, task.fail_count);
+
+                // First time through display name of task set.
+                if !displayed_task_set {
+                    writeln!(
+                        fmt,
+                        " {:23 } |",
+                        util::truncate_string(
+                            &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
+                            60
+                        ),
+                    )?;
+                    displayed_task_set = true;
+                }
+
+                if fail_percent as usize == 100 || fail_percent as usize == 0 {
+                    writeln!(
+                        fmt,
+                        " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                        util::truncate_string(
+                            &format!("  {}: {}", task.task_index + 1, task.task_name),
+                            23
+                        ),
+                        total_count.to_formatted_string(&Locale::en),
+                        format!(
+                            "{} ({}%)",
+                            task.fail_count.to_formatted_string(&Locale::en),
+                            fail_percent as usize
+                        ),
+                        run_s,
+                        fail_s,
+                    )?;
+                } else {
+                    writeln!(
+                        fmt,
+                        " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                        util::truncate_string(
+                            &format!("  {}: {}", task.task_index + 1, task.task_name),
+                            23
+                        ),
+                        total_count.to_formatted_string(&Locale::en),
+                        format!(
+                            "{} ({:.1}%)",
+                            task.fail_count.to_formatted_string(&Locale::en),
+                            fail_percent
+                        ),
+                        run_s,
+                        fail_s,
+                    )?;
+                }
+                aggregate_total_count += total_count;
+                aggregate_fail_count += task.fail_count;
             }
-            aggregate_total_count += total_count;
-            aggregate_fail_count += task.fail_count;
         }
-        if self.tasks.len() > 1 {
+        if task_count > 1 {
             let aggregate_fail_percent = if aggregate_fail_count > 0 {
                 aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
             } else {

@@ -339,7 +339,7 @@ use url::Url;
 use crate::goose::{
     GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
 };
-use crate::stats::{GooseRawTask, GooseStats, GooseTaskStat};
+use crate::stats::{GooseRawTask, GooseStats};
 
 /// Constant defining how often statistics should be displayed while load test is running.
 const RUNNING_STATS_EVERY: usize = 15;
@@ -1592,6 +1592,9 @@ impl GooseAttack {
             stats_log_file = Some(BufWriter::new(file));
         }
 
+        // Initialize the optional task statistics.
+        self.stats.initialize_task_stats(&self.task_sets);
+
         // If logging stats to CSV, use this flag to write header; otherwise it's ignored.
         let mut header = true;
         loop {
@@ -1692,16 +1695,9 @@ impl GooseAttack {
                 while message.is_ok() {
                     received_task_message = true;
                     let raw_task = message.unwrap();
-
-                    let key = format!("{:?} {}", raw_task.index, raw_task.name);
-                    let mut merge_stat = match self.stats.tasks.get(&key) {
-                        Some(m) => m.clone(),
-                        None => GooseTaskStat::new(raw_task.index, &raw_task.name, 0),
-                    };
                     // Store a new statistic.
-                    merge_stat.set_time(raw_task.run_time, raw_task.success);
-
-                    self.stats.tasks.insert(key.to_string(), merge_stat);
+                    self.stats.tasks[raw_task.taskset_index][raw_task.task_index]
+                        .set_time(raw_task.run_time, raw_task.success);
                     message = task_stats_receiver.try_recv();
                 }
 
@@ -1744,7 +1740,7 @@ impl GooseAttack {
                         }
 
                         self.stats.requests = HashMap::new();
-                        self.stats.tasks = HashMap::new();
+                        self.stats.initialize_task_stats(&self.task_sets);
                         // Restart the timer now that all threads are launched.
                         self.started = Some(time::Instant::now());
                     } else if self.stats.users < self.users {
