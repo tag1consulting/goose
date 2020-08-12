@@ -205,16 +205,16 @@ pub struct GooseStats {
 }
 
 impl GooseStats {
-    pub fn initialize_task_stats(&mut self, task_sets: &Vec<GooseTaskSet>) {
+    pub fn initialize_task_stats(&mut self, task_sets: &[GooseTaskSet]) {
         self.tasks = Vec::new();
-        for task_set in 0..task_sets.len() {
+        for task_set in task_sets {
             let mut task_vector = Vec::new();
-            for task in 0..task_sets[task_set].tasks.len() {
+            for task in &task_set.tasks {
                 task_vector.push(GooseTaskStat::new(
-                    task_sets[task_set].task_sets_index,
-                    &task_sets[task_set].name,
-                    task_sets[task_set].tasks[task].tasks_index,
-                    &task_sets[task_set].tasks[task].name,
+                    task_set.task_sets_index,
+                    &task_set.name,
+                    task.tasks_index,
+                    &task.name,
                     0,
                 ));
             }
