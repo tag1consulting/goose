@@ -74,7 +74,7 @@ fn merge_from_worker(
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
     // Iterate over user response times, and merge into global response time
-    merged_request.response_times = stats::merge_response_times(
+    merged_request.response_times = stats::merge_times(
         merged_request.response_times,
         user_request.response_times.clone(),
     );
@@ -83,12 +83,12 @@ fn merge_from_worker(
     // Increment count of how many response counters we've seen.
     merged_request.response_time_counter += &user_request.response_time_counter;
     // If user had new fastest response time, update global fastest response time.
-    merged_request.min_response_time = stats::update_min_response_time(
+    merged_request.min_response_time = stats::update_min_time(
         merged_request.min_response_time,
         user_request.min_response_time,
     );
     // If user had new slowest response time, update global slowest resposne time.
-    merged_request.max_response_time = stats::update_max_response_time(
+    merged_request.max_response_time = stats::update_max_time(
         merged_request.max_response_time,
         user_request.max_response_time,
     );

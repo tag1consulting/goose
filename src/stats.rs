@@ -388,7 +388,7 @@ impl GooseStats {
             return Ok(());
         }
 
-        // Display stats from merged HashMap
+        // Display stats from tasks Vector
         writeln!(
             fmt,
             "------------------------------------------------------------------------------ "
@@ -518,6 +518,110 @@ impl GooseStats {
     }
 
     // Optionally prepares a table of response times.
+    pub fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // If there's nothing to display, exit immediately.
+        if self.tasks.is_empty() {
+            return Ok(());
+        }
+
+        let mut aggregate_task_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut aggregate_total_task_time: usize = 0;
+        let mut aggregate_task_time_counter: usize = 0;
+        let mut aggregate_min_task_time: usize = 0;
+        let mut aggregate_max_task_time: usize = 0;
+        writeln!(
+            fmt,
+            "-------------------------------------------------------------------------------"
+        )?;
+        writeln!(
+            fmt,
+            " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
+            "Name", "Avg (ms)", "Min", "Max", "Median"
+        )?;
+        writeln!(
+            fmt,
+            " ----------------------------------------------------------------------------- "
+        )?;
+        let mut task_count = 0;
+        for task_set in &self.tasks {
+            let mut displayed_task_set = false;
+            for task in task_set {
+                task_count += 1;
+                // First time through display name of task set.
+                if !displayed_task_set {
+                    writeln!(
+                        fmt,
+                        " {:23 } |",
+                        util::truncate_string(
+                            &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
+                            60
+                        ),
+                    )?;
+                    displayed_task_set = true;
+                }
+
+                // Iterate over user task times, and merge into global task times.
+                aggregate_task_times = merge_times(aggregate_task_times, task.times.clone());
+
+                // Increment total task time counter.
+                aggregate_total_task_time += &task.total_time;
+
+                // Increment counter tracking individual task times seen.
+                aggregate_task_time_counter += &task.counter;
+
+                // If user had new fastest task time, update global fastest task time.
+                aggregate_min_task_time = update_min_time(aggregate_min_task_time, task.min_time);
+
+                // If user had new slowest task` time, update global slowest task` time.
+                aggregate_max_task_time = update_max_time(aggregate_max_task_time, task.max_time);
+
+                let average = match task.counter {
+                    0 => 0,
+                    _ => task.total_time / task.counter,
+                };
+
+                writeln!(
+                    fmt,
+                    " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                    util::truncate_string(
+                        &format!("  {}: {}", task.task_index + 1, task.task_name),
+                        23
+                    ),
+                    average,
+                    task.min_time,
+                    task.max_time,
+                    util::median(&task.times, task.counter, task.min_time, task.max_time),
+                )?;
+            }
+        }
+        if task_count > 1 {
+            writeln!(
+                fmt,
+                " ------------------------+------------+------------+------------+------------- "
+            )?;
+            if aggregate_task_time_counter == 0 {
+                aggregate_task_time_counter = 1;
+            }
+            writeln!(
+                fmt,
+                " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                "Aggregated",
+                aggregate_total_task_time / aggregate_task_time_counter,
+                aggregate_min_task_time,
+                aggregate_max_task_time,
+                util::median(
+                    &aggregate_task_times,
+                    aggregate_task_time_counter,
+                    aggregate_min_task_time,
+                    aggregate_max_task_time
+                ),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    // Optionally prepares a table of response times.
     pub fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
@@ -545,7 +649,7 @@ impl GooseStats {
         for (request_key, request) in self.requests.iter().sorted() {
             // Iterate over user response times, and merge into global response times.
             aggregate_response_times =
-                merge_response_times(aggregate_response_times, request.response_times.clone());
+                merge_times(aggregate_response_times, request.response_times.clone());
 
             // Increment total response time counter.
             aggregate_total_response_time += &request.total_response_time;
@@ -555,11 +659,11 @@ impl GooseStats {
 
             // If user had new fastest response time, update global fastest response time.
             aggregate_min_response_time =
-                update_min_response_time(aggregate_min_response_time, request.min_response_time);
+                update_min_time(aggregate_min_response_time, request.min_response_time);
 
             // If user had new slowest response time, update global slowest resposne time.
             aggregate_max_response_time =
-                update_max_response_time(aggregate_max_response_time, request.max_response_time);
+                update_max_time(aggregate_max_response_time, request.max_response_time);
 
             writeln!(
                 fmt,
@@ -639,7 +743,7 @@ impl GooseStats {
         for (request_key, request) in self.requests.iter().sorted() {
             // Iterate over user response times, and merge into global response times.
             aggregate_response_times =
-                merge_response_times(aggregate_response_times, request.response_times.clone());
+                merge_times(aggregate_response_times, request.response_times.clone());
 
             // Increment total response time counter.
             aggregate_total_response_time += &request.total_response_time;
@@ -649,11 +753,11 @@ impl GooseStats {
 
             // If user had new fastest response time, update global fastest response time.
             aggregate_min_response_time =
-                update_min_response_time(aggregate_min_response_time, request.min_response_time);
+                update_min_time(aggregate_min_response_time, request.min_response_time);
 
             // If user had new slowest response time, update global slowest resposne time.
             aggregate_max_response_time =
-                update_max_response_time(aggregate_max_response_time, request.max_response_time);
+                update_max_time(aggregate_max_response_time, request.max_response_time);
             // Sort response times so we can calculate a mean.
             writeln!(
                 fmt,
@@ -844,6 +948,7 @@ impl fmt::Display for GooseStats {
         // Formats from zero to four tables of data, depending on what data is contained
         // and which contained flags are set.
         self.fmt_tasks(fmt)?;
+        self.fmt_task_times(fmt)?;
         self.fmt_requests(fmt)?;
         self.fmt_response_times(fmt)?;
         self.fmt_percentiles(fmt)?;
@@ -865,11 +970,11 @@ fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (Strin
     (requests_per_second, fails_per_second)
 }
 
-/// A helper function that merges together response times.
+/// A helper function that merges together times.
 ///
-/// Used in `lib.rs` to merge together per-thread response times, and in `stats.rs`
-/// to aggregate all response times.
-pub fn merge_response_times(
+/// Used in `lib.rs` to merge together per-thread times, and in `stats.rs` to
+/// aggregate all times.
+pub fn merge_times(
     mut global_response_times: BTreeMap<usize, usize>,
     local_response_times: BTreeMap<usize, usize>,
 ) -> BTreeMap<usize, usize> {
@@ -886,16 +991,16 @@ pub fn merge_response_times(
     global_response_times
 }
 
-// Update global minimum response time based on local resposne time.
-pub fn update_min_response_time(mut global_min: usize, min: usize) -> usize {
+// Update global minimum time based on local time.
+pub fn update_min_time(mut global_min: usize, min: usize) -> usize {
     if global_min == 0 || (min > 0 && min < global_min) {
         global_min = min;
     }
     global_min
 }
 
-// Update global maximum response time based on local resposne time.
-pub fn update_max_response_time(mut global_max: usize, max: usize) -> usize {
+// Update global maximum time based on local time.
+pub fn update_max_time(mut global_max: usize, max: usize) -> usize {
     if global_max < max {
         global_max = max;
     }
@@ -941,10 +1046,10 @@ mod test {
     fn max_response_time() {
         let mut max_response_time = 99;
         // Update max response time to a higher value.
-        max_response_time = update_max_response_time(max_response_time, 101);
+        max_response_time = update_max_time(max_response_time, 101);
         assert_eq!(max_response_time, 101);
         // Max response time doesn't update when updating with a lower value.
-        max_response_time = update_max_response_time(max_response_time, 1);
+        max_response_time = update_max_time(max_response_time, 1);
         assert_eq!(max_response_time, 101);
     }
 
@@ -952,13 +1057,13 @@ mod test {
     fn min_response_time() {
         let mut min_response_time = 11;
         // Update min response time to a lower value.
-        min_response_time = update_min_response_time(min_response_time, 9);
+        min_response_time = update_min_time(min_response_time, 9);
         assert_eq!(min_response_time, 9);
         // Min response time doesn't update when updating with a lower value.
-        min_response_time = update_min_response_time(min_response_time, 22);
+        min_response_time = update_min_time(min_response_time, 22);
         assert_eq!(min_response_time, 9);
         // Min response time doesn't update when updating with a 0 value.
-        min_response_time = update_min_response_time(min_response_time, 0);
+        min_response_time = update_min_time(min_response_time, 0);
         assert_eq!(min_response_time, 9);
     }
 
@@ -966,8 +1071,7 @@ mod test {
     fn response_time_merge() {
         let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
         let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        global_response_times =
-            merge_response_times(global_response_times, local_response_times.clone());
+        global_response_times = merge_times(global_response_times, local_response_times.clone());
         // @TODO: how can we do useful testing of private method and objects?
         assert_eq!(&global_response_times, &local_response_times);
     }

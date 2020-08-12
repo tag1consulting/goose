@@ -1806,28 +1806,26 @@ impl GooseAttack {
 
                 // If we're printing statistics, collect the final messages received from users.
                 if !self.configuration.no_stats {
-                    if !self.configuration.no_task_stats {
-                        let mut message = request_stats_receiver.try_recv();
-                        while message.is_ok() {
-                            let raw_request = message.unwrap();
-                            let key = format!("{:?} {}", raw_request.method, raw_request.name);
-                            let mut merge_request = match self.stats.requests.get(&key) {
-                                Some(m) => m.clone(),
-                                None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
-                            };
-                            merge_request.set_response_time(raw_request.response_time);
-                            if self.configuration.status_codes {
-                                merge_request.set_status_code(raw_request.status_code);
-                            }
-                            if raw_request.success {
-                                merge_request.success_count += 1;
-                            } else {
-                                merge_request.fail_count += 1;
-                            }
-
-                            self.stats.requests.insert(key.to_string(), merge_request);
-                            message = request_stats_receiver.try_recv();
+                    let mut message = request_stats_receiver.try_recv();
+                    while message.is_ok() {
+                        let raw_request = message.unwrap();
+                        let key = format!("{:?} {}", raw_request.method, raw_request.name);
+                        let mut merge_request = match self.stats.requests.get(&key) {
+                            Some(m) => m.clone(),
+                            None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
+                        };
+                        merge_request.set_response_time(raw_request.response_time);
+                        if self.configuration.status_codes {
+                            merge_request.set_status_code(raw_request.status_code);
                         }
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                        } else {
+                            merge_request.fail_count += 1;
+                        }
+
+                        self.stats.requests.insert(key.to_string(), merge_request);
+                        message = request_stats_receiver.try_recv();
                     }
 
                     // If we're printing task statistics, collect the final messages received
