@@ -80,8 +80,6 @@ pub struct GooseTaskStat {
     pub success_count: usize,
     /// Total number of times task has failed.
     pub fail_count: usize,
-    /// Load test hash.
-    pub load_test_hash: u64,
 }
 impl GooseTaskStat {
     pub fn new(
@@ -89,7 +87,6 @@ impl GooseTaskStat {
         taskset_name: &str,
         task_index: usize,
         task_name: &str,
-        load_test_hash: u64,
     ) -> Self {
         GooseTaskStat {
             taskset_index,
@@ -103,7 +100,6 @@ impl GooseTaskStat {
             counter: 0,
             success_count: 0,
             fail_count: 0,
-            load_test_hash,
         }
     }
 
@@ -221,7 +217,6 @@ impl GooseStats {
                         &task_set.name,
                         task.tasks_index,
                         &task.name,
-                        0,
                     ));
                 }
                 self.tasks.push(task_vector);

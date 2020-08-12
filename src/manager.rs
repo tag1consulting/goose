@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use nng::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
@@ -9,6 +9,7 @@ use std::{thread, time};
 use crate::goose::GooseRequest;
 use crate::stats;
 use crate::util;
+use crate::worker::GaggleStats;
 use crate::{GooseAttack, GooseConfiguration, GooseUserCommand};
 
 /// How long the manager will wait for all workers to stop after the load test ends.
@@ -65,8 +66,32 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-/// Merge per-user-statistics from user thread into global parent statistics
-fn merge_from_worker(
+/// Merge per-user task statistics from user thread into global parent statistics
+fn merge_tasks_from_worker(
+    parent_task: &stats::GooseTaskStat,
+    user_task: &stats::GooseTaskStat,
+) -> stats::GooseTaskStat {
+    // Make a mutable copy where we can merge things
+    let mut merged_task = parent_task.clone();
+    // Iterate over user times, and merge into global time
+    merged_task.times = stats::merge_times(merged_task.times, user_task.times.clone());
+    // Increment total task time counter.
+    merged_task.total_time += &user_task.total_time;
+    // Increment count of how many task counters we've seen.
+    merged_task.counter += &user_task.counter;
+    // If user had new fastest task time, update global fastest task time.
+    merged_task.min_time = stats::update_min_time(merged_task.min_time, user_task.min_time);
+    // If user had new slowest task time, update global slowest task time.
+    merged_task.max_time = stats::update_max_time(merged_task.max_time, user_task.max_time);
+    // Increment total success counter.
+    merged_task.success_count += &user_task.success_count;
+    // Increment total fail counter.
+    merged_task.fail_count += &user_task.fail_count;
+    merged_task
+}
+
+/// Merge per-user request statistics from user thread into global parent statistics
+fn merge_requests_from_worker(
     parent_request: &GooseRequest,
     user_request: &GooseRequest,
     config: &GooseConfiguration,
@@ -168,6 +193,11 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     let canceled = Arc::new(AtomicBool::new(false));
     util::setup_ctrlc_handler(&canceled);
 
+    // Initialize the optional task statistics.
+    goose_attack
+        .stats
+        .initialize_task_stats(&goose_attack.task_sets, &goose_attack.configuration);
+
     // Worker control loop.
     loop {
         // While running load test, check if any workers go away.
@@ -229,10 +259,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 // Message received, grab the pipe to determine which worker it is.
                 let pipe = msg.pipe().expect("fatal error getting worker pipe");
 
-                // Workers always send a HashMap<String, GooseRequest>.
-                let requests: HashMap<String, GooseRequest> =
-                    serde_cbor::from_reader(msg.as_slice()).unwrap();
-                debug!("requests statistics received: {:?}", requests.len());
+                // Workers always send a GaggleStats object.
+                let gaggle_stats: GaggleStats = serde_cbor::from_reader(msg.as_slice()).unwrap();
 
                 // If workers already contains this pipe, we've seen this worker before.
                 if workers.contains(&pipe) {
@@ -240,27 +268,43 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // All workers are running load test, sending statistics.
                     if workers.len() == goose_attack.configuration.expect_workers as usize {
                         // Requests statistics received, merge them into our local copy.
-                        if !requests.is_empty() {
-                            debug!("requests statistics received: {:?}", requests.len());
-                            for (request_key, request) in requests {
-                                trace!("request_key: {}", request_key);
-                                let merged_request;
-                                if let Some(parent_request) =
-                                    goose_attack.stats.requests.get(&request_key)
-                                {
-                                    merged_request = merge_from_worker(
-                                        parent_request,
-                                        &request,
-                                        &goose_attack.configuration,
-                                    );
-                                } else {
-                                    // First time seeing this request, simply insert it.
-                                    merged_request = request.clone();
+                        if let Some(requests) = gaggle_stats.requests {
+                            if !requests.is_empty() {
+                                debug!("requests statistics received: {:?}", requests.len());
+                                for (request_key, request) in requests {
+                                    trace!("request_key: {}", request_key);
+                                    let merged_request;
+                                    if let Some(parent_request) =
+                                        goose_attack.stats.requests.get(&request_key)
+                                    {
+                                        merged_request = merge_requests_from_worker(
+                                            parent_request,
+                                            &request,
+                                            &goose_attack.configuration,
+                                        );
+                                    } else {
+                                        // First time seeing this request, simply insert it.
+                                        merged_request = request.clone();
+                                    }
+                                    goose_attack
+                                        .stats
+                                        .requests
+                                        .insert(request_key.to_string(), merged_request);
                                 }
-                                goose_attack
-                                    .stats
-                                    .requests
-                                    .insert(request_key.to_string(), merged_request);
+                            }
+                        }
+                        // Task statistics received, merge them into our local copy.
+                        if let Some(task_sets) = gaggle_stats.tasks {
+                            for task_set in task_sets {
+                                for task in task_set {
+                                    let merged_task = merge_tasks_from_worker(
+                                        &goose_attack.stats.tasks[task.taskset_index]
+                                            [task.task_index],
+                                        &task,
+                                    );
+                                    goose_attack.stats.tasks[task.taskset_index][task.task_index] =
+                                        merged_task;
+                                }
                             }
                         }
                         // Notify the worker that the load test is over and to exit.
@@ -329,23 +373,27 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // We need another worker, accept the connection.
                     else {
                         // Validate worker load test hash.
-                        match requests.get("load_test_hash") {
-                            Some(r) => {
-                                if r.load_test_hash != goose_attack.stats.hash {
+                        if let Some(requests) = gaggle_stats.requests {
+                            match requests.get("load_test_hash") {
+                                Some(r) => {
+                                    if r.load_test_hash != goose_attack.stats.hash {
+                                        if goose_attack.configuration.no_hash_check {
+                                            warn!(
+                                                "worker is running a different load test, ignoring"
+                                            )
+                                        } else {
+                                            panic!("worker is running a different load test, set --no-hash-check to ignore");
+                                        }
+                                    }
+                                }
+                                None => {
                                     if goose_attack.configuration.no_hash_check {
                                         warn!("worker is running a different load test, ignoring")
                                     } else {
                                         panic!("worker is running a different load test, set --no-hash-check to ignore");
                                     }
                                 }
-                            }
-                            None => {
-                                if goose_attack.configuration.no_hash_check {
-                                    warn!("worker is running a different load test, ignoring")
-                                } else {
-                                    panic!("worker is running a different load test, set --no-hash-check to ignore");
-                                }
-                            }
+                            };
                         };
 
                         workers.insert(pipe);

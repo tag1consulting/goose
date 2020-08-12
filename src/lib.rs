@@ -1677,9 +1677,10 @@ impl GooseAttack {
                     #[cfg(feature = "gaggle")]
                     {
                         // Push request statistics to manager process.
-                        if !worker::push_request_stats_to_manager(
+                        if !worker::push_stats_to_manager(
                             &socket.clone().unwrap(),
-                            &self.stats.requests.clone(),
+                            Some(self.stats.requests.clone()),
+                            None,
                             true,
                         ) {
                             // EXIT received, cancel.
@@ -1706,20 +1707,19 @@ impl GooseAttack {
                 if self.configuration.worker && received_task_message {
                     #[cfg(feature = "gaggle")]
                     {
-                        /*
-                        @TODO: implement gaggle support for task statistics.
-                        // Push request statistics to manager process.
-                        if !worker::push_task_stats_to_manager(
+                        // Push task statistics to manager process.
+                        if !worker::push_stats_to_manager(
                             &socket.clone().unwrap(),
-                            &self.stats.tasks.clone(),
+                            None,
+                            Some(self.stats.tasks.clone()),
                             true,
                         ) {
                             // EXIT received, cancel.
                             canceled.store(true, Ordering::SeqCst);
                         }
                         // The manager has all our request statistics, reset locally.
-                        self.stats.tasks = HashMap::new();
-                        */
+                        self.stats
+                            .initialize_task_stats(&self.task_sets, &self.configuration);
                     }
                 }
 
@@ -1845,12 +1845,12 @@ impl GooseAttack {
 
                 #[cfg(feature = "gaggle")]
                 {
-                    // As worker, push request statistics up to manager.
+                    // As worker, push all statistics up to manager.
                     if self.configuration.worker {
-                        // Push request statistics to manager process.
-                        worker::push_request_stats_to_manager(
+                        worker::push_stats_to_manager(
                             &socket.clone().unwrap(),
-                            &self.stats.requests.clone(),
+                            Some(self.stats.requests.clone()),
+                            Some(self.stats.tasks.clone()),
                             true,
                         );
                         // No need to reset local stats, the worker is exiting.
