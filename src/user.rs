@@ -221,6 +221,11 @@ pub async fn user_main(
 }
 
 fn send_task_stats_to_parent(user: &GooseUser, raw_task: GooseRawTask) {
+    // Exit immediately if all statistics or task statistics are disabled.
+    if user.config.no_stats || user.config.no_task_stats {
+        return;
+    }
+
     // Parent is not defined during testing.
     if let Some(parent) = user.parent_task_stats.clone() {
         // Best effort statistics.

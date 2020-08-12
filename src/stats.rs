@@ -6,6 +6,7 @@ use std::{f32, fmt};
 
 use crate::goose::{GooseRequest, GooseTaskSet};
 use crate::util;
+use crate::GooseConfiguration;
 
 /// Goose optionally tracks statistics about requests made during a load test.
 pub type GooseRequestStats = HashMap<String, GooseRequest>;
@@ -205,20 +206,26 @@ pub struct GooseStats {
 }
 
 impl GooseStats {
-    pub fn initialize_task_stats(&mut self, task_sets: &[GooseTaskSet]) {
+    pub fn initialize_task_stats(
+        &mut self,
+        task_sets: &[GooseTaskSet],
+        config: &GooseConfiguration,
+    ) {
         self.tasks = Vec::new();
-        for task_set in task_sets {
-            let mut task_vector = Vec::new();
-            for task in &task_set.tasks {
-                task_vector.push(GooseTaskStat::new(
-                    task_set.task_sets_index,
-                    &task_set.name,
-                    task.tasks_index,
-                    &task.name,
-                    0,
-                ));
+        if !config.no_stats && !config.no_task_stats {
+            for task_set in task_sets {
+                let mut task_vector = Vec::new();
+                for task in &task_set.tasks {
+                    task_vector.push(GooseTaskStat::new(
+                        task_set.task_sets_index,
+                        &task_set.name,
+                        task.tasks_index,
+                        &task.name,
+                        0,
+                    ));
+                }
+                self.tasks.push(task_vector);
             }
-            self.tasks.push(task_vector);
         }
     }
 

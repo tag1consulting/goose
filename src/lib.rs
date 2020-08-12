@@ -1593,7 +1593,8 @@ impl GooseAttack {
         }
 
         // Initialize the optional task statistics.
-        self.stats.initialize_task_stats(&self.task_sets);
+        self.stats
+            .initialize_task_stats(&self.task_sets, &self.configuration);
 
         // If logging stats to CSV, use this flag to write header; otherwise it's ignored.
         let mut header = true;
@@ -1740,7 +1741,8 @@ impl GooseAttack {
                         }
 
                         self.stats.requests = HashMap::new();
-                        self.stats.initialize_task_stats(&self.task_sets);
+                        self.stats
+                            .initialize_task_stats(&self.task_sets, &self.configuration);
                         // Restart the timer now that all threads are launched.
                         self.started = Some(time::Instant::now());
                     } else if self.stats.users < self.users {
@@ -1804,26 +1806,42 @@ impl GooseAttack {
 
                 // If we're printing statistics, collect the final messages received from users.
                 if !self.configuration.no_stats {
-                    let mut message = request_stats_receiver.try_recv();
-                    while message.is_ok() {
-                        let raw_request = message.unwrap();
-                        let key = format!("{:?} {}", raw_request.method, raw_request.name);
-                        let mut merge_request = match self.stats.requests.get(&key) {
-                            Some(m) => m.clone(),
-                            None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
-                        };
-                        merge_request.set_response_time(raw_request.response_time);
-                        if self.configuration.status_codes {
-                            merge_request.set_status_code(raw_request.status_code);
-                        }
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                        } else {
-                            merge_request.fail_count += 1;
-                        }
+                    if !self.configuration.no_task_stats {
+                        let mut message = request_stats_receiver.try_recv();
+                        while message.is_ok() {
+                            let raw_request = message.unwrap();
+                            let key = format!("{:?} {}", raw_request.method, raw_request.name);
+                            let mut merge_request = match self.stats.requests.get(&key) {
+                                Some(m) => m.clone(),
+                                None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
+                            };
+                            merge_request.set_response_time(raw_request.response_time);
+                            if self.configuration.status_codes {
+                                merge_request.set_status_code(raw_request.status_code);
+                            }
+                            if raw_request.success {
+                                merge_request.success_count += 1;
+                            } else {
+                                merge_request.fail_count += 1;
+                            }
 
-                        self.stats.requests.insert(key.to_string(), merge_request);
-                        message = request_stats_receiver.try_recv();
+                            self.stats.requests.insert(key.to_string(), merge_request);
+                            message = request_stats_receiver.try_recv();
+                        }
+                    }
+
+                    // If we're printing task statistics, collect the final messages received
+                    // from users.
+                    if !self.configuration.no_task_stats {
+                        // Load raw_task messages from user threads until the receiver queue is empty.
+                        let mut message = task_stats_receiver.try_recv();
+                        while message.is_ok() {
+                            let raw_task = message.unwrap();
+                            // Store a new statistic.
+                            self.stats.tasks[raw_task.taskset_index][raw_task.task_index]
+                                .set_time(raw_task.run_time, raw_task.success);
+                            message = task_stats_receiver.try_recv();
+                        }
                     }
                 }
 
@@ -1915,6 +1933,10 @@ pub struct GooseConfiguration {
     /// Don't print stats in the console
     #[structopt(long)]
     pub no_stats: bool,
+
+    /// Don't print task statistics in the console
+    #[structopt(long)]
+    pub no_task_stats: bool,
 
     /// Includes status code counts in console stats
     #[structopt(long)]
