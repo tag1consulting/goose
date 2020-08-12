@@ -177,7 +177,7 @@ load tests. For example, pass the `-h` flag to the `simple` example,
 `cargo run --example simple -- -h`:
 
 ```
-Goose 0.9.0
+Goose 0.9.2
 CLI options available when launching a Goose load test
 
 USAGE:
@@ -191,6 +191,7 @@ FLAGS:
         --no-hash-check     Ignore worker load test checksum
         --no-reset-stats    Resets statistics once hatching has been completed
         --no-stats          Don't print stats in the console
+        --no-task-stats     Don't print task statistics in the console
         --only-summary      Only prints summary stats
         --status-codes      Includes status code counts in console stats
         --sticky-follow     User follows redirect of base_url with subsequent requests
