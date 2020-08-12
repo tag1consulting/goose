@@ -6,7 +6,7 @@ use std::time;
 use tokio::sync::mpsc;
 
 use crate::get_worker_id;
-use crate::goose::{GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
 use crate::stats::GooseRawTask;
 
 pub async fn user_main(
@@ -48,17 +48,7 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                let started = time::Instant::now();
-                let mut raw_task = GooseRawTask::new(
-                    thread_user.started.elapsed().as_millis(),
-                    thread_user.task_sets_index,
-                    *task_index,
-                    thread_task_name.to_string(),
-                    thread_user.weighted_users_index,
-                );
-                let success = function(&thread_user).await.is_ok();
-                raw_task.set_time(started.elapsed().as_millis(), success);
-                send_task_stats_to_parent(&thread_user, raw_task);
+                invoke_task_function(function, &thread_user, *task_index, thread_task_name).await;
             }
         }
     }
@@ -110,17 +100,13 @@ pub async fn user_main(
         }
 
         // Invoke the task function.
-        let started = time::Instant::now();
-        let mut raw_task = GooseRawTask::new(
-            thread_user.started.elapsed().as_millis(),
-            thread_user.task_sets_index,
+        invoke_task_function(
+            function,
+            &thread_user,
             thread_weighted_task,
-            thread_task_name.to_string(),
-            thread_user.weighted_users_index,
-        );
-        let success = function(&thread_user).await.is_ok();
-        raw_task.set_time(started.elapsed().as_millis(), success);
-        send_task_stats_to_parent(&thread_user, raw_task);
+            thread_task_name,
+        )
+        .await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time = if thread_user.max_wait > 0 {
@@ -189,17 +175,7 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                let started = time::Instant::now();
-                let mut raw_task = GooseRawTask::new(
-                    thread_user.started.elapsed().as_millis(),
-                    thread_user.task_sets_index,
-                    *task_index,
-                    thread_task_name.to_string(),
-                    thread_user.weighted_users_index,
-                );
-                let success = function(&thread_user).await.is_ok();
-                raw_task.set_time(started.elapsed().as_millis(), success);
-                send_task_stats_to_parent(&thread_user, raw_task);
+                invoke_task_function(function, &thread_user, *task_index, thread_task_name).await;
             }
         }
     }
@@ -220,14 +196,31 @@ pub async fn user_main(
     }
 }
 
-fn send_task_stats_to_parent(user: &GooseUser, raw_task: GooseRawTask) {
-    // Exit immediately if all statistics or task statistics are disabled.
-    if user.config.no_stats || user.config.no_task_stats {
+// Invoke the task function, collecting task statistics.
+async fn invoke_task_function(
+    function: &GooseTaskFunction,
+    thread_user: &GooseUser,
+    task_index: usize,
+    thread_task_name: &str,
+) {
+    let started = time::Instant::now();
+    let mut raw_task = GooseRawTask::new(
+        thread_user.started.elapsed().as_millis(),
+        thread_user.task_sets_index,
+        task_index,
+        thread_task_name.to_string(),
+        thread_user.weighted_users_index,
+    );
+    let success = function(&thread_user).await.is_ok();
+    raw_task.set_time(started.elapsed().as_millis(), success);
+
+    // Exit if all statistics or task statistics are disabled.
+    if thread_user.config.no_stats || thread_user.config.no_task_stats {
         return;
     }
 
-    // Parent is not defined during testing.
-    if let Some(parent) = user.parent_task_stats.clone() {
+    // Otherwise send statistics to parent (which doesn't exist during testing).
+    if let Some(parent) = thread_user.parent_task_stats.clone() {
         // Best effort statistics.
         let _ = parent.send(raw_task);
     }

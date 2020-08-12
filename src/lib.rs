@@ -1717,7 +1717,7 @@ impl GooseAttack {
                             // EXIT received, cancel.
                             canceled.store(true, Ordering::SeqCst);
                         }
-                        // The manager has all our request statistics, reset locally.
+                        // The manager has all our task statistics, reset locally.
                         self.stats
                             .initialize_task_stats(&self.task_sets, &self.configuration);
                     }

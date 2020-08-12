@@ -512,7 +512,7 @@ impl GooseStats {
         Ok(())
     }
 
-    // Optionally prepares a table of response times.
+    // Optionally prepares a table of task times.
     pub fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.tasks.is_empty() {
@@ -940,7 +940,7 @@ impl GooseStats {
 
 impl fmt::Display for GooseStats {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        // Formats from zero to four tables of data, depending on what data is contained
+        // Formats from zero to six tables of data, depending on what data is contained
         // and which contained flags are set.
         self.fmt_tasks(fmt)?;
         self.fmt_task_times(fmt)?;
