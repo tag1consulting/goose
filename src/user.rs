@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::stats::{GooseMetric, GooseRawTask};
+use crate::metrics::{GooseMetric, GooseRawTask};
 
 pub async fn user_main(
     thread_number: usize,
@@ -215,7 +215,7 @@ async fn invoke_task_function(
     raw_task.set_time(started.elapsed().as_millis(), success);
 
     // Exit if all statistics or task statistics are disabled.
-    if thread_user.config.no_stats || thread_user.config.no_task_stats {
+    if thread_user.config.no_metrics || thread_user.config.no_task_metrics {
         return;
     }
 

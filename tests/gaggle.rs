@@ -45,13 +45,15 @@ fn test_gaggle() {
     worker_configuration.worker = true;
     worker_configuration.host = "".to_string();
     worker_configuration.users = None;
-    worker_configuration.no_stats = false;
+    worker_configuration.no_metrics = false;
     worker_configuration.run_time = "".to_string();
+    // Can't change this on the worker.
+    worker_configuration.no_task_metrics = false;
     for _ in 0..2 {
         let configuration = worker_configuration.clone();
         // Start worker instance of the load test.
         worker_handles.push(thread::spawn(move || {
-            let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
+            let _goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
                 .setup()
                 .unwrap()
                 .register_taskset(taskset!("User1").register_task(task!(get_index)))
@@ -69,10 +71,10 @@ fn test_gaggle() {
     manager_configuration.expect_workers = 2;
     manager_configuration.run_time = "3".to_string();
     // Enable statistics so we can validate they are merged to the manager correctly.
-    manager_configuration.no_stats = false;
-    manager_configuration.no_task_stats = false;
-    manager_configuration.no_reset_stats = true;
-    let goose_stats = crate::GooseAttack::initialize_with_config(manager_configuration)
+    manager_configuration.no_metrics = false;
+    manager_configuration.no_task_metrics = false;
+    manager_configuration.no_reset_metrics = true;
+    let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
         .setup()
         .unwrap()
         .register_taskset(taskset!("User1").register_task(task!(get_index)))
@@ -89,19 +91,19 @@ fn test_gaggle() {
     assert!(index.times_called() > 0);
     assert!(about.times_called() > 0);
 
-    // Validate task stats.
-    assert!(goose_stats.tasks[0][0].counter == index.times_called());
-    assert!(goose_stats.tasks[1][0].counter == about.times_called());
+    // Validate task metrics.
+    assert!(goose_metrics.tasks[0][0].counter == index.times_called());
+    assert!(goose_metrics.tasks[1][0].counter == about.times_called());
 
-    // Validate request stats.
-    let index_stats = goose_stats
+    // Validate request metrics.
+    let index_metrics = goose_metrics
         .requests
         .get(&format!("GET {}", INDEX_PATH))
         .unwrap();
-    let about_stats = goose_stats
+    let about_metrics = goose_metrics
         .requests
         .get(&format!("GET {}", ABOUT_PATH))
         .unwrap();
-    assert!(index_stats.response_time_counter == index.times_called());
-    assert!(about_stats.response_time_counter == about.times_called());
+    assert!(index_metrics.response_time_counter == index.times_called());
+    assert!(about_metrics.response_time_counter == about.times_called());
 }

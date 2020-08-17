@@ -5,7 +5,7 @@
 //! - [`GooseTaskSet`](./struct.GooseTaskSet.html) each user is assigned a task set, which is a collection of tasks.
 //! - [`GooseTask`](./struct.GooseTask.html) tasks define one or more web requests and are assigned to task sets.
 //! - [`GooseUser`](./struct.GooseUser.html) a user state responsible for repeatedly running all tasks in the assigned task set.
-//! - [`GooseRequest`](./struct.GooseRequest.html) optional statistics collected for each URL/method pair.
+//! - [`GooseRequest`](./struct.GooseRequest.html) optional metrics collected for each URL/method pair.
 //!
 //! ## Creating Task Sets
 //!
@@ -85,7 +85,7 @@
 //!
 //! ### Task Name
 //!
-//! A name can be assigned to a task, and will be displayed in statistics about all requests
+//! A name can be assigned to a task, and will be displayed in metrics about all requests
 //! made by the task.
 //!
 //! ```rust
@@ -227,7 +227,7 @@
 //!
 //! ### GET
 //!
-//! A helper to make a `GET` request of a path and collect relevant statistics.
+//! A helper to make a `GET` request of a path and collect relevant metrics.
 //! Automatically prepends the correct host.
 //!
 //! ```rust
@@ -250,7 +250,7 @@
 //! ### POST
 //!
 //! A helper to make a `POST` request of a string value to the path and collect relevant
-//! statistics. Automatically prepends the correct host. The returned response is a
+//! metrics. Automatically prepends the correct host. The returned response is a
 //! [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)
 //!
 //! ```rust
@@ -296,7 +296,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
-use crate::stats::GooseMetric;
+use crate::metrics::GooseMetric;
 use crate::{GooseConfiguration, GooseError};
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -340,10 +340,10 @@ pub enum GooseTaskError {
     RequestCanceled {
         source: mpsc::error::SendError<bool>,
     },
-    /// There was an error sending the statistics for a request to the parent thread.
+    /// There was an error sending the metrics for a request to the parent thread.
     /// The `GooseRawRequest` that was not recorded can be extracted from the error
     /// chain, available inside `.source`.
-    StatsFailed {
+    MetricsFailed {
         source: mpsc::error::SendError<GooseMetric>,
     },
     /// Attempt to send debug detail to logger failed.
@@ -366,7 +366,7 @@ impl GooseTaskError {
             GooseTaskError::RequestCanceled { .. } => {
                 "request canceled because throttled load test ended"
             }
-            GooseTaskError::StatsFailed { .. } => "failed to send stats to parent thread",
+            GooseTaskError::MetricsFailed { .. } => "failed to send metrics to parent thread",
             GooseTaskError::LoggerFailed { .. } => "failed to send log message to logger thread",
             GooseTaskError::InvalidMethod { .. } => "unrecognized HTTP request method",
         }
@@ -386,7 +386,7 @@ impl fmt::Display for GooseTaskError {
             GooseTaskError::RequestCanceled { ref source } => {
                 write!(f, "GooseTaskError: {} ({})", self.describe(), source)
             }
-            GooseTaskError::StatsFailed { ref source } => {
+            GooseTaskError::MetricsFailed { ref source } => {
                 write!(f, "GooseTaskError: {} ({})", self.describe(), source)
             }
             GooseTaskError::LoggerFailed { ref source } => {
@@ -404,7 +404,7 @@ impl std::error::Error for GooseTaskError {
             GooseTaskError::Reqwest(ref source) => Some(source),
             GooseTaskError::Url(ref source) => Some(source),
             GooseTaskError::RequestCanceled { ref source } => Some(source),
-            GooseTaskError::StatsFailed { ref source } => Some(source),
+            GooseTaskError::MetricsFailed { ref source } => Some(source),
             GooseTaskError::LoggerFailed { ref source } => Some(source),
             _ => None,
         }
@@ -434,10 +434,10 @@ impl From<mpsc::error::SendError<bool>> for GooseTaskError {
     }
 }
 
-/// Attempt to send statistics to the parent thread failed.
+/// Attempt to send metrics to the parent thread failed.
 impl From<mpsc::error::SendError<GooseMetric>> for GooseTaskError {
     fn from(source: mpsc::error::SendError<GooseMetric>) -> GooseTaskError {
-        GooseTaskError::StatsFailed { source }
+        GooseTaskError::MetricsFailed { source }
     }
 }
 
@@ -641,7 +641,7 @@ fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskErro
 }
 
 /// The request that Goose is making. User threads send this data to the parent thread
-/// when statistics are enabled. This request object must be provided to calls to
+/// when metrics are enabled. This request object must be provided to calls to
 /// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
 /// or
 /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
@@ -708,12 +708,12 @@ impl GooseRawRequest {
     }
 }
 
-/// Statistics collected about a path-method pair, (for example `/index`-`GET`).
+/// Metrics collected about a path-method pair, (for example `/index`-`GET`).
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequest {
-    /// The path for which statistics are being collected.
+    /// The path for which metrics are being collected.
     pub path: String,
-    /// The method for which statistics are being collected.
+    /// The method for which metrics are being collected.
     pub method: GooseMethod,
     /// Per-response-time counters, tracking how often pages are returned with this response time.
     pub response_times: BTreeMap<usize, usize>,
@@ -999,7 +999,7 @@ impl GooseUser {
         Ok(self.base_url.read().await.join(path)?.to_string())
     }
 
-    /// A helper to make a `GET` request of a path and collect relevant statistics.
+    /// A helper to make a `GET` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
@@ -1031,9 +1031,9 @@ impl GooseUser {
         Ok(self.goose_send(request_builder, None).await?)
     }
 
-    /// A helper to make a named `GET` request of a path and collect relevant statistics.
+    /// A helper to make a named `GET` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host. Naming a request only affects collected
-    /// statistics.
+    /// metrics.
     ///
     /// Calls to `user.get_named` return a `GooseResponse` object which contains a copy of
     /// the request you made
@@ -1063,7 +1063,7 @@ impl GooseUser {
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
-    /// A helper to make a `POST` request of a path and collect relevant statistics.
+    /// A helper to make a `POST` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
@@ -1095,9 +1095,9 @@ impl GooseUser {
         Ok(self.goose_send(request_builder, None).await?)
     }
 
-    /// A helper to make a named `POST` request of a path and collect relevant statistics.
+    /// A helper to make a named `POST` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host. Naming a request only affects collected
-    /// statistics.
+    /// metrics.
     ///
     /// Calls to `user.post` return a `GooseResponse` object which contains a copy of
     /// the request you made
@@ -1128,7 +1128,7 @@ impl GooseUser {
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
-    /// A helper to make a `HEAD` request of a path and collect relevant statistics.
+    /// A helper to make a `HEAD` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
@@ -1160,9 +1160,9 @@ impl GooseUser {
         Ok(self.goose_send(request_builder, None).await?)
     }
 
-    /// A helper to make a named `HEAD` request of a path and collect relevant statistics.
+    /// A helper to make a named `HEAD` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host. Naming a request only affects collected
-    /// statistics.
+    /// metrics.
     ///
     /// Calls to `user.head` return a `GooseResponse` object which contains a copy of
     /// the request you made
@@ -1192,7 +1192,7 @@ impl GooseUser {
         Ok(self.goose_send(request_builder, Some(request_name)).await?)
     }
 
-    /// A helper to make a `DELETE` request of a path and collect relevant statistics.
+    /// A helper to make a `DELETE` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
@@ -1224,9 +1224,9 @@ impl GooseUser {
         Ok(self.goose_send(request_builder, None).await?)
     }
 
-    /// A helper to make a named `DELETE` request of a path and collect relevant statistics.
+    /// A helper to make a named `DELETE` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host. Naming a request only affects collected
-    /// statistics.
+    /// metrics.
     ///
     /// Calls to `user.delete` return a `GooseResponse` object which contains a copy of
     /// the request you made
@@ -1420,12 +1420,12 @@ impl GooseUser {
 
     /// Builds the provided
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object and then executes the response. If statistics are being displayed, it
-    /// also captures request statistics.
+    /// object and then executes the response. If metrics are being displayed, it
+    /// also captures request metrics.
     ///
     /// It is possible to build and execute a `RequestBuilder` object directly with
     /// Reqwest without using this helper function, but then Goose is unable to capture
-    /// statistics.
+    /// metrics.
     ///
     /// Calls to `user.goose_send()` returns a `Result` containing a `GooseResponse` on success,
     /// and a `tokio::sync::mpsc::error::SendError<bool>` on failure. Failure only happens when
@@ -1529,8 +1529,8 @@ impl GooseUser {
         };
 
         // Send a copy of the raw request object to the parent process if
-        // we're tracking statistics.
-        if !self.config.no_stats {
+        // we're tracking metrics.
+        if !self.config.no_metrics {
             self.send_to_parent(GooseMetric::Request(raw_request.clone()))?;
         }
 
@@ -1861,7 +1861,7 @@ impl GooseUser {
     /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
-    ///     let _goose_stats = GooseAttack::initialize()?
+    ///     let _goose_metrics = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
     ///             .set_wait_time(0, 3)?
     ///             .register_task(task!(task_foo).set_weight(10)?)
@@ -1964,7 +1964,7 @@ pub type GooseTaskFunction = Arc<
 pub struct GooseTask {
     /// An index into GooseTaskSet.task, indicating which task this is.
     pub tasks_index: usize,
-    /// An optional name for the task, used when displaying statistics about requests made.
+    /// An optional name for the task, used when displaying metrics about requests made.
     pub name: String,
     /// An integer value that controls the frequency that this task will be run.
     pub weight: usize,
@@ -1991,7 +1991,7 @@ impl GooseTask {
         }
     }
 
-    /// Set an optional name for the task, used when displaying statistics about
+    /// Set an optional name for the task, used when displaying metrics about
     /// requests made by the task.
     ///
     /// Individual requests can also be named withing your load test. See the

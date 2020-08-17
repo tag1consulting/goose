@@ -30,9 +30,9 @@ pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-fn cleanup_files(stats_log_file: &str, debug_log_file: &str) {
-    if std::path::Path::new(stats_log_file).exists() {
-        std::fs::remove_file(stats_log_file).expect("failed to delete stats log file");
+fn cleanup_files(metrics_log_file: &str, debug_log_file: &str) {
+    if std::path::Path::new(metrics_log_file).exists() {
+        std::fs::remove_file(metrics_log_file).expect("failed to delete metrics log file");
     }
     if std::path::Path::new(debug_log_file).exists() {
         std::fs::remove_file(debug_log_file).expect("failed to delete debug log file");
@@ -40,8 +40,8 @@ fn cleanup_files(stats_log_file: &str, debug_log_file: &str) {
 }
 
 #[test]
-fn test_stats_logs_json() {
-    const STATS_LOG_FILE: &str = "stats-json.log";
+fn test_metrics_logs_json() {
+    const METRICS_LOG_FILE: &str = "metrics-json.log";
     const DEBUG_LOG_FILE: &str = "debug-json.log";
 
     let server = MockServer::start();
@@ -53,9 +53,9 @@ fn test_stats_logs_json() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.stats_log_file = STATS_LOG_FILE.to_string();
-    config.no_stats = false;
-    let goose_stats = crate::GooseAttack::initialize_with_config(config)
+    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.no_metrics = false;
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
@@ -66,18 +66,18 @@ fn test_stats_logs_json() {
     assert!(index.times_called() > 0);
 
     // Confirm that the test duration was correct.
-    assert!(goose_stats.duration == 1);
+    assert!(goose_metrics.duration == 1);
 
-    // Confirm only the stats log file exists.
-    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    // Confirm only the metrics log file exists.
+    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
     assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
 
-    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-fn test_stats_logs_csv() {
-    const STATS_LOG_FILE: &str = "stats-csv.log";
+fn test_metrics_logs_csv() {
+    const METRICS_LOG_FILE: &str = "metrics-csv.log";
     const DEBUG_LOG_FILE: &str = "debug-csv.log";
 
     let server = MockServer::start();
@@ -89,10 +89,10 @@ fn test_stats_logs_csv() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.stats_log_file = STATS_LOG_FILE.to_string();
-    config.stats_log_format = "csv".to_string();
-    config.no_stats = false;
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.metrics_log_format = "csv".to_string();
+    config.no_metrics = false;
+    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
@@ -102,16 +102,16 @@ fn test_stats_logs_csv() {
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
 
-    // Confirm only the stats log file exists.
-    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    // Confirm only the metrics log file exists.
+    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
     assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
 
-    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-fn test_stats_logs_raw() {
-    const STATS_LOG_FILE: &str = "stats-raw.log";
+fn test_metrics_logs_raw() {
+    const METRICS_LOG_FILE: &str = "metrics-raw.log";
     const DEBUG_LOG_FILE: &str = "debug-raw.log";
 
     let server = MockServer::start();
@@ -123,10 +123,10 @@ fn test_stats_logs_raw() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.stats_log_file = STATS_LOG_FILE.to_string();
-    config.stats_log_format = "raw".to_string();
-    config.no_stats = false;
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.metrics_log_format = "raw".to_string();
+    config.no_metrics = false;
+    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
@@ -136,16 +136,16 @@ fn test_stats_logs_raw() {
     // Confirm that we loaded the mock endpoints.
     assert!(index.times_called() > 0);
 
-    // Confirm only the stats log file exists.
-    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    // Confirm only the metrics log file exists.
+    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
     assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
 
-    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
 fn test_debug_logs_raw() {
-    const STATS_LOG_FILE: &str = "stats-raw2.log";
+    const METRICS_LOG_FILE: &str = "metrics-raw2.log";
     const DEBUG_LOG_FILE: &str = "debug-raw2.log";
 
     let server = MockServer::start();
@@ -164,7 +164,7 @@ fn test_debug_logs_raw() {
     let mut config = common::build_configuration(&server);
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
     config.debug_log_format = "raw".to_string();
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -181,14 +181,14 @@ fn test_debug_logs_raw() {
 
     // Confirm only the debug log file exists.
     assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
-    assert!(!std::path::Path::new(STATS_LOG_FILE).exists());
+    assert!(!std::path::Path::new(METRICS_LOG_FILE).exists());
 
-    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
 fn test_debug_logs_json() {
-    const STATS_LOG_FILE: &str = "stats-json2.log";
+    const METRICS_LOG_FILE: &str = "metrics-json2.log";
     const DEBUG_LOG_FILE: &str = "debug-json2.log";
 
     let server = MockServer::start();
@@ -206,7 +206,7 @@ fn test_debug_logs_json() {
 
     let mut config = common::build_configuration(&server);
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -222,15 +222,15 @@ fn test_debug_logs_json() {
     assert!(error.times_called() > 0);
 
     // Confirm only the debug log file exists.
-    assert!(!std::path::Path::new(STATS_LOG_FILE).exists());
+    assert!(!std::path::Path::new(METRICS_LOG_FILE).exists());
     assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
 
-    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
 }
 
 #[test]
-fn test_stats_and_debug_logs() {
-    const STATS_LOG_FILE: &str = "stats-both.log";
+fn test_metrics_and_debug_logs() {
+    const METRICS_LOG_FILE: &str = "metrics-both.log";
     const DEBUG_LOG_FILE: &str = "debug-both.log";
 
     let server = MockServer::start();
@@ -247,11 +247,11 @@ fn test_stats_and_debug_logs() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.stats_log_file = STATS_LOG_FILE.to_string();
-    config.stats_log_format = "raw".to_string();
-    config.no_stats = false;
+    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.metrics_log_format = "raw".to_string();
+    config.no_metrics = false;
     config.debug_log_file = DEBUG_LOG_FILE.to_string();
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -266,9 +266,9 @@ fn test_stats_and_debug_logs() {
     assert!(index.times_called() > 0);
     assert!(error.times_called() > 0);
 
-    // Confirm both the stats and debug logs exist.
-    assert!(std::path::Path::new(STATS_LOG_FILE).exists());
+    // Confirm both the metrics and debug logs exist.
+    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
     assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
 
-    cleanup_files(STATS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
 }

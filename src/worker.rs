@@ -6,19 +6,19 @@ use url::Url;
 
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
-use crate::stats::{GooseRequestStats, GooseTaskStats};
+use crate::metrics::{GooseRequestMetrics, GooseTaskMetrics};
 use crate::util;
 use crate::{get_worker_id, GooseAttack, GooseConfiguration, WORKER_ID};
 
-/// Workers send GooseMetrics to the Manager process to be aggregated together.
+/// Workers send GaggleMetrics to the Manager process to be aggregated together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GooseMetrics {
+pub enum GaggleMetrics {
     /// Load test hash, used to ensure all Workers are running the same load test.
     WorkerInit(u64),
     /// Goose request statistics.
-    Requests(GooseRequestStats),
+    Requests(GooseRequestMetrics),
     /// Goose task statistics.
-    Tasks(GooseTaskStats),
+    Tasks(GooseTaskMetrics),
 }
 
 // If pipe closes unexpectedly, exit.
@@ -79,7 +79,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // Send manager the hash of the load test we are ready to run.
     push_metrics_to_manager(
         &manager,
-        vec![GooseMetrics::WorkerInit(goose_attack.stats.hash)],
+        vec![GaggleMetrics::WorkerInit(goose_attack.metrics.hash)],
         false,
     );
 
@@ -127,7 +127,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
             initializer.min_wait,
             initializer.max_wait,
             &initializer.config,
-            goose_attack.stats.hash,
+            goose_attack.metrics.hash,
         )
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("failed to create socket");
@@ -160,7 +160,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         // Push metrics to manager to force a reply, waiting for RUN.
         push_metrics_to_manager(
             &manager,
-            vec![GooseMetrics::WorkerInit(goose_attack.stats.hash)],
+            vec![GaggleMetrics::WorkerInit(goose_attack.metrics.hash)],
             false,
         );
         let msg = manager
@@ -225,7 +225,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 // Push metrics to manager.
 pub fn push_metrics_to_manager(
     manager: &Socket,
-    metrics: Vec<GooseMetrics>,
+    metrics: Vec<GaggleMetrics>,
     get_response: bool,
 ) -> bool {
     debug!("[{}] pushing metrics to manager", get_worker_id(),);
@@ -233,7 +233,7 @@ pub fn push_metrics_to_manager(
 
     serde_cbor::to_writer(&mut message, &metrics)
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
-        .expect("failed to serialize GooseMetrics");
+        .expect("failed to serialize GaggleMetrics");
 
     manager
         .try_send(message)
