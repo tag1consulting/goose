@@ -392,7 +392,7 @@ impl GooseStats {
     /// Optionally prepares a table of tasks.
     pub fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if !self.display_metrics {
+        if self.tasks.is_empty() || !self.display_metrics {
             return Ok(());
         }
 
@@ -528,7 +528,7 @@ impl GooseStats {
     // Optionally prepares a table of task times.
     pub fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if !self.display_metrics {
+        if self.tasks.is_empty() || !self.display_metrics {
             return Ok(());
         }
 

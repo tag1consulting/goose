@@ -1124,6 +1124,14 @@ impl GooseAttack {
                 });
             }
 
+            if self.configuration.no_task_stats {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-task-stats".to_string(),
+                    value: self.configuration.no_task_stats.to_string(),
+                    detail: Some("--no-task-stats is only available to the manager".to_string()),
+                });
+            }
+
             if self.configuration.only_summary {
                 return Err(GooseError::InvalidOption {
                     option: "--only-summary".to_string(),
