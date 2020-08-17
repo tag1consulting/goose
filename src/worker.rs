@@ -1,20 +1,24 @@
 use nng::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::{thread, time};
 use url::Url;
 
-use crate::goose::{GooseMethod, GooseRequest, GooseUser, GooseUserCommand};
+use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
-use crate::stats::GooseTaskStats;
+use crate::stats::{GooseRequestStats, GooseTaskStats};
 use crate::util;
 use crate::{get_worker_id, GooseAttack, GooseConfiguration, WORKER_ID};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GaggleStats {
-    pub requests: Option<HashMap<String, GooseRequest>>,
-    pub tasks: Option<GooseTaskStats>,
+/// Workers send GooseMetrics to the Manager process to be aggregated together.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GooseMetrics {
+    /// Load test hash, used to ensure all Workers are running the same load test.
+    WorkerInit(u64),
+    /// Goose request statistics.
+    Requests(GooseRequestStats),
+    /// Goose task statistics.
+    Tasks(GooseTaskStats),
 }
 
 // If pipe closes unexpectedly, exit.
@@ -72,21 +76,12 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         }
     }
 
-    // Let manager know we're ready to work -- push empty HashMap.
-    let mut requests: HashMap<String, GooseRequest> = HashMap::new();
-    // "Fake" request for manager to validate this worker's load test hash.
-    requests.insert(
-        "load_test_hash".to_string(),
-        GooseRequest::new("none", GooseMethod::GET, goose_attack.stats.hash),
+    // Send manager the hash of the load test we are ready to run.
+    push_metrics_to_manager(
+        &manager,
+        vec![GooseMetrics::WorkerInit(goose_attack.stats.hash)],
+        false,
     );
-    debug!(
-        "sending load test hash to manager: {}",
-        goose_attack.stats.hash
-    );
-    push_stats_to_manager(&manager, Some(requests.clone()), None, false);
-
-    // Only send load_test_hash one time.
-    requests = HashMap::new();
 
     let mut hatch_rate: Option<f32> = None;
     let mut config: GooseConfiguration = GooseConfiguration::default();
@@ -107,20 +102,17 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                 let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("invalid message received: {}", e);
-                        continue;
+                        panic!("invalid message received: {}", e);
                     }
                 };
                 match command {
                     GooseUserCommand::EXIT => {
-                        warn!("received EXIT command from manager");
-                        std::process::exit(0);
+                        panic!("unexpected EXIT from manager during startup");
                     }
                     other => {
-                        info!("received unknown command from manager: {:?}", other);
+                        panic!("unknown command from manager: {:?}", other);
                     }
                 }
-                continue;
             }
         };
 
@@ -169,8 +161,12 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 
     // Wait for the manager to send go-ahead to start the load test.
     loop {
-        // Push statistics to manager to force a reply, waiting for RUN.
-        push_stats_to_manager(&manager, Some(requests.clone()), None, false);
+        // Push metrics to manager to force a reply, waiting for RUN.
+        push_metrics_to_manager(
+            &manager,
+            vec![GooseMetrics::WorkerInit(goose_attack.stats.hash)],
+            false,
+        );
         let msg = manager
             .recv()
             .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
@@ -230,21 +226,18 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         .expect("failed to launch GooseAttack")
 }
 
-// Push request or task statistics to manager.
-pub fn push_stats_to_manager(
+// Push metrics to manager.
+pub fn push_metrics_to_manager(
     manager: &Socket,
-    requests: Option<HashMap<String, GooseRequest>>,
-    tasks: Option<GooseTaskStats>,
+    metrics: Vec<GooseMetrics>,
     get_response: bool,
 ) -> bool {
-    debug!("[{}] pushing stats to manager", get_worker_id(),);
+    debug!("[{}] pushing metrics to manager", get_worker_id(),);
     let mut message = Message::new().unwrap();
 
-    let gaggle_stats = GaggleStats { requests, tasks };
-
-    serde_cbor::to_writer(&mut message, &gaggle_stats)
+    serde_cbor::to_writer(&mut message, &metrics)
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
-        .expect("failed to serialize GooseRequest");
+        .expect("failed to serialize GooseMetric");
 
     manager
         .try_send(message)

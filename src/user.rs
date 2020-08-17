@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::stats::GooseRawTask;
+use crate::stats::{GooseMetric, GooseRawTask};
 
 pub async fn user_main(
     thread_number: usize,
@@ -220,8 +220,8 @@ async fn invoke_task_function(
     }
 
     // Otherwise send statistics to parent (which doesn't exist during testing).
-    if let Some(parent) = thread_user.parent_task_stats.clone() {
+    if let Some(parent) = thread_user.channel_to_parent.clone() {
         // Best effort statistics.
-        let _ = parent.send(raw_task);
+        let _ = parent.send(GooseMetric::Task(raw_task));
     }
 }

@@ -4,9 +4,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::{f32, fmt};
 
-use crate::goose::{GooseRequest, GooseTaskSet};
+use crate::goose::{GooseRawRequest, GooseRequest, GooseTaskSet};
 use crate::util;
 use crate::GooseConfiguration;
+
+/// Each GooseUser thread pushes these metrics to the parent for aggregation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GooseMetric {
+    Request(GooseRawRequest),
+    Task(GooseRawTask),
+}
 
 /// Goose optionally tracks statistics about requests made during a load test.
 pub type GooseRequestStats = HashMap<String, GooseRequest>;
@@ -14,7 +21,7 @@ pub type GooseRequestStats = HashMap<String, GooseRequest>;
 /// Goose optionally tracks statistics about tasks run during a load test.
 pub type GooseTaskStats = Vec<Vec<GooseTaskStat>>;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseRawTask {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
@@ -199,6 +206,9 @@ pub struct GooseStats {
     /// Flag indicating whether or not to display status_codes. Because we're deriving Default,
     /// this defaults to false.
     pub display_status_codes: bool,
+    /// Flag indicating whether or not to display metrics, set to false on Workers. This
+    /// defaults to false because we're deriving Default.
+    pub display_metrics: bool,
 }
 
 impl GooseStats {
@@ -248,20 +258,23 @@ impl GooseStats {
     /// }
     /// ```
     pub fn print(&self) {
-        info!("printing statistics after {} seconds...", self.duration);
-
-        print!("{}", self);
+        if self.display_metrics {
+            info!("printing statistics after {} seconds...", self.duration);
+            print!("{}", self);
+        }
     }
 
     /// Consumes and displays statistics from a running load test.
     pub fn print_running(&self) {
-        info!(
-            "printing running statistics after {} seconds...",
-            self.duration
-        );
+        if self.display_metrics {
+            info!(
+                "printing running statistics after {} seconds...",
+                self.duration
+            );
 
-        // Include a blank line after printing running statistics.
-        println!("{}", self);
+            // Include a blank line after printing running statistics.
+            println!("{}", self);
+        }
     }
 
     /// Optionally prepares a table of requests and fails.
@@ -379,7 +392,7 @@ impl GooseStats {
     /// Optionally prepares a table of tasks.
     pub fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if self.tasks.is_empty() {
+        if !self.display_metrics {
             return Ok(());
         }
 
@@ -515,7 +528,7 @@ impl GooseStats {
     // Optionally prepares a table of task times.
     pub fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if self.tasks.is_empty() {
+        if !self.display_metrics {
             return Ok(());
         }
 
