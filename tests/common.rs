@@ -11,6 +11,7 @@ pub fn build_configuration(server: &MockServer) -> GooseConfiguration {
         hatch_rate: 1,
         run_time: "1".to_string(),
         no_stats: true,
+        no_task_stats: true,
         status_codes: false,
         only_summary: false,
         no_reset_stats: false,

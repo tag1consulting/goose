@@ -6,7 +6,8 @@ use std::time;
 use tokio::sync::mpsc;
 
 use crate::get_worker_id;
-use crate::goose::{GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::stats::{GooseMetric, GooseRawTask};
 
 pub async fn user_main(
     thread_number: usize,
@@ -47,7 +48,7 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                let _ = function(&thread_user).await;
+                invoke_task_function(function, &thread_user, *task_index, thread_task_name).await;
             }
         }
     }
@@ -97,8 +98,15 @@ pub async fn user_main(
         if thread_task_name != "" {
             thread_user.task_request_name = Some(thread_task_name.to_string());
         }
+
         // Invoke the task function.
-        let _ = function(&thread_user).await;
+        invoke_task_function(
+            function,
+            &thread_user,
+            thread_weighted_task,
+            thread_task_name,
+        )
+        .await;
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time = if thread_user.max_wait > 0 {
@@ -167,7 +175,7 @@ pub async fn user_main(
                     thread_user.task_request_name = Some(thread_task_name.to_string());
                 }
                 // Invoke the task function.
-                let _ = function(&thread_user).await;
+                invoke_task_function(function, &thread_user, *task_index, thread_task_name).await;
             }
         }
     }
@@ -185,5 +193,35 @@ pub async fn user_main(
             "exiting user {} from {}...",
             thread_number, thread_task_set.name
         );
+    }
+}
+
+// Invoke the task function, collecting task statistics.
+async fn invoke_task_function(
+    function: &GooseTaskFunction,
+    thread_user: &GooseUser,
+    task_index: usize,
+    thread_task_name: &str,
+) {
+    let started = time::Instant::now();
+    let mut raw_task = GooseRawTask::new(
+        thread_user.started.elapsed().as_millis(),
+        thread_user.task_sets_index,
+        task_index,
+        thread_task_name.to_string(),
+        thread_user.weighted_users_index,
+    );
+    let success = function(&thread_user).await.is_ok();
+    raw_task.set_time(started.elapsed().as_millis(), success);
+
+    // Exit if all statistics or task statistics are disabled.
+    if thread_user.config.no_stats || thread_user.config.no_task_stats {
+        return;
+    }
+
+    // Otherwise send statistics to parent.
+    if let Some(parent) = thread_user.channel_to_parent.clone() {
+        // Best effort statistics.
+        let _ = parent.send(GooseMetric::Task(raw_task));
     }
 }

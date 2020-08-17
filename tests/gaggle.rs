@@ -19,9 +19,11 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-/// Test test_start alone.
 #[test]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+// Spawn a gaggle of 1 manager and 2 workers each simulating one user. Run a load test,
+// synchronize statistics from the workers to the manager, and validate that Goose tracked
+// the same statistics as the mock server.
 fn test_gaggle() {
     let server = MockServer::start();
 
@@ -36,46 +38,70 @@ fn test_gaggle() {
         .return_status(200)
         .create_on(&server);
 
-    let mut configuration = common::build_configuration(&server);
+    // Launch workers in their own threads, storing the thread handle.
+    let mut worker_handles = Vec::new();
+    // Each worker has the same identical configuration.
+    let mut worker_configuration = common::build_configuration(&server);
+    worker_configuration.worker = true;
+    worker_configuration.host = "".to_string();
+    worker_configuration.users = None;
+    worker_configuration.no_stats = false;
+    worker_configuration.run_time = "".to_string();
+    for _ in 0..2 {
+        let configuration = worker_configuration.clone();
+        // Start worker instance of the load test.
+        worker_handles.push(thread::spawn(move || {
+            let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
+                .setup()
+                .unwrap()
+                .register_taskset(taskset!("User1").register_task(task!(get_index)))
+                .register_taskset(taskset!("User2").register_task(task!(get_about)))
+                .execute()
+                .unwrap();
+        }));
+    }
 
-    // Start manager instance of the load test.
-    let mut master_configuration = configuration.clone();
-    let master_handle = thread::spawn(move || {
-        master_configuration.users = Some(2);
-        master_configuration.hatch_rate = 4;
-        master_configuration.manager = true;
-        master_configuration.expect_workers = 1;
-        master_configuration.run_time = "3".to_string();
-        let _goose_stats = crate::GooseAttack::initialize_with_config(master_configuration)
-            .setup()
-            .unwrap()
-            .register_taskset(taskset!("User1").register_task(task!(get_index)))
-            .register_taskset(taskset!("User2").register_task(task!(get_about)))
-            .execute()
-            .unwrap();
-    });
+    // Start manager instance in current thread and run a distributed load test.
+    let mut manager_configuration = common::build_configuration(&server);
+    manager_configuration.users = Some(2);
+    manager_configuration.hatch_rate = 4;
+    manager_configuration.manager = true;
+    manager_configuration.expect_workers = 2;
+    manager_configuration.run_time = "3".to_string();
+    // Enable statistics so we can validate they are merged to the manager correctly.
+    manager_configuration.no_stats = false;
+    manager_configuration.no_task_stats = false;
+    manager_configuration.no_reset_stats = true;
+    let goose_stats = crate::GooseAttack::initialize_with_config(manager_configuration)
+        .setup()
+        .unwrap()
+        .register_taskset(taskset!("User1").register_task(task!(get_index)))
+        .register_taskset(taskset!("User2").register_task(task!(get_about)))
+        .execute()
+        .unwrap();
 
-    // Start worker instance of the load test.
-    let worker_handle = thread::spawn(move || {
-        configuration.worker = true;
-        configuration.host = "".to_string();
-        configuration.users = None;
-        configuration.no_stats = false;
-        configuration.run_time = "".to_string();
-        let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
-            .setup()
-            .unwrap()
-            .register_taskset(taskset!("User1").register_task(task!(get_index)))
-            .register_taskset(taskset!("User2").register_task(task!(get_about)))
-            .execute()
-            .unwrap();
-    });
+    // Wait for both worker threads to finish and exit.
+    for worker_handle in worker_handles {
+        let _ = worker_handle.join();
+    }
 
-    // Wait for the load test to finish.
-    let _ = worker_handle.join();
-    let _ = master_handle.join();
-
-    // Confirm the load test ran both tasksets.
+    // Confirm the load test ran both task sets.
     assert!(index.times_called() > 0);
     assert!(about.times_called() > 0);
+
+    // Validate task stats.
+    assert!(goose_stats.tasks[0][0].counter == index.times_called());
+    assert!(goose_stats.tasks[1][0].counter == about.times_called());
+
+    // Validate request stats.
+    let index_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", INDEX_PATH))
+        .unwrap();
+    let about_stats = goose_stats
+        .requests
+        .get(&format!("GET {}", ABOUT_PATH))
+        .unwrap();
+    assert!(index_stats.response_time_counter == index.times_called());
+    assert!(about_stats.response_time_counter == about.times_called());
 }

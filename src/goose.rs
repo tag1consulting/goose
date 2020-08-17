@@ -296,6 +296,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
+use crate::stats::GooseMetric;
 use crate::{GooseConfiguration, GooseError};
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -343,7 +344,7 @@ pub enum GooseTaskError {
     /// The `GooseRawRequest` that was not recorded can be extracted from the error
     /// chain, available inside `.source`.
     StatsFailed {
-        source: mpsc::error::SendError<GooseRawRequest>,
+        source: mpsc::error::SendError<GooseMetric>,
     },
     /// Attempt to send debug detail to logger failed.
     /// There was an error sending debug information to the logger thread. The
@@ -434,8 +435,8 @@ impl From<mpsc::error::SendError<bool>> for GooseTaskError {
 }
 
 /// Attempt to send statistics to the parent thread failed.
-impl From<mpsc::error::SendError<GooseRawRequest>> for GooseTaskError {
-    fn from(source: mpsc::error::SendError<GooseRawRequest>) -> GooseTaskError {
+impl From<mpsc::error::SendError<GooseMetric>> for GooseTaskError {
+    fn from(source: mpsc::error::SendError<GooseMetric>) -> GooseTaskError {
         GooseTaskError::StatsFailed { source }
     }
 }
@@ -645,7 +646,7 @@ fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskErro
 /// or
 /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
 /// so Goose knows which request is being updated.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseRawRequest {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
@@ -911,7 +912,7 @@ pub struct GooseUser {
     /// Normal tasks are optionally throttled, test_start and test_stop tasks are not.
     pub is_throttled: bool,
     /// Channel to parent.
-    pub parent: Option<mpsc::UnboundedSender<GooseRawRequest>>,
+    pub channel_to_parent: Option<mpsc::UnboundedSender<GooseMetric>>,
     /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
     pub weighted_users_index: usize,
     /// A weighted list of all tasks that run when the user first starts.
@@ -956,7 +957,7 @@ impl GooseUser {
             logger: None,
             throttle: None,
             is_throttled: true,
-            parent: None,
+            channel_to_parent: None,
             // A value of max_value() indicates this user isn't fully initialized yet.
             weighted_users_index: usize::max_value(),
             weighted_on_start_tasks: Vec::new(),
@@ -1527,19 +1528,20 @@ impl GooseUser {
             }
         };
 
-        // Send raw request object to parent if we're tracking statistics.
+        // Send a copy of the raw request object to the parent process if
+        // we're tracking statistics.
         if !self.config.no_stats {
-            self.send_to_parent(&raw_request)?;
+            self.send_to_parent(GooseMetric::Request(raw_request.clone()))?;
         }
 
         Ok(GooseResponse::new(raw_request, response))
     }
 
-    fn send_to_parent(&self, raw_request: &GooseRawRequest) -> GooseTaskResult {
+    fn send_to_parent(&self, metric: GooseMetric) -> GooseTaskResult {
         // Parent is not defined when running test_start_task, test_stop_task,
         // and during testing.
-        if let Some(parent) = self.parent.clone() {
-            parent.send(raw_request.clone())?;
+        if let Some(parent) = self.channel_to_parent.clone() {
+            parent.send(metric)?;
         }
 
         Ok(())
@@ -1591,7 +1593,7 @@ impl GooseUser {
         if !request.success {
             request.success = true;
             request.update = true;
-            self.send_to_parent(&request)?;
+            self.send_to_parent(GooseMetric::Request(request.clone()))?;
         }
 
         Ok(())
@@ -1658,7 +1660,7 @@ impl GooseUser {
         if request.success {
             request.success = false;
             request.update = true;
-            self.send_to_parent(&request)?;
+            self.send_to_parent(GooseMetric::Request(request.clone()))?;
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;

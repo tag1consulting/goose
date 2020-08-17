@@ -1,14 +1,15 @@
 use lazy_static::lazy_static;
 use nng::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
 use crate::goose::GooseRequest;
-use crate::stats;
+use crate::stats::{self, GooseRequestStats, GooseTaskStat, GooseTaskStats};
 use crate::util;
+use crate::worker::GooseMetrics;
 use crate::{GooseAttack, GooseConfiguration, GooseUserCommand};
 
 /// How long the manager will wait for all workers to stop after the load test ends.
@@ -65,8 +66,32 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-/// Merge per-user-statistics from user thread into global parent statistics
-fn merge_from_worker(
+/// Merge per-user task statistics from user thread into global parent statistics
+fn merge_tasks_from_worker(
+    parent_task: &GooseTaskStat,
+    user_task: &GooseTaskStat,
+) -> GooseTaskStat {
+    // Make a mutable copy where we can merge things
+    let mut merged_task = parent_task.clone();
+    // Iterate over user times, and merge into global time
+    merged_task.times = stats::merge_times(merged_task.times, user_task.times.clone());
+    // Increment total task time counter.
+    merged_task.total_time += &user_task.total_time;
+    // Increment count of how many task counters we've seen.
+    merged_task.counter += &user_task.counter;
+    // If user had new fastest task time, update global fastest task time.
+    merged_task.min_time = stats::update_min_time(merged_task.min_time, user_task.min_time);
+    // If user had new slowest task time, update global slowest task time.
+    merged_task.max_time = stats::update_max_time(merged_task.max_time, user_task.max_time);
+    // Increment total success counter.
+    merged_task.success_count += &user_task.success_count;
+    // Increment total fail counter.
+    merged_task.fail_count += &user_task.fail_count;
+    merged_task
+}
+
+/// Merge per-user request statistics from user thread into global parent statistics
+fn merge_requests_from_worker(
     parent_request: &GooseRequest,
     user_request: &GooseRequest,
     config: &GooseConfiguration,
@@ -74,7 +99,7 @@ fn merge_from_worker(
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
     // Iterate over user response times, and merge into global response time
-    merged_request.response_times = stats::merge_response_times(
+    merged_request.response_times = stats::merge_times(
         merged_request.response_times,
         user_request.response_times.clone(),
     );
@@ -83,12 +108,12 @@ fn merge_from_worker(
     // Increment count of how many response counters we've seen.
     merged_request.response_time_counter += &user_request.response_time_counter;
     // If user had new fastest response time, update global fastest response time.
-    merged_request.min_response_time = stats::update_min_response_time(
+    merged_request.min_response_time = stats::update_min_time(
         merged_request.min_response_time,
         user_request.min_response_time,
     );
     // If user had new slowest response time, update global slowest resposne time.
-    merged_request.max_response_time = stats::update_max_response_time(
+    merged_request.max_response_time = stats::update_max_time(
         merged_request.max_response_time,
         user_request.max_response_time,
     );
@@ -118,6 +143,73 @@ fn merge_from_worker(
     merged_request
 }
 
+/// Helper to send EXIT command to worker.
+fn tell_worker_to_exit(server: &Socket) -> bool {
+    let mut message = Message::new().unwrap();
+    serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
+        .map_err(|error| eprintln!("{:?}", error))
+        .expect("failed to serialize user command");
+    send_message_to_worker(server, message)
+}
+
+/// Helper to send message to worker.
+fn send_message_to_worker(server: &Socket, message: Message) -> bool {
+    // If there's an error, handle it.
+    if let Err((_, e)) = server.try_send(message) {
+        match e {
+            Error::TryAgain => {
+                if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
+                    info!("all workers have exited");
+                    return false;
+                }
+            }
+            _ => {
+                panic!("communication failure: {:?}", e);
+            }
+        }
+    }
+    true
+}
+
+/// Helper to merge in request metrics from Worker.
+fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestStats) {
+    if !requests.is_empty() {
+        debug!("requests statistics received: {:?}", requests.len());
+        for (request_key, request) in requests {
+            trace!("request_key: {}", request_key);
+            let merged_request;
+            if let Some(parent_request) = goose_attack.stats.requests.get(&request_key) {
+                merged_request = merge_requests_from_worker(
+                    parent_request,
+                    &request,
+                    &goose_attack.configuration,
+                );
+            } else {
+                // First time seeing this request, simply insert it.
+                merged_request = request.clone();
+            }
+            goose_attack
+                .stats
+                .requests
+                .insert(request_key.to_string(), merged_request);
+        }
+    }
+}
+
+/// Helper to merge in task metrics from Worker.
+fn merge_task_metrics(goose_attack: &mut GooseAttack, tasks: GooseTaskStats) {
+    for task_set in tasks {
+        for task in task_set {
+            let merged_task = merge_tasks_from_worker(
+                &goose_attack.stats.tasks[task.taskset_index][task.task_index],
+                &task,
+            );
+            goose_attack.stats.tasks[task.taskset_index][task.task_index] = merged_task;
+        }
+    }
+}
+
+/// Main manager loop.
 pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     // Creates a TCP address.
     let address = format!(
@@ -167,6 +259,11 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     // Catch ctrl-c to allow clean shutdown to display statistics.
     let canceled = Arc::new(AtomicBool::new(false));
     util::setup_ctrlc_handler(&canceled);
+
+    // Initialize the optional task statistics.
+    goose_attack
+        .stats
+        .initialize_task_stats(&goose_attack.task_sets, &goose_attack.configuration);
 
     // Worker control loop.
     loop {
@@ -229,124 +326,52 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 // Message received, grab the pipe to determine which worker it is.
                 let pipe = msg.pipe().expect("fatal error getting worker pipe");
 
-                // Workers always send a HashMap<String, GooseRequest>.
-                let requests: HashMap<String, GooseRequest> =
+                // Workers always send a vector of GooseMetric objects.
+                let mut gaggle_metrics: Vec<GooseMetrics> =
                     serde_cbor::from_reader(msg.as_slice()).unwrap();
-                debug!("requests statistics received: {:?}", requests.len());
 
-                // If workers already contains this pipe, we've seen this worker before.
-                if workers.contains(&pipe) {
-                    let mut message = Message::new().unwrap();
-                    // All workers are running load test, sending statistics.
-                    if workers.len() == goose_attack.configuration.expect_workers as usize {
-                        // Requests statistics received, merge them into our local copy.
-                        if !requests.is_empty() {
-                            debug!("requests statistics received: {:?}", requests.len());
-                            for (request_key, request) in requests {
-                                trace!("request_key: {}", request_key);
-                                let merged_request;
-                                if let Some(parent_request) =
-                                    goose_attack.stats.requests.get(&request_key)
-                                {
-                                    merged_request = merge_from_worker(
-                                        parent_request,
-                                        &request,
-                                        &goose_attack.configuration,
-                                    );
-                                } else {
-                                    // First time seeing this request, simply insert it.
-                                    merged_request = request.clone();
-                                }
-                                goose_attack
-                                    .stats
-                                    .requests
-                                    .insert(request_key.to_string(), merged_request);
-                            }
-                        }
-                        // Notify the worker that the load test is over and to exit.
-                        if load_test_finished {
-                            debug!("telling worker to exit");
-                            serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
-                                .map_err(|error| eprintln!("{:?}", error))
-                                .expect("failed to serialize user command");
-                        }
-                        // Notify the worker that the load test is still running.
-                        else {
-                            serde_cbor::to_writer(&mut message, &GooseUserCommand::RUN)
-                                .map_err(|error| eprintln!("{:?}", error))
-                                .expect("failed to serialize user command");
-                        }
-                    }
-                    // All workers are not yet running, tell worker to wait.
-                    else {
-                        serde_cbor::to_writer(&mut message, &GooseUserCommand::WAIT)
-                            .map_err(|error| eprintln!("{:?}", error))
-                            .expect("failed to serialize user command");
-                    }
-                    match server.try_send(message) {
-                        Ok(_) => (),
-                        // Determine why there was an error.
-                        Err((_, e)) => {
-                            match e {
-                                // A worker went away, this happens during shutdown.
-                                Error::TryAgain => {
-                                    if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
-                                        info!("all workers have exited");
-                                        break;
-                                    }
-                                }
-                                // An unexpected error.
-                                _ => panic!("communication failure: {:?}", e),
-                            }
-                        }
-                    }
-                }
-                // This is the first time we've seen this worker.
-                else {
-                    // Make sure we're not already connected to all of our workers.
+                // Check if we're seeing this worker for the first time.
+                if !workers.contains(&pipe) {
+                    // Check if we are expecting another worker.
                     if workers.len() >= goose_attack.configuration.expect_workers as usize {
                         // We already have enough workers, tell this extra one to EXIT.
-                        let mut message = Message::new().unwrap();
-                        serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
-                            .map_err(|error| eprintln!("{:?}", error))
-                            .expect("failed to serialize user command");
-                        match server.try_send(message) {
-                            Ok(_) => (),
-                            // Determine why our send failed.
-                            Err((_, e)) => match e {
-                                Error::TryAgain => {
-                                    if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
-                                        info!("all workers have exited");
-                                        break;
-                                    }
-                                }
-                                _ => {
-                                    panic!("communication failure: {:?}", e);
-                                }
-                            },
+                        if !tell_worker_to_exit(&server) {
+                            // All workers have exited, shut down the
+                            // load test.
+                            break;
                         }
                     }
                     // We need another worker, accept the connection.
                     else {
-                        // Validate worker load test hash.
-                        match requests.get("load_test_hash") {
-                            Some(r) => {
-                                if r.load_test_hash != goose_attack.stats.hash {
-                                    if goose_attack.configuration.no_hash_check {
-                                        warn!("worker is running a different load test, ignoring")
-                                    } else {
-                                        panic!("worker is running a different load test, set --no-hash-check to ignore");
-                                    }
-                                }
+                        // New worker has to send us a single
+                        // GooseMetrics::WorkerInit object or it's invalid.
+                        if gaggle_metrics.len() != 1 {
+                            // Invalid message, tell worker to EXIT.
+                            if !tell_worker_to_exit(&server) {
+                                // All workers have exited, shut down the
+                                // load test.
+                                break;
                             }
-                            None => {
+                        }
+
+                        let goose_metric = gaggle_metrics.pop().unwrap();
+                        if let GooseMetrics::WorkerInit(load_test_hash) = goose_metric {
+                            if load_test_hash != goose_attack.stats.hash {
                                 if goose_attack.configuration.no_hash_check {
                                     warn!("worker is running a different load test, ignoring")
                                 } else {
                                     panic!("worker is running a different load test, set --no-hash-check to ignore");
                                 }
                             }
-                        };
+                        } else {
+                            // Unexpected object received, tell the worker
+                            // to EXIT.
+                            if !tell_worker_to_exit(&server) {
+                                // All workers have exited, shut down the
+                                // load test.
+                                break;
+                            }
+                        }
 
                         workers.insert(pipe);
                         info!(
@@ -390,19 +415,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             .expect("failed to serialize user initializers");
 
                         info!("sending {} users to worker {}", users.len(), workers.len());
-                        match server.try_send(message) {
-                            Ok(_) => (),
-                            Err((_, e)) => match e {
-                                Error::TryAgain => {
-                                    if ACTIVE_WORKERS.load(Ordering::SeqCst) == 0 {
-                                        info!("all workers have exited");
-                                        break;
-                                    }
-                                }
-                                _ => {
-                                    panic!("communication failure: {:?}", e);
-                                }
-                            },
+                        if !send_message_to_worker(&server, message) {
+                            // All workers have exited, shut down the load
+                            // test.
+                            break;
                         }
 
                         if workers.len() == goose_attack.configuration.expect_workers as usize {
@@ -412,6 +428,58 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             running_statistics_timer = time::Instant::now();
                             load_test_running = true;
                         }
+                    }
+                }
+                // Received message from known Worker.
+                else {
+                    let mut message = Message::new().unwrap();
+
+                    // When starting a Gaggle, some Workers may start before others and
+                    // will send regular heartbeats to the Manager to confirm the load
+                    // test is still waiting to start.
+                    if !load_test_running {
+                        // Assume this is the Worker heartbeat, tell it to keep waiting.
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::WAIT)
+                            .map_err(|error| eprintln!("{:?}", error))
+                            .expect("failed to serialize user command");
+                        if !send_message_to_worker(&server, message) {
+                            // All workers have exited, shut down the load test.
+                            break;
+                        }
+                        continue;
+                    }
+
+                    for metric in gaggle_metrics {
+                        match metric {
+                            // Merge in request metrics from Worker.
+                            GooseMetrics::Requests(requests) => {
+                                merge_request_metrics(&mut goose_attack, requests)
+                            }
+                            // Merge in task metrics from Worker.
+                            GooseMetrics::Tasks(tasks) => {
+                                merge_task_metrics(&mut goose_attack, tasks)
+                            }
+                            // Ignore Worker heartbeats.
+                            GooseMetrics::WorkerInit(_) => (),
+                        }
+                    }
+
+                    if load_test_finished {
+                        debug!("telling worker to exit");
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
+                            .map_err(|error| eprintln!("{:?}", error))
+                            .expect("failed to serialize user command");
+                    }
+                    // Notify the worker that the load test is still running.
+                    else {
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::RUN)
+                            .map_err(|error| eprintln!("{:?}", error))
+                            .expect("failed to serialize user command");
+                    }
+                    if !send_message_to_worker(&server, message) {
+                        // All workers have exited, shut down the load
+                        // test.
+                        break;
                     }
                 }
             }

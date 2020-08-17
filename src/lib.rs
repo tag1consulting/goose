@@ -339,7 +339,9 @@ use url::Url;
 use crate::goose::{
     GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
 };
-use crate::stats::GooseStats;
+use crate::stats::{GooseMetric, GooseStats};
+#[cfg(feature = "gaggle")]
+use crate::worker::GooseMetrics;
 
 /// Constant defining how often statistics should be displayed while load test is running.
 const RUNNING_STATS_EVERY: usize = 15;
@@ -1122,6 +1124,14 @@ impl GooseAttack {
                 });
             }
 
+            if self.configuration.no_task_stats {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-task-stats".to_string(),
+                    value: self.configuration.no_task_stats.to_string(),
+                    detail: Some("--no-task-stats is only available to the manager".to_string()),
+                });
+            }
+
             if self.configuration.only_summary {
                 return Err(GooseError::InvalidOption {
                     option: "--only-summary".to_string(),
@@ -1245,9 +1255,14 @@ impl GooseAttack {
             );
         }
 
-        // Allocate a state for each of the users we are about to start.
         if !self.configuration.worker {
+            // Allocate a state for each of the users we are about to start.
             self.weighted_users = self.weight_task_set_users()?;
+
+            // Stand-alone and Manager processes can display metrics.
+            if !self.configuration.no_stats {
+                self.stats.display_metrics = true;
+            }
         }
 
         // Calculate a unique hash for the current load test.
@@ -1470,10 +1485,11 @@ impl GooseAttack {
         let mut users = vec![];
         // Collect user thread channels in a vector so we can talk to the user threads.
         let mut user_channels = vec![];
-        // Create a single channel allowing all Goose child threads to sync state back to parent
-        let (all_threads_sender, mut parent_receiver): (
-            mpsc::UnboundedSender<GooseRawRequest>,
-            mpsc::UnboundedReceiver<GooseRawRequest>,
+        // Create a single channel allowing all Goose child threads to sync metrics back
+        // to the parent process.
+        let (all_threads_sender, mut metric_receiver): (
+            mpsc::UnboundedSender<GooseMetric>,
+            mpsc::UnboundedReceiver<GooseMetric>,
         ) = mpsc::unbounded_channel();
 
         // A new user thread will be spawned at regular intervals. The spawning_user_drift
@@ -1522,7 +1538,7 @@ impl GooseAttack {
             }
 
             // Copy the GooseUser-to-parent sender channel, used by all threads.
-            thread_user.parent = Some(all_threads_sender.clone());
+            thread_user.channel_to_parent = Some(all_threads_sender.clone());
 
             // Copy the appropriate task_set into the thread.
             let thread_task_set = self.task_sets[thread_user.task_sets_index].clone();
@@ -1584,6 +1600,10 @@ impl GooseAttack {
             stats_log_file = Some(BufWriter::new(file));
         }
 
+        // Initialize the optional task statistics.
+        self.stats
+            .initialize_task_stats(&self.task_sets, &self.configuration);
+
         // If logging stats to CSV, use this flag to write header; otherwise it's ignored.
         let mut header = true;
         loop {
@@ -1599,75 +1619,21 @@ impl GooseAttack {
                 }
 
                 // Load messages from user threads until the receiver queue is empty.
-                let mut received_message = false;
-                let mut message = parent_receiver.try_recv();
-                while message.is_ok() {
-                    received_message = true;
-                    let raw_request = message.unwrap();
+                let received_message = self
+                    .receive_metrics(&mut metric_receiver, &mut header, &mut stats_log_file)
+                    .await;
 
-                    // Options should appear above, search for formatted_log.
-                    let formatted_log = match self.configuration.stats_log_format.as_str() {
-                        // Use serde_json to create JSON.
-                        "json" => json!(raw_request).to_string(),
-                        // Manually create CSV, library doesn't support single-row string conversion.
-                        "csv" => GooseAttack::prepare_csv(&raw_request, &mut header),
-                        // Raw format is Debug output for GooseRawRequest structure.
-                        "raw" => format!("{:?}", raw_request).to_string(),
-                        _ => unreachable!(),
-                    };
-
-                    if let Some(file) = stats_log_file.as_mut() {
-                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                            Ok(_) => (),
-                            Err(e) => {
-                                warn!(
-                                    "failed to write statistics to {}: {}",
-                                    &self.configuration.stats_log_file, e
-                                );
-                            }
-                        }
-                    }
-
-                    let key = format!("{:?} {}", raw_request.method, raw_request.name);
-                    let mut merge_request = match self.stats.requests.get(&key) {
-                        Some(m) => m.clone(),
-                        None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
-                    };
-                    // Handle a statistics update.
-                    if raw_request.update {
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                            merge_request.fail_count -= 1;
-                        } else {
-                            merge_request.success_count -= 1;
-                            merge_request.fail_count += 1;
-                        }
-                    }
-                    // Store a new statistic.
-                    else {
-                        merge_request.set_response_time(raw_request.response_time);
-                        if self.configuration.status_codes {
-                            merge_request.set_status_code(raw_request.status_code);
-                        }
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                        } else {
-                            merge_request.fail_count += 1;
-                        }
-                    }
-
-                    self.stats.requests.insert(key.to_string(), merge_request);
-                    message = parent_receiver.try_recv();
-                }
-
-                // As worker, push request statistics up to manager.
+                // As worker, push metrics up to manager.
                 if self.configuration.worker && received_message {
                     #[cfg(feature = "gaggle")]
                     {
-                        // Push request statistics to manager process.
-                        if !worker::push_stats_to_manager(
+                        // Push metrics to manager process.
+                        if !worker::push_metrics_to_manager(
                             &socket.clone().unwrap(),
-                            &self.stats.requests.clone(),
+                            vec![
+                                GooseMetrics::Requests(self.stats.requests.clone()),
+                                GooseMetrics::Tasks(self.stats.tasks.clone()),
+                            ],
                             true,
                         ) {
                             // EXIT received, cancel.
@@ -1675,6 +1641,8 @@ impl GooseAttack {
                         }
                         // The manager has all our request statistics, reset locally.
                         self.stats.requests = HashMap::new();
+                        self.stats
+                            .initialize_task_stats(&self.task_sets, &self.configuration);
                     }
                 }
 
@@ -1685,17 +1653,21 @@ impl GooseAttack {
                         self.stats.duration = self.started.unwrap().elapsed().as_secs() as usize;
                         self.stats.print_running();
 
-                        if self.stats.users < self.users {
-                            println!(
-                                "{} of {} users hatched, timer expired, resetting statistics (disable with --no-reset-stats).\n", self.stats.users, self.users
-                            );
-                        } else {
-                            println!(
-                                "All {} users hatched, resetting statistics (disable with --no-reset-stats).\n", self.stats.users
-                            );
+                        if self.stats.display_metrics {
+                            if self.stats.users < self.users {
+                                println!(
+                                    "{} of {} users hatched, timer expired, resetting statistics (disable with --no-reset-stats).\n", self.stats.users, self.users
+                                );
+                            } else {
+                                println!(
+                                    "All {} users hatched, resetting statistics (disable with --no-reset-stats).\n", self.stats.users
+                                );
+                            }
                         }
 
                         self.stats.requests = HashMap::new();
+                        self.stats
+                            .initialize_task_stats(&self.task_sets, &self.configuration);
                         // Restart the timer now that all threads are launched.
                         self.started = Some(time::Instant::now());
                     } else if self.stats.users < self.users {
@@ -1757,39 +1729,23 @@ impl GooseAttack {
                     let _ = tokio::join!(logger_thread.unwrap());
                 }
 
-                // If we're printing statistics, collect the final messages received from users.
+                // If we're printing statistics, collect the final metrics received from users.
                 if !self.configuration.no_stats {
-                    let mut message = parent_receiver.try_recv();
-                    while message.is_ok() {
-                        let raw_request = message.unwrap();
-                        let key = format!("{:?} {}", raw_request.method, raw_request.name);
-                        let mut merge_request = match self.stats.requests.get(&key) {
-                            Some(m) => m.clone(),
-                            None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
-                        };
-                        merge_request.set_response_time(raw_request.response_time);
-                        if self.configuration.status_codes {
-                            merge_request.set_status_code(raw_request.status_code);
-                        }
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                        } else {
-                            merge_request.fail_count += 1;
-                        }
-
-                        self.stats.requests.insert(key.to_string(), merge_request);
-                        message = parent_receiver.try_recv();
-                    }
+                    let _received_message = self
+                        .receive_metrics(&mut metric_receiver, &mut header, &mut stats_log_file)
+                        .await;
                 }
 
                 #[cfg(feature = "gaggle")]
                 {
-                    // As worker, push request statistics up to manager.
+                    // As worker, push metrics up to manager.
                     if self.configuration.worker {
-                        // Push request statistics to manager process.
-                        worker::push_stats_to_manager(
+                        worker::push_metrics_to_manager(
                             &socket.clone().unwrap(),
-                            &self.stats.requests.clone(),
+                            vec![
+                                GooseMetrics::Requests(self.stats.requests.clone()),
+                                GooseMetrics::Tasks(self.stats.tasks.clone()),
+                            ],
                             true,
                         );
                         // No need to reset local stats, the worker is exiting.
@@ -1845,6 +1801,80 @@ impl GooseAttack {
 
         Ok(self)
     }
+
+    async fn receive_metrics(
+        &mut self,
+        metric_receiver: &mut mpsc::UnboundedReceiver<GooseMetric>,
+        header: &mut bool,
+        stats_log_file: &mut Option<BufWriter<File>>,
+    ) -> bool {
+        let mut received_message = false;
+        let mut message = metric_receiver.try_recv();
+        while message.is_ok() {
+            received_message = true;
+            match message.unwrap() {
+                GooseMetric::Request(raw_request) => {
+                    // Options should appear above, search for formatted_log.
+                    let formatted_log = match self.configuration.stats_log_format.as_str() {
+                        // Use serde_json to create JSON.
+                        "json" => json!(raw_request).to_string(),
+                        // Manually create CSV, library doesn't support single-row string conversion.
+                        "csv" => GooseAttack::prepare_csv(&raw_request, header),
+                        // Raw format is Debug output for GooseRawRequest structure.
+                        "raw" => format!("{:?}", raw_request).to_string(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(file) = stats_log_file.as_mut() {
+                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!(
+                                    "failed to write statistics to {}: {}",
+                                    &self.configuration.stats_log_file, e
+                                );
+                            }
+                        }
+                    }
+                    let key = format!("{:?} {}", raw_request.method, raw_request.name);
+                    let mut merge_request = match self.stats.requests.get(&key) {
+                        Some(m) => m.clone(),
+                        None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
+                    };
+                    // Handle a statistics update.
+                    if raw_request.update {
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                            merge_request.fail_count -= 1;
+                        } else {
+                            merge_request.success_count -= 1;
+                            merge_request.fail_count += 1;
+                        }
+                    }
+                    // Store a new statistic.
+                    else {
+                        merge_request.set_response_time(raw_request.response_time);
+                        if self.configuration.status_codes {
+                            merge_request.set_status_code(raw_request.status_code);
+                        }
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                        } else {
+                            merge_request.fail_count += 1;
+                        }
+                    }
+
+                    self.stats.requests.insert(key.to_string(), merge_request);
+                }
+                GooseMetric::Task(raw_task) => {
+                    // Store a new statistic.
+                    self.stats.tasks[raw_task.taskset_index][raw_task.task_index]
+                        .set_time(raw_task.run_time, raw_task.success);
+                }
+            }
+            message = metric_receiver.try_recv();
+        }
+        received_message
+    }
 }
 
 /// CLI options available when launching a Goose load test.
@@ -1870,6 +1900,10 @@ pub struct GooseConfiguration {
     /// Don't print stats in the console
     #[structopt(long)]
     pub no_stats: bool,
+
+    /// Don't print task statistics in the console
+    #[structopt(long)]
+    pub no_task_stats: bool,
 
     /// Includes status code counts in console stats
     #[structopt(long)]
