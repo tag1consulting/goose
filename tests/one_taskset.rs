@@ -261,7 +261,10 @@ fn test_single_taskset_closure() {
 
         assert!(
             endpoint_metrics.path == item.path,
-            format_item(&format!("{} != {}", endpoint_metrics.path, item.path), &item)
+            format_item(
+                &format!("{} != {}", endpoint_metrics.path, item.path),
+                &item
+            )
         );
         assert!(endpoint_metrics.method == GooseMethod::GET);
 

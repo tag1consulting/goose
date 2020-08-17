@@ -306,8 +306,8 @@ pub mod goose;
 pub mod logger;
 #[cfg(feature = "gaggle")]
 mod manager;
-pub mod prelude;
 mod metrics;
+pub mod prelude;
 mod throttle;
 mod user;
 mod util;
@@ -608,7 +608,8 @@ impl GooseAttack {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
                     detail: Some(
-                        "--no-metrics must not be enabled when enabling --status-codes.".to_string(),
+                        "--no-metrics must not be enabled when enabling --status-codes."
+                            .to_string(),
                     ),
                 });
             }
@@ -619,7 +620,8 @@ impl GooseAttack {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
                     detail: Some(
-                        "--no-metrics must not be enabled when enabling --only-summary.".to_string(),
+                        "--no-metrics must not be enabled when enabling --only-summary."
+                            .to_string(),
                     ),
                 });
             }
