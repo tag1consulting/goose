@@ -219,7 +219,7 @@ async fn invoke_task_function(
         return;
     }
 
-    // Otherwise send statistics to parent (which doesn't exist during testing).
+    // Otherwise send statistics to parent.
     if let Some(parent) = thread_user.channel_to_parent.clone() {
         // Best effort statistics.
         let _ = parent.send(GooseMetric::Task(raw_task));

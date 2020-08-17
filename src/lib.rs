@@ -1529,7 +1529,7 @@ impl GooseAttack {
                 None => thread_user.throttle = None,
             }
 
-            // Copy the GooseUser-to-parent request sender channel, used by all threads.
+            // Copy the GooseUser-to-parent sender channel, used by all threads.
             thread_user.channel_to_parent = Some(all_threads_sender.clone());
 
             // Copy the appropriate task_set into the thread.
@@ -1610,12 +1610,12 @@ impl GooseAttack {
                     display_running_statistics = true;
                 }
 
-                // Load raw_request messages from user threads until the receiver queue is empty.
+                // Load messages from user threads until the receiver queue is empty.
                 let received_message = self
                     .receive_metrics(&mut metric_receiver, &mut header, &mut stats_log_file)
                     .await;
 
-                // As worker, push request statistics up to manager.
+                // As worker, push metrics up to manager.
                 if self.configuration.worker && received_message {
                     #[cfg(feature = "gaggle")]
                     {
@@ -1730,7 +1730,7 @@ impl GooseAttack {
 
                 #[cfg(feature = "gaggle")]
                 {
-                    // As worker, push all statistics up to manager.
+                    // As worker, push metrics up to manager.
                     if self.configuration.worker {
                         worker::push_metrics_to_manager(
                             &socket.clone().unwrap(),

@@ -335,7 +335,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // Check if we are expecting another worker.
                     if workers.len() >= goose_attack.configuration.expect_workers as usize {
                         // We already have enough workers, tell this extra one to EXIT.
-                        if tell_worker_to_exit(&server) == false {
+                        if !tell_worker_to_exit(&server) {
                             // All workers have exited, shut down the
                             // load test.
                             break;
@@ -347,7 +347,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         // GooseMetrics::WorkerInit object or it's invalid.
                         if gaggle_metrics.len() != 1 {
                             // Invalid message, tell worker to EXIT.
-                            if tell_worker_to_exit(&server) == false {
+                            if !tell_worker_to_exit(&server) {
                                 // All workers have exited, shut down the
                                 // load test.
                                 break;
@@ -366,7 +366,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         } else {
                             // Unexpected object received, tell the worker
                             // to EXIT.
-                            if tell_worker_to_exit(&server) == false {
+                            if !tell_worker_to_exit(&server) {
                                 // All workers have exited, shut down the
                                 // load test.
                                 break;
@@ -460,7 +460,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 merge_task_metrics(&mut goose_attack, tasks)
                             }
                             // Ignore Worker heartbeats.
-                            _ => (),
+                            GooseMetrics::WorkerInit(_) => (),
                         }
                     }
 

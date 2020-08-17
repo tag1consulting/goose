@@ -88,74 +88,70 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     let mut weighted_users: Vec<GooseUser> = Vec::new();
 
     // Wait for the manager to send user parameters.
-    loop {
-        info!("waiting for instructions from manager");
-        let msg = manager
-            .recv()
-            .map_err(|error| eprintln!("{:?}", error))
-            .expect("error receiving manager message");
+    info!("waiting for instructions from manager");
+    let msg = manager
+        .recv()
+        .map_err(|error| eprintln!("{:?}", error))
+        .expect("error receiving manager message");
 
-        let initializers: Vec<GooseUserInitializer> = match serde_cbor::from_reader(msg.as_slice())
-        {
-            Ok(i) => i,
-            Err(_) => {
-                let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        panic!("invalid message received: {}", e);
-                    }
-                };
-                match command {
-                    GooseUserCommand::EXIT => {
-                        panic!("unexpected EXIT from manager during startup");
-                    }
-                    other => {
-                        panic!("unknown command from manager: {:?}", other);
-                    }
+    let initializers: Vec<GooseUserInitializer> = match serde_cbor::from_reader(msg.as_slice()) {
+        Ok(i) => i,
+        Err(_) => {
+            let command: GooseUserCommand = match serde_cbor::from_reader(msg.as_slice()) {
+                Ok(c) => c,
+                Err(e) => {
+                    panic!("invalid message received: {}", e);
+                }
+            };
+            match command {
+                GooseUserCommand::EXIT => {
+                    panic!("unexpected EXIT from manager during startup");
+                }
+                other => {
+                    panic!("unknown command from manager: {:?}", other);
                 }
             }
-        };
-
-        let mut worker_id: usize = 0;
-        // Allocate a state for each user that will be spawned.
-        info!("initializing user states...");
-        for initializer in initializers {
-            if worker_id == 0 {
-                worker_id = initializer.worker_id;
-            }
-            let user = GooseUser::new(
-                initializer.task_sets_index,
-                Url::parse(&initializer.base_url).unwrap(),
-                initializer.min_wait,
-                initializer.max_wait,
-                &initializer.config,
-                goose_attack.stats.hash,
-            )
-            .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
-            .expect("failed to create socket");
-
-            weighted_users.push(user);
-            if hatch_rate == None {
-                hatch_rate = Some(
-                    1.0 / (initializer.config.hatch_rate as f32
-                        / (initializer.config.expect_workers as f32)),
-                );
-                config = initializer.config;
-                info!(
-                    "[{}] prepared to start 1 user every {:.2} seconds",
-                    worker_id,
-                    hatch_rate.unwrap()
-                );
-            }
         }
-        WORKER_ID.store(worker_id, Ordering::Relaxed);
-        info!(
-            "[{}] initialized {} user states",
-            get_worker_id(),
-            weighted_users.len()
-        );
-        break;
+    };
+
+    let mut worker_id: usize = 0;
+    // Allocate a state for each user that will be spawned.
+    info!("initializing user states...");
+    for initializer in initializers {
+        if worker_id == 0 {
+            worker_id = initializer.worker_id;
+        }
+        let user = GooseUser::new(
+            initializer.task_sets_index,
+            Url::parse(&initializer.base_url).unwrap(),
+            initializer.min_wait,
+            initializer.max_wait,
+            &initializer.config,
+            goose_attack.stats.hash,
+        )
+        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+        .expect("failed to create socket");
+
+        weighted_users.push(user);
+        if hatch_rate == None {
+            hatch_rate = Some(
+                1.0 / (initializer.config.hatch_rate as f32
+                    / (initializer.config.expect_workers as f32)),
+            );
+            config = initializer.config;
+            info!(
+                "[{}] prepared to start 1 user every {:.2} seconds",
+                worker_id,
+                hatch_rate.unwrap()
+            );
+        }
     }
+    WORKER_ID.store(worker_id, Ordering::Relaxed);
+    info!(
+        "[{}] initialized {} user states",
+        get_worker_id(),
+        weighted_users.len()
+    );
 
     info!("[{}] waiting for go-ahead from manager", get_worker_id());
 
@@ -237,7 +233,7 @@ pub fn push_metrics_to_manager(
 
     serde_cbor::to_writer(&mut message, &metrics)
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
-        .expect("failed to serialize GooseMetric");
+        .expect("failed to serialize GooseMetrics");
 
     manager
         .try_send(message)
