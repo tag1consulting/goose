@@ -94,7 +94,7 @@ pub async fn user_main(
             "launching {} task from {}",
             thread_task_name, thread_task_set.name
         );
-        // If task name is set, it will be used for storing request statistics instead of the raw url.
+        // If task name is set, it will be used for storing request metrics instead of the raw url.
         if thread_task_name != "" {
             thread_user.task_request_name = Some(thread_task_name.to_string());
         }
@@ -196,7 +196,7 @@ pub async fn user_main(
     }
 }
 
-// Invoke the task function, collecting task statistics.
+// Invoke the task function, collecting task metrics.
 async fn invoke_task_function(
     function: &GooseTaskFunction,
     thread_user: &GooseUser,
@@ -214,14 +214,14 @@ async fn invoke_task_function(
     let success = function(&thread_user).await.is_ok();
     raw_task.set_time(started.elapsed().as_millis(), success);
 
-    // Exit if all statistics or task statistics are disabled.
+    // Exit if all metrics or task metrics are disabled.
     if thread_user.config.no_metrics || thread_user.config.no_task_metrics {
         return;
     }
 
-    // Otherwise send statistics to parent.
+    // Otherwise send metrics to parent.
     if let Some(parent) = thread_user.channel_to_parent.clone() {
-        // Best effort statistics.
+        // Best effort metrics.
         let _ = parent.send(GooseMetric::Task(raw_task));
     }
 }

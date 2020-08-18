@@ -27,7 +27,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! goose = "0.9"
+//! goose = "0.10"
 //! ```
 //!
 //! Add the following boilerplate `use` declaration at the top of your `src/main.rs`:
@@ -922,7 +922,7 @@ impl GooseAttack {
             weighted_task_sets.append(&mut weighted_sets);
         }
 
-        // Allocate a state for each user that will be spawned.
+        // Allocate a state for each user that will be hatched.
         info!("initializing user states...");
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
@@ -1275,7 +1275,7 @@ impl GooseAttack {
 
         // Our load test is officially starting.
         self.started = Some(time::Instant::now());
-        // Spawn users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
+        // Hatch users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_float = 1.0 / self.configuration.hatch_rate as f32;
         let sleep_duration = time::Duration::from_secs_f32(sleep_float);
 
@@ -1852,7 +1852,7 @@ impl GooseAttack {
                             merge_request.fail_count += 1;
                         }
                     }
-                    // Store a new statistic.
+                    // Store a new metric.
                     else {
                         merge_request.set_response_time(raw_request.response_time);
                         if self.configuration.status_codes {
@@ -1868,7 +1868,7 @@ impl GooseAttack {
                     self.metrics.requests.insert(key.to_string(), merge_request);
                 }
                 GooseMetric::Task(raw_task) => {
-                    // Store a new statistic.
+                    // Store a new metric.
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
                 }
@@ -1883,113 +1883,111 @@ impl GooseAttack {
 #[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
 #[structopt(name = "Goose")]
 pub struct GooseConfiguration {
-    /// Host to load test, for example: http://10.21.32.33
-    #[structopt(short = "H", long, required = false, default_value = "")]
-    pub host: String,
-
-    /// Number of concurrent Goose users (defaults to available CPUs)
-    #[structopt(short, long)]
-    pub users: Option<usize>,
-
-    /// How many users to spawn per second
-    #[structopt(short = "r", long, required = false, default_value = "1")]
-    pub hatch_rate: usize,
-
-    /// Stop after e.g. (300s, 20m, 3h, 1h30m, etc.)
-    #[structopt(short = "t", long, required = false, default_value = "")]
-    pub run_time: String,
-
-    /// Doesn't print metrics in the console
-    #[structopt(long)]
-    pub no_metrics: bool,
-
-    /// Doesn't print task metrics in the console
-    #[structopt(long)]
-    pub no_task_metrics: bool,
-
-    /// Includes status code counts in console metrics
-    #[structopt(long)]
-    pub status_codes: bool,
-
-    /// Only prints summary metrics in the console
-    #[structopt(long)]
-    pub only_summary: bool,
-
-    /// Resets metrics once hatching has been completed
-    #[structopt(long)]
-    pub no_reset_metrics: bool,
-
-    /// Shows list of all possible Goose tasks and exits
+    /// Lists all tasks and exits
     #[structopt(short, long)]
     pub list: bool,
 
-    // The number of occurrences of the `v/verbose` flag
-    /// Debug level (-v, -vv, -vvv, etc.)
+    /// Host to load test (ie http://10.21.32.33)
+    #[structopt(short = "H", long, required = false, default_value = "")]
+    pub host: String,
+
+    /// Sets concurrent Goose users (defaults to available CPUs)
+    #[structopt(short, long)]
+    pub users: Option<usize>,
+
+    /// Sets per-second user hatch rate
+    #[structopt(short = "r", long, required = false, default_value = "1")]
+    pub hatch_rate: usize,
+
+    /// Stops load test after e.g. (30s, 20m, 3h, 1h30m, etc.)
+    #[structopt(short = "t", long, required = false, default_value = "")]
+    pub run_time: String,
+
+    /// Doesn't track or print metrics
+    #[structopt(long)]
+    pub no_metrics: bool,
+
+    /// Doesn't track or print task metrics
+    #[structopt(long)]
+    pub no_task_metrics: bool,
+
+    /// Tracks and prints status code metrics
+    #[structopt(long)]
+    pub status_codes: bool,
+
+    /// Only prints final summary metrics in the console
+    #[structopt(long)]
+    pub only_summary: bool,
+
+    /// Resets metrics once all users have started
+    #[structopt(long)]
+    pub no_reset_metrics: bool,
+
+    /// Sets debug level (-v, -vv, -vvv, etc.)
     #[structopt(short = "v", long, parse(from_occurrences))]
     pub verbose: u8,
 
-    // The number of occurrences of the `g/log-level` flag
-    /// Log level (-g, -gg, -ggg, etc.)
+    /// Sets log level (-g, -gg, -ggg, etc.)
     #[structopt(short = "g", long, parse(from_occurrences))]
     pub log_level: u8,
 
-    /// Log file name
+    /// Sets log file name
     #[structopt(long, default_value = "goose.log")]
     pub log_file: String,
 
-    /// Metrics log file name
+    /// Sets metrics log file name
     #[structopt(short = "s", long, default_value = "")]
     pub metrics_log_file: String,
 
-    /// Metrics log format ('csv', 'json', or 'raw')
+    /// Sets metrics log format ('csv', 'json', or 'raw')
     #[structopt(long, default_value = "json")]
     pub metrics_log_format: String,
 
-    /// Debug log file name
+    /// Sets debug log file name
     #[structopt(short = "d", long, default_value = "")]
     pub debug_log_file: String,
 
-    /// Debug log format ('json' or 'raw')
+    /// Sets debug log format ('json' or 'raw')
     #[structopt(long, default_value = "json")]
     pub debug_log_format: String,
 
-    /// Throttle (max) requests per second
+    /// Sets maximum requests per second
     #[structopt(long)]
     pub throttle_requests: Option<usize>,
 
-    /// User follows redirect of base_url with subsequent requests
+    /// Tells users to follow redirect of base_url with subsequent requests
     #[structopt(long)]
     pub sticky_follow: bool,
 
-    /// Enables manager mode
+    /// Gaggle: enables manager mode
     #[structopt(long)]
     pub manager: bool,
 
-    /// Ignore worker load test checksum
+    /// Gaggle: ignores worker load test checksum
     #[structopt(long)]
     pub no_hash_check: bool,
 
-    /// Required when in manager mode, how many workers to expect
-    #[structopt(long, required = false, default_value = "0")]
+    /// Gaggle: tells manager how many workers to expect
+    #[structopt(long, required_if("manager", "true"))]
     pub expect_workers: u16,
 
-    /// Define host manager listens on, formatted x.x.x.x
+    /// Gaggle: sets host manager listens on, formatted x.x.x.x
     #[structopt(long, default_value = "0.0.0.0")]
     pub manager_bind_host: String,
 
-    /// Define port manager listens on
+    /// Gaggle: sets port manager listens on
     #[structopt(long, default_value=DEFAULT_PORT)]
     pub manager_bind_port: u16,
 
-    /// Enables worker mode
+    /// Gaggle: enables worker mode
     #[structopt(long)]
     pub worker: bool,
 
-    /// Host manager is running on
+    /// Gaggle: sets host worker connects to manager on
     #[structopt(long, default_value = "127.0.0.1")]
     pub manager_host: String,
 
-    /// Port manager is listening on
+    /// Gaggle: sets port worker connects to manager on
     #[structopt(long, default_value=DEFAULT_PORT)]
     pub manager_port: u16,
 }

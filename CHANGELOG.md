@@ -1,11 +1,17 @@
 # Changelog
 
-## 0.9.2-dev
+## 0.10.0-dev
  - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
  - only run gaggle integration tests when feature is enabled
  - prevent time-drift when launching users and throttling requests
  - add per-task statistics in addition to per-request statistics, disable with `--no-task-stats`
  - rename `stats` and `statistics` to `metrics` for consistency and clarity
+    o `--no-stats` became `--no-metrics`
+    o `--no-reset-stats` became `--no-reset-metrics`
+    o `--no-task-stats` became `--no-task-metrics`
+    o `--stats-log-file` became `--metrics-log-file`
+    o `--stats-log-format` became `--metrics-log-format`
+
 
 ## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`
