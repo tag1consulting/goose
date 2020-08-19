@@ -15,11 +15,11 @@ pub enum GooseMetric {
     Task(GooseRawTask),
 }
 
-/// Goose optionally tracks statistics about requests made during a load test.
-pub type GooseRequestStats = HashMap<String, GooseRequest>;
+/// Goose optionally tracks metrics about requests made during a load test.
+pub type GooseRequestMetrics = HashMap<String, GooseRequest>;
 
-/// Goose optionally tracks statistics about tasks run during a load test.
-pub type GooseTaskStats = Vec<Vec<GooseTaskStat>>;
+/// Goose optionally tracks metrics about tasks run during a load test.
+pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetric>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseRawTask {
@@ -64,7 +64,7 @@ impl GooseRawTask {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseTaskStat {
+pub struct GooseTaskMetric {
     /// An index into GooseAttack.task_sets, indicating which task set this is.
     pub taskset_index: usize,
     /// The task set name.
@@ -88,14 +88,14 @@ pub struct GooseTaskStat {
     /// Total number of times task has failed.
     pub fail_count: usize,
 }
-impl GooseTaskStat {
+impl GooseTaskMetric {
     pub fn new(
         taskset_index: usize,
         taskset_name: &str,
         task_index: usize,
         task_name: &str,
     ) -> Self {
-        GooseTaskStat {
+        GooseTaskMetric {
             taskset_index,
             taskset_name: taskset_name.to_string(),
             task_index,
@@ -161,22 +161,22 @@ impl GooseTaskStat {
     }
 }
 
-/// Statistics collected during a Goose load test.
+/// Metrics collected during a Goose load test.
 ///
 /// # Example
 /// ```rust,no_run
 /// use goose::prelude::*;
 ///
 /// fn main() -> Result<(), GooseError> {
-///     let goose_stats: GooseStats = GooseAttack::initialize()?
+///     let goose_metrics: GooseMetrics = GooseAttack::initialize()?
 ///         .register_taskset(taskset!("ExampleUsers")
 ///             .register_task(task!(example_task))
 ///         )
 ///         .execute()?;
 ///
-///     // It is now possible to do something with the statistics collected by Goose.
+///     // It is now possible to do something with the metrics collected by Goose.
 ///     // For now, we'll just pretty-print the entire object.
-///     println!("{:#?}", goose_stats);
+///     println!("{:#?}", goose_metrics);
 ///
 ///     Ok(())
 /// }
@@ -188,18 +188,18 @@ impl GooseTaskStat {
 /// }
 /// ```
 #[derive(Clone, Debug, Default)]
-pub struct GooseStats {
-    /// A hash of the load test, useful to verify if different statistics are from
+pub struct GooseMetrics {
+    /// A hash of the load test, useful to verify if different metrics are from
     /// the same load test.
     pub hash: u64,
     /// How many seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
     pub users: usize,
-    /// Goose request statistics.
-    pub requests: GooseRequestStats,
-    /// Goose task statistics.
-    pub tasks: GooseTaskStats,
+    /// Goose request metrics.
+    pub requests: GooseRequestMetrics,
+    /// Goose task metrics.
+    pub tasks: GooseTaskMetrics,
     /// Flag indicating whether or not to display percentile. Because we're deriving Default,
     /// this defaults to false.
     pub display_percentile: bool,
@@ -211,18 +211,18 @@ pub struct GooseStats {
     pub display_metrics: bool,
 }
 
-impl GooseStats {
-    pub fn initialize_task_stats(
+impl GooseMetrics {
+    pub fn initialize_task_metrics(
         &mut self,
         task_sets: &[GooseTaskSet],
         config: &GooseConfiguration,
     ) {
         self.tasks = Vec::new();
-        if !config.no_stats && !config.no_task_stats {
+        if !config.no_metrics && !config.no_task_metrics {
             for task_set in task_sets {
                 let mut task_vector = Vec::new();
                 for task in &task_set.tasks {
-                    task_vector.push(GooseTaskStat::new(
+                    task_vector.push(GooseTaskMetric::new(
                         task_set.task_sets_index,
                         &task_set.name,
                         task.tasks_index,
@@ -234,7 +234,7 @@ impl GooseStats {
         }
     }
 
-    /// Consumes and display all statistics from a completed load test.
+    /// Consumes and display all metrics from a completed load test.
     ///
     /// # Example
     /// ```rust,no_run
@@ -259,20 +259,20 @@ impl GooseStats {
     /// ```
     pub fn print(&self) {
         if self.display_metrics {
-            info!("printing statistics after {} seconds...", self.duration);
+            info!("printing metrics after {} seconds...", self.duration);
             print!("{}", self);
         }
     }
 
-    /// Consumes and displays statistics from a running load test.
+    /// Consumes and displays metrics from a running load test.
     pub fn print_running(&self) {
         if self.display_metrics {
             info!(
-                "printing running statistics after {} seconds...",
+                "printing running metrics after {} seconds...",
                 self.duration
             );
 
-            // Include a blank line after printing running statistics.
+            // Include a blank line after printing running metrics.
             println!("{}", self);
         }
     }
@@ -284,10 +284,10 @@ impl GooseStats {
             return Ok(());
         }
 
-        // Display stats from merged HashMap
+        // Display metrics from merged HashMap
         writeln!(
             fmt,
-            "\n=== PER REQUEST STATISTICS ===\n------------------------------------------------------------------------------ "
+            "\n=== PER REQUEST METRICS ===\n------------------------------------------------------------------------------ "
         )?;
         writeln!(
             fmt,
@@ -396,10 +396,10 @@ impl GooseStats {
             return Ok(());
         }
 
-        // Display stats from tasks Vector
+        // Display metrics from tasks Vector
         writeln!(
             fmt,
-            "\n=== PER TASK STATISTICS ===\n------------------------------------------------------------------------------ "
+            "\n=== PER TASK METRICS ===\n------------------------------------------------------------------------------ "
         )?;
         writeln!(
             fmt,
@@ -951,7 +951,7 @@ impl GooseStats {
     }
 }
 
-impl fmt::Display for GooseStats {
+impl fmt::Display for GooseMetrics {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         // Formats from zero to six tables of data, depending on what data is contained
         // and which contained flags are set.
@@ -980,7 +980,7 @@ fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (Strin
 
 /// A helper function that merges together times.
 ///
-/// Used in `lib.rs` to merge together per-thread times, and in `stats.rs` to
+/// Used in `lib.rs` to merge together per-thread times, and in `metrics.rs` to
 /// aggregate all times.
 pub fn merge_times(
     mut global_response_times: BTreeMap<usize, usize>,

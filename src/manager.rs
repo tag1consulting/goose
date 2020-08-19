@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::{thread, time};
 
 use crate::goose::GooseRequest;
-use crate::stats::{self, GooseRequestStats, GooseTaskStat, GooseTaskStats};
+use crate::metrics::{self, GooseRequestMetrics, GooseTaskMetric, GooseTaskMetrics};
 use crate::util;
-use crate::worker::GooseMetrics;
+use crate::worker::GaggleMetrics;
 use crate::{GooseAttack, GooseConfiguration, GooseUserCommand};
 
 /// How long the manager will wait for all workers to stop after the load test ends.
@@ -66,23 +66,23 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-/// Merge per-user task statistics from user thread into global parent statistics
+/// Merge per-user task metrics from user thread into global parent metrics
 fn merge_tasks_from_worker(
-    parent_task: &GooseTaskStat,
-    user_task: &GooseTaskStat,
-) -> GooseTaskStat {
+    parent_task: &GooseTaskMetric,
+    user_task: &GooseTaskMetric,
+) -> GooseTaskMetric {
     // Make a mutable copy where we can merge things
     let mut merged_task = parent_task.clone();
     // Iterate over user times, and merge into global time
-    merged_task.times = stats::merge_times(merged_task.times, user_task.times.clone());
+    merged_task.times = metrics::merge_times(merged_task.times, user_task.times.clone());
     // Increment total task time counter.
     merged_task.total_time += &user_task.total_time;
     // Increment count of how many task counters we've seen.
     merged_task.counter += &user_task.counter;
     // If user had new fastest task time, update global fastest task time.
-    merged_task.min_time = stats::update_min_time(merged_task.min_time, user_task.min_time);
+    merged_task.min_time = metrics::update_min_time(merged_task.min_time, user_task.min_time);
     // If user had new slowest task time, update global slowest task time.
-    merged_task.max_time = stats::update_max_time(merged_task.max_time, user_task.max_time);
+    merged_task.max_time = metrics::update_max_time(merged_task.max_time, user_task.max_time);
     // Increment total success counter.
     merged_task.success_count += &user_task.success_count;
     // Increment total fail counter.
@@ -90,7 +90,7 @@ fn merge_tasks_from_worker(
     merged_task
 }
 
-/// Merge per-user request statistics from user thread into global parent statistics
+/// Merge per-user request metrics from user thread into global parent metrics
 fn merge_requests_from_worker(
     parent_request: &GooseRequest,
     user_request: &GooseRequest,
@@ -99,7 +99,7 @@ fn merge_requests_from_worker(
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
     // Iterate over user response times, and merge into global response time
-    merged_request.response_times = stats::merge_times(
+    merged_request.response_times = metrics::merge_times(
         merged_request.response_times,
         user_request.response_times.clone(),
     );
@@ -108,12 +108,12 @@ fn merge_requests_from_worker(
     // Increment count of how many response counters we've seen.
     merged_request.response_time_counter += &user_request.response_time_counter;
     // If user had new fastest response time, update global fastest response time.
-    merged_request.min_response_time = stats::update_min_time(
+    merged_request.min_response_time = metrics::update_min_time(
         merged_request.min_response_time,
         user_request.min_response_time,
     );
     // If user had new slowest response time, update global slowest resposne time.
-    merged_request.max_response_time = stats::update_max_time(
+    merged_request.max_response_time = metrics::update_max_time(
         merged_request.max_response_time,
         user_request.max_response_time,
     );
@@ -172,13 +172,13 @@ fn send_message_to_worker(server: &Socket, message: Message) -> bool {
 }
 
 /// Helper to merge in request metrics from Worker.
-fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestStats) {
+fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestMetrics) {
     if !requests.is_empty() {
-        debug!("requests statistics received: {:?}", requests.len());
+        debug!("requests metrics received: {:?}", requests.len());
         for (request_key, request) in requests {
             trace!("request_key: {}", request_key);
             let merged_request;
-            if let Some(parent_request) = goose_attack.stats.requests.get(&request_key) {
+            if let Some(parent_request) = goose_attack.metrics.requests.get(&request_key) {
                 merged_request = merge_requests_from_worker(
                     parent_request,
                     &request,
@@ -189,7 +189,7 @@ fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestS
                 merged_request = request.clone();
             }
             goose_attack
-                .stats
+                .metrics
                 .requests
                 .insert(request_key.to_string(), merged_request);
         }
@@ -197,14 +197,14 @@ fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestS
 }
 
 /// Helper to merge in task metrics from Worker.
-fn merge_task_metrics(goose_attack: &mut GooseAttack, tasks: GooseTaskStats) {
+fn merge_task_metrics(goose_attack: &mut GooseAttack, tasks: GooseTaskMetrics) {
     for task_set in tasks {
         for task in task_set {
             let merged_task = merge_tasks_from_worker(
-                &goose_attack.stats.tasks[task.taskset_index][task.task_index],
+                &goose_attack.metrics.tasks[task.taskset_index][task.task_index],
                 &task,
             );
-            goose_attack.stats.tasks[task.taskset_index][task.task_index] = merged_task;
+            goose_attack.metrics.tasks[task.taskset_index][task.task_index] = merged_task;
         }
     }
 }
@@ -251,19 +251,19 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     // Track start time, we'll reset this when the test actually starts.
     let mut started = time::Instant::now();
-    let mut running_statistics_timer = time::Instant::now();
+    let mut running_metrics_timer = time::Instant::now();
     let mut exit_timer = time::Instant::now();
     let mut load_test_running = false;
     let mut load_test_finished = false;
 
-    // Catch ctrl-c to allow clean shutdown to display statistics.
+    // Catch ctrl-c to allow clean shutdown to display metrics.
     let canceled = Arc::new(AtomicBool::new(false));
     util::setup_ctrlc_handler(&canceled);
 
-    // Initialize the optional task statistics.
+    // Initialize the optional task metrics.
     goose_attack
-        .stats
-        .initialize_task_stats(&goose_attack.task_sets, &goose_attack.configuration);
+        .metrics
+        .initialize_task_metrics(&goose_attack.task_sets, &goose_attack.configuration);
 
     // Worker control loop.
     loop {
@@ -305,15 +305,15 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 break;
             }
 
-            // When displaying running statistics, sync data from user threads first.
+            // When displaying running metrics, sync data from user threads first.
             if !goose_attack.configuration.only_summary
-                && util::timer_expired(running_statistics_timer, crate::RUNNING_STATS_EVERY)
+                && util::timer_expired(running_metrics_timer, crate::RUNNING_METRICS_EVERY)
             {
-                // Reset timer each time we display statistics.
-                running_statistics_timer = time::Instant::now();
-                goose_attack.stats.duration =
+                // Reset timer each time we display metrics.
+                running_metrics_timer = time::Instant::now();
+                goose_attack.metrics.duration =
                     goose_attack.started.unwrap().elapsed().as_secs() as usize;
-                goose_attack.stats.print_running();
+                goose_attack.metrics.print_running();
             }
         } else if canceled.load(Ordering::SeqCst) {
             info!("load test canceled, exiting");
@@ -327,7 +327,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 let pipe = msg.pipe().expect("fatal error getting worker pipe");
 
                 // Workers always send a vector of GooseMetric objects.
-                let mut gaggle_metrics: Vec<GooseMetrics> =
+                let mut gaggle_metrics: Vec<GaggleMetrics> =
                     serde_cbor::from_reader(msg.as_slice()).unwrap();
 
                 // Check if we're seeing this worker for the first time.
@@ -344,7 +344,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // We need another worker, accept the connection.
                     else {
                         // New worker has to send us a single
-                        // GooseMetrics::WorkerInit object or it's invalid.
+                        // GaggleMetrics::WorkerInit object or it's invalid.
                         if gaggle_metrics.len() != 1 {
                             // Invalid message, tell worker to EXIT.
                             if !tell_worker_to_exit(&server) {
@@ -355,8 +355,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         }
 
                         let goose_metric = gaggle_metrics.pop().unwrap();
-                        if let GooseMetrics::WorkerInit(load_test_hash) = goose_metric {
-                            if load_test_hash != goose_attack.stats.hash {
+                        if let GaggleMetrics::WorkerInit(load_test_hash) = goose_metric {
+                            if load_test_hash != goose_attack.metrics.hash {
                                 if goose_attack.configuration.no_hash_check {
                                     warn!("worker is running a different load test, ignoring")
                                 } else {
@@ -425,7 +425,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             info!("gaggle distributed load test started");
                             // Reset start time, the distributed load test is truly starting now.
                             started = time::Instant::now();
-                            running_statistics_timer = time::Instant::now();
+                            running_metrics_timer = time::Instant::now();
                             load_test_running = true;
                         }
                     }
@@ -452,15 +452,15 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     for metric in gaggle_metrics {
                         match metric {
                             // Merge in request metrics from Worker.
-                            GooseMetrics::Requests(requests) => {
+                            GaggleMetrics::Requests(requests) => {
                                 merge_request_metrics(&mut goose_attack, requests)
                             }
                             // Merge in task metrics from Worker.
-                            GooseMetrics::Tasks(tasks) => {
+                            GaggleMetrics::Tasks(tasks) => {
                                 merge_task_metrics(&mut goose_attack, tasks)
                             }
                             // Ignore Worker heartbeats.
-                            GooseMetrics::WorkerInit(_) => (),
+                            GaggleMetrics::WorkerInit(_) => (),
                         }
                     }
 

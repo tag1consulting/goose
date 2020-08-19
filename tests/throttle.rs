@@ -7,7 +7,7 @@ use goose::prelude::*;
 
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
-const STATS_LOG_FILE: &str = "throttle-stats.log";
+const METRICS_LOG_FILE: &str = "throttle-metrics.log";
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -42,8 +42,8 @@ fn test_throttle() {
 
     let mut config = common::build_configuration(&server);
     // Record all requests so we can confirm throttle is working.
-    config.stats_log_file = STATS_LOG_FILE.to_string();
-    config.no_stats = false;
+    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.no_metrics = false;
     // Enable the throttle.
     config.throttle_requests = Some(throttle_requests);
     config.users = Some(users);
@@ -51,7 +51,7 @@ fn test_throttle() {
     config.hatch_rate = users;
     // Run for a few seconds to be sure throttle really works.
     config.run_time = run_time.to_string();
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -67,8 +67,8 @@ fn test_throttle() {
     assert!(about.times_called() > 0);
 
     let test1_lines: usize;
-    if let Ok(stats_log) = std::fs::File::open(std::path::Path::new(STATS_LOG_FILE)) {
-        test1_lines = io::BufReader::new(stats_log).lines().count();
+    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_LOG_FILE)) {
+        test1_lines = io::BufReader::new(metrics_log).lines().count();
     } else {
         test1_lines = 0;
     }
@@ -77,7 +77,7 @@ fn test_throttle() {
     assert!(test1_lines <= (run_time + 1) * throttle_requests);
 
     // Cleanup log file.
-    std::fs::remove_file(STATS_LOG_FILE).expect("failed to delete stats log file");
+    std::fs::remove_file(METRICS_LOG_FILE).expect("failed to delete metrics log file");
 
     // Increase the throttle and run a second load test, so we can compare the difference
     // and confirm the throttle is actually working.
@@ -85,15 +85,15 @@ fn test_throttle() {
 
     let mut config = common::build_configuration(&server);
     // Record all requests so we can confirm throttle is working.
-    config.stats_log_file = STATS_LOG_FILE.to_string();
-    config.no_stats = false;
+    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.no_metrics = false;
     // Enable the throttle.
     config.throttle_requests = Some(throttle_requests);
     config.users = Some(users);
     // Start all users in half a second.
     config.hatch_rate = users;
     config.run_time = run_time.to_string();
-    let _goose_stats = crate::GooseAttack::initialize_with_config(config)
+    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -109,8 +109,8 @@ fn test_throttle() {
     assert!(about.times_called() > 0);
 
     let lines: usize;
-    if let Ok(stats_log) = std::fs::File::open(std::path::Path::new(STATS_LOG_FILE)) {
-        lines = io::BufReader::new(stats_log).lines().count();
+    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_LOG_FILE)) {
+        lines = io::BufReader::new(metrics_log).lines().count();
     } else {
         lines = 0;
     }
@@ -123,5 +123,5 @@ fn test_throttle() {
     assert!(lines < test1_lines * 6);
 
     // Cleanup log file.
-    std::fs::remove_file(STATS_LOG_FILE).expect("failed to delete stats log file");
+    std::fs::remove_file(METRICS_LOG_FILE).expect("failed to delete metrics log file");
 }

@@ -37,13 +37,13 @@ fn test_single_taskset() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.no_stats = false;
+    config.no_metrics = false;
     // Start users in .5 seconds.
     config.users = Some(2);
     config.hatch_rate = 4;
     config.status_codes = true;
-    config.no_reset_stats = true;
-    let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
+    config.no_reset_metrics = true;
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
         .register_taskset(
@@ -63,34 +63,34 @@ fn test_single_taskset() {
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 
-    let index_stats = goose_stats
+    let index_metrics = goose_metrics
         .requests
         .get(&format!("GET {}", INDEX_PATH))
         .unwrap();
-    let about_stats = goose_stats
+    let about_metrics = goose_metrics
         .requests
         .get(&format!("GET {}", ABOUT_PATH))
         .unwrap();
 
     // Confirm that the path and method are correct in the statistics.
-    assert!(index_stats.path == INDEX_PATH);
-    assert!(index_stats.method == GooseMethod::GET);
-    assert!(about_stats.path == ABOUT_PATH);
-    assert!(about_stats.method == GooseMethod::GET);
+    assert!(index_metrics.path == INDEX_PATH);
+    assert!(index_metrics.method == GooseMethod::GET);
+    assert!(about_metrics.path == ABOUT_PATH);
+    assert!(about_metrics.method == GooseMethod::GET);
 
     // Confirm that Goose and the server saw the same number of page loads.
     let status_code: u16 = 200;
-    assert!(index_stats.response_time_counter == index.times_called());
-    assert!(index_stats.status_code_counts[&status_code] == index.times_called());
-    assert!(index_stats.success_count == index.times_called());
-    assert!(index_stats.fail_count == 0);
-    assert!(about_stats.response_time_counter == about.times_called());
-    assert!(about_stats.status_code_counts[&status_code] == about.times_called());
-    assert!(about_stats.success_count == about.times_called());
-    assert!(about_stats.fail_count == 0);
+    assert!(index_metrics.response_time_counter == index.times_called());
+    assert!(index_metrics.status_code_counts[&status_code] == index.times_called());
+    assert!(index_metrics.success_count == index.times_called());
+    assert!(index_metrics.fail_count == 0);
+    assert!(about_metrics.response_time_counter == about.times_called());
+    assert!(about_metrics.status_code_counts[&status_code] == about.times_called());
+    assert!(about_metrics.success_count == about.times_called());
+    assert!(about_metrics.fail_count == 0);
 
     // Verify that Goose started the correct number of users.
-    assert!(goose_stats.users == config.users.unwrap());
+    assert!(goose_metrics.users == config.users.unwrap());
 }
 
 #[test]
@@ -115,9 +115,9 @@ fn test_single_taskset_empty_config_host() {
     // Leaves an empty string in config.host.
     let host = std::mem::take(&mut config.host);
     // Enable statistics to confirm Goose and web server agree.
-    config.no_stats = false;
-    config.no_reset_stats = true;
-    let goose_stats = crate::GooseAttack::initialize_with_config(config)
+    config.no_metrics = false;
+    config.no_reset_metrics = true;
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
         .register_taskset(
@@ -140,7 +140,7 @@ fn test_single_taskset_empty_config_host() {
 
     // Confirm that Goose and the server saw the same number of page loads.
     assert!(
-        goose_stats
+        goose_metrics
             .requests
             .get(&format!("GET {}", INDEX_PATH))
             .unwrap()
@@ -148,7 +148,7 @@ fn test_single_taskset_empty_config_host() {
             == index.times_called()
     );
     assert!(
-        goose_stats
+        goose_metrics
             .requests
             .get(&format!("GET {}", ABOUT_PATH))
             .unwrap()
@@ -188,12 +188,12 @@ fn test_single_taskset_closure() {
 
     // Build configuration.
     let mut config = common::build_configuration(&server);
-    config.no_stats = false;
+    config.no_metrics = false;
     // Start users in .5 seconds.
     config.users = Some(test_endpoints.len());
     config.hatch_rate = 2 * test_endpoints.len();
     config.status_codes = true;
-    config.no_reset_stats = true;
+    config.no_reset_metrics = true;
 
     // Setup mock endpoints.
     let mut mock_endpoints = Vec::with_capacity(test_endpoints.len());
@@ -233,7 +233,7 @@ fn test_single_taskset_closure() {
     }
 
     // Run the loadtest.
-    let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
         .register_taskset(taskset)
@@ -253,35 +253,38 @@ fn test_single_taskset_closure() {
             mock_endpoint.times_called() > 0,
             format_item("Endpoint was not called > 0", &item)
         );
-        let expect_error = format_item("Item does not exist in goose_stats", &item);
-        let endpoint_stats = goose_stats
+        let expect_error = format_item("Item does not exist in goose_metrics", &item);
+        let endpoint_metrics = goose_metrics
             .requests
             .get(&format!("GET {}", item.path))
             .expect(&expect_error);
 
         assert!(
-            endpoint_stats.path == item.path,
-            format_item(&format!("{} != {}", endpoint_stats.path, item.path), &item)
+            endpoint_metrics.path == item.path,
+            format_item(
+                &format!("{} != {}", endpoint_metrics.path, item.path),
+                &item
+            )
         );
-        assert!(endpoint_stats.method == GooseMethod::GET);
+        assert!(endpoint_metrics.method == GooseMethod::GET);
 
         // Confirm that Goose and the server saw the same number of page loads.
         let status_code: u16 = item.status_code;
 
         assert!(
-            endpoint_stats.response_time_counter == mock_endpoint.times_called(),
+            endpoint_metrics.response_time_counter == mock_endpoint.times_called(),
             format_item("response_time_counter != times_called()", &item)
         );
         assert!(
-            endpoint_stats.status_code_counts[&status_code] == mock_endpoint.times_called(),
+            endpoint_metrics.status_code_counts[&status_code] == mock_endpoint.times_called(),
             format_item("status_code_counts != times_called()", &item)
         );
         assert!(
-            endpoint_stats.success_count == mock_endpoint.times_called(),
+            endpoint_metrics.success_count == mock_endpoint.times_called(),
             format_item("success_count != times_called()", &item)
         );
         assert!(
-            endpoint_stats.fail_count == 0,
+            endpoint_metrics.fail_count == 0,
             format_item("fail_count != 0", &item)
         );
     }
@@ -296,13 +299,13 @@ fn test_single_taskset_closure() {
     assert!(difference >= -2 && difference <= 2);
 
     // Verify that Goose started the correct number of users.
-    assert!(goose_stats.users == config.users.unwrap());
+    assert!(goose_metrics.users == config.users.unwrap());
 }
 
 #[test]
 // Load test with a single task set containing two weighted tasks. Validate
-// weighting and statistics after resetting stats.
-fn test_single_taskset_reset_stats() {
+// weighting and statistics after resetting metrics.
+fn test_single_taskset_reset_metrics() {
     let server = MockServer::start();
 
     let index = Mock::new()
@@ -317,12 +320,12 @@ fn test_single_taskset_reset_stats() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.no_stats = false;
+    config.no_metrics = false;
     // Start users in .5 seconds.
     config.users = Some(2);
     config.hatch_rate = 4;
     config.status_codes = true;
-    let goose_stats = crate::GooseAttack::initialize_with_config(config.clone())
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
         .setup()
         .unwrap()
         .register_taskset(
@@ -342,33 +345,33 @@ fn test_single_taskset_reset_stats() {
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 
-    let index_stats = goose_stats
+    let index_metrics = goose_metrics
         .requests
         .get(&format!("GET {}", INDEX_PATH))
         .unwrap();
-    let about_stats = goose_stats
+    let about_metrics = goose_metrics
         .requests
         .get(&format!("GET {}", ABOUT_PATH))
         .unwrap();
 
     // Confirm that the path and method are correct in the statistics.
-    assert!(index_stats.path == INDEX_PATH);
-    assert!(index_stats.method == GooseMethod::GET);
-    assert!(about_stats.path == ABOUT_PATH);
-    assert!(about_stats.method == GooseMethod::GET);
+    assert!(index_metrics.path == INDEX_PATH);
+    assert!(index_metrics.method == GooseMethod::GET);
+    assert!(about_metrics.path == ABOUT_PATH);
+    assert!(about_metrics.method == GooseMethod::GET);
 
     // Confirm that Goose saw fewer page loads than the server, as the statistics
     // were reset after .5 seconds.
     let status_code: u16 = 200;
-    assert!(index_stats.response_time_counter < index.times_called());
-    assert!(index_stats.status_code_counts[&status_code] < index.times_called());
-    assert!(index_stats.success_count < index.times_called());
-    assert!(index_stats.fail_count == 0);
-    assert!(about_stats.response_time_counter < about.times_called());
-    assert!(about_stats.status_code_counts[&status_code] < about.times_called());
-    assert!(about_stats.success_count < about.times_called());
-    assert!(about_stats.fail_count == 0);
+    assert!(index_metrics.response_time_counter < index.times_called());
+    assert!(index_metrics.status_code_counts[&status_code] < index.times_called());
+    assert!(index_metrics.success_count < index.times_called());
+    assert!(index_metrics.fail_count == 0);
+    assert!(about_metrics.response_time_counter < about.times_called());
+    assert!(about_metrics.status_code_counts[&status_code] < about.times_called());
+    assert!(about_metrics.success_count < about.times_called());
+    assert!(about_metrics.fail_count == 0);
 
     // Verify that Goose started the correct number of users.
-    assert!(goose_stats.users == config.users.unwrap());
+    assert!(goose_metrics.users == config.users.unwrap());
 }

@@ -13,7 +13,7 @@ pub async fn logger_main(
     configuration: GooseConfiguration,
     mut log_receiver: mpsc::UnboundedReceiver<Option<GooseDebug>>,
 ) {
-    // Prepare an asynchronous buffered file writer for stats_log_file (if enabled).
+    // Prepare an asynchronous buffered file writer for metrics_log_file (if enabled).
     let mut debug_log_file = None;
     if !configuration.debug_log_file.is_empty() {
         debug_log_file = match File::create(&configuration.debug_log_file).await {
