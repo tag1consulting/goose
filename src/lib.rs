@@ -41,8 +41,7 @@
 //!
 //! ```rust
 //! use goose::goose::{
-//!     GooseMethod, GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet,
-//!     GooseUser,
+//!     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
 //! };
 //! use goose::metrics::GooseMetrics;
 //! use goose::{task, taskset, GooseAttack, GooseError};
