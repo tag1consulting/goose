@@ -20,6 +20,7 @@
  - replace `structopt` with `gumdrop`
     o restructured help page to logically group related options
     o rewrote/simplified configuration descriptions to fit standard console width
+ - update prelude documentation
 
 ## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`
