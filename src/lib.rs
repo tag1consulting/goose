@@ -1968,7 +1968,7 @@ pub struct GooseConfiguration {
     pub no_hash_check: bool,
 
     /// Gaggle: tells manager how many workers to expect
-    #[structopt(long, required_if("manager", "true"))]
+    #[structopt(long, required = false, default_value = "0")]
     pub expect_workers: u16,
 
     /// Gaggle: sets host manager listens on, formatted x.x.x.x
