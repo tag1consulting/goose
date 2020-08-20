@@ -44,7 +44,7 @@
 //!     GooseMethod, GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet,
 //!     GooseUser,
 //! };
-//! use goose::metrics::{GooseMetrics, GooseRequestMetrics};
+//! use goose::metrics::GooseMetrics;
 //! use goose::{task, taskset, GooseAttack, GooseError};
 //! ```
 //!
@@ -308,7 +308,7 @@ pub mod goose;
 pub mod logger;
 #[cfg(feature = "gaggle")]
 mod manager;
-mod metrics;
+pub mod metrics;
 pub mod prelude;
 mod throttle;
 mod user;
