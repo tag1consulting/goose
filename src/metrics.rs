@@ -972,8 +972,28 @@ fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (Strin
         requests_per_second = 0.to_formatted_string(&Locale::en);
         fails_per_second = 0.to_formatted_string(&Locale::en);
     } else {
-        requests_per_second = (total / duration).to_formatted_string(&Locale::en);
-        fails_per_second = (fail / duration).to_formatted_string(&Locale::en);
+        // Adjust the precision depending on how large the number is.
+        let rps = total / duration;
+        if rps < 1000 && rps >= 100 {
+            requests_per_second = format!("{:.1}", total as f64 / duration as f64);
+        } else if rps < 100 && rps >= 10 {
+            requests_per_second = format!("{:.2}", total as f64 / duration as f64);
+        } else if rps < 10 {
+            requests_per_second = format!("{:.3}", total as f64 / duration as f64);
+        } else {
+            requests_per_second = (rps).to_formatted_string(&Locale::en);
+        }
+
+        let fps = fail / duration;
+        if fps < 1000 && rps >= 100 {
+            fails_per_second = format!("{:.1}", fail as f64 / duration as f64);
+        } else if fps < 100 && fps > 10 {
+            fails_per_second = format!("{:.2}", fail as f64 / duration as f64);
+        } else if fps < 10 {
+            fails_per_second = format!("{:.3}", fail as f64 / duration as f64);
+        } else {
+            fails_per_second = (fps).to_formatted_string(&Locale::en);
+        }
     }
     (requests_per_second, fails_per_second)
 }
@@ -1169,7 +1189,7 @@ mod test {
         duration = 10;
         let (requests_per_second, fails_per_second) =
             per_second_calculations(duration, total, fail);
-        assert!(requests_per_second == "10");
-        assert!(fails_per_second == "1");
+        assert!(requests_per_second == "10.00");
+        assert!(fails_per_second == "1.000");
     }
 }
