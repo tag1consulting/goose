@@ -972,30 +972,33 @@ fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (Strin
         requests_per_second = 0.to_formatted_string(&Locale::en);
         fails_per_second = 0.to_formatted_string(&Locale::en);
     } else {
-        // Adjust the precision depending on how large the number is.
-        let rps = total / duration;
-        if rps < 1000 && rps >= 100 {
-            requests_per_second = format!("{:.1}", total as f64 / duration as f64);
-        } else if rps < 100 && rps >= 10 {
-            requests_per_second = format!("{:.2}", total as f64 / duration as f64);
-        } else if rps < 10 {
-            requests_per_second = format!("{:.3}", total as f64 / duration as f64);
-        } else {
-            requests_per_second = (rps).to_formatted_string(&Locale::en);
-        }
-
-        let fps = fail / duration;
-        if fps < 1000 && rps >= 100 {
-            fails_per_second = format!("{:.1}", fail as f64 / duration as f64);
-        } else if fps < 100 && fps > 10 {
-            fails_per_second = format!("{:.2}", fail as f64 / duration as f64);
-        } else if fps < 10 {
-            fails_per_second = format!("{:.3}", fail as f64 / duration as f64);
-        } else {
-            fails_per_second = (fps).to_formatted_string(&Locale::en);
-        }
+        requests_per_second = division_with_adjusted_precision(total, duration);
+        fails_per_second = division_with_adjusted_precision(fail, duration);
     }
     (requests_per_second, fails_per_second)
+}
+
+// A helper function that divides two non-zero usize numbers, adjusting precision
+// depending on how large the result is.
+fn division_with_adjusted_precision(top: usize, bottom: usize) -> String {
+    let result = top / bottom;
+    // Result is 99.9 - 999.9.
+    if result < 1000 && result > 100 {
+        format!("{:.1}", top as f64 / bottom as f64)
+    }
+    // Result is 10.00 - 99.99.
+    else if result < 100 && result > 10 {
+        format!("{:.2}", top as f64 / bottom as f64)
+    }
+    // Result is 0.000 - 9.999.
+    else if result < 10 {
+        format!("{:.3}", top as f64 / bottom as f64)
+    }
+    // Result is >1,000.
+    else {
+        // Format large number in locale appropriate style.
+        (result).to_formatted_string(&Locale::en)
+    }
 }
 
 /// A helper function that merges together times.
