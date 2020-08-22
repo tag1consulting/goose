@@ -584,13 +584,13 @@ impl GooseMetrics {
                 aggregate_max_task_time = update_max_time(aggregate_max_task_time, task.max_time);
 
                 let average = match task.counter {
-                    0 => 0,
-                    _ => task.total_time / task.counter,
+                    0 => "0".to_string(),
+                    _ => division_with_adjusted_precision(task.total_time, task.counter),
                 };
 
                 writeln!(
                     fmt,
-                    " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                    " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
                     util::truncate_string(
                         &format!("  {}: {}", task.task_index + 1, task.task_name),
                         23
@@ -612,9 +612,12 @@ impl GooseMetrics {
             }
             writeln!(
                 fmt,
-                " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
                 "Aggregated",
-                aggregate_total_task_time / aggregate_task_time_counter,
+                division_with_adjusted_precision(
+                    aggregate_total_task_time,
+                    aggregate_task_time_counter
+                ),
                 aggregate_min_task_time,
                 aggregate_max_task_time,
                 util::median(
@@ -675,9 +678,12 @@ impl GooseMetrics {
 
             writeln!(
                 fmt,
-                " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
                 util::truncate_string(&request_key, 23),
-                request.total_response_time / request.response_time_counter,
+                division_with_adjusted_precision(
+                    request.total_response_time,
+                    request.response_time_counter
+                ),
                 request.min_response_time,
                 request.max_response_time,
                 util::median(
@@ -698,9 +704,12 @@ impl GooseMetrics {
             }
             writeln!(
                 fmt,
-                " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
                 "Aggregated",
-                aggregate_total_response_time / aggregate_response_time_counter,
+                division_with_adjusted_precision(
+                    aggregate_total_response_time,
+                    aggregate_response_time_counter
+                ),
                 aggregate_min_response_time,
                 aggregate_max_response_time,
                 util::median(
@@ -982,12 +991,12 @@ fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (Strin
 // depending on how large the result is.
 fn division_with_adjusted_precision(top: usize, bottom: usize) -> String {
     let result = top / bottom;
-    // Result is 99.9 - 999.9.
-    if result < 1000 && result > 100 {
+    // Result is 100.0 - 999.9.
+    if result < 1000 && result >= 100 {
         format!("{:.1}", top as f64 / bottom as f64)
     }
     // Result is 10.00 - 99.99.
-    else if result < 100 && result > 10 {
+    else if result < 100 && result >= 10 {
         format!("{:.2}", top as f64 / bottom as f64)
     }
     // Result is 0.000 - 9.999.
