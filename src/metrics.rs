@@ -1183,4 +1183,14 @@ mod test {
         assert!(requests_per_second == "10.00");
         assert!(fails_per_second == "1.000");
     }
+
+    #[test]
+    fn division_precision() {
+        assert!(division_with_adjusted_precision(1, 3) == "0.333");
+        assert!(division_with_adjusted_precision(10, 3) == "3.333");
+        assert!(division_with_adjusted_precision(100, 3) == "33.33");
+        assert!(division_with_adjusted_precision(1000, 3) == "333.3");
+        // @TODO: will this fail in a different locale?
+        assert!(division_with_adjusted_precision(10000, 3) == "3,333");
+    }
 }
