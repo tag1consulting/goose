@@ -590,15 +590,20 @@ impl GooseMetrics {
 
                 writeln!(
                     fmt,
-                    " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
+                    " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
                     util::truncate_string(
                         &format!("  {}: {}", task.task_index + 1, task.task_name),
                         23
                     ),
                     average,
-                    task.min_time,
-                    task.max_time,
-                    util::median(&task.times, task.counter, task.min_time, task.max_time),
+                    format_number(task.min_time),
+                    format_number(task.max_time),
+                    format_number(util::median(
+                        &task.times,
+                        task.counter,
+                        task.min_time,
+                        task.max_time
+                    )),
                 )?;
             }
         }
@@ -612,20 +617,20 @@ impl GooseMetrics {
             }
             writeln!(
                 fmt,
-                " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
                 "Aggregated",
                 division_with_adjusted_precision(
                     aggregate_total_task_time,
                     aggregate_task_time_counter
                 ),
-                aggregate_min_task_time,
-                aggregate_max_task_time,
-                util::median(
+                format_number(aggregate_min_task_time),
+                format_number(aggregate_max_task_time),
+                format_number(util::median(
                     &aggregate_task_times,
                     aggregate_task_time_counter,
                     aggregate_min_task_time,
                     aggregate_max_task_time
-                ),
+                )),
             )?;
         }
 
@@ -678,20 +683,20 @@ impl GooseMetrics {
 
             writeln!(
                 fmt,
-                " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
                 util::truncate_string(&request_key, 23),
                 division_with_adjusted_precision(
                     request.total_response_time,
                     request.response_time_counter
                 ),
-                request.min_response_time,
-                request.max_response_time,
-                util::median(
+                format_number(request.min_response_time),
+                format_number(request.max_response_time),
+                format_number(util::median(
                     &request.response_times,
                     request.response_time_counter,
                     request.min_response_time,
                     request.max_response_time
-                ),
+                )),
             )?;
         }
         if self.requests.len() > 1 {
@@ -704,27 +709,27 @@ impl GooseMetrics {
             }
             writeln!(
                 fmt,
-                " {:<23} | {:<10} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
                 "Aggregated",
                 division_with_adjusted_precision(
                     aggregate_total_response_time,
                     aggregate_response_time_counter
                 ),
-                aggregate_min_response_time,
-                aggregate_max_response_time,
-                util::median(
+                format_number(aggregate_min_response_time),
+                format_number(aggregate_max_response_time),
+                format_number(util::median(
                     &aggregate_response_times,
                     aggregate_response_time_counter,
                     aggregate_min_response_time,
                     aggregate_max_response_time
-                ),
+                )),
             )?;
         }
 
         Ok(())
     }
 
-    // Optionallyl prepares a table of slowest response times within several percentiles.
+    // Optionally prepares a table of slowest response times within several percentiles.
     pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_percentile {
@@ -778,7 +783,7 @@ impl GooseMetrics {
             // Sort response times so we can calculate a mean.
             writeln!(
                 fmt,
-                " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+                " {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}",
                 util::truncate_string(&request_key, 23),
                 calculate_response_time_percentile(
                     &request.response_times,
@@ -831,7 +836,7 @@ impl GooseMetrics {
             )?;
             writeln!(
                 fmt,
-                " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+                " {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}",
                 "Aggregated",
                 calculate_response_time_percentile(
                     &aggregate_response_times,
@@ -1005,9 +1010,13 @@ fn division_with_adjusted_precision(top: usize, bottom: usize) -> String {
     }
     // Result is >1,000.
     else {
-        // Format large number in locale appropriate style.
-        (result).to_formatted_string(&Locale::en)
+        format_number(result)
     }
+}
+
+// Format large number in locale appropriate style.
+fn format_number(number: usize) -> String {
+    (number).to_formatted_string(&Locale::en)
 }
 
 /// A helper function that merges together times.
@@ -1054,7 +1063,7 @@ fn calculate_response_time_percentile(
     min: usize,
     max: usize,
     percent: f32,
-) -> usize {
+) -> String {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!(
         "percentile: {}, request {} of total {}",
@@ -1067,15 +1076,15 @@ fn calculate_response_time_percentile(
         total_count += counter;
         if total_count >= percentile_request {
             if *value < min {
-                return min;
+                return format_number(min);
             } else if *value > max {
-                return max;
+                return format_number(max);
             } else {
-                return *value;
+                return format_number(*value);
             }
         }
     }
-    0
+    format_number(0)
 }
 
 #[cfg(test)]
@@ -1123,42 +1132,21 @@ mod test {
         response_times.insert(2, 1);
         response_times.insert(3, 1);
         // 3 * .5 = 1.5, rounds to 2.
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5) == "2");
         response_times.insert(3, 2);
         // 4 * .5 = 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5) == "2");
         // 4 * .25 = 1
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25),
-            1
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25) == "1");
         // 4 * .75 = 3
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75),
-            3
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75) == "3");
         // 4 * 1 = 4 (and the 4th response time is also 3)
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0),
-            3
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0) == "3");
 
         // 4 * .5 = 2, but uses specified minimum of 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25) == "2");
         // 4 * .75 = 3, but uses specified maximum of 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75) == "2");
 
         response_times.insert(10, 25);
         response_times.insert(20, 25);
@@ -1166,18 +1154,9 @@ mod test {
         response_times.insert(50, 25);
         response_times.insert(100, 10);
         response_times.insert(200, 1);
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9),
-            50
-        );
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99),
-            100
-        );
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999),
-            200
-        );
+        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9) == "50");
+        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99) == "100");
+        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999) == "200");
     }
 
     #[test]
