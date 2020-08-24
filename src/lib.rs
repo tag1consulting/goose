@@ -524,9 +524,9 @@ impl GooseAttack {
     /// # Example
     /// ```rust,no_run
     ///     use goose::{GooseAttack, GooseConfiguration};
-    ///     use structopt::StructOpt;
+    ///     use gumdrop::Options;
     ///
-    ///     let configuration = GooseConfiguration::from_args();
+    ///     let configuration = GooseConfiguration::parse_args_default_or_exit();
     ///     let mut goose_attack = GooseAttack::initialize_with_config(configuration);
     /// ```
     pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
@@ -590,7 +590,13 @@ impl GooseAttack {
     }
 
     pub fn setup(mut self) -> Result<Self, GooseError> {
-        //self.initialize_logger();
+        // If version flag is set, display package name and version and exit.
+        if self.configuration.version {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+
+        self.initialize_logger();
 
         // Collecting metrics is required for the following options.
         if self.configuration.no_metrics {
@@ -1852,6 +1858,9 @@ pub struct GooseConfiguration {
     /// Displays this help
     #[options(short = "h")]
     pub help: bool,
+    /// Prints version information
+    #[options(short = "V")]
+    pub version: bool,
     // Add a blank line after this option
     #[options(short = "l", help = "Lists all tasks and exits\n")]
     pub list: bool,
@@ -1859,14 +1868,14 @@ pub struct GooseConfiguration {
     /// Defines host to load test (ie http://10.21.32.33)
     #[options(short = "H")]
     pub host: String,
-    /// Sets concurrent users (default: # of CPUs)
+    /// Sets concurrent users (default: number of CPUs)
     #[options(short = "u")]
     pub users: Option<usize>,
     /// Sets per-second user hatch rate
     #[options(short = "r", default = "1", meta = "RATE")]
     pub hatch_rate: usize,
     /// Stops after (30s, 20m, 3h, 1h30m, etc)
-    #[options(short = "t", default = "", meta = "TIME")]
+    #[options(short = "t", meta = "TIME")]
     pub run_time: String,
     /// Sets log level (-g, -gg, etc)
     #[options(short = "g", count)]
@@ -1874,10 +1883,10 @@ pub struct GooseConfiguration {
     /// Sets log file name
     #[options(default = "goose.log", help = "Sets log file name")]
     pub log_file: String,
-    // Add a blank line and then a Metrics: header after this option
     #[options(
-        short = "v",
         count,
+        short = "v",
+        // Add a blank line and then a 'Metrics:' header after this option
         help = "Sets debug level (-v, -vv, etc)\n\nMetrics:"
     )]
     pub verbose: u8,
@@ -1885,7 +1894,7 @@ pub struct GooseConfiguration {
     /// Only prints final summary metrics
     #[options(no_short)]
     pub only_summary: bool,
-    /// Resets metrics once all users have started
+    /// Doesn't reset metrics after all users have started
     #[options(no_short)]
     pub no_reset_metrics: bool,
     /// Doesn't track metrics
@@ -1895,15 +1904,15 @@ pub struct GooseConfiguration {
     #[options(no_short)]
     pub no_task_metrics: bool,
     /// Sets metrics log file name
-    #[options(no_short, default = "", meta = "NAME")]
+    #[options(no_short, meta = "NAME")]
     pub metrics_file: String,
-    /// Sets metrics log format ('csv', 'json', 'raw')
+    /// Sets metrics log format (csv, json, raw)
     #[options(no_short, default = "json", meta = "FORMAT")]
     pub metrics_format: String,
     /// Sets debug log file name
-    #[options(short = "d", default = "", meta = "NAME")]
+    #[options(short = "d", meta = "NAME")]
     pub debug_file: String,
-    /// Sets debug log format ('json', 'raw')
+    /// Sets debug log format (json, raw)
     #[options(no_short, default = "json", meta = "FORMAT")]
     pub debug_format: String,
     // Add a blank line and then an Advanced: header after this option
@@ -1923,7 +1932,7 @@ pub struct GooseConfiguration {
     #[options(no_short)]
     pub manager: bool,
     /// Sets number of Workers to expect
-    #[options(no_short, default = "0", meta = "VALUE")]
+    #[options(no_short, meta = "VALUE")]
     pub expect_workers: u16,
     /// Tells Manager to ignore load test checksum
     #[options(no_short)]
@@ -1932,7 +1941,7 @@ pub struct GooseConfiguration {
     #[options(no_short, default = "0.0.0.0", meta = "HOST")]
     pub manager_bind_host: String,
     /// Sets port Manager listens on
-    // @TODO: use constant
+    // @TODO: use const for default
     #[options(no_short, default = "5115", meta = "PORT")]
     pub manager_bind_port: u16,
     /// Enables distributed load test Worker mode
@@ -1942,7 +1951,7 @@ pub struct GooseConfiguration {
     #[options(no_short, default = "127.0.0.1", meta = "HOST")]
     pub manager_host: String,
     /// Sets port Worker connects to
-    // @TODO: use constant
+    // @TODO: use const for default
     #[options(no_short, default = "5115", meta = "PORT")]
     pub manager_port: u16,
 }
