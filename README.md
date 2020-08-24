@@ -184,46 +184,48 @@ optimized code. This can generate considerably more load test traffic.
 The `-h` flag will show all run-time configuration options available to Goose load tests. For example, pass the `-h` flag to the `simple` example, `cargo run --example simple -- -h`:
 
 ```
-Goose 0.10.0
-Options available when launching a Goose load test
+Usage: target/debug/examples/simple [OPTIONS]
 
-USAGE:
-    simple [FLAGS] [OPTIONS]
+Options available when launching a Goose load test.
 
-FLAGS:
-    -h, --help                Prints help information
-    -l, --list                Lists all tasks and exits
-    -g, --log-level           Sets log level (-g, -gg, -ggg, etc.)
-        --manager             Gaggle: enables Manager mode
-        --no-hash-check       Gaggle: ignores Worker load test checksum
-        --no-metrics          Doesn't track or print metrics
-        --no-reset-metrics    Resets metrics once all users have started
-        --no-task-metrics     Doesn't track or print task metrics
-        --only-summary        Only prints final summary metrics in the console
-        --status-codes        Tracks and prints status code metrics
-        --sticky-follow       Tells users to follow redirect of base_url with subsequent requests
-    -V, --version             Prints version information
-    -v, --verbose             Sets debug level (-v, -vv, -vvv, etc.)
-        --worker              Gaggle: enables Worker mode
 
-OPTIONS:
-    -d, --debug-file <debug-file>                  Sets debug log file name [default: ]
-        --debug-format <debug-format>              Sets debug log format ('json' or 'raw') [default: json]
-        --expect-workers <expect-workers>          Gaggle: tells Manager how many Workers to expect [default: 0]
-    -r, --hatch-rate <hatch-rate>                  Sets per-second user hatch rate [default: 1]
-    -H, --host <host>                              Host to load test (ie http://10.21.32.33) [default: ]
-        --log-file <log-file>                      Sets log file name [default: goose.log]
-        --manager-bind-host <manager-bind-host>
-            Gaggle: sets host Manager listens on, formatted x.x.x.x [default: 0.0.0.0]
+Optional arguments:
+  -h, --help                 Displays this help
+  -V, --version              Prints version information
+  -l, --list                 Lists all tasks and exits
 
-        --manager-bind-port <manager-bind-port>    Gaggle: sets port Manager listens on [default: 5115]
-        --manager-host <manager-host>              Gaggle: sets host Worker connects to Manager on [default: 127.0.0.1]
-        --manager-port <manager-port>              Gaggle: sets port Worker connects to Manager on [default: 5115]
-    -s, --metrics-file <metrics-file>              Sets metrics log file name [default: ]
-        --metrics-format <metrics-format>          Sets metrics log format ('csv', 'json', or 'raw') [default: json]
-    -t, --run-time <run-time>                      Stops load test after e.g. (30s, 20m, 3h, 1h30m, etc.) [default: ]
-        --throttle-requests <throttle-requests>    Sets maximum requests per second
-    -u, --users <users>                            Sets concurrent Goose users (defaults to available CPUs)
+  -H, --host HOST            Defines host to load test (ie http://10.21.32.33)
+  -u, --users USERS          Sets concurrent users (default: number of CPUs)
+  -r, --hatch-rate RATE      Sets per-second user hatch rate (default: 1)
+  -t, --run-time TIME        Stops after (30s, 20m, 3h, 1h30m, etc)
+  -g, --log-level            Sets log level (-g, -gg, etc)
+  -L, --log-file NAME        Sets log file name (default: goose.log)
+  -v, --verbose              Sets debug level (-v, -vv, etc)
+
+Metrics:
+  --only-summary             Only prints final summary metrics
+  --no-reset-metrics         Doesn't reset metrics after all users have started
+  --no-metrics               Doesn't track metrics
+  --no-task-metrics          Doesn't track task metrics
+  -m, --metrics-file NAME    Sets metrics log file name
+  --metrics-format FORMAT    Sets metrics log format (csv, json, raw) (default: json)
+  -d, --debug-file NAME      Sets debug log file name
+  --debug-format FORMAT      Sets debug log format (json, raw) (default: json)
+  --status-codes             Tracks additional status code metrics
+
+Advanced:
+  --throttle-requests VALUE  Sets maximum requests per second
+  --sticky-follow            Follows base_url redirect with subsequent requests
+
+Gaggle:
+  --manager                  Enables distributed load test Manager mode
+  --expect-workers VALUE     Sets number of Workers to expect
+  --no-hash-check            Tells Manager to ignore load test checksum
+  --manager-bind-host HOST   Sets host Manager listens on (default: 0.0.0.0)
+  --manager-bind-port PORT   Sets port Manager listens on (default: 5115)
+  --worker                   Enables distributed load test Worker mode
+  --manager-host HOST        Sets host Worker connects to (default: 127.0.0.1)
+  --manager-port PORT        Sets port Worker connects to (default: 5115)
 ```
 
 The `examples/simple.rs` example copies the simple load test documented on the locust.io web page, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the user log in and then load a couple of pages.

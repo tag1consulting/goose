@@ -1,37 +1,27 @@
+use gumdrop::Options;
 use httpmock::MockServer;
 
 use goose::GooseConfiguration;
 
 pub fn build_configuration(server: &MockServer) -> GooseConfiguration {
-    // Manually specify configuration for test, normally this is provided as
-    // CLI options.
-    GooseConfiguration {
-        host: server.url("/"),
-        users: Some(1),
-        hatch_rate: 1,
-        run_time: "1".to_string(),
-        no_metrics: true,
-        no_task_metrics: true,
-        status_codes: false,
-        only_summary: false,
-        no_reset_metrics: false,
-        list: false,
-        verbose: 0,
-        log_level: 0,
-        log_file: "goose.log".to_string(),
-        metrics_file: "".to_string(),
-        metrics_format: "json".to_string(),
-        debug_file: "".to_string(),
-        debug_format: "json".to_string(),
-        throttle_requests: None,
-        sticky_follow: false,
-        manager: false,
-        no_hash_check: false,
-        expect_workers: 0,
-        manager_bind_host: "0.0.0.0".to_string(),
-        manager_bind_port: 5115,
-        worker: false,
-        manager_host: "127.0.0.1".to_string(),
-        manager_port: 5115,
-    }
+    // Using default options, except for those specified below
+    GooseConfiguration::parse_args_default(&[
+        // Set --host to server URL
+        "--host",
+        &server.url("/"),
+        // Set --users to 1
+        "--users",
+        "1",
+        // Set --hatch-rate to 1
+        "--hatch-rate",
+        "1",
+        // Set --run-time to 1
+        "--run-time",
+        "1",
+        // Set --no-metrics flag
+        "--no-metrics",
+        // Set --no-task-metrics flag
+        "--no-task-metrics",
+    ])
+    .unwrap()
 }
