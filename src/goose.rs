@@ -542,7 +542,7 @@ impl GooseTaskSet {
         if weight == 0 {
             return Err(GooseError::InvalidWeight {
                 weight,
-                detail: Some("weight of 0 not allowed".to_string()),
+                detail: ("Weight must be set to at least 1.".to_string()),
             });
         }
         self.weight = weight;
@@ -593,7 +593,9 @@ impl GooseTaskSet {
             return Err(GooseError::InvalidWaitTime {
                 min_wait,
                 max_wait,
-                detail: Some("min_wait can not be larger than max_wait".to_string()),
+                detail:
+                    "The min_wait option can not be set to a larger value than the max_wait option."
+                        .to_string(),
             });
         }
         self.min_wait = min_wait;
@@ -1913,7 +1915,7 @@ pub fn get_base_url(
         Some(host) => Ok(
             Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
                 host,
-                detail: Some("failure parsing host specified with --host".to_string()),
+                detail: "There was a failure parsing the host specified with --host.".to_string(),
                 parse_error,
             })?,
         ),
@@ -1924,10 +1926,7 @@ pub fn get_base_url(
                     Ok(
                         Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
                             host,
-                            detail: Some(
-                                "failure parsing host specified with GooseTaskSet.set_host()"
-                                    .to_string(),
-                            ),
+                            detail: "There was a failure parsing the host specified with the GooseTaskSet.set_host()l function.".to_string(),
                             parse_error,
                         })?,
                     )
@@ -1939,10 +1938,7 @@ pub fn get_base_url(
                     Ok(
                         Url::parse(&default_host).map_err(|parse_error| GooseError::InvalidHost {
                             host: default_host.to_string(),
-                            detail: Some(
-                                "failure parsing host specified globally with GooseAttack.set_host()"
-                                    .to_string(),
-                            ),
+                            detail: "There was a failure parsing the host specified globally with the GooseAttack.set_host() function.".to_string(),
                             parse_error,
                         })?,
                     )
@@ -2102,7 +2098,7 @@ impl GooseTask {
         if weight == 0 {
             return Err(GooseError::InvalidWeight {
                 weight,
-                detail: Some("weight of 0 not allowed".to_string()),
+                detail: "Weight must be set to at least 1.".to_string(),
             });
         }
         self.weight = weight;

@@ -376,16 +376,13 @@ pub enum GooseError {
     Reqwest(reqwest::Error),
     /// Failed attempt to use code that requires a compile-time feature be enabled. The missing
     /// feature is named in `.feature`. An optional explanation may be found in `.detail`.
-    FeatureNotEnabled {
-        feature: String,
-        detail: Option<String>,
-    },
+    FeatureNotEnabled { feature: String, detail: String },
     /// Failed to parse hostname. The invalid hostname that caused this error is found in
     /// `.host`. An optional explanation may be found in `.detail`. The lower level
     /// `url::ParseError` is contained in `.parse_error`.
     InvalidHost {
         host: String,
-        detail: Option<String>,
+        detail: String,
         parse_error: url::ParseError,
     },
     /// Invalid option or value specified, may only be invalid in context. The invalid option
@@ -394,7 +391,7 @@ pub enum GooseError {
     InvalidOption {
         option: String,
         value: String,
-        detail: Option<String>,
+        detail: String,
     },
     /// Invalid wait time specified. The minimum wait time and maximum wait time are found in
     /// `.min_wait` and `.max_wait` respectively. An optional explanation providing context may
@@ -402,17 +399,14 @@ pub enum GooseError {
     InvalidWaitTime {
         min_wait: usize,
         max_wait: usize,
-        detail: Option<String>,
+        detail: String,
     },
     /// Invalid weight specified. The invalid weight value is found in `.weight`. An optional
     // explanation providing context may be found in `.detail`.
-    InvalidWeight {
-        weight: usize,
-        detail: Option<String>,
-    },
+    InvalidWeight { weight: usize, detail: String },
     /// `GooseAttack` has no `GooseTaskSet` defined. An optional explanation may be found in
     /// `.detail`.
-    NoTaskSets { detail: Option<String> },
+    NoTaskSets { detail: String },
 }
 impl GooseError {
     fn describe(&self) -> &str {
@@ -607,10 +601,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
-                    detail: Some(
-                        "--no-metrics must not be enabled when enabling --status-codes."
-                            .to_string(),
-                    ),
+                    detail: "The --no-metrics flag can not be set together with the --status-codes flag.".to_string(),
                 });
             }
 
@@ -619,10 +610,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
-                    detail: Some(
-                        "--no-metrics must not be enabled when enabling --only-summary."
-                            .to_string(),
-                    ),
+                    detail: "The --no-metrics flag can not be set together with the --only-summary flag.".to_string(),
                 });
             }
 
@@ -631,10 +619,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
-                    detail: Some(
-                        "--no-metrics must not be enabled when enabling --metrics-file."
-                            .to_string(),
-                    ),
+                    detail: "The --no-metrics flag can not be set together with the --metrics-file option.".to_string(),
                 });
             }
 
@@ -643,10 +628,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
-                    detail: Some(
-                        "--no-metrics must not be enabled when enabling --metrics-format."
-                            .to_string(),
-                    ),
+                    detail: "The --no-metrics flag can not be set together with the --metrics-format option.".to_string(),
                 });
             }
         }
@@ -657,9 +639,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--metrics-format".to_string(),
                     value: self.configuration.metrics_format,
-                    detail: Some(
-                        "--metrics-file must be enabled when setting --metrics-format.".to_string(),
-                    ),
+                    detail: "The --metrics-file option must be set together with the --metrics-format option.".to_string(),
                 });
             }
 
@@ -669,10 +649,10 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--metrics-format".to_string(),
                     value: self.configuration.metrics_format,
-                    detail: Some(format!(
-                        "--metrics-format must be set to one of: {}.",
+                    detail: format!(
+                        "The --metrics-format option must be set to one of: {}.",
                         options.join(", ")
-                    )),
+                    ),
                 });
             }
         }
@@ -683,9 +663,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-format".to_string(),
                     value: self.configuration.debug_format,
-                    detail: Some(
-                        "--debug-file must be enabled when setting --debug-format.".to_string(),
-                    ),
+                    detail: "The --debug-file option must be set together with the --debug-format option.".to_string(),
                 });
             }
 
@@ -695,10 +673,10 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-format".to_string(),
                     value: self.configuration.debug_format,
-                    detail: Some(format!(
-                        "--debug-format must be set to one of: {}.",
+                    detail: format!(
+                        "The --debug-format option must be set to one of: {}.",
                         options.join(", ")
-                    )),
+                    ),
                 });
             }
         }
@@ -709,9 +687,8 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--run-time".to_string(),
                     value: "true".to_string(),
-                    detail: Some(
-                        "The --run-time option is only available to the manager.".to_string(),
-                    ),
+                    detail: "The --run-time option can not be set together with the --worker flag."
+                        .to_string(),
                 });
             }
             self.run_time = 0;
@@ -730,7 +707,7 @@ impl GooseAttack {
                         return Err(GooseError::InvalidOption {
                             option: "--users".to_string(),
                             value: self.users.to_string(),
-                            detail: Some("at least 1 user is required.".to_string()),
+                            detail: "The --users option must be set to at least 1.".to_string(),
                         });
                     }
                     0
@@ -739,9 +716,9 @@ impl GooseAttack {
                         return Err(GooseError::InvalidOption {
                             option: "--users".to_string(),
                             value: self.users.to_string(),
-                            detail: Some(
-                                "--users option only available to manager process".to_string(),
-                            ),
+                            detail:
+                                "The --users option can not be set together with the --worker flag."
+                                    .to_string(),
                         });
                     }
                     u
@@ -981,7 +958,7 @@ impl GooseAttack {
         // At least one task set is required.
         if self.task_sets.is_empty() {
             return Err(GooseError::NoTaskSets {
-                detail: Some("no task sets defined".to_string()),
+                detail: "No task sets are defined.".to_string(),
             });
         }
 
@@ -1004,7 +981,8 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--worker".to_string(),
                     value: "true".to_string(),
-                    detail: Some("enable manager or worker mode, not both".to_string()),
+                    detail: "The --worker flag can not be set together with the --manager flag"
+                        .to_string(),
                 });
             }
 
@@ -1012,14 +990,14 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--expect-workers".to_string(),
                     value: self.configuration.expect_workers.to_string(),
-                    detail: Some("--expect-workers must be at least 1".to_string()),
+                    detail: "The --expect-workers option must be set to at least 1.".to_string(),
                 });
             }
             if self.configuration.expect_workers as usize > self.users {
                 return Err(GooseError::InvalidOption {
                     option: "--expect-workers".to_string(),
                     value: self.configuration.expect_workers.to_string(),
-                    detail: Some("--expect-workers can not be larger than --users".to_string()),
+                    detail: "The --expect-workers option can not be set to a value larger than --users option.".to_string(),
                 });
             }
 
@@ -1027,10 +1005,9 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-file".to_string(),
                     value: self.configuration.debug_file,
-                    detail: Some(
-                        "--debug-file can only be enabled in stand-alone or worker mode"
+                    detail:
+                        "The --debug-file option can not be set together with the --manager flag."
                             .to_string(),
-                    ),
                 });
             }
 
@@ -1038,7 +1015,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--throttle-requests".to_string(),
                     value: self.configuration.throttle_requests.unwrap().to_string(),
-                    detail: Some("--throttle-requests can only be enabled in stand-alone mode or worker mode".to_string()),
+                    detail: "The --throttle-requests option can not be set together with the --manager flag.".to_string(),
                 });
             }
         }
@@ -1049,19 +1026,14 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--throttle-requests".to_string(),
                     value: throttle.to_string(),
-                    detail: Some(
-                        "--throttle-requests must be at least 1 request per second".to_string(),
-                    ),
+                    detail: "The --throttle-requests option must be set to at least 1 request per second.".to_string(),
                 });
             }
             Some(throttle) if throttle > 1_000_000 => {
                 return Err(GooseError::InvalidOption {
                     option: "--throttle-requests".to_string(),
                     value: throttle.to_string(),
-                    detail: Some(
-                        "--throttle-requests can not be more than 1,000,000 request per second"
-                            .to_string(),
-                    ),
+                    detail: "The --throttle-requests option can not be set to more than 1,000,000 requests per second.".to_string(),
                 });
             }
             // Everything else is valid.
@@ -1075,7 +1047,8 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--manager".to_string(),
                     value: "true".to_string(),
-                    detail: Some("enable manager or worker mode, not both".to_string()),
+                    detail: "The --manager flag can not be set together with the --worker flag."
+                        .to_string(),
                 });
             }
 
@@ -1083,7 +1056,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--expect-workers".to_string(),
                     value: self.configuration.expect_workers.to_string(),
-                    detail: Some("--expect-workers is only available to the manager".to_string()),
+                    detail: "The --expect-workers option can not be set together with the --worker flag.".to_string(),
                 });
             }
 
@@ -1091,7 +1064,8 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--host".to_string(),
                     value: self.configuration.host,
-                    detail: Some("--host is only available to the manager".to_string()),
+                    detail: "The --host option can not be set together with the --worker flag."
+                        .to_string(),
                 });
             }
 
@@ -1099,9 +1073,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--manager-bind-host".to_string(),
                     value: self.configuration.manager_bind_host,
-                    detail: Some(
-                        "--manager-bind-host is only available to the manager".to_string(),
-                    ),
+                    detail: "The --manager-bind-host option can not be set together with the --worker flag.".to_string(),
                 });
             }
 
@@ -1110,9 +1082,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--manager-bind-port".to_string(),
                     value: self.configuration.manager_bind_port.to_string(),
-                    detail: Some(
-                        "--manager-bind-port is only available to the manager".to_string(),
-                    ),
+                    detail: "The --manager-bind-port option can not be set together with the --worker flag.".to_string(),
                 });
             }
 
@@ -1120,7 +1090,8 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: self.configuration.no_metrics.to_string(),
-                    detail: Some("--no-metrics is only available to the manager".to_string()),
+                    detail: "The --no-metrics flag can not be set together with the --worker flag."
+                        .to_string(),
                 });
             }
 
@@ -1128,7 +1099,9 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-task-metrics".to_string(),
                     value: self.configuration.no_task_metrics.to_string(),
-                    detail: Some("--no-task-metrics is only available to the manager".to_string()),
+                    detail:
+                        "The --no-task-metrics flag can not be set together with the --worker flag."
+                            .to_string(),
                 });
             }
 
@@ -1136,7 +1109,9 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--only-summary".to_string(),
                     value: self.configuration.only_summary.to_string(),
-                    detail: Some("--only-summary is only available to the manager".to_string()),
+                    detail:
+                        "The --only-summary flag can not be set together with the --worker flag."
+                            .to_string(),
                 });
             }
 
@@ -1144,7 +1119,9 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--status-codes".to_string(),
                     value: self.configuration.status_codes.to_string(),
-                    detail: Some("--status-codes is only available to the manager".to_string()),
+                    detail:
+                        "The --status-codes flag can not be set together with the --worker flag."
+                            .to_string(),
                 });
             }
 
@@ -1152,7 +1129,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-reset-metrics".to_string(),
                     value: self.configuration.no_reset_metrics.to_string(),
-                    detail: Some("--no-reset-metrics is only available to the manager".to_string()),
+                    detail: "The --no-reset-metrics flag can not be set together with the --worker flag.".to_string(),
                 });
             }
 
@@ -1160,7 +1137,9 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-hash-check".to_string(),
                     value: self.configuration.no_hash_check.to_string(),
-                    detail: Some("--no-hash-check is only available to the manager".to_string()),
+                    detail:
+                        "The --no-hash-check flag can not be set together with the --worker flag."
+                            .to_string(),
                 });
             }
         }
@@ -1170,10 +1149,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-hash-check".to_string(),
                     value: self.configuration.no_hash_check.to_string(),
-                    detail: Some(
-                        "--no-hash-check is only available when running in manager mode"
-                            .to_string(),
-                    ),
+                    detail: "The --no-hash-check flag can not be set without also setting the --manager flag.".to_string(),
                 });
             }
 
@@ -1181,10 +1157,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--expect-workers".to_string(),
                     value: self.configuration.expect_workers.to_string(),
-                    detail: Some(
-                        "--expect-workers is only available when running in manager mode"
-                            .to_string(),
-                    ),
+                    detail: "The --expect-workers flag can not be set without also setting the --manager flag.".to_string(),
                 });
             }
         }
@@ -1194,16 +1167,15 @@ impl GooseAttack {
             return Err(GooseError::InvalidOption {
                 option: "--hatch-rate".to_string(),
                 value: self.configuration.hatch_rate.to_string(),
-                detail: Some(
-                    "--hatch-rate must be greater than 0, or no users can launch".to_string(),
-                ),
+                detail: "The --hatch-rate option must be set to at least 1.".to_string(),
             });
         }
         if self.configuration.hatch_rate > 1 && self.configuration.worker {
             return Err(GooseError::InvalidOption {
                 option: "--hatch-rate".to_string(),
                 value: self.configuration.hatch_rate.to_string(),
-                detail: Some("--hatch-rate is only available to the manager".to_string()),
+                detail: "The --hatch-rate option can not be set together with the --worker flag."
+                    .to_string(),
             });
         }
         debug!("hatch_rate = {}", self.configuration.hatch_rate);
@@ -1228,7 +1200,7 @@ impl GooseAttack {
                                 return Err(GooseError::InvalidOption {
                                     option: "--host".to_string(),
                                     value: "".to_string(),
-                                    detail: Some(format!("host must be defined via --host, GooseAttack.set_host() or GooseTaskSet.set_host() (no host defined for {})", task_set.name))
+                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_host() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
                                 });
                             }
                         }
@@ -1287,7 +1259,9 @@ impl GooseAttack {
 
             #[cfg(not(feature = "gaggle"))]
             {
-                return Err(GooseError::FeatureNotEnabled { feature: "gaggle".to_string(), detail: Some("goose must be recompiled with `--features gaggle` to start in manager mode".to_string()) });
+                return Err(GooseError::FeatureNotEnabled {
+                    feature: "gaggle".to_string(), detail: "Load test must be recompiled with `--features gaggle` to start in manager mode.".to_string()
+                });
             }
         }
         // Start goose in worker mode.
@@ -1302,10 +1276,7 @@ impl GooseAttack {
             {
                 return Err(GooseError::FeatureNotEnabled {
                     feature: "gaggle".to_string(),
-                    detail: Some(
-                        "goose must be recompiled with `--features gaggle` to start in worker mode"
-                            .to_string(),
-                    ),
+                    detail: "Load test must be recompiled with `--features gaggle` to start in worker mode.".to_string(),
                 });
             }
         }
@@ -2186,7 +2157,7 @@ fn weight_tasks(
 fn is_valid_host(host: &str) -> Result<bool, GooseError> {
     Url::parse(host).map_err(|parse_error| GooseError::InvalidHost {
         host: host.to_string(),
-        detail: None,
+        detail: "Invalid host.".to_string(),
         parse_error,
     })?;
     Ok(true)

@@ -16,6 +16,7 @@
     o `--debug-log-format` became `--debug-format`
     o `--metrics-log-file` became `--metrics-file`
     o `--metrics-log-format` became `--metrics-format`
+ - reworded errors for consistency, made error.detail required
 
 ## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`
