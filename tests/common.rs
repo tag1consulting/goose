@@ -6,6 +6,7 @@ pub fn build_configuration(server: &MockServer) -> GooseConfiguration {
     // Manually specify configuration for test, normally this is provided as
     // CLI options.
     GooseConfiguration {
+        help: false,
         host: server.url("/"),
         users: Some(1),
         hatch_rate: 1,

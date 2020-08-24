@@ -300,8 +300,6 @@
 #[macro_use]
 extern crate log;
 
-extern crate structopt;
-
 pub mod goose;
 pub mod logger;
 #[cfg(feature = "gaggle")]
@@ -314,6 +312,7 @@ mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
+use gumdrop::Options;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
@@ -329,7 +328,6 @@ use std::sync::{
     Arc,
 };
 use std::{f32, fmt, io, time};
-use structopt::StructOpt;
 use tokio::fs::File;
 use tokio::io::BufWriter;
 use tokio::prelude::*;
@@ -510,7 +508,7 @@ impl GooseAttack {
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
             host: None,
-            configuration: GooseConfiguration::from_args(),
+            configuration: GooseConfiguration::parse_args_default_or_exit(),
             number_of_cpus: num_cpus::get(),
             run_time: 0,
             users: 0,
@@ -592,7 +590,7 @@ impl GooseAttack {
     }
 
     pub fn setup(mut self) -> Result<Self, GooseError> {
-        self.initialize_logger();
+        //self.initialize_logger();
 
         // Collecting metrics is required for the following options.
         if self.configuration.no_metrics {
@@ -1849,115 +1847,103 @@ impl GooseAttack {
 }
 
 /// Options available when launching a Goose load test.
-#[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
-#[structopt(name = "Goose")]
+#[derive(Options, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GooseConfiguration {
-    /// Lists all tasks and exits
-    #[structopt(short, long)]
+    /// Displays this help
+    #[options(short = "h")]
+    pub help: bool,
+    // Add a blank line after this option
+    #[options(short = "l", help = "Lists all tasks and exits\n")]
     pub list: bool,
 
-    /// Host to load test (ie http://10.21.32.33)
-    #[structopt(short = "H", long, required = false, default_value = "")]
+    /// Defines host to load test (ie http://10.21.32.33)
+    #[options(short = "H")]
     pub host: String,
-
-    /// Sets concurrent Goose users (defaults to available CPUs)
-    #[structopt(short, long)]
+    /// Sets concurrent users (default: # of CPUs)
+    #[options(short = "u")]
     pub users: Option<usize>,
-
     /// Sets per-second user hatch rate
-    #[structopt(short = "r", long, required = false, default_value = "1")]
+    #[options(short = "r", default = "1", meta = "RATE")]
     pub hatch_rate: usize,
-
-    /// Stops load test after e.g. (30s, 20m, 3h, 1h30m, etc.)
-    #[structopt(short = "t", long, required = false, default_value = "")]
+    /// Stops after (30s, 20m, 3h, 1h30m, etc)
+    #[options(short = "t", default = "", meta = "TIME")]
     pub run_time: String,
-
-    /// Doesn't track or print metrics
-    #[structopt(long)]
-    pub no_metrics: bool,
-
-    /// Doesn't track or print task metrics
-    #[structopt(long)]
-    pub no_task_metrics: bool,
-
-    /// Tracks and prints status code metrics
-    #[structopt(long)]
-    pub status_codes: bool,
-
-    /// Only prints final summary metrics in the console
-    #[structopt(long)]
-    pub only_summary: bool,
-
-    /// Resets metrics once all users have started
-    #[structopt(long)]
-    pub no_reset_metrics: bool,
-
-    /// Sets debug level (-v, -vv, -vvv, etc.)
-    #[structopt(short = "v", long, parse(from_occurrences))]
+    /// Sets log level (-g, -gg, etc)
+    #[options(short = "g", count)]
+    pub log_level: u8,
+    /// Sets log file name
+    #[options(default = "goose.log", help = "Sets log file name")]
+    pub log_file: String,
+    // Add a blank line and then a Metrics: header after this option
+    #[options(
+        short = "v",
+        count,
+        help = "Sets debug level (-v, -vv, etc)\n\nMetrics:"
+    )]
     pub verbose: u8,
 
-    /// Sets log level (-g, -gg, -ggg, etc.)
-    #[structopt(short = "g", long, parse(from_occurrences))]
-    pub log_level: u8,
-
-    /// Sets log file name
-    #[structopt(long, default_value = "goose.log")]
-    pub log_file: String,
-
+    /// Only prints final summary metrics
+    #[options(no_short)]
+    pub only_summary: bool,
+    /// Resets metrics once all users have started
+    #[options(no_short)]
+    pub no_reset_metrics: bool,
+    /// Doesn't track metrics
+    #[options(no_short)]
+    pub no_metrics: bool,
+    /// Doesn't track task metrics
+    #[options(no_short)]
+    pub no_task_metrics: bool,
     /// Sets metrics log file name
-    #[structopt(short = "s", long, default_value = "")]
+    #[options(no_short, default = "", meta = "NAME")]
     pub metrics_file: String,
-
-    /// Sets metrics log format ('csv', 'json', or 'raw')
-    #[structopt(long, default_value = "json")]
+    /// Sets metrics log format ('csv', 'json', 'raw')
+    #[options(no_short, default = "json", meta = "FORMAT")]
     pub metrics_format: String,
-
     /// Sets debug log file name
-    #[structopt(short = "d", long, default_value = "")]
+    #[options(short = "d", default = "", meta = "NAME")]
     pub debug_file: String,
-
-    /// Sets debug log format ('json' or 'raw')
-    #[structopt(long, default_value = "json")]
+    /// Sets debug log format ('json', 'raw')
+    #[options(no_short, default = "json", meta = "FORMAT")]
     pub debug_format: String,
+    // Add a blank line and then an Advanced: header after this option
+    #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
+    pub status_codes: bool,
 
     /// Sets maximum requests per second
-    #[structopt(long)]
+    #[options(no_short, meta = "VALUE")]
     pub throttle_requests: Option<usize>,
-
-    /// Tells users to follow redirect of base_url with subsequent requests
-    #[structopt(long)]
+    #[options(
+        no_short,
+        help = "Follows base_url redirect with subsequent requests\n\nGaggle:"
+    )]
     pub sticky_follow: bool,
 
-    /// Gaggle: enables Manager mode
-    #[structopt(long)]
+    /// Enables distributed load test Manager mode
+    #[options(no_short)]
     pub manager: bool,
-
-    /// Gaggle: ignores Worker load test checksum
-    #[structopt(long)]
-    pub no_hash_check: bool,
-
-    /// Gaggle: tells Manager how many Workers to expect
-    #[structopt(long, required = false, default_value = "0")]
+    /// Sets number of Workers to expect
+    #[options(no_short, default = "0", meta = "VALUE")]
     pub expect_workers: u16,
-
-    /// Gaggle: sets host Manager listens on, formatted x.x.x.x
-    #[structopt(long, default_value = "0.0.0.0")]
+    /// Tells Manager to ignore load test checksum
+    #[options(no_short)]
+    pub no_hash_check: bool,
+    /// Sets host Manager listens on
+    #[options(no_short, default = "0.0.0.0", meta = "HOST")]
     pub manager_bind_host: String,
-
-    /// Gaggle: sets port Manager listens on
-    #[structopt(long, default_value=DEFAULT_PORT)]
+    /// Sets port Manager listens on
+    // @TODO: use constant
+    #[options(no_short, default = "5115", meta = "PORT")]
     pub manager_bind_port: u16,
-
-    /// Gaggle: enables Worker mode
-    #[structopt(long)]
+    /// Enables distributed load test Worker mode
+    #[options(no_short)]
     pub worker: bool,
-
-    /// Gaggle: sets host Worker connects to Manager on
-    #[structopt(long, default_value = "127.0.0.1")]
+    /// Sets host Worker connects to
+    #[options(no_short, default = "127.0.0.1", meta = "HOST")]
     pub manager_host: String,
-
-    /// Gaggle: sets port Worker connects to Manager on
-    #[structopt(long, default_value=DEFAULT_PORT)]
+    /// Sets port Worker connects to
+    // @TODO: use constant
+    #[options(no_short, default = "5115", meta = "PORT")]
     pub manager_port: u16,
 }
 
