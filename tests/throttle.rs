@@ -7,7 +7,7 @@ use goose::prelude::*;
 
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
-const METRICS_LOG_FILE: &str = "throttle-metrics.log";
+const METRICS_FILE: &str = "throttle-metrics.log";
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -42,7 +42,7 @@ fn test_throttle() {
 
     let mut config = common::build_configuration(&server);
     // Record all requests so we can confirm throttle is working.
-    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.metrics_file = METRICS_FILE.to_string();
     config.no_metrics = false;
     // Enable the throttle.
     config.throttle_requests = Some(throttle_requests);
@@ -67,7 +67,7 @@ fn test_throttle() {
     assert!(about.times_called() > 0);
 
     let test1_lines: usize;
-    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_LOG_FILE)) {
+    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_FILE)) {
         test1_lines = io::BufReader::new(metrics_log).lines().count();
     } else {
         test1_lines = 0;
@@ -77,7 +77,7 @@ fn test_throttle() {
     assert!(test1_lines <= (run_time + 1) * throttle_requests);
 
     // Cleanup log file.
-    std::fs::remove_file(METRICS_LOG_FILE).expect("failed to delete metrics log file");
+    std::fs::remove_file(METRICS_FILE).expect("failed to delete metrics log file");
 
     // Increase the throttle and run a second load test, so we can compare the difference
     // and confirm the throttle is actually working.
@@ -85,7 +85,7 @@ fn test_throttle() {
 
     let mut config = common::build_configuration(&server);
     // Record all requests so we can confirm throttle is working.
-    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.metrics_file = METRICS_FILE.to_string();
     config.no_metrics = false;
     // Enable the throttle.
     config.throttle_requests = Some(throttle_requests);
@@ -109,7 +109,7 @@ fn test_throttle() {
     assert!(about.times_called() > 0);
 
     let lines: usize;
-    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_LOG_FILE)) {
+    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_FILE)) {
         lines = io::BufReader::new(metrics_log).lines().count();
     } else {
         lines = 0;
@@ -123,5 +123,5 @@ fn test_throttle() {
     assert!(lines < test1_lines * 6);
 
     // Cleanup log file.
-    std::fs::remove_file(METRICS_LOG_FILE).expect("failed to delete metrics log file");
+    std::fs::remove_file(METRICS_FILE).expect("failed to delete metrics log file");
 }

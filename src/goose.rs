@@ -1673,7 +1673,7 @@ impl GooseUser {
         })
     }
 
-    /// Write to debug_log_file if enabled.
+    /// Write to debug_file if enabled.
     ///
     /// This function provides a mechanism for optional debug logging when a load test
     /// is running. This can be especially helpful when writing a load test. Each entry
@@ -1749,7 +1749,7 @@ impl GooseUser {
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> GooseTaskResult {
-        if !self.config.debug_log_file.is_empty() {
+        if !self.config.debug_file.is_empty() {
             // Logger is not defined when running test_start_task, test_stop_task,
             // and during testing.
             if let Some(logger) = self.logger.clone() {
