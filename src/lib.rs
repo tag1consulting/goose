@@ -40,8 +40,11 @@
 //! necessary for your load test, so you don't need to manually add them:
 //!
 //! ```rust
-//! use goose::{GooseAttack, task, taskset};
-//! use goose::goose::{GooseTaskSet, GooseUser, GooseTask};
+//! use goose::goose::{
+//!     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+//! };
+//! use goose::metrics::GooseMetrics;
+//! use goose::{task, taskset, GooseAttack, GooseError};
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
@@ -304,7 +307,7 @@ pub mod goose;
 pub mod logger;
 #[cfg(feature = "gaggle")]
 mod manager;
-mod metrics;
+pub mod metrics;
 pub mod prelude;
 mod throttle;
 mod user;

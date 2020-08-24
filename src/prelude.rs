@@ -1,6 +1,5 @@
 pub use crate::goose::{
-    GooseMethod, GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet,
-    GooseUser,
+    GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
 };
-pub use crate::metrics::{GooseMetrics, GooseRequestMetrics};
+pub use crate::metrics::GooseMetrics;
 pub use crate::{task, taskset, GooseAttack, GooseError};

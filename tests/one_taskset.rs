@@ -3,6 +3,7 @@ use httpmock::{Mock, MockServer};
 
 mod common;
 
+use goose::goose::GooseMethod;
 use goose::prelude::*;
 use std::sync::Arc;
 
