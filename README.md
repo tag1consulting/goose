@@ -185,10 +185,10 @@ The `-h` flag will show all run-time configuration options available to Goose lo
 
 ```
 Goose 0.10.0
-CLI options available when launching a Goose load test
+Options available when launching a Goose load test
 
 USAGE:
-    simple [FLAGS] [OPTIONS] --expect-workers <expect-workers>
+    simple [FLAGS] [OPTIONS]
 
 FLAGS:
     -h, --help                Prints help information
@@ -207,25 +207,23 @@ FLAGS:
         --worker              Gaggle: enables Worker mode
 
 OPTIONS:
-    -d, --debug-log-file <debug-log-file>            Sets debug log file name [default: ]
-        --debug-log-format <debug-log-format>        Sets debug log format ('json' or 'raw') [default: json]
-        --expect-workers <expect-workers>            Gaggle: tells Manager how many Workers to expect
-    -r, --hatch-rate <hatch-rate>                    Sets per-second user hatch rate [default: 1]
-    -H, --host <host>                                Host to load test (ie http://10.21.32.33) [default: ]
-        --log-file <log-file>                        Sets log file name [default: goose.log]
+    -d, --debug-file <debug-file>                  Sets debug log file name [default: ]
+        --debug-format <debug-format>              Sets debug log format ('json' or 'raw') [default: json]
+        --expect-workers <expect-workers>          Gaggle: tells Manager how many Workers to expect [default: 0]
+    -r, --hatch-rate <hatch-rate>                  Sets per-second user hatch rate [default: 1]
+    -H, --host <host>                              Host to load test (ie http://10.21.32.33) [default: ]
+        --log-file <log-file>                      Sets log file name [default: goose.log]
         --manager-bind-host <manager-bind-host>
-            Gaggle: sets host manager listens on, formatted x.x.x.x [default: 0.0.0.0]
+            Gaggle: sets host Manager listens on, formatted x.x.x.x [default: 0.0.0.0]
 
-        --manager-bind-port <manager-bind-port>      Gaggle: sets port manager listens on [default: 5115]
-        --manager-host <manager-host>
-            Gaggle: sets host Worker connects to Manager on [default: 127.0.0.1]
-
-        --manager-port <manager-port>                Gaggle: sets port Worker connects to Manager on [default: 5115]
-    -s, --metrics-log-file <metrics-log-file>        Sets metrics log file name [default: ]
-        --metrics-log-format <metrics-log-format>    Sets metrics log format ('csv', 'json', or 'raw') [default: json]
-    -t, --run-time <run-time>                        Stops load test after e.g. (30s, 20m, 3h, 1h30m, etc.) [default: ]
-        --throttle-requests <throttle-requests>      Sets maximum requests per second
-    -u, --users <users>                              Sets concurrent Goose users (defaults to available CPUs)
+        --manager-bind-port <manager-bind-port>    Gaggle: sets port Manager listens on [default: 5115]
+        --manager-host <manager-host>              Gaggle: sets host Worker connects to Manager on [default: 127.0.0.1]
+        --manager-port <manager-port>              Gaggle: sets port Worker connects to Manager on [default: 5115]
+    -s, --metrics-file <metrics-file>              Sets metrics log file name [default: ]
+        --metrics-format <metrics-format>          Sets metrics log format ('csv', 'json', or 'raw') [default: json]
+    -t, --run-time <run-time>                      Stops load test after e.g. (30s, 20m, 3h, 1h30m, etc.) [default: ]
+        --throttle-requests <throttle-requests>    Sets maximum requests per second
+    -u, --users <users>                            Sets concurrent Goose users (defaults to available CPUs)
 ```
 
 The `examples/simple.rs` example copies the simple load test documented on the locust.io web page, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the user log in and then load a couple of pages.

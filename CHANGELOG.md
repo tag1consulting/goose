@@ -11,7 +11,11 @@
     o `--no-task-stats` became `--no-task-metrics`
     o `--stats-log-file` became `--metrics-log-file`
     o `--stats-log-format` became `--metrics-log-format`
-
+ - shorten some configuration options to fit standard console width, preparation for switch to gumdrop
+    o `--debug-log-file` became `--debug-file`
+    o `--debug-log-format` became `--debug-format`
+    o `--metrics-log-file` became `--metrics-file`
+    o `--metrics-log-format` became `--metrics-format`
 
 ## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`

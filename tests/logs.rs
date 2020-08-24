@@ -30,19 +30,19 @@ pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-fn cleanup_files(metrics_log_file: &str, debug_log_file: &str) {
-    if std::path::Path::new(metrics_log_file).exists() {
-        std::fs::remove_file(metrics_log_file).expect("failed to delete metrics log file");
+fn cleanup_files(metrics_file: &str, debug_file: &str) {
+    if std::path::Path::new(metrics_file).exists() {
+        std::fs::remove_file(metrics_file).expect("failed to delete metrics log file");
     }
-    if std::path::Path::new(debug_log_file).exists() {
-        std::fs::remove_file(debug_log_file).expect("failed to delete debug log file");
+    if std::path::Path::new(debug_file).exists() {
+        std::fs::remove_file(debug_file).expect("failed to delete debug log file");
     }
 }
 
 #[test]
 fn test_metrics_logs_json() {
-    const METRICS_LOG_FILE: &str = "metrics-json.log";
-    const DEBUG_LOG_FILE: &str = "debug-json.log";
+    const METRICS_FILE: &str = "metrics-json.log";
+    const DEBUG_FILE: &str = "debug-json.log";
 
     let server = MockServer::start();
 
@@ -53,7 +53,7 @@ fn test_metrics_logs_json() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.metrics_log_file = METRICS_LOG_FILE.to_string();
+    config.metrics_file = METRICS_FILE.to_string();
     config.no_metrics = false;
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -69,16 +69,16 @@ fn test_metrics_logs_json() {
     assert!(goose_metrics.duration == 1);
 
     // Confirm only the metrics log file exists.
-    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
-    assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
+    assert!(std::path::Path::new(METRICS_FILE).exists());
+    assert!(!std::path::Path::new(DEBUG_FILE).exists());
 
-    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_FILE, DEBUG_FILE);
 }
 
 #[test]
 fn test_metrics_logs_csv() {
-    const METRICS_LOG_FILE: &str = "metrics-csv.log";
-    const DEBUG_LOG_FILE: &str = "debug-csv.log";
+    const METRICS_FILE: &str = "metrics-csv.log";
+    const DEBUG_FILE: &str = "debug-csv.log";
 
     let server = MockServer::start();
 
@@ -89,8 +89,8 @@ fn test_metrics_logs_csv() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.metrics_log_file = METRICS_LOG_FILE.to_string();
-    config.metrics_log_format = "csv".to_string();
+    config.metrics_file = METRICS_FILE.to_string();
+    config.metrics_format = "csv".to_string();
     config.no_metrics = false;
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -103,16 +103,16 @@ fn test_metrics_logs_csv() {
     assert!(index.times_called() > 0);
 
     // Confirm only the metrics log file exists.
-    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
-    assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
+    assert!(std::path::Path::new(METRICS_FILE).exists());
+    assert!(!std::path::Path::new(DEBUG_FILE).exists());
 
-    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_FILE, DEBUG_FILE);
 }
 
 #[test]
 fn test_metrics_logs_raw() {
-    const METRICS_LOG_FILE: &str = "metrics-raw.log";
-    const DEBUG_LOG_FILE: &str = "debug-raw.log";
+    const METRICS_FILE: &str = "metrics-raw.log";
+    const DEBUG_FILE: &str = "debug-raw.log";
 
     let server = MockServer::start();
 
@@ -123,8 +123,8 @@ fn test_metrics_logs_raw() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.metrics_log_file = METRICS_LOG_FILE.to_string();
-    config.metrics_log_format = "raw".to_string();
+    config.metrics_file = METRICS_FILE.to_string();
+    config.metrics_format = "raw".to_string();
     config.no_metrics = false;
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -137,16 +137,16 @@ fn test_metrics_logs_raw() {
     assert!(index.times_called() > 0);
 
     // Confirm only the metrics log file exists.
-    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
-    assert!(!std::path::Path::new(DEBUG_LOG_FILE).exists());
+    assert!(std::path::Path::new(METRICS_FILE).exists());
+    assert!(!std::path::Path::new(DEBUG_FILE).exists());
 
-    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_FILE, DEBUG_FILE);
 }
 
 #[test]
 fn test_debug_logs_raw() {
-    const METRICS_LOG_FILE: &str = "metrics-raw2.log";
-    const DEBUG_LOG_FILE: &str = "debug-raw2.log";
+    const METRICS_FILE: &str = "metrics-raw2.log";
+    const DEBUG_FILE: &str = "debug-raw2.log";
 
     let server = MockServer::start();
 
@@ -162,8 +162,8 @@ fn test_debug_logs_raw() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.debug_log_file = DEBUG_LOG_FILE.to_string();
-    config.debug_log_format = "raw".to_string();
+    config.debug_file = DEBUG_FILE.to_string();
+    config.debug_format = "raw".to_string();
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
@@ -180,16 +180,16 @@ fn test_debug_logs_raw() {
     assert!(error.times_called() > 0);
 
     // Confirm only the debug log file exists.
-    assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
-    assert!(!std::path::Path::new(METRICS_LOG_FILE).exists());
+    assert!(std::path::Path::new(DEBUG_FILE).exists());
+    assert!(!std::path::Path::new(METRICS_FILE).exists());
 
-    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_FILE, DEBUG_FILE);
 }
 
 #[test]
 fn test_debug_logs_json() {
-    const METRICS_LOG_FILE: &str = "metrics-json2.log";
-    const DEBUG_LOG_FILE: &str = "debug-json2.log";
+    const METRICS_FILE: &str = "metrics-json2.log";
+    const DEBUG_FILE: &str = "debug-json2.log";
 
     let server = MockServer::start();
 
@@ -205,7 +205,7 @@ fn test_debug_logs_json() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.debug_log_file = DEBUG_LOG_FILE.to_string();
+    config.debug_file = DEBUG_FILE.to_string();
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
@@ -222,16 +222,16 @@ fn test_debug_logs_json() {
     assert!(error.times_called() > 0);
 
     // Confirm only the debug log file exists.
-    assert!(!std::path::Path::new(METRICS_LOG_FILE).exists());
-    assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
+    assert!(!std::path::Path::new(METRICS_FILE).exists());
+    assert!(std::path::Path::new(DEBUG_FILE).exists());
 
-    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_FILE, DEBUG_FILE);
 }
 
 #[test]
 fn test_metrics_and_debug_logs() {
-    const METRICS_LOG_FILE: &str = "metrics-both.log";
-    const DEBUG_LOG_FILE: &str = "debug-both.log";
+    const METRICS_FILE: &str = "metrics-both.log";
+    const DEBUG_FILE: &str = "debug-both.log";
 
     let server = MockServer::start();
 
@@ -247,10 +247,10 @@ fn test_metrics_and_debug_logs() {
         .create_on(&server);
 
     let mut config = common::build_configuration(&server);
-    config.metrics_log_file = METRICS_LOG_FILE.to_string();
-    config.metrics_log_format = "raw".to_string();
+    config.metrics_file = METRICS_FILE.to_string();
+    config.metrics_format = "raw".to_string();
     config.no_metrics = false;
-    config.debug_log_file = DEBUG_LOG_FILE.to_string();
+    config.debug_file = DEBUG_FILE.to_string();
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
@@ -267,8 +267,8 @@ fn test_metrics_and_debug_logs() {
     assert!(error.times_called() > 0);
 
     // Confirm both the metrics and debug logs exist.
-    assert!(std::path::Path::new(METRICS_LOG_FILE).exists());
-    assert!(std::path::Path::new(DEBUG_LOG_FILE).exists());
+    assert!(std::path::Path::new(METRICS_FILE).exists());
+    assert!(std::path::Path::new(DEBUG_FILE).exists());
 
-    cleanup_files(METRICS_LOG_FILE, DEBUG_LOG_FILE);
+    cleanup_files(METRICS_FILE, DEBUG_FILE);
 }

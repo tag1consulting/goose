@@ -627,78 +627,76 @@ impl GooseAttack {
             }
 
             // There is nothing to log if metrics are disabled.
-            if !self.configuration.metrics_log_file.is_empty() {
+            if !self.configuration.metrics_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
                     detail: Some(
-                        "--no-metrics must not be enabled when enabling --metrics-log-file."
+                        "--no-metrics must not be enabled when enabling --metrics-file."
                             .to_string(),
                     ),
                 });
             }
 
             // There is nothing to log if metrics are disabled.
-            if !self.configuration.metrics_log_file.is_empty() {
+            if !self.configuration.metrics_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
                     detail: Some(
-                        "--no-metrics must not be enabled when enabling --metrics-log-format."
+                        "--no-metrics must not be enabled when enabling --metrics-format."
                             .to_string(),
                     ),
                 });
             }
         }
 
-        if self.configuration.metrics_log_format != "json" {
+        if self.configuration.metrics_format != "json" {
             // Log format isn't relevant if log not enabled.
-            if self.configuration.metrics_log_file.is_empty() {
+            if self.configuration.metrics_file.is_empty() {
                 return Err(GooseError::InvalidOption {
-                    option: "--metrics-log-format".to_string(),
-                    value: self.configuration.metrics_log_format,
+                    option: "--metrics-format".to_string(),
+                    value: self.configuration.metrics_format,
                     detail: Some(
-                        "--metrics-log-file must be enabled when setting --metrics-log-format."
-                            .to_string(),
+                        "--metrics-file must be enabled when setting --metrics-format.".to_string(),
                     ),
                 });
             }
 
             // All of these options must be defined below, search for formatted_log.
             let options = vec!["json", "csv", "raw"];
-            if !options.contains(&self.configuration.metrics_log_format.as_str()) {
+            if !options.contains(&self.configuration.metrics_format.as_str()) {
                 return Err(GooseError::InvalidOption {
-                    option: "--metrics-log-format".to_string(),
-                    value: self.configuration.metrics_log_format,
+                    option: "--metrics-format".to_string(),
+                    value: self.configuration.metrics_format,
                     detail: Some(format!(
-                        "--metrics-log-format must be set to one of: {}.",
+                        "--metrics-format must be set to one of: {}.",
                         options.join(", ")
                     )),
                 });
             }
         }
 
-        if self.configuration.debug_log_format != "json" {
+        if self.configuration.debug_format != "json" {
             // Log format isn't relevant if log not enabled.
-            if self.configuration.debug_log_file.is_empty() {
+            if self.configuration.debug_file.is_empty() {
                 return Err(GooseError::InvalidOption {
-                    option: "--debug-log-format".to_string(),
-                    value: self.configuration.debug_log_format,
+                    option: "--debug-format".to_string(),
+                    value: self.configuration.debug_format,
                     detail: Some(
-                        "--debug-log-file must be enabled when setting --debug-log-format."
-                            .to_string(),
+                        "--debug-file must be enabled when setting --debug-format.".to_string(),
                     ),
                 });
             }
 
             // All of these options must be defined below, search for formatted_log.
             let options = vec!["json", "raw"];
-            if !options.contains(&self.configuration.debug_log_format.as_str()) {
+            if !options.contains(&self.configuration.debug_format.as_str()) {
                 return Err(GooseError::InvalidOption {
-                    option: "--debug-log-format".to_string(),
-                    value: self.configuration.debug_log_format,
+                    option: "--debug-format".to_string(),
+                    value: self.configuration.debug_format,
                     detail: Some(format!(
-                        "--debug-log-format must be set to one of: {}.",
+                        "--debug-format must be set to one of: {}.",
                         options.join(", ")
                     )),
                 });
@@ -1025,12 +1023,12 @@ impl GooseAttack {
                 });
             }
 
-            if !self.configuration.debug_log_file.is_empty() {
+            if !self.configuration.debug_file.is_empty() {
                 return Err(GooseError::InvalidOption {
-                    option: "--debug-log-file".to_string(),
-                    value: self.configuration.debug_log_file,
+                    option: "--debug-file".to_string(),
+                    value: self.configuration.debug_file,
                     detail: Some(
-                        "--debug-log-file can only be enabled in stand-alone or worker mode"
+                        "--debug-file can only be enabled in stand-alone or worker mode"
                             .to_string(),
                     ),
                 });
@@ -1379,7 +1377,7 @@ impl GooseAttack {
         Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
     ) {
         // If the logger isn't configured, return immediately.
-        if self.configuration.debug_log_file.is_empty() {
+        if self.configuration.debug_file.is_empty() {
             return (None, None);
         }
 
@@ -1526,7 +1524,7 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             user_channels.push(parent_sender);
 
-            if !self.configuration.debug_log_file.is_empty() {
+            if !self.configuration.debug_file.is_empty() {
                 // Copy the GooseUser-to-logger sender channel, used by all threads.
                 thread_user.logger = Some(all_threads_logger.clone().unwrap());
             } else {
@@ -1591,15 +1589,15 @@ impl GooseAttack {
         let mut metrics_timer = time::Instant::now();
         let mut display_running_metrics = false;
 
-        // Prepare an asynchronous buffered file writer for metrics_log_file (if enabled).
-        let mut metrics_log_file = None;
-        if !self.configuration.no_metrics && !self.configuration.metrics_log_file.is_empty() {
+        // Prepare an asynchronous buffered file writer for metrics_file (if enabled).
+        let mut metrics_file = None;
+        if !self.configuration.no_metrics && !self.configuration.metrics_file.is_empty() {
             info!(
                 "opening file to log metrics: {}",
-                self.configuration.metrics_log_file
+                self.configuration.metrics_file
             );
-            let file = File::create(&self.configuration.metrics_log_file).await?;
-            metrics_log_file = Some(BufWriter::new(file));
+            let file = File::create(&self.configuration.metrics_file).await?;
+            metrics_file = Some(BufWriter::new(file));
         }
 
         // Initialize the optional task metrics.
@@ -1622,7 +1620,7 @@ impl GooseAttack {
 
                 // Load messages from user threads until the receiver queue is empty.
                 let received_message = self
-                    .receive_metrics(&mut metric_receiver, &mut header, &mut metrics_log_file)
+                    .receive_metrics(&mut metric_receiver, &mut header, &mut metrics_file)
                     .await;
 
                 // As worker, push metrics up to manager.
@@ -1722,7 +1720,7 @@ impl GooseAttack {
                 futures::future::join_all(users).await;
                 debug!("all users exited");
 
-                if !self.configuration.debug_log_file.is_empty() {
+                if !self.configuration.debug_file.is_empty() {
                     // Tell logger thread to flush and exit.
                     if let Err(e) = all_threads_logger.unwrap().send(None) {
                         warn!("unexpected error telling logger thread to exit: {}", e);
@@ -1734,7 +1732,7 @@ impl GooseAttack {
                 // If we're printing metrics, collect the final metrics received from users.
                 if !self.configuration.no_metrics {
                     let _received_message = self
-                        .receive_metrics(&mut metric_receiver, &mut header, &mut metrics_log_file)
+                        .receive_metrics(&mut metric_receiver, &mut header, &mut metrics_file)
                         .await;
                 }
 
@@ -1791,10 +1789,10 @@ impl GooseAttack {
         }
 
         // If metrics logging is enabled, flush all metrics before we exit.
-        if let Some(file) = metrics_log_file.as_mut() {
+        if let Some(file) = metrics_file.as_mut() {
             info!(
-                "flushing metrics_log_file: {}",
-                &self.configuration.metrics_log_file
+                "flushing metrics_file: {}",
+                &self.configuration.metrics_file
             );
             let _ = file.flush().await;
         };
@@ -1808,7 +1806,7 @@ impl GooseAttack {
         &mut self,
         metric_receiver: &mut mpsc::UnboundedReceiver<GooseMetric>,
         header: &mut bool,
-        metrics_log_file: &mut Option<BufWriter<File>>,
+        metrics_file: &mut Option<BufWriter<File>>,
     ) -> bool {
         let mut received_message = false;
         let mut message = metric_receiver.try_recv();
@@ -1817,7 +1815,7 @@ impl GooseAttack {
             match message.unwrap() {
                 GooseMetric::Request(raw_request) => {
                     // Options should appear above, search for formatted_log.
-                    let formatted_log = match self.configuration.metrics_log_format.as_str() {
+                    let formatted_log = match self.configuration.metrics_format.as_str() {
                         // Use serde_json to create JSON.
                         "json" => json!(raw_request).to_string(),
                         // Manually create CSV, library doesn't support single-row string conversion.
@@ -1826,13 +1824,13 @@ impl GooseAttack {
                         "raw" => format!("{:?}", raw_request).to_string(),
                         _ => unreachable!(),
                     };
-                    if let Some(file) = metrics_log_file.as_mut() {
+                    if let Some(file) = metrics_file.as_mut() {
                         match file.write(format!("{}\n", formatted_log).as_ref()).await {
                             Ok(_) => (),
                             Err(e) => {
                                 warn!(
                                     "failed to write metrics to {}: {}",
-                                    &self.configuration.metrics_log_file, e
+                                    &self.configuration.metrics_file, e
                                 );
                             }
                         }
@@ -1879,7 +1877,7 @@ impl GooseAttack {
     }
 }
 
-/// CLI options available when launching a Goose load test.
+/// Options available when launching a Goose load test.
 #[derive(StructOpt, Debug, Default, Clone, Serialize, Deserialize)]
 #[structopt(name = "Goose")]
 pub struct GooseConfiguration {
@@ -1937,19 +1935,19 @@ pub struct GooseConfiguration {
 
     /// Sets metrics log file name
     #[structopt(short = "s", long, default_value = "")]
-    pub metrics_log_file: String,
+    pub metrics_file: String,
 
     /// Sets metrics log format ('csv', 'json', or 'raw')
     #[structopt(long, default_value = "json")]
-    pub metrics_log_format: String,
+    pub metrics_format: String,
 
     /// Sets debug log file name
     #[structopt(short = "d", long, default_value = "")]
-    pub debug_log_file: String,
+    pub debug_file: String,
 
     /// Sets debug log format ('json' or 'raw')
     #[structopt(long, default_value = "json")]
-    pub debug_log_format: String,
+    pub debug_format: String,
 
     /// Sets maximum requests per second
     #[structopt(long)]
@@ -1959,35 +1957,35 @@ pub struct GooseConfiguration {
     #[structopt(long)]
     pub sticky_follow: bool,
 
-    /// Gaggle: enables manager mode
+    /// Gaggle: enables Manager mode
     #[structopt(long)]
     pub manager: bool,
 
-    /// Gaggle: ignores worker load test checksum
+    /// Gaggle: ignores Worker load test checksum
     #[structopt(long)]
     pub no_hash_check: bool,
 
-    /// Gaggle: tells manager how many workers to expect
+    /// Gaggle: tells Manager how many Workers to expect
     #[structopt(long, required = false, default_value = "0")]
     pub expect_workers: u16,
 
-    /// Gaggle: sets host manager listens on, formatted x.x.x.x
+    /// Gaggle: sets host Manager listens on, formatted x.x.x.x
     #[structopt(long, default_value = "0.0.0.0")]
     pub manager_bind_host: String,
 
-    /// Gaggle: sets port manager listens on
+    /// Gaggle: sets port Manager listens on
     #[structopt(long, default_value=DEFAULT_PORT)]
     pub manager_bind_port: u16,
 
-    /// Gaggle: enables worker mode
+    /// Gaggle: enables Worker mode
     #[structopt(long)]
     pub worker: bool,
 
-    /// Gaggle: sets host worker connects to manager on
+    /// Gaggle: sets host Worker connects to Manager on
     #[structopt(long, default_value = "127.0.0.1")]
     pub manager_host: String,
 
-    /// Gaggle: sets port worker connects to manager on
+    /// Gaggle: sets port Worker connects to Manager on
     #[structopt(long, default_value=DEFAULT_PORT)]
     pub manager_port: u16,
 }
