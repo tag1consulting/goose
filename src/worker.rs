@@ -1,8 +1,11 @@
+use gumdrop::Options;
 use nng::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 use std::{thread, time};
 use url::Url;
+
+const EMPTY_ARGS: Vec<&str> = vec![];
 
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
@@ -84,7 +87,8 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     );
 
     let mut hatch_rate: Option<f32> = None;
-    let mut config: GooseConfiguration = GooseConfiguration::default();
+    let mut config: GooseConfiguration = GooseConfiguration::parse_args_default(&EMPTY_ARGS)
+        .expect("failed to generate default configuration");
     let mut weighted_users: Vec<GooseUser> = Vec::new();
 
     // Wait for the manager to send user parameters.

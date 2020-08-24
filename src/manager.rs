@@ -506,9 +506,13 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 mod tests {
     use super::*;
 
+    use gumdrop::Options;
+
+    const EMPTY_ARGS: Vec<&str> = vec![];
+
     #[test]
     fn test_distribute_users() {
-        let config = GooseConfiguration::default();
+        let config = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(config);
 
         goose_attack.users = 10;

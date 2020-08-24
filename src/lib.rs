@@ -1856,7 +1856,7 @@ impl GooseAttack {
 }
 
 /// Options available when launching a Goose load test.
-#[derive(Options, Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Options, Debug, Clone, Serialize, Deserialize)]
 pub struct GooseConfiguration {
     /// Displays this help
     #[options(short = "h")]
