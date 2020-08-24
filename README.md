@@ -184,7 +184,10 @@ optimized code. This can generate considerably more load test traffic.
 The `-h` flag will show all run-time configuration options available to Goose load tests. For example, pass the `-h` flag to the `simple` example, `cargo run --example simple -- -h`:
 
 ```
+Usage: target/debug/examples/simple [OPTIONS]
+
 Options available when launching a Goose load test.
+
 
 Optional arguments:
   -h, --help                 Displays this help
@@ -196,7 +199,7 @@ Optional arguments:
   -r, --hatch-rate RATE      Sets per-second user hatch rate (default: 1)
   -t, --run-time TIME        Stops after (30s, 20m, 3h, 1h30m, etc)
   -g, --log-level            Sets log level (-g, -gg, etc)
-  -L, --log-file LOG-FILE    Sets log file name (default: goose.log)
+  -L, --log-file NAME        Sets log file name (default: goose.log)
   -v, --verbose              Sets debug level (-v, -vv, etc)
 
 Metrics:
@@ -204,7 +207,7 @@ Metrics:
   --no-reset-metrics         Doesn't reset metrics after all users have started
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
-  --metrics-file NAME        Sets metrics log file name
+  -m, --metrics-file NAME    Sets metrics log file name
   --metrics-format FORMAT    Sets metrics log format (csv, json, raw) (default: json)
   -d, --debug-file NAME      Sets debug log file name
   --debug-format FORMAT      Sets debug log format (json, raw) (default: json)

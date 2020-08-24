@@ -1881,7 +1881,7 @@ pub struct GooseConfiguration {
     #[options(short = "g", count)]
     pub log_level: u8,
     /// Sets log file name
-    #[options(default = "goose.log", help = "Sets log file name")]
+    #[options(default = "goose.log", help = "Sets log file name", meta = "NAME")]
     pub log_file: String,
     #[options(
         count,
@@ -1904,7 +1904,7 @@ pub struct GooseConfiguration {
     #[options(no_short)]
     pub no_task_metrics: bool,
     /// Sets metrics log file name
-    #[options(no_short, meta = "NAME")]
+    #[options(short = "m", meta = "NAME")]
     pub metrics_file: String,
     /// Sets metrics log format (csv, json, raw)
     #[options(no_short, default = "json", meta = "FORMAT")]
