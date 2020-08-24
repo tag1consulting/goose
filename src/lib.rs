@@ -1957,35 +1957,35 @@ pub struct GooseConfiguration {
     #[structopt(long)]
     pub sticky_follow: bool,
 
-    /// Gaggle: enables manager mode
+    /// Gaggle: enables Manager mode
     #[structopt(long)]
     pub manager: bool,
 
-    /// Gaggle: ignores worker load test checksum
+    /// Gaggle: ignores Worker load test checksum
     #[structopt(long)]
     pub no_hash_check: bool,
 
-    /// Gaggle: tells manager how many workers to expect
+    /// Gaggle: tells Manager how many Workers to expect
     #[structopt(long, required = false, default_value = "0")]
     pub expect_workers: u16,
 
-    /// Gaggle: sets host manager listens on, formatted x.x.x.x
+    /// Gaggle: sets host Manager listens on, formatted x.x.x.x
     #[structopt(long, default_value = "0.0.0.0")]
     pub manager_bind_host: String,
 
-    /// Gaggle: sets port manager listens on
+    /// Gaggle: sets port Manager listens on
     #[structopt(long, default_value=DEFAULT_PORT)]
     pub manager_bind_port: u16,
 
-    /// Gaggle: enables worker mode
+    /// Gaggle: enables Worker mode
     #[structopt(long)]
     pub worker: bool,
 
-    /// Gaggle: sets host worker connects to manager on
+    /// Gaggle: sets host Worker connects to Manager on
     #[structopt(long, default_value = "127.0.0.1")]
     pub manager_host: String,
 
-    /// Gaggle: sets port worker connects to manager on
+    /// Gaggle: sets port Worker connects to Manager on
     #[structopt(long, default_value=DEFAULT_PORT)]
     pub manager_port: u16,
 }
