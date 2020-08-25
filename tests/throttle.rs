@@ -40,17 +40,24 @@ fn test_throttle() {
     let users = 5;
     let run_time = 3;
 
-    let mut config = common::build_configuration(&server);
-    // Record all requests so we can confirm throttle is working.
-    config.metrics_file = METRICS_FILE.to_string();
-    config.no_metrics = false;
-    // Enable the throttle.
-    config.throttle_requests = Some(throttle_requests);
-    config.users = Some(users);
-    // Start all users in half a second.
-    config.hatch_rate = users;
-    // Run for a few seconds to be sure throttle really works.
-    config.run_time = run_time.to_string();
+    let config = common::build_configuration(
+        &server,
+        vec![
+            // Record all requests so we can confirm throttle is working.
+            "--metrics-file",
+            METRICS_FILE,
+            // Enable the throttle.
+            "--throttle-requests",
+            &throttle_requests.to_string(),
+            "--users",
+            &users.to_string(),
+            "--hatch-rate",
+            &users.to_string(),
+            // Run for a few seconds to be sure throttle really works.
+            "--run-time",
+            &run_time.to_string(),
+        ],
+    );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()
@@ -84,16 +91,22 @@ fn test_throttle() {
     // and confirm the throttle is actually working.
     throttle_requests *= 5;
 
-    let mut config = common::build_configuration(&server);
-    // Record all requests so we can confirm throttle is working.
-    config.metrics_file = METRICS_FILE.to_string();
-    config.no_metrics = false;
-    // Enable the throttle.
-    config.throttle_requests = Some(throttle_requests);
-    config.users = Some(users);
-    // Start all users in half a second.
-    config.hatch_rate = users;
-    config.run_time = run_time.to_string();
+    let config = common::build_configuration(
+        &server,
+        vec![
+            // Record all requests so we can confirm throttle is working.
+            "--metrics-file",
+            METRICS_FILE,
+            "--throttle-requests",
+            &throttle_requests.to_string(),
+            "--users",
+            &users.to_string(),
+            "--hatch-rate",
+            &users.to_string(),
+            "--run-time",
+            &run_time.to_string(),
+        ],
+    );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()

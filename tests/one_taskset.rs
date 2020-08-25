@@ -37,13 +37,18 @@ fn test_single_taskset() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.no_metrics = false;
-    // Start users in .5 seconds.
-    config.users = Some(2);
-    config.hatch_rate = 4;
-    config.status_codes = true;
-    config.no_reset_metrics = true;
+    let config = common::build_configuration(
+        &server,
+        vec![
+            "--users",
+            "2",
+            // Start users in .5 seconds.
+            "--hatch-rate",
+            "4",
+            "--status-codes",
+            "--no-reset-metrics",
+        ],
+    );
     let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
         .unwrap()
         .setup()
@@ -64,6 +69,8 @@ fn test_single_taskset() {
     let one_third_index = index.times_called() / 3;
     let difference = about.times_called() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
+
+    println!("{:?}", &goose_metrics);
 
     let index_metrics = goose_metrics
         .requests
@@ -113,12 +120,10 @@ fn test_single_taskset_empty_config_host() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
+    let mut config = common::build_configuration(&server, vec!["--no-reset-metrics"]);
     // Leaves an empty string in config.host.
     let host = std::mem::take(&mut config.host);
-    // Enable statistics to confirm Goose and web server agree.
-    config.no_metrics = false;
-    config.no_reset_metrics = true;
+    // Enable metrics to confirm Goose and web server agree.
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()
@@ -190,13 +195,18 @@ fn test_single_taskset_closure() {
     let server = MockServer::start();
 
     // Build configuration.
-    let mut config = common::build_configuration(&server);
-    config.no_metrics = false;
-    // Start users in .5 seconds.
-    config.users = Some(test_endpoints.len());
-    config.hatch_rate = 2 * test_endpoints.len();
-    config.status_codes = true;
-    config.no_reset_metrics = true;
+    let config = common::build_configuration(
+        &server,
+        vec![
+            "--no-reset-metrics",
+            "--no-task-metrics",
+            "--status-codes",
+            "--users",
+            &test_endpoints.len().to_string(),
+            "--hatch-rate",
+            &(2 * test_endpoints.len()).to_string(),
+        ],
+    );
 
     // Setup mock endpoints.
     let mut mock_endpoints = Vec::with_capacity(test_endpoints.len());
@@ -323,12 +333,17 @@ fn test_single_taskset_reset_metrics() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.no_metrics = false;
-    // Start users in .5 seconds.
-    config.users = Some(2);
-    config.hatch_rate = 4;
-    config.status_codes = true;
+    let config = common::build_configuration(
+        &server,
+        vec![
+            "--no-task-metrics",
+            "--status-codes",
+            "--users",
+            "2",
+            "--hatch-rate",
+            "4",
+        ],
+    );
     let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
         .unwrap()
         .setup()

@@ -41,14 +41,7 @@ fn test_gaggle() {
     // Launch workers in their own threads, storing the thread handle.
     let mut worker_handles = Vec::new();
     // Each worker has the same identical configuration.
-    let mut worker_configuration = common::build_configuration(&server);
-    worker_configuration.worker = true;
-    worker_configuration.host = "".to_string();
-    worker_configuration.users = None;
-    worker_configuration.no_metrics = false;
-    worker_configuration.run_time = "".to_string();
-    // Can't change this on the worker.
-    worker_configuration.no_task_metrics = false;
+    let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
     for _ in 0..2 {
         let configuration = worker_configuration.clone();
         // Start worker instance of the load test.
@@ -65,16 +58,22 @@ fn test_gaggle() {
     }
 
     // Start manager instance in current thread and run a distributed load test.
-    let mut manager_configuration = common::build_configuration(&server);
-    manager_configuration.users = Some(2);
-    manager_configuration.hatch_rate = 4;
-    manager_configuration.manager = true;
-    manager_configuration.expect_workers = 2;
-    manager_configuration.run_time = "3".to_string();
-    // Enable statistics so we can validate they are merged to the manager correctly.
-    manager_configuration.no_metrics = false;
-    manager_configuration.no_task_metrics = false;
-    manager_configuration.no_reset_metrics = true;
+    let manager_configuration = common::build_configuration(
+        &server,
+        vec![
+            "--manager",
+            "--expect-workers",
+            "2",
+            "--users",
+            "2",
+            "--hatch-rate",
+            "4",
+            "--run-time",
+            "3",
+            // Enable statistics so we can validate they are merged to the manager correctly.
+            "--no-reset-metrics",
+        ],
+    );
     let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
         .unwrap()
         .setup()

@@ -52,9 +52,7 @@ fn test_metrics_logs_json() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.metrics_file = METRICS_FILE.to_string();
-    config.no_metrics = false;
+    let config = common::build_configuration(&server, vec!["--metrics-file", METRICS_FILE]);
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()
@@ -89,10 +87,10 @@ fn test_metrics_logs_csv() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.metrics_file = METRICS_FILE.to_string();
-    config.metrics_format = "csv".to_string();
-    config.no_metrics = false;
+    let config = common::build_configuration(
+        &server,
+        vec!["--metrics-file", METRICS_FILE, "--metrics-format", "csv"],
+    );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()
@@ -124,10 +122,10 @@ fn test_metrics_logs_raw() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.metrics_file = METRICS_FILE.to_string();
-    config.metrics_format = "raw".to_string();
-    config.no_metrics = false;
+    let config = common::build_configuration(
+        &server,
+        vec!["--metrics-file", METRICS_FILE, "--metrics-format", "raw"],
+    );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()
@@ -164,9 +162,10 @@ fn test_debug_logs_raw() {
         .return_status(503)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.debug_file = DEBUG_FILE.to_string();
-    config.debug_format = "raw".to_string();
+    let config = common::build_configuration(
+        &server,
+        vec!["--debug-file", DEBUG_FILE, "--debug-format", "raw"],
+    );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()
@@ -208,8 +207,7 @@ fn test_debug_logs_json() {
         .return_status(503)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.debug_file = DEBUG_FILE.to_string();
+    let config = common::build_configuration(&server, vec!["--debug-file", DEBUG_FILE]);
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()
@@ -251,11 +249,17 @@ fn test_metrics_and_debug_logs() {
         .return_status(503)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.metrics_file = METRICS_FILE.to_string();
-    config.metrics_format = "raw".to_string();
-    config.no_metrics = false;
-    config.debug_file = DEBUG_FILE.to_string();
+    let config = common::build_configuration(
+        &server,
+        vec![
+            "--metrics-file",
+            METRICS_FILE,
+            "--metrics-format",
+            "raw",
+            "--debug-file",
+            DEBUG_FILE,
+        ],
+    );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .setup()

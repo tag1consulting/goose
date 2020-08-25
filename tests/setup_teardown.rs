@@ -47,17 +47,17 @@ fn test_start() {
         .return_status(200)
         .create_on(&server);
 
-    let _goose_stats =
-        crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
-            .unwrap()
-            .setup()
-            .unwrap()
-            .test_start(task!(setup))
-            .register_taskset(
-                taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
-            )
-            .execute()
-            .unwrap();
+    let _goose_stats = crate::GooseAttack::initialize_with_config(common::build_configuration(
+        &server,
+        vec!["--no-metrics"],
+    ))
+    .unwrap()
+    .setup()
+    .unwrap()
+    .test_start(task!(setup))
+    .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()))
+    .execute()
+    .unwrap();
 
     // Confirm the load test ran.
     assert!(index.times_called() > 0);
@@ -90,17 +90,17 @@ fn test_stop() {
         .return_status(200)
         .create_on(&server);
 
-    let _goose_stats =
-        crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
-            .unwrap()
-            .setup()
-            .unwrap()
-            .test_stop(task!(teardown))
-            .register_taskset(
-                taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
-            )
-            .execute()
-            .unwrap();
+    let _goose_stats = crate::GooseAttack::initialize_with_config(common::build_configuration(
+        &server,
+        vec!["--no-metrics"],
+    ))
+    .unwrap()
+    .setup()
+    .unwrap()
+    .test_stop(task!(teardown))
+    .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()))
+    .execute()
+    .unwrap();
 
     // Confirm the load test ran.
     assert!(index.times_called() > 0);
@@ -132,10 +132,11 @@ fn test_setup_teardown() {
         .return_status(200)
         .create_on(&server);
 
-    let mut configuration = common::build_configuration(&server);
     // Launch several user threads, confirm we still only setup and teardown one time.
-    configuration.users = Some(5);
-    configuration.hatch_rate = 5;
+    let configuration = common::build_configuration(
+        &server,
+        vec!["--no-metrics", "--users", "5", "--hatch-rate", "5"],
+    );
 
     let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()

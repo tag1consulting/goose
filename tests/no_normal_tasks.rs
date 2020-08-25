@@ -35,18 +35,20 @@ fn test_no_normal_tasks() {
         .return_status(200)
         .create_on(&server);
 
-    let _goose_stats =
-        crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
-            .unwrap()
-            .setup()
-            .unwrap()
-            .register_taskset(
-                taskset!("LoadTest")
-                    .register_task(task!(login).set_on_start())
-                    .register_task(task!(logout).set_on_stop()),
-            )
-            .execute()
-            .unwrap();
+    let _goose_stats = crate::GooseAttack::initialize_with_config(common::build_configuration(
+        &server,
+        vec!["--no-metrics"],
+    ))
+    .unwrap()
+    .setup()
+    .unwrap()
+    .register_taskset(
+        taskset!("LoadTest")
+            .register_task(task!(login).set_on_start())
+            .register_task(task!(logout).set_on_stop()),
+    )
+    .execute()
+    .unwrap();
 
     // Confirm that the on_start and on_exit tasks actually ran.
     assert!(login_path.times_called() == 1);

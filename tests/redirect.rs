@@ -95,21 +95,23 @@ fn test_redirect() {
         .return_body("<HTML><BODY>about page</BODY></HTML>")
         .create_on(&server1);
 
-    let _goose_stats =
-        crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
-            .unwrap()
-            .setup()
-            .unwrap()
-            .register_taskset(
-                taskset!("LoadTest")
-                    // Load index directly.
-                    .register_task(task!(get_index))
-                    // Load redirect path, redirect to redirect2 path, redirect to
-                    // redirect3 path, redirect to about.
-                    .register_task(task!(get_redirect)),
-            )
-            .execute()
-            .unwrap();
+    let _goose_stats = crate::GooseAttack::initialize_with_config(common::build_configuration(
+        &server1,
+        vec!["--no-metrics"],
+    ))
+    .unwrap()
+    .setup()
+    .unwrap()
+    .register_taskset(
+        taskset!("LoadTest")
+            // Load index directly.
+            .register_task(task!(get_index))
+            // Load redirect path, redirect to redirect2 path, redirect to
+            // redirect3 path, redirect to about.
+            .register_task(task!(get_redirect)),
+    )
+    .execute()
+    .unwrap();
 
     // Confirm that we loaded the mock endpoints; while we never load the about page
     // directly, we should follow the redirects and load it.
@@ -162,22 +164,24 @@ fn test_domain_redirect() {
         .return_status(200)
         .create_on(&server2);
 
-    let _goose_stats =
-        crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
-            .unwrap()
-            .setup()
-            .unwrap()
-            .register_taskset(
-                taskset!("LoadTest")
-                    // First load redirect, takes this request only to another domain.
-                    .register_task(task!(get_domain_redirect).set_on_start())
-                    // Load index directly.
-                    .register_task(task!(get_index))
-                    // Load about directly, always on original domain.
-                    .register_task(task!(get_about)),
-            )
-            .execute()
-            .unwrap();
+    let _goose_stats = crate::GooseAttack::initialize_with_config(common::build_configuration(
+        &server1,
+        vec!["--no-metrics"],
+    ))
+    .unwrap()
+    .setup()
+    .unwrap()
+    .register_taskset(
+        taskset!("LoadTest")
+            // First load redirect, takes this request only to another domain.
+            .register_task(task!(get_domain_redirect).set_on_start())
+            // Load index directly.
+            .register_task(task!(get_index))
+            // Load about directly, always on original domain.
+            .register_task(task!(get_about)),
+    )
+    .execute()
+    .unwrap();
 
     // Confirm that we load the index, about and redirect pages on the orginal domain.
     assert!(server1_index.times_called() > 0);
@@ -226,8 +230,8 @@ fn test_sticky_domain_redirect() {
         .create_on(&server2);
 
     // Enable sticky_follow option.
-    let mut configuration = common::build_configuration(&server1);
-    configuration.sticky_follow = true;
+    let configuration =
+        common::build_configuration(&server1, vec!["--no-metrics", "--sticky-follow"]);
     let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()
         .setup()
