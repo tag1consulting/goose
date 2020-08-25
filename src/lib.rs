@@ -505,18 +505,18 @@ impl GooseAttack {
     ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> Result<GooseAttack, GooseError> {
-        let config = GooseConfiguration::parse_args_default_or_exit();
-        let users = GooseAttack::set_users(&config)?;
+        let configuration = GooseConfiguration::parse_args_default_or_exit();
+        let users = GooseAttack::set_users(&configuration)?;
         let goose_attack = GooseAttack {
             test_start_task: None,
             test_stop_task: None,
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
             host: None,
-            configuration: config,
+            configuration,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users: users,
+            users,
             started: None,
             metrics: GooseMetrics::default(),
         };
@@ -534,18 +534,20 @@ impl GooseAttack {
     ///     let configuration = GooseConfiguration::parse_args_default_or_exit();
     ///     let mut goose_attack = GooseAttack::initialize_with_config(configuration);
     /// ```
-    pub fn initialize_with_config(config: GooseConfiguration) -> Result<GooseAttack, GooseError> {
-        let users = GooseAttack::set_users(&config)?;
+    pub fn initialize_with_config(
+        configuration: GooseConfiguration,
+    ) -> Result<GooseAttack, GooseError> {
+        let users = GooseAttack::set_users(&configuration)?;
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
             host: None,
-            configuration: config,
+            configuration,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users: users,
+            users,
             started: None,
             metrics: GooseMetrics::default(),
         })
