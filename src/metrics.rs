@@ -1201,7 +1201,7 @@ mod test {
         duration = 10;
         let (requests_per_second, fails_per_second) =
             per_second_calculations(duration, total, fail);
-        assert!(requests_per_second == 10.0);
-        assert!(fails_per_second == 1.0);
+        assert!((requests_per_second - 10.0).abs() < f32::EPSILON);
+        assert!((fails_per_second - 1.0).abs() < f32::EPSILON);
     }
 }
