@@ -1026,10 +1026,8 @@ fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, 
 }
 
 fn determine_precision(value: f32) -> usize {
-    if value < 10.0 {
+    if value < 1000.0 {
         2
-    } else if value < 100.0 {
-        1
     } else {
         0
     }
