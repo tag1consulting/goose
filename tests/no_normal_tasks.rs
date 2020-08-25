@@ -37,6 +37,7 @@ fn test_no_normal_tasks() {
 
     let _goose_stats =
         crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
+            .unwrap()
             .setup()
             .unwrap()
             .register_taskset(

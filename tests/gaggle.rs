@@ -54,6 +54,7 @@ fn test_gaggle() {
         // Start worker instance of the load test.
         worker_handles.push(thread::spawn(move || {
             let _goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
+                .unwrap()
                 .setup()
                 .unwrap()
                 .register_taskset(taskset!("User1").register_task(task!(get_index)))
@@ -75,6 +76,7 @@ fn test_gaggle() {
     manager_configuration.no_task_metrics = false;
     manager_configuration.no_reset_metrics = true;
     let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
+        .unwrap()
         .setup()
         .unwrap()
         .register_taskset(taskset!("User1").register_task(task!(get_index)))

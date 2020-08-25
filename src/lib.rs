@@ -505,16 +505,18 @@ impl GooseAttack {
     ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> Result<GooseAttack, GooseError> {
+        let config = GooseConfiguration::parse_args_default_or_exit();
+        let users = GooseAttack::set_users(&config)?;
         let goose_attack = GooseAttack {
             test_start_task: None,
             test_stop_task: None,
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
             host: None,
-            configuration: GooseConfiguration::parse_args_default_or_exit(),
+            configuration: config,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users: 0,
+            users: users,
             started: None,
             metrics: GooseMetrics::default(),
         };
@@ -532,8 +534,9 @@ impl GooseAttack {
     ///     let configuration = GooseConfiguration::parse_args_default_or_exit();
     ///     let mut goose_attack = GooseAttack::initialize_with_config(configuration);
     /// ```
-    pub fn initialize_with_config(config: GooseConfiguration) -> GooseAttack {
-        GooseAttack {
+    pub fn initialize_with_config(config: GooseConfiguration) -> Result<GooseAttack, GooseError> {
+        let users = GooseAttack::set_users(&config)?;
+        Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
             task_sets: Vec::new(),
@@ -542,10 +545,10 @@ impl GooseAttack {
             configuration: config,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users: 0,
+            users: users,
             started: None,
             metrics: GooseMetrics::default(),
-        }
+        })
     }
 
     pub fn initialize_logger(&self) {
@@ -590,6 +593,43 @@ impl GooseAttack {
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
         info!("Writing to log file: {}", log_file.display());
+    }
+
+    // Helper to determine the number of user threads to launch, defaulting to the
+    // number of CPU cores available.
+    fn set_users(config: &GooseConfiguration) -> Result<usize, GooseError> {
+        match config.users {
+            Some(u) => {
+                if u == 0 {
+                    if config.worker {
+                        return Err(GooseError::InvalidOption {
+                            option: "--users".to_string(),
+                            value: u.to_string(),
+                            detail: "The --users option must be set to at least 1.".to_string(),
+                        });
+                    }
+                    Ok(0)
+                } else {
+                    if config.worker {
+                        return Err(GooseError::InvalidOption {
+                            option: "--users".to_string(),
+                            value: u.to_string(),
+                            detail:
+                                "The --users option can not be set together with the --worker flag."
+                                    .to_string(),
+                        });
+                    }
+                    Ok(u)
+                }
+            }
+            None => {
+                let u = num_cpus::get();
+                if !config.manager && !config.worker {
+                    info!("concurrent users defaulted to {} (number of CPUs)", u);
+                }
+                Ok(u)
+            }
+        }
     }
 
     pub fn setup(mut self) -> Result<Self, GooseError> {
@@ -705,40 +745,6 @@ impl GooseAttack {
         } else {
             self.run_time = 0;
         }
-
-        // Configure number of user threads to launch, default to the number of CPU cores available.
-        self.users = match self.configuration.users {
-            Some(u) => {
-                if u == 0 {
-                    if self.configuration.worker {
-                        return Err(GooseError::InvalidOption {
-                            option: "--users".to_string(),
-                            value: self.users.to_string(),
-                            detail: "The --users option must be set to at least 1.".to_string(),
-                        });
-                    }
-                    0
-                } else {
-                    if self.configuration.worker {
-                        return Err(GooseError::InvalidOption {
-                            option: "--users".to_string(),
-                            value: self.users.to_string(),
-                            detail:
-                                "The --users option can not be set together with the --worker flag."
-                                    .to_string(),
-                        });
-                    }
-                    u
-                }
-            }
-            None => {
-                let u = self.number_of_cpus;
-                if !self.configuration.manager && !self.configuration.worker {
-                    info!("concurrent users defaulted to {} (number of CPUs)", u);
-                }
-                u
-            }
-        };
 
         if !self.configuration.manager && !self.configuration.worker {
             debug!("users = {}", self.users);

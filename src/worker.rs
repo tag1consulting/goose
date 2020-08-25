@@ -204,7 +204,10 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     );
     let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
 
-    let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone());
+    let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone())
+        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+        .expect("failed to launch GooseAttack");
+
     worker_goose_attack.started = Some(time::Instant::now());
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
     if config.run_time != "" {

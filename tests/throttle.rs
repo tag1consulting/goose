@@ -52,6 +52,7 @@ fn test_throttle() {
     // Run for a few seconds to be sure throttle really works.
     config.run_time = run_time.to_string();
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
         .setup()
         .unwrap()
         .register_taskset(
@@ -94,6 +95,7 @@ fn test_throttle() {
     config.hatch_rate = users;
     config.run_time = run_time.to_string();
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
         .setup()
         .unwrap()
         .register_taskset(

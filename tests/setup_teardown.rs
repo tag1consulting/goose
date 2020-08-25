@@ -49,6 +49,7 @@ fn test_start() {
 
     let _goose_stats =
         crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
+            .unwrap()
             .setup()
             .unwrap()
             .test_start(task!(setup))
@@ -91,6 +92,7 @@ fn test_stop() {
 
     let _goose_stats =
         crate::GooseAttack::initialize_with_config(common::build_configuration(&server))
+            .unwrap()
             .setup()
             .unwrap()
             .test_stop(task!(teardown))
@@ -136,6 +138,7 @@ fn test_setup_teardown() {
     configuration.hatch_rate = 5;
 
     let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
+        .unwrap()
         .setup()
         .unwrap()
         .test_start(task!(setup))

@@ -508,27 +508,27 @@ mod tests {
 
     use gumdrop::Options;
 
-    const EMPTY_ARGS: Vec<&str> = vec![];
-
     #[test]
     fn test_distribute_users() {
-        let config = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        let mut goose_attack = GooseAttack::initialize_with_config(config);
-
-        goose_attack.users = 10;
-        goose_attack.configuration.expect_workers = 2;
+        let ten_users_two_workers: Vec<&str> = vec!["--users", "10", "--expect-workers", "2"];
+        let config = GooseConfiguration::parse_args_default(&ten_users_two_workers).unwrap();
+        let goose_attack = GooseAttack::initialize_with_config(config).unwrap();
         let (users_per_process, users_remainder) = distribute_users(&goose_attack);
         assert_eq!(users_per_process, 5);
         assert_eq!(users_remainder, 0);
 
-        goose_attack.users = 1;
-        goose_attack.configuration.expect_workers = 1;
+        let one_user_one_worker: Vec<&str> = vec!["--users", "1", "--expect-workers", "1"];
+        let config = GooseConfiguration::parse_args_default(&one_user_one_worker).unwrap();
+        let goose_attack = GooseAttack::initialize_with_config(config).unwrap();
         let (users_per_process, users_remainder) = distribute_users(&goose_attack);
         assert_eq!(users_per_process, 1);
         assert_eq!(users_remainder, 0);
 
-        goose_attack.users = 100;
-        goose_attack.configuration.expect_workers = 21;
+        let onehundred_users_twentyone_workers: Vec<&str> =
+            vec!["--users", "100", "--expect-workers", "21"];
+        let config =
+            GooseConfiguration::parse_args_default(&onehundred_users_twentyone_workers).unwrap();
+        let goose_attack = GooseAttack::initialize_with_config(config).unwrap();
         let (users_per_process, users_remainder) = distribute_users(&goose_attack);
         assert_eq!(users_per_process, 4);
         assert_eq!(users_remainder, 16);

@@ -97,6 +97,7 @@ fn test_redirect() {
 
     let _goose_stats =
         crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
+            .unwrap()
             .setup()
             .unwrap()
             .register_taskset(
@@ -163,6 +164,7 @@ fn test_domain_redirect() {
 
     let _goose_stats =
         crate::GooseAttack::initialize_with_config(common::build_configuration(&server1))
+            .unwrap()
             .setup()
             .unwrap()
             .register_taskset(
@@ -227,6 +229,7 @@ fn test_sticky_domain_redirect() {
     let mut configuration = common::build_configuration(&server1);
     configuration.sticky_follow = true;
     let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
+        .unwrap()
         .setup()
         .unwrap()
         .register_taskset(
