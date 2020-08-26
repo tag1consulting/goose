@@ -133,7 +133,7 @@ fn test_single_taskset_empty_config_host() {
                 .register_task(task!(get_index).set_weight(9).unwrap())
                 .register_task(task!(get_about).set_weight(3).unwrap()),
         )
-        .set_host(&host)
+        .set_default(GooseDefault::Host, host.as_str())
         .execute()
         .unwrap();
 

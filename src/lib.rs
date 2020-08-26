@@ -104,7 +104,7 @@
 //!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2)?)
 //!         )
 //!         // You could also set a default host here, for example:
-//!         //.set_host("http://dev.local/")
+//!         //.set_default(GooseDefault::Host, "http://dev.local/")
 //!         .execute()?;
 //!
 //!     Ok(())
@@ -580,60 +580,6 @@ pub enum GooseDefault {
     ManagerPort,
 }
 
-// The trait implementing the overloads through generic parameters
-pub trait DefaultType<T> {
-	fn set_default(self, key: GooseDefault, value: T) -> Self;
-}
-impl DefaultType<&str> for GooseDefaults {
-    fn set_default(mut self, key: GooseDefault, value: &str) -> Self {
-        match key {
-            GooseDefault::Host => self.host = Some(value.to_string()),
-            GooseDefault::LogFile => self.log_file = Some(value.to_string()),
-            GooseDefault::MetricsFile => self.metrics_file = Some(value.to_string()),
-            GooseDefault::MetricsFormat => self.metrics_format = Some(value.to_string()),
-            GooseDefault::DebugFile => self.debug_file = Some(value.to_string()),
-            GooseDefault::DebugFormat => self.debug_format = Some(value.to_string()),
-            GooseDefault::ManagerBindHost => self.manager_bind_host = Some(value.to_string()),
-            GooseDefault::ManagerHost => self.manager_host = Some(value.to_string()),
-            _ => {},
-        }
-        self
-    }
-}
-impl DefaultType<usize> for GooseDefaults {
-    fn set_default(mut self, key: GooseDefault, value: usize) -> Self {
-        match key {
-            GooseDefault::Users => self.users = Some(value),
-            GooseDefault::HatchRate => self.hatch_rate = Some(value),
-            GooseDefault::RunTime => self.run_time = Some(value),
-            GooseDefault::LogLevel => self.log_level = Some(value as u8),
-            GooseDefault::Verbose => self.verbose = Some(value as u8),
-            GooseDefault::ThrottleRequests => self.throttle_requests = Some(value),
-            GooseDefault::ExpectWorkers => self.expect_workers = Some(value as u16),
-            GooseDefault::ManagerBindPort => self.manager_bind_port = Some(value as u16),
-            GooseDefault::ManagerPort => self.manager_port = Some(value as u16),
-            _ => {},
-        }
-        self
-    }
-}
-impl DefaultType<bool> for GooseDefaults {
-    fn set_default(mut self, key: GooseDefault, value: bool) -> Self {
-        match key {
-            GooseDefault::OnlySummary => self.only_summary = Some(value),
-            GooseDefault::NoResetMetrics => self.no_reset_metrics = Some(value),
-            GooseDefault::NoMetrics => self.no_metrics = Some(value),
-            GooseDefault::NoTaskMetrics => self.no_task_metrics = Some(value),
-            GooseDefault::StatusCodes => self.status_codes = Some(value),
-            GooseDefault::Manager => self.manager = Some(value),
-            GooseDefault::NoHashCheck => self.no_hash_check = Some(value),
-            GooseDefault::Worker => self.worker = Some(value),
-            _ => {},
-        }
-        self
-    }
-}
-
 /// Internal global state for load test.
 #[derive(Clone)]
 pub struct GooseAttack {
@@ -1013,34 +959,6 @@ impl GooseAttack {
     /// ```
     pub fn test_stop(mut self, task: GooseTask) -> Self {
         self.test_stop_task = Some(task);
-        self
-    }
-
-    /// Optionally configure a default host for the load test. This is used if no
-    /// per-GooseTaskSet host is defined, no `--host` CLI option is configured, and if
-    /// the GooseTask itself doesn't hard-code the host in the base url of its request.
-    /// In that case, this host is added to all requests.
-    ///
-    /// For example, a load test could be configured to default to running against a local
-    /// development container, and the `--host` option could be used to override the host
-    /// value to run the load test against the production environment.
-    ///
-    /// # Example
-    /// ```rust,no_run
-    ///     use goose::prelude::*;
-    ///
-    /// fn main() -> Result<(), GooseError> {
-    ///     GooseAttack::initialize()?
-    ///         .set_host("local.dev");
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn set_host(mut self, host: &str) -> Self {
-        trace!("set_host: {}", host);
-        // Host validation happens in main() at startup.
-        self.defaults = self.defaults.set_default(GooseDefault::Host, host);
-        //self.defaults.host = Some(host.to_string());
         self
     }
 
@@ -2027,6 +1945,84 @@ impl GooseAttack {
             message = metric_receiver.try_recv();
         }
         received_message
+    }
+}
+
+/// Optionally configure a default host for the load test. This is used if no
+/// per-GooseTaskSet host is defined, no `--host` CLI option is configured, and if
+/// the GooseTask itself doesn't hard-code the host in the base url of its request.
+/// In that case, this host is added to all requests.
+///
+/// For example, a load test could be configured to default to running against a local
+/// development container, and the `--host` option could be used to override the host
+/// value to run the load test against the production environment.
+///
+/// # Example
+/// ```rust,no_run
+///     use goose::prelude::*;
+///
+/// fn main() -> Result<(), GooseError> {
+///     GooseAttack::initialize()?
+///         .set_default(GooseDefault::Host, "local.dev");
+///
+///     Ok(())
+/// }
+/// ```
+pub trait GooseDefaultType<T> {
+    fn set_default(self, key: GooseDefault, value: T) -> Self;
+}
+impl GooseDefaultType<&str> for GooseAttack {
+    fn set_default(mut self, key: GooseDefault, value: &str) -> Self {
+        match key {
+            GooseDefault::Host => self.defaults.host = Some(value.to_string()),
+            GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
+            GooseDefault::MetricsFile => self.defaults.metrics_file = Some(value.to_string()),
+            GooseDefault::MetricsFormat => self.defaults.metrics_format = Some(value.to_string()),
+            GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
+            GooseDefault::DebugFormat => self.defaults.debug_format = Some(value.to_string()),
+            GooseDefault::ManagerBindHost => {
+                self.defaults.manager_bind_host = Some(value.to_string())
+            }
+            GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
+            // @TODO error
+            _ => {}
+        }
+        self
+    }
+}
+impl GooseDefaultType<usize> for GooseAttack {
+    fn set_default(mut self, key: GooseDefault, value: usize) -> Self {
+        match key {
+            GooseDefault::Users => self.defaults.users = Some(value),
+            GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value),
+            GooseDefault::RunTime => self.defaults.run_time = Some(value),
+            GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
+            GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
+            GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
+            GooseDefault::ExpectWorkers => self.defaults.expect_workers = Some(value as u16),
+            GooseDefault::ManagerBindPort => self.defaults.manager_bind_port = Some(value as u16),
+            GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
+            // @TODO error
+            _ => {}
+        }
+        self
+    }
+}
+impl GooseDefaultType<bool> for GooseAttack {
+    fn set_default(mut self, key: GooseDefault, value: bool) -> Self {
+        match key {
+            GooseDefault::OnlySummary => self.defaults.only_summary = Some(value),
+            GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
+            GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
+            GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
+            GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
+            GooseDefault::Manager => self.defaults.manager = Some(value),
+            GooseDefault::NoHashCheck => self.defaults.no_hash_check = Some(value),
+            GooseDefault::Worker => self.defaults.worker = Some(value),
+            // @TODO error
+            _ => {}
+        }
+        self
     }
 }
 
