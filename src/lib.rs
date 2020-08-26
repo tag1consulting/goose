@@ -468,6 +468,62 @@ impl From<io::Error> for GooseError {
     }
 }
 
+/// Optional default values for Goose run-time options.
+pub struct GooseDefaults {
+    /// An optional default host to run this load test against.
+    host: Option<String>,
+    /// An optional default number of users to simulate.
+    users: Option<usize>,
+    /// An optional default number of clients to start per second.
+    hatch_rate: Option<usize>,
+    /// An optional default number of seconds for the test to run.
+    run_time: Option<usize>,
+    /// An optional default log level.
+    log_level: Option<u8>,
+    /// An optional default for the log file name.
+    log_file: Option<String>,
+    /// An optional default value for verbosity level.
+    verbose: Option<u8>,
+    /// An optional default for only printing final summary metrics.
+    only_summary: Option<bool>,
+    /// An optional default for not resetting metrics after all users started.
+    no_reset_metrics: Option<bool>,
+    /// An optional default for not tracking metrics.
+    no_metrics: Option<bool>,
+    /// An optional default for not tracking task metrics.
+    no_task_metrics: Option<bool>,
+    /// An optional default for the metrics log file name.
+    metrics_file: Option<String>,
+    /// An optional default for the metrics log file format.
+    metrics_format: Option<String>,
+    /// An optional default for the debug log file name.
+    debug_file: Option<String>,
+    /// An optional default for the debug log format.
+    debug_format: Option<String>,
+    /// An optional default to track additional status code metrics.
+    status_codes: Option<bool>,
+    /// An optional default maximum requests per second.
+    throttle_requests: Option<usize>,
+    /// An optional default to follows base_url redirect with subsequent request.
+    sticky_follow: Option<bool>,
+    /// An optional default to enable Manager mode.
+    manager: Option<bool>,
+    /// An optional default for number of Workers to expect.
+    expect_workers: Option<u16>,
+    /// An optional default for Manager to ignore load test checksum.
+    no_hash_check: Option<bool>,
+    /// An optional default for host Manager listens on.
+    manager_bind_host: Option<String>,
+    /// An optional default for port Manager listens on.
+    manager_bind_port: Option<u16>,
+    /// An optional default to enable Worker mode.
+    worker: Option<bool>,
+    /// An optional default for host Worker connects to.
+    manager_host: Option<String>,
+    /// An optional default for port Worker connects to.
+    manager_port: Option<u16>,
+}
+
 /// Internal global state for load test.
 #[derive(Clone)]
 pub struct GooseAttack {
