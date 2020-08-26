@@ -525,6 +525,115 @@ pub struct GooseDefaults {
     manager_port: Option<u16>,
 }
 
+pub enum GooseDefault {
+    /// An optional default host to run this load test against.
+    Host,
+    /// An optional default number of users to simulate.
+    Users,
+    /// An optional default number of clients to start per second.
+    HatchRate,
+    /// An optional default number of seconds for the test to run.
+    RunTime,
+    /// An optional default log level.
+    LogLevel,
+    /// An optional default for the log file name.
+    LogFile,
+    /// An optional default value for verbosity level.
+    Verbose,
+    /// An optional default for only printing final summary metrics.
+    OnlySummary,
+    /// An optional default for not resetting metrics after all users started.
+    NoResetMetrics,
+    /// An optional default for not tracking metrics.
+    NoMetrics,
+    /// An optional default for not tracking task metrics.
+    NoTaskMetrics,
+    /// An optional default for the metrics log file name.
+    MetricsFile,
+    /// An optional default for the metrics log file format.
+    MetricsFormat,
+    /// An optional default for the debug log file name.
+    DebugFile,
+    /// An optional default for the debug log format.
+    DebugFormat,
+    /// An optional default to track additional status code metrics.
+    StatusCodes,
+    /// An optional default maximum requests per second.
+    ThrottleRequests,
+    /// An optional default to follows base_url redirect with subsequent request.
+    StickyFollow,
+    /// An optional default to enable Manager mode.
+    Manager,
+    /// An optional default for number of Workers to expect.
+    ExpectWorkers,
+    /// An optional default for Manager to ignore load test checksum.
+    NoHashCheck,
+    /// An optional default for host Manager listens on.
+    ManagerBindHost,
+    /// An optional default for port Manager listens on.
+    ManagerBindPort,
+    /// An optional default to enable Worker mode.
+    Worker,
+    /// An optional default for host Worker connects to.
+    ManagerHost,
+    /// An optional default for port Worker connects to.
+    ManagerPort,
+}
+
+// The trait implementing the overloads through generic parameters
+pub trait DefaultType<T> {
+	fn set_default(self, key: GooseDefault, value: T) -> Self;
+}
+impl DefaultType<&str> for GooseDefaults {
+    fn set_default(mut self, key: GooseDefault, value: &str) -> Self {
+        match key {
+            GooseDefault::Host => self.host = Some(value.to_string()),
+            GooseDefault::LogFile => self.log_file = Some(value.to_string()),
+            GooseDefault::MetricsFile => self.metrics_file = Some(value.to_string()),
+            GooseDefault::MetricsFormat => self.metrics_format = Some(value.to_string()),
+            GooseDefault::DebugFile => self.debug_file = Some(value.to_string()),
+            GooseDefault::DebugFormat => self.debug_format = Some(value.to_string()),
+            GooseDefault::ManagerBindHost => self.manager_bind_host = Some(value.to_string()),
+            GooseDefault::ManagerHost => self.manager_host = Some(value.to_string()),
+            _ => {},
+        }
+        self
+    }
+}
+impl DefaultType<usize> for GooseDefaults {
+    fn set_default(mut self, key: GooseDefault, value: usize) -> Self {
+        match key {
+            GooseDefault::Users => self.users = Some(value),
+            GooseDefault::HatchRate => self.hatch_rate = Some(value),
+            GooseDefault::RunTime => self.run_time = Some(value),
+            GooseDefault::LogLevel => self.log_level = Some(value as u8),
+            GooseDefault::Verbose => self.verbose = Some(value as u8),
+            GooseDefault::ThrottleRequests => self.throttle_requests = Some(value),
+            GooseDefault::ExpectWorkers => self.expect_workers = Some(value as u16),
+            GooseDefault::ManagerBindPort => self.manager_bind_port = Some(value as u16),
+            GooseDefault::ManagerPort => self.manager_port = Some(value as u16),
+            _ => {},
+        }
+        self
+    }
+}
+impl DefaultType<bool> for GooseDefaults {
+    fn set_default(mut self, key: GooseDefault, value: bool) -> Self {
+        match key {
+            GooseDefault::OnlySummary => self.only_summary = Some(value),
+            GooseDefault::NoResetMetrics => self.no_reset_metrics = Some(value),
+            GooseDefault::NoMetrics => self.no_metrics = Some(value),
+            GooseDefault::NoTaskMetrics => self.no_task_metrics = Some(value),
+            GooseDefault::StatusCodes => self.status_codes = Some(value),
+            GooseDefault::Manager => self.manager = Some(value),
+            GooseDefault::NoHashCheck => self.no_hash_check = Some(value),
+            GooseDefault::Worker => self.worker = Some(value),
+            _ => {},
+        }
+        self
+    }
+}
+
 /// Internal global state for load test.
 #[derive(Clone)]
 pub struct GooseAttack {
@@ -930,7 +1039,8 @@ impl GooseAttack {
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("set_host: {}", host);
         // Host validation happens in main() at startup.
-        self.defaults.host = Some(host.to_string());
+        self.defaults = self.defaults.set_default(GooseDefault::Host, host);
+        //self.defaults.host = Some(host.to_string());
         self
     }
 
