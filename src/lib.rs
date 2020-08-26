@@ -469,6 +469,7 @@ impl From<io::Error> for GooseError {
 }
 
 /// Optional default values for Goose run-time options.
+#[derive(Clone, Default)]
 pub struct GooseDefaults {
     /// An optional default host to run this load test against.
     host: Option<String>,
@@ -536,7 +537,7 @@ pub struct GooseAttack {
     /// A weighted vector containing a GooseUser object for each user that will run during this load test.
     weighted_users: Vec<GooseUser>,
     /// An optional default host to run this load test against.
-    host: Option<String>,
+    defaults: GooseDefaults,
     /// Configuration object managed by StructOpt.
     configuration: GooseConfiguration,
     /// By default launch 1 user per number of CPUs.
@@ -568,8 +569,8 @@ impl GooseAttack {
             test_stop_task: None,
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
-            host: None,
-            configuration,
+            defaults: GooseDefaults::default(),
+            configuration: GooseConfiguration::parse_args_default_or_exit(),
             number_of_cpus: num_cpus::get(),
             run_time: 0,
             users,
@@ -599,8 +600,8 @@ impl GooseAttack {
             test_stop_task: None,
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
-            host: None,
-            configuration,
+            defaults: GooseDefaults::default(),
+            configuration: config,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
             users,
@@ -906,14 +907,14 @@ impl GooseAttack {
         self
     }
 
-    /// Optionally configure a default host for the load test. This is used if
-    /// no per-GooseTaskSet host is defined, no `--host` CLI option is configurared,
-    /// and if the GooseTask itself doesn't hard-code the host in its request. The
-    /// host is prepended on all requests.
+    /// Optionally configure a default host for the load test. This is used if no
+    /// per-GooseTaskSet host is defined, no `--host` CLI option is configured, and if
+    /// the GooseTask itself doesn't hard-code the host in the base url of its request.
+    /// In that case, this host is added to all requests.
     ///
-    /// For example, your load test may default to running against your local development
-    /// container, and the `--host` option could be used to override host to run the load
-    /// test against production.
+    /// For example, a load test could be configured to default to running against a local
+    /// development container, and the `--host` option could be used to override the host
+    /// value to run the load test against the production environment.
     ///
     /// # Example
     /// ```rust,no_run
@@ -929,7 +930,7 @@ impl GooseAttack {
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("set_host: {}", host);
         // Host validation happens in main() at startup.
-        self.host = Some(host.to_string());
+        self.defaults.host = Some(host.to_string());
         self
     }
 
@@ -977,7 +978,7 @@ impl GooseAttack {
                 let base_url = goose::get_base_url(
                     self.get_configuration_host(),
                     self.task_sets[*task_sets_index].host.clone(),
-                    self.host.clone(),
+                    self.defaults.host.clone(),
                 )?;
                 weighted_users.push(GooseUser::new(
                     self.task_sets[*task_sets_index].task_sets_index,
@@ -1260,7 +1261,7 @@ impl GooseAttack {
                             info!("host for {} configured: {}", task_set.name, h);
                         }
                     }
-                    None => match &self.host {
+                    None => match &self.defaults.host {
                         Some(h) => {
                             if is_valid_host(h).is_ok() {
                                 info!("host for {} configured: {}", task_set.name, h);
@@ -1506,7 +1507,7 @@ impl GooseAttack {
                     let base_url = goose::get_base_url(
                         self.get_configuration_host(),
                         None,
-                        self.host.clone(),
+                        self.defaults.host.clone(),
                     )?;
                     let user = GooseUser::single(base_url, &self.configuration)?;
                     let function = &t.function;
@@ -1818,7 +1819,7 @@ impl GooseAttack {
                     let base_url = goose::get_base_url(
                         self.get_configuration_host(),
                         None,
-                        self.host.clone(),
+                        self.defaults.host.clone(),
                     )?;
                     // Create a one-time-use user to run the test_stop_task.
                     let user = GooseUser::single(base_url, &self.configuration)?;
