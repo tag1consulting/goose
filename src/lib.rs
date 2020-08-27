@@ -1684,13 +1684,27 @@ impl GooseAttack {
 
         // Prepare an asynchronous buffered file writer for metrics_file (if enabled).
         let mut metrics_file = None;
-        if !self.configuration.no_metrics && !self.configuration.metrics_file.is_empty() {
-            info!(
-                "opening file to log metrics: {}",
-                self.configuration.metrics_file
-            );
-            let file = File::create(&self.configuration.metrics_file).await?;
-            metrics_file = Some(BufWriter::new(file));
+        if !self.configuration.no_metrics {
+            let mut file: Option<File> = None;
+            // Log metrics to --metrics-file if set.
+            if !self.configuration.metrics_file.is_empty() {
+                info!(
+                    "opening file to log metrics: {}",
+                    self.configuration.metrics_file
+                );
+                file = Some(File::create(&self.configuration.metrics_file).await?);
+            }
+            // Otherwise log metrics to defaults.metrics_file if set.
+            else if let Some(default_metrics_file) = &self.defaults.metrics_file {
+                info!(
+                    "opening default file to log metrics: {}",
+                    &default_metrics_file
+                );
+                file = Some(File::create(default_metrics_file).await?);
+            }
+            if let Some(file_created) = file {
+                metrics_file = Some(BufWriter::new(file_created));
+            }
         }
 
         // Initialize the optional task metrics.
