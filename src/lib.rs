@@ -684,30 +684,51 @@ impl GooseAttack {
             _ => log_level = LevelFilter::Trace,
         }
 
-        let log_file = PathBuf::from(&self.configuration.log_file);
+        let log_file: Option<PathBuf>;
+        // Use --log-file if set.
+        if !self.configuration.log_file.is_empty() {
+            log_file = Some(PathBuf::from(&self.configuration.log_file));
+        }
+        // Otherwise use goose_attack.defaults.log_file if set.
+        else if let Some(default_log_file) = &self.defaults.log_file {
+            log_file = Some(PathBuf::from(default_log_file));
+        }
+        // Otherwise disable the log.
+        else {
+            log_file = None;
+        }
 
-        match CombinedLogger::init(vec![
-            match TermLogger::new(debug_level, Config::default(), TerminalMode::Mixed) {
-                Some(t) => t,
-                None => {
-                    eprintln!("failed to initialize TermLogger");
-                    return;
+        if let Some(log_to_file) = log_file {
+            match CombinedLogger::init(vec![
+                match TermLogger::new(debug_level, Config::default(), TerminalMode::Mixed) {
+                    Some(t) => t,
+                    None => {
+                        eprintln!("failed to initialize TermLogger");
+                        return;
+                    }
+                },
+                WriteLogger::new(
+                    log_level,
+                    Config::default(),
+                    std::fs::File::create(&log_to_file).unwrap(),
+                ),
+            ]) {
+                Ok(_) => (),
+                Err(e) => {
+                    info!("failed to initialize CombinedLogger: {}", e);
                 }
-            },
-            WriteLogger::new(
-                log_level,
-                Config::default(),
-                std::fs::File::create(&log_file).unwrap(),
-            ),
-        ]) {
-            Ok(_) => (),
-            Err(e) => {
-                info!("failed to initialize CombinedLogger: {}", e);
+            }
+            info!("Writing to log file: {}", log_to_file.display());
+        } else {
+            let response = TermLogger::new(debug_level, Config::default(), TerminalMode::Mixed);
+            if response.is_none() {
+                eprintln!("failed to initialize TermLogger");
+                return;
             }
         }
+
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
-        info!("Writing to log file: {}", log_file.display());
     }
 
     // Helper to calculate the number of user threads to launch, defaulting to
@@ -2125,8 +2146,8 @@ pub struct GooseConfiguration {
     /// Sets log level (-g, -gg, etc)
     #[options(short = "g", count)]
     pub log_level: u8,
-    /// Sets log file name
-    #[options(default = "goose.log", help = "Sets log file name", meta = "NAME")]
+    /// Enables log file and sets name
+    #[options(meta = "NAME")]
     pub log_file: String,
     #[options(
         count,

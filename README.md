@@ -199,7 +199,7 @@ Optional arguments:
   -r, --hatch-rate RATE      Sets per-second user hatch rate (default: 1)
   -t, --run-time TIME        Stops after (30s, 20m, 3h, 1h30m, etc)
   -g, --log-level            Sets log level (-g, -gg, etc)
-  -L, --log-file NAME        Sets log file name (default: goose.log)
+  -L, --log-file NAME        Enables log file and sets name
   -v, --verbose              Sets debug level (-v, -vv, etc)
 
 Metrics:
