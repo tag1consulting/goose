@@ -525,6 +525,7 @@ pub struct GooseDefaults {
     manager_port: Option<u16>,
 }
 
+#[derive(Debug)]
 pub enum GooseDefault {
     /// An optional default host to run this load test against.
     Host,
@@ -1974,6 +1975,7 @@ pub trait GooseDefaultType<T> {
 impl GooseDefaultType<&str> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: &str) -> Self {
         match key {
+            // Set valid defaults.
             GooseDefault::Host => self.defaults.host = Some(value.to_string()),
             GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
             GooseDefault::MetricsFile => self.defaults.metrics_file = Some(value.to_string()),
@@ -1984,8 +1986,31 @@ impl GooseDefaultType<&str> for GooseAttack {
                 self.defaults.manager_bind_host = Some(value.to_string())
             }
             GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
-            // @TODO error
-            _ => {}
+            // Otherwise display a helpful and explicit error.
+            GooseDefault::Users
+            | GooseDefault::HatchRate
+            | GooseDefault::RunTime
+            | GooseDefault::LogLevel
+            | GooseDefault::Verbose
+            | GooseDefault::ThrottleRequests
+            | GooseDefault::ExpectWorkers
+            | GooseDefault::ManagerBindPort
+            | GooseDefault::ManagerPort => panic!(format!(
+                "set_default(GooseDefault::{:?}, {}) expected usize value, received &str",
+                key, value
+            )),
+            GooseDefault::OnlySummary
+            | GooseDefault::NoResetMetrics
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoTaskMetrics
+            | GooseDefault::StatusCodes
+            | GooseDefault::StickyFollow
+            | GooseDefault::Manager
+            | GooseDefault::NoHashCheck
+            | GooseDefault::Worker => panic!(format!(
+                "set_default(GooseDefault::{:?}, {}) expected bool value, received &str",
+                key, value
+            )),
         }
         self
     }
@@ -1993,6 +2018,7 @@ impl GooseDefaultType<&str> for GooseAttack {
 impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Self {
         match key {
+            // Set valid defaults.
             GooseDefault::Users => self.defaults.users = Some(value),
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
@@ -2002,8 +2028,30 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ExpectWorkers => self.defaults.expect_workers = Some(value as u16),
             GooseDefault::ManagerBindPort => self.defaults.manager_bind_port = Some(value as u16),
             GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
-            // @TODO error
-            _ => {}
+            // Otherwise display a helpful and explicit error.
+            GooseDefault::Host
+            | GooseDefault::LogFile
+            | GooseDefault::MetricsFile
+            | GooseDefault::MetricsFormat
+            | GooseDefault::DebugFile
+            | GooseDefault::DebugFormat
+            | GooseDefault::ManagerBindHost
+            | GooseDefault::ManagerHost => panic!(format!(
+                "set_default(GooseDefault::{:?}, {}) expected &str value, received usize",
+                key, value
+            )),
+            GooseDefault::OnlySummary
+            | GooseDefault::NoResetMetrics
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoTaskMetrics
+            | GooseDefault::StatusCodes
+            | GooseDefault::StickyFollow
+            | GooseDefault::Manager
+            | GooseDefault::NoHashCheck
+            | GooseDefault::Worker => panic!(format!(
+                "set_default(GooseDefault::{:?}, {}) expected bool value, received usize",
+                key, value
+            )),
         }
         self
     }
@@ -2016,11 +2064,34 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
+            GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
             GooseDefault::NoHashCheck => self.defaults.no_hash_check = Some(value),
             GooseDefault::Worker => self.defaults.worker = Some(value),
-            // @TODO error
-            _ => {}
+            // Otherwise display a helpful and explicit error.
+            GooseDefault::Host
+            | GooseDefault::LogFile
+            | GooseDefault::MetricsFile
+            | GooseDefault::MetricsFormat
+            | GooseDefault::DebugFile
+            | GooseDefault::DebugFormat
+            | GooseDefault::ManagerBindHost
+            | GooseDefault::ManagerHost => panic!(format!(
+                "set_default(GooseDefault::{:?}, {}) expected &str value, received bool",
+                key, value
+            )),
+            GooseDefault::Users
+            | GooseDefault::HatchRate
+            | GooseDefault::RunTime
+            | GooseDefault::LogLevel
+            | GooseDefault::Verbose
+            | GooseDefault::ThrottleRequests
+            | GooseDefault::ExpectWorkers
+            | GooseDefault::ManagerBindPort
+            | GooseDefault::ManagerPort => panic!(format!(
+                "set_default(GooseDefault::{:?}, {}) expected usize value, received bool",
+                key, value
+            )),
         }
         self
     }
