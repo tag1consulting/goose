@@ -2429,4 +2429,111 @@ mod test {
         assert_eq!(is_valid_host("http:///example.com").is_ok(), true);
         assert_eq!(is_valid_host("http:// example.com").is_ok(), false);
     }
+
+    #[test]
+    fn set_defaults() {
+        let host = "http://example.com/".to_string();
+        let users: usize = 10;
+        let run_time: usize = 10;
+        let hatch_rate: usize = 2;
+        let log_level: usize = 1;
+        let log_file = "custom-goose.log".to_string();
+        let verbose: usize = 0;
+        let metrics_file = "custom-goose-metrics.log".to_string();
+        let metrics_format = "raw".to_string();
+        let debug_file = "custom-goose-debug.log".to_string();
+        let debug_format = "raw".to_string();
+        let throttle_requests: usize = 25;
+        let expect_workers: usize = 5;
+        let manager_bind_host = "127.0.0.1".to_string();
+        let manager_bind_port: usize = 1221;
+        let manager_host = "127.0.0.1".to_string();
+        let manager_port: usize = 1221;
+
+        let goose_attack = GooseAttack::initialize()
+            .unwrap()
+            .set_default(GooseDefault::Host, host.as_str())
+            .set_default(GooseDefault::Users, users)
+            .set_default(GooseDefault::RunTime, run_time)
+            .set_default(GooseDefault::HatchRate, hatch_rate)
+            .set_default(GooseDefault::LogLevel, log_level)
+            .set_default(GooseDefault::LogFile, log_file.as_str())
+            .set_default(GooseDefault::Verbose, verbose)
+            .set_default(GooseDefault::OnlySummary, true)
+            .set_default(GooseDefault::NoResetMetrics, true)
+            .set_default(GooseDefault::NoMetrics, true)
+            .set_default(GooseDefault::NoTaskMetrics, true)
+            .set_default(GooseDefault::MetricsFile, metrics_file.as_str())
+            .set_default(GooseDefault::MetricsFormat, metrics_format.as_str())
+            .set_default(GooseDefault::DebugFile, debug_file.as_str())
+            .set_default(GooseDefault::DebugFormat, debug_format.as_str())
+            .set_default(GooseDefault::StatusCodes, true)
+            .set_default(GooseDefault::ThrottleRequests, throttle_requests)
+            .set_default(GooseDefault::StickyFollow, true)
+            .set_default(GooseDefault::Manager, true)
+            .set_default(GooseDefault::ExpectWorkers, expect_workers)
+            .set_default(GooseDefault::NoHashCheck, true)
+            .set_default(GooseDefault::ManagerBindHost, manager_bind_host.as_str())
+            .set_default(GooseDefault::ManagerBindPort, manager_bind_port)
+            .set_default(GooseDefault::Worker, true)
+            .set_default(GooseDefault::ManagerHost, manager_host.as_str())
+            .set_default(GooseDefault::ManagerPort, manager_port);
+
+        assert!(goose_attack.defaults.host == Some(host));
+        assert!(goose_attack.defaults.users == Some(users));
+        assert!(goose_attack.defaults.run_time == Some(run_time));
+        assert!(goose_attack.defaults.hatch_rate == Some(hatch_rate));
+        assert!(goose_attack.defaults.log_level == Some(log_level as u8));
+        assert!(goose_attack.defaults.log_file == Some(log_file));
+        assert!(goose_attack.defaults.verbose == Some(verbose as u8));
+        assert!(goose_attack.defaults.only_summary == Some(true));
+        assert!(goose_attack.defaults.no_reset_metrics == Some(true));
+        assert!(goose_attack.defaults.no_metrics == Some(true));
+        assert!(goose_attack.defaults.no_task_metrics == Some(true));
+        assert!(goose_attack.defaults.metrics_file == Some(metrics_file));
+        assert!(goose_attack.defaults.metrics_format == Some(metrics_format));
+        assert!(goose_attack.defaults.debug_file == Some(debug_file));
+        assert!(goose_attack.defaults.debug_format == Some(debug_format));
+        assert!(goose_attack.defaults.status_codes == Some(true));
+        assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
+        assert!(goose_attack.defaults.sticky_follow == Some(true));
+        assert!(goose_attack.defaults.manager == Some(true));
+        assert!(goose_attack.defaults.expect_workers == Some(expect_workers as u16));
+        assert!(goose_attack.defaults.no_hash_check == Some(true));
+        assert!(goose_attack.defaults.manager_bind_host == Some(manager_bind_host));
+        assert!(goose_attack.defaults.manager_bind_port == Some(manager_bind_port as u16));
+        assert!(goose_attack.defaults.worker == Some(true));
+        assert!(goose_attack.defaults.manager_host == Some(manager_host));
+        assert!(goose_attack.defaults.manager_port == Some(manager_port as u16));
+    }
+
+    #[test]
+    #[should_panic]
+    fn set_defaults_invalid_str() {
+        // Setting GooseDefault::Users with a &str (instead of a usize) will panic.
+        let value: &str = "invalid";
+        let _ = GooseAttack::initialize()
+            .unwrap()
+            .set_default(GooseDefault::Users, value);
+    }
+
+    #[test]
+    #[should_panic]
+    fn set_defaults_invalid_usize() {
+        // Setting GooseDefault::Host with a usize (instead of a &str) will panic.
+        let value: usize = 42;
+        let _ = GooseAttack::initialize()
+            .unwrap()
+            .set_default(GooseDefault::Host, value);
+    }
+
+    #[test]
+    #[should_panic]
+    fn set_defaults_invalid_bool() {
+        // Setting GooseDefault::ExpectWorkers with a bool (instead of a usize) will panic.
+        let value: bool = true;
+        let _ = GooseAttack::initialize()
+            .unwrap()
+            .set_default(GooseDefault::ExpectWorkers, value);
+    }
 }
