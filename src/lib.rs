@@ -1301,7 +1301,7 @@ impl GooseAttack {
                                 return Err(GooseError::InvalidOption {
                                     option: "--host".to_string(),
                                     value: "".to_string(),
-                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_host() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
+                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
                                 });
                             }
                         }
