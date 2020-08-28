@@ -16,6 +16,7 @@ const LOG_LEVEL: usize = 0;
 const METRICS_FILE: &str = "metrics-test.log";
 const DEBUG_FILE: &str = "debug-test.log";
 const LOG_FORMAT: &str = "raw";
+const THROTTLE_REQUESTS: usize = 10;
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -78,6 +79,7 @@ fn test_defaults() {
         .set_default(GooseDefault::MetricsFormat, LOG_FORMAT)
         .set_default(GooseDefault::DebugFile, debug_file.as_str())
         .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
+        .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
         .execute()
         .unwrap();
 
@@ -117,6 +119,7 @@ fn test_no_defaults() {
     config.metrics_format = LOG_FORMAT.to_string();
     config.debug_file = debug_file.to_string();
     config.debug_format = LOG_FORMAT.to_string();
+    config.throttle_requests = Some(THROTTLE_REQUESTS);
 
     config.no_reset_metrics = true;
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
@@ -192,6 +195,9 @@ fn validate_test(
 
     // Verify that the test ran as long as it was supposed to.
     assert!(goose_metrics.duration == RUN_TIME);
+
+    // Requests are made while GooseUsers are hatched, and then for run_time seconds.
+    assert!(file_length(metrics_file) <= (RUN_TIME + 1) * THROTTLE_REQUESTS);
 
     // Cleanup from test.
     cleanup_files(vec![metrics_file, debug_file]);
