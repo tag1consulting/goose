@@ -103,69 +103,6 @@ fn test_single_taskset() {
 }
 
 #[test]
-// Load test with a single task set containing two weighted tasks. Validate
-// that setting the host in the load test is properly recognized, and doesn't
-// otherwise affect the test.
-fn test_single_taskset_empty_config_host() {
-    let server = MockServer::start();
-
-    let index = Mock::new()
-        .expect_method(GET)
-        .expect_path(INDEX_PATH)
-        .return_status(200)
-        .create_on(&server);
-    let about = Mock::new()
-        .expect_method(GET)
-        .expect_path(ABOUT_PATH)
-        .return_status(200)
-        .create_on(&server);
-
-    let mut config = common::build_configuration(&server, vec!["--no-reset-metrics"]);
-    // Leaves an empty string in config.host.
-    let host = std::mem::take(&mut config.host);
-    // Enable metrics to confirm Goose and web server agree.
-    let goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .setup()
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9).unwrap())
-                .register_task(task!(get_about).set_weight(3).unwrap()),
-        )
-        .set_default(GooseDefault::Host, host.as_str())
-        .execute()
-        .unwrap();
-
-    // Confirm that we loaded the mock endpoints.
-    assert!(index.times_called() > 0);
-    assert!(about.times_called() > 0);
-
-    // Confirm that we loaded the index roughly three times as much as the about page.
-    let one_third_index = index.times_called() / 3;
-    let difference = about.times_called() as i32 - one_third_index as i32;
-    assert!(difference >= -2 && difference <= 2);
-
-    // Confirm that Goose and the server saw the same number of page loads.
-    assert!(
-        goose_metrics
-            .requests
-            .get(&format!("GET {}", INDEX_PATH))
-            .unwrap()
-            .response_time_counter
-            == index.times_called()
-    );
-    assert!(
-        goose_metrics
-            .requests
-            .get(&format!("GET {}", ABOUT_PATH))
-            .unwrap()
-            .response_time_counter
-            == about.times_called()
-    );
-}
-
-#[test]
 // Load test with a single task set containing two weighted tasks setup via closure.
 // Validate weighting and statistics.
 fn test_single_taskset_closure() {

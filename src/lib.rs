@@ -676,13 +676,20 @@ impl GooseAttack {
             _ => debug_level = LevelFilter::Trace,
         }
 
-        // Allow optionally controlling log level
-        let log_level;
-        match self.configuration.log_level {
-            0 => log_level = LevelFilter::Info,
-            1 => log_level = LevelFilter::Debug,
-            _ => log_level = LevelFilter::Trace,
-        }
+        // Set log level based on run-time option or default if set.
+        let log_level_value = if self.configuration.log_level > 0 {
+            self.configuration.log_level
+        } else if let Some(value) = self.defaults.log_level {
+            value
+        } else {
+            0
+        };
+        let log_level = match log_level_value {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            _ => LevelFilter::Trace,
+        };
 
         let log_file: Option<PathBuf>;
         // Use --log-file if set.
@@ -768,14 +775,12 @@ impl GooseAttack {
         }
     }
 
-    pub fn setup(mut self) -> Result<Self, GooseError> {
+    pub fn setup(self) -> Result<Self, GooseError> {
         // If version flag is set, display package name and version and exit.
         if self.configuration.version {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
-
-        self.initialize_logger();
 
         // Collecting metrics is required for the following options.
         if self.configuration.no_metrics {
@@ -862,28 +867,6 @@ impl GooseAttack {
                     ),
                 });
             }
-        }
-
-        // Configure maximum run time if specified, otherwise run until canceled.
-        if self.configuration.worker {
-            if self.configuration.run_time != "" {
-                return Err(GooseError::InvalidOption {
-                    option: "--run-time".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --run-time option can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-            self.run_time = 0;
-        } else if self.configuration.run_time != "" {
-            self.run_time = util::parse_timespan(&self.configuration.run_time);
-            info!("run_time = {}", self.run_time);
-        } else {
-            self.run_time = 0;
-        }
-
-        if !self.configuration.manager && !self.configuration.worker {
-            debug!("users = {}", self.users);
         }
 
         Ok(self)
@@ -1047,6 +1030,120 @@ impl GooseAttack {
         }
     }
 
+    // Configure how many Goose Users to hatch.
+    fn set_users(&mut self) -> Result<(), GooseError> {
+        // Use --users if set.
+        self.users = if let Some(u) = self.configuration.users {
+            if self.configuration.worker {
+                return Err(GooseError::InvalidOption {
+                    option: "--users".to_string(),
+                    value: self.users.to_string(),
+                    detail: "The --users option can not be set together with the --worker flag."
+                        .to_string(),
+                });
+            }
+            u
+        // Otherwise, use default if set, but not on Worker.
+        } else if let Some(u) = self.defaults.users {
+            if self.configuration.worker {
+                0
+            } else {
+                u
+            }
+        // Otherwise use number of CPUs.
+        } else {
+            if !self.configuration.manager && !self.configuration.worker {
+                info!(
+                    "concurrent users defaulted to {} (number of CPUs)",
+                    self.number_of_cpus
+                );
+            }
+            self.number_of_cpus
+        };
+
+        // Be sure a valid users value was set.
+        if self.users == 0 && !self.configuration.worker {
+            return Err(GooseError::InvalidOption {
+                option: "--users".to_string(),
+                value: self.users.to_string(),
+                detail: "The --users option must be set to at least 1.".to_string(),
+            });
+        }
+
+        if !self.configuration.manager && !self.configuration.worker {
+            debug!("users = {}", self.users);
+        }
+
+        Ok(())
+    }
+
+    // Configure maximum run time if specified, otherwise run until canceled.
+    fn set_run_time(&mut self) -> Result<(), GooseError> {
+        // Use --run-time if set, don't allow on Worker.
+        self.run_time = if !self.configuration.run_time.is_empty() {
+            if self.configuration.worker {
+                return Err(GooseError::InvalidOption {
+                    option: "--run-time".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --run-time option can not be set together with the --worker flag."
+                        .to_string(),
+                });
+            }
+            util::parse_timespan(&self.configuration.run_time)
+        // Otherwise, use default if set, but not on Worker.
+        } else if let Some(r) = self.defaults.run_time {
+            if self.configuration.worker {
+                0
+            } else {
+                r
+            }
+        }
+        // Otherwise the test runs until canceled.
+        else {
+            0
+        };
+
+        if self.run_time > 0 {
+            info!("run_time = {}", self.run_time);
+        }
+
+        Ok(())
+    }
+
+    // Configure how quickly to hatch Goose Users.
+    fn set_hatch_rate(&mut self) -> Result<(), GooseError> {
+        // Don't allow --hatch-rate with --worker.
+        if self.configuration.hatch_rate > 0 && self.configuration.worker {
+            return Err(GooseError::InvalidOption {
+                option: "--hatch-rate".to_string(),
+                value: self.configuration.hatch_rate.to_string(),
+                detail: "The --hatch-rate option can not be set together with the --worker flag."
+                    .to_string(),
+            });
+        }
+
+        // If --hatch-rate isn't set, use default if set and not in Worker mode.
+        if self.configuration.hatch_rate == 0 && !self.configuration.worker {
+            if let Some(hatch_rate) = self.defaults.hatch_rate {
+                self.configuration.hatch_rate = hatch_rate;
+            }
+
+            if self.configuration.hatch_rate == 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--hatch-rate".to_string(),
+                    value: self.configuration.hatch_rate.to_string(),
+                    detail: "The --hatch-rate option must be set to at least 1.".to_string(),
+                });
+            }
+        }
+
+        if self.configuration.hatch_rate > 0 {
+            info!("hatch_rate = {}", self.configuration.hatch_rate);
+        }
+
+        Ok(())
+    }
+
     /// Execute the load test.
     ///
     /// # Example
@@ -1084,8 +1181,8 @@ impl GooseAttack {
             });
         }
 
+        // Display task sets and tasks, then exit.
         if self.configuration.list {
-            // Display task sets and tasks, then exit.
             println!("Available tasks:");
             for task_set in self.task_sets {
                 println!(" - {} (weight: {})", task_set.name, task_set.weight);
@@ -1095,6 +1192,18 @@ impl GooseAttack {
             }
             std::process::exit(0);
         }
+
+        // Initialize logger.
+        self.initialize_logger();
+
+        // Determine how many users to simulate.
+        self.set_users()?;
+
+        // Determine how long to run.
+        self.set_run_time()?;
+
+        // Determine how many users to hatch per second.
+        self.set_hatch_rate()?;
 
         // Manager mode.
         if self.configuration.manager {
@@ -1284,24 +1393,6 @@ impl GooseAttack {
             }
         }
 
-        // Configure number of user threads to launch per second, defaults to 1.
-        if self.configuration.hatch_rate == 0 {
-            return Err(GooseError::InvalidOption {
-                option: "--hatch-rate".to_string(),
-                value: self.configuration.hatch_rate.to_string(),
-                detail: "The --hatch-rate option must be set to at least 1.".to_string(),
-            });
-        }
-        if self.configuration.hatch_rate > 1 && self.configuration.worker {
-            return Err(GooseError::InvalidOption {
-                option: "--hatch-rate".to_string(),
-                value: self.configuration.hatch_rate.to_string(),
-                detail: "The --hatch-rate option can not be set together with the --worker flag."
-                    .to_string(),
-            });
-        }
-        debug!("hatch_rate = {}", self.configuration.hatch_rate);
-
         // Confirm there's either a global host, or each task set has a host defined.
         if self.configuration.host.is_empty() {
             for task_set in &self.task_sets {
@@ -1470,7 +1561,7 @@ impl GooseAttack {
         Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
     ) {
         // If the logger isn't configured, return immediately.
-        if self.configuration.debug_file.is_empty() {
+        if self.configuration.debug_file.is_empty() && self.defaults.debug_file.is_none() {
             return (None, None);
         }
 
@@ -1482,6 +1573,7 @@ impl GooseAttack {
         // Launch a new thread for logging.
         let logger_thread = tokio::spawn(logger::logger_main(
             self.configuration.clone(),
+            self.defaults.clone(),
             logger_receiver,
         ));
         (Some(logger_thread), Some(all_threads_logger))
@@ -1617,7 +1709,7 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             user_channels.push(parent_sender);
 
-            if !self.configuration.debug_file.is_empty() {
+            if !self.configuration.debug_file.is_empty() || self.defaults.debug_file.is_some() {
                 // Copy the GooseUser-to-logger sender channel, used by all threads.
                 thread_user.logger = Some(all_threads_logger.clone().unwrap());
             } else {
@@ -1827,7 +1919,7 @@ impl GooseAttack {
                 futures::future::join_all(users).await;
                 debug!("all users exited");
 
-                if !self.configuration.debug_file.is_empty() {
+                if !self.configuration.debug_file.is_empty() || self.defaults.debug_file.is_some() {
                     // Tell logger thread to flush and exit.
                     if let Err(e) = all_threads_logger.unwrap().send(None) {
                         warn!("unexpected error telling logger thread to exit: {}", e);
