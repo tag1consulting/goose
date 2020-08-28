@@ -14,6 +14,8 @@ const RUN_TIME: usize = 1;
 const HATCH_RATE: usize = 4;
 const LOG_LEVEL: usize = 0;
 const METRICS_FILE: &str = "metrics-test.log";
+const DEBUG_FILE: &str = "debug-test.log";
+const LOG_FORMAT: &str = "raw";
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -33,9 +35,10 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 fn test_defaults() {
     // Multiple tests run together, so set a unique name.
     let metrics_file = "defaults-".to_string() + METRICS_FILE;
+    let debug_file = "defaults-".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
-    cleanup_file(&metrics_file);
+    cleanup_files(vec![&metrics_file, &debug_file]);
 
     let server = MockServer::start();
 
@@ -55,6 +58,8 @@ fn test_defaults() {
     config.users = None;
     config.run_time = "".to_string();
     config.hatch_rate = 0;
+    config.metrics_format = "".to_string();
+    config.debug_format = "".to_string();
 
     config.no_reset_metrics = true;
     let host = std::mem::take(&mut config.host);
@@ -70,10 +75,13 @@ fn test_defaults() {
         .set_default(GooseDefault::HatchRate, HATCH_RATE)
         .set_default(GooseDefault::LogLevel, LOG_LEVEL)
         .set_default(GooseDefault::MetricsFile, metrics_file.as_str())
+        .set_default(GooseDefault::MetricsFormat, LOG_FORMAT)
+        .set_default(GooseDefault::DebugFile, debug_file.as_str())
+        .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
         .execute()
         .unwrap();
 
-    validate_test(goose_metrics, index, about, &metrics_file);
+    validate_test(goose_metrics, index, about, &metrics_file, &debug_file);
 }
 
 #[test]
@@ -81,9 +89,10 @@ fn test_defaults() {
 fn test_no_defaults() {
     // Multiple tests run together, so set a unique name.
     let metrics_file = "nodefaults-".to_string() + METRICS_FILE;
+    let debug_file = "nodefaults-".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
-    cleanup_file(&metrics_file);
+    cleanup_files(vec![&metrics_file, &debug_file]);
 
     let server = MockServer::start();
 
@@ -105,6 +114,9 @@ fn test_no_defaults() {
     config.hatch_rate = HATCH_RATE;
     config.log_level = LOG_LEVEL as u8;
     config.metrics_file = metrics_file.to_string();
+    config.metrics_format = LOG_FORMAT.to_string();
+    config.debug_file = debug_file.to_string();
+    config.debug_format = LOG_FORMAT.to_string();
 
     config.no_reset_metrics = true;
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
@@ -115,13 +127,15 @@ fn test_no_defaults() {
         .execute()
         .unwrap();
 
-    validate_test(goose_metrics, index, about, &metrics_file);
+    validate_test(goose_metrics, index, about, &metrics_file, &debug_file);
 }
 
 // Helper to delete test artifact, if existing.
-fn cleanup_file(file: &str) {
-    if std::path::Path::new(file).exists() {
-        std::fs::remove_file(file).expect("failed to remove file");
+fn cleanup_files(files: Vec<&str>) {
+    for file in files {
+        if std::path::Path::new(file).exists() {
+            std::fs::remove_file(file).expect("failed to remove file");
+        }
     }
 }
 
@@ -136,7 +150,13 @@ fn file_length(file_name: &str) -> usize {
 
 /// Helper that validates test results are the same regardless of if setting
 /// run-time options, or defaults.
-fn validate_test(goose_metrics: GooseMetrics, index: MockRef, about: MockRef, metrics_file: &str) {
+fn validate_test(
+    goose_metrics: GooseMetrics,
+    index: MockRef,
+    about: MockRef,
+    metrics_file: &str,
+    debug_file: &str,
+) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
     assert!(index.times_called() > 0);
@@ -166,9 +186,13 @@ fn validate_test(goose_metrics: GooseMetrics, index: MockRef, about: MockRef, me
     assert!(std::path::Path::new(metrics_file).exists());
     assert!(file_length(metrics_file) == index.times_called() + about.times_called());
 
+    // Verify that the debug file was created and is empty.
+    assert!(std::path::Path::new(debug_file).exists());
+    assert!(file_length(debug_file) == 0);
+
     // Verify that the test ran as long as it was supposed to.
     assert!(goose_metrics.duration == RUN_TIME);
 
     // Cleanup from test.
-    cleanup_file(metrics_file);
+    cleanup_files(vec![metrics_file, debug_file]);
 }

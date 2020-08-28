@@ -28,6 +28,8 @@ pub struct GooseUserInitializer {
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
+    /// A local copy of any configured GooseDefaults.
+    pub run_time: usize,
     /// Numerical identifier for worker.
     pub worker_id: usize,
 }
@@ -404,6 +406,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 min_wait: user.min_wait,
                                 max_wait: user.max_wait,
                                 config: user.config.clone(),
+                                run_time: goose_attack.run_time,
                                 worker_id: workers.len(),
                             });
                         }

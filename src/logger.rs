@@ -22,8 +22,6 @@ pub async fn logger_main(
         debug_file_path = defaults.debug_file;
     }
 
-    println!("debug_file_path: {:?}", &debug_file_path);
-
     // If debug file is configured, prepare an asynchronous buffered file writer.
     let mut debug_file = None;
     if let Some(file_path) = debug_file_path {

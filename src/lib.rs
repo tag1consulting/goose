@@ -469,7 +469,7 @@ impl From<io::Error> for GooseError {
 }
 
 /// Optional default values for Goose run-time options.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct GooseDefaults {
     /// An optional default host to run this load test against.
     host: Option<String>,
@@ -602,6 +602,8 @@ pub struct GooseAttack {
     run_time: usize,
     /// Track total number of users to run for this load test.
     users: usize,
+    /// Hatch rate.
+    hatch_rate: usize,
     /// When the load test started.
     started: Option<time::Instant>,
     /// All metrics merged together.
@@ -629,7 +631,8 @@ impl GooseAttack {
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users,
+            users: 0,
+            hatch_rate: 0,
             started: None,
             metrics: GooseMetrics::default(),
         };
@@ -660,7 +663,8 @@ impl GooseAttack {
             configuration: config,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users,
+            users: 0,
+            hatch_rate: 0,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -808,63 +812,6 @@ impl GooseAttack {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
                     detail: "The --no-metrics flag can not be set together with the --metrics-file option.".to_string(),
-                });
-            }
-
-            // There is nothing to log if metrics are disabled.
-            if !self.configuration.metrics_file.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --metrics-format option.".to_string(),
-                });
-            }
-        }
-
-        if self.configuration.metrics_format != "json" {
-            // Log format isn't relevant if log not enabled.
-            if self.configuration.metrics_file.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "--metrics-format".to_string(),
-                    value: self.configuration.metrics_format,
-                    detail: "The --metrics-file option must be set together with the --metrics-format option.".to_string(),
-                });
-            }
-
-            // All of these options must be defined below, search for formatted_log.
-            let options = vec!["json", "csv", "raw"];
-            if !options.contains(&self.configuration.metrics_format.as_str()) {
-                return Err(GooseError::InvalidOption {
-                    option: "--metrics-format".to_string(),
-                    value: self.configuration.metrics_format,
-                    detail: format!(
-                        "The --metrics-format option must be set to one of: {}.",
-                        options.join(", ")
-                    ),
-                });
-            }
-        }
-
-        if self.configuration.debug_format != "json" {
-            // Log format isn't relevant if log not enabled.
-            if self.configuration.debug_file.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "--debug-format".to_string(),
-                    value: self.configuration.debug_format,
-                    detail: "The --debug-file option must be set together with the --debug-format option.".to_string(),
-                });
-            }
-
-            // All of these options must be defined below, search for formatted_log.
-            let options = vec!["json", "raw"];
-            if !options.contains(&self.configuration.debug_format.as_str()) {
-                return Err(GooseError::InvalidOption {
-                    option: "--debug-format".to_string(),
-                    value: self.configuration.debug_format,
-                    detail: format!(
-                        "The --debug-format option must be set to one of: {}.",
-                        options.join(", ")
-                    ),
                 });
             }
         }
@@ -1112,33 +1059,115 @@ impl GooseAttack {
 
     // Configure how quickly to hatch Goose Users.
     fn set_hatch_rate(&mut self) -> Result<(), GooseError> {
-        // Don't allow --hatch-rate with --worker.
-        if self.configuration.hatch_rate > 0 && self.configuration.worker {
-            return Err(GooseError::InvalidOption {
-                option: "--hatch-rate".to_string(),
-                value: self.configuration.hatch_rate.to_string(),
-                detail: "The --hatch-rate option can not be set together with the --worker flag."
-                    .to_string(),
-            });
-        }
-
-        // If --hatch-rate isn't set, use default if set and not in Worker mode.
-        if self.configuration.hatch_rate == 0 && !self.configuration.worker {
-            if let Some(hatch_rate) = self.defaults.hatch_rate {
-                self.configuration.hatch_rate = hatch_rate;
-            }
-
-            if self.configuration.hatch_rate == 0 {
+        self.hatch_rate = if self.configuration.hatch_rate > 0 {
+            // Don't allow --hatch-rate with --worker.
+            if self.configuration.worker {
                 return Err(GooseError::InvalidOption {
                     option: "--hatch-rate".to_string(),
                     value: self.configuration.hatch_rate.to_string(),
-                    detail: "The --hatch-rate option must be set to at least 1.".to_string(),
+                    detail:
+                        "The --hatch-rate option can not be set together with the --worker flag."
+                            .to_string(),
+                });
+            }
+            self.configuration.hatch_rate
+        } else if let Some(hatch_rate) = self.defaults.hatch_rate {
+            if self.configuration.worker {
+                self.hatch_rate
+            } else {
+                hatch_rate
+            }
+        } else {
+            self.hatch_rate
+        };
+
+        // If --hatch-rate isn't set, use default if set and not in Worker mode.
+        if self.hatch_rate == 0 && !self.configuration.worker {
+            return Err(GooseError::InvalidOption {
+                option: "--hatch-rate".to_string(),
+                value: self.configuration.hatch_rate.to_string(),
+                detail: "The --hatch-rate option must be set to at least 1.".to_string(),
+            });
+        }
+
+        if self.hatch_rate > 0 {
+            info!("hatch_rate = {}", self.configuration.hatch_rate);
+        }
+
+        Ok(())
+    }
+
+    // Configure metric log format.
+    fn set_metrics_format(&mut self) -> Result<(), GooseError> {
+        if self.configuration.metrics_format.is_empty() {
+            if let Some(metrics_format) = &self.defaults.metrics_format {
+                self.configuration.metrics_format = metrics_format.to_string();
+            } else {
+                self.configuration.metrics_format = "json".to_string();
+            }
+        } else {
+            // Log format isn't relevant if metrics aren't enabled.
+            if self.configuration.no_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-metrics".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --metrics-format option.".to_string(),
+                });
+            }
+            // Log format isn't relevant if log not enabled.
+            else if self.configuration.metrics_file.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--metrics-format".to_string(),
+                    value: self.configuration.metrics_format.clone(),
+                    detail: "The --metrics-file option must be set together with the --metrics-format option.".to_string(),
                 });
             }
         }
 
-        if self.configuration.hatch_rate > 0 {
-            info!("hatch_rate = {}", self.configuration.hatch_rate);
+        let options = vec!["json", "csv", "raw"];
+        if !options.contains(&self.configuration.metrics_format.as_str()) {
+            return Err(GooseError::InvalidOption {
+                option: "--metrics-format".to_string(),
+                value: self.configuration.metrics_format.clone(),
+                detail: format!(
+                    "The --metrics-format option must be set to one of: {}.",
+                    options.join(", ")
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
+    // Configure debug log format.
+    fn set_debug_format(&mut self) -> Result<(), GooseError> {
+        if self.configuration.debug_format.is_empty() {
+            if let Some(debug_format) = &self.defaults.debug_format {
+                self.configuration.debug_format = debug_format.to_string();
+            } else {
+                self.configuration.debug_format = "json".to_string();
+            }
+        } else {
+            // Log format isn't relevant if log not enabled.
+            if self.configuration.debug_file.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--debug-format".to_string(),
+                    value: self.configuration.metrics_format.clone(),
+                    detail: "The --debug-file option must be set together with the --debug-format option.".to_string(),
+                });
+            }
+        }
+
+        let options = vec!["json", "raw"];
+        if !options.contains(&self.configuration.debug_format.as_str()) {
+            return Err(GooseError::InvalidOption {
+                option: "--debug-format".to_string(),
+                value: self.configuration.debug_format.clone(),
+                detail: format!(
+                    "The --debug-format option must be set to one of: {}.",
+                    options.join(", ")
+                ),
+            });
         }
 
         Ok(())
@@ -1204,6 +1233,12 @@ impl GooseAttack {
 
         // Determine how many users to hatch per second.
         self.set_hatch_rate()?;
+
+        // Determine the metrics log format.
+        self.set_metrics_format()?;
+
+        // Determine the debug log format.
+        self.set_debug_format()?;
 
         // Manager mode.
         if self.configuration.manager {
@@ -1459,8 +1494,13 @@ impl GooseAttack {
         // Our load test is officially starting.
         self.started = Some(time::Instant::now());
         // Hatch users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
-        let sleep_float = 1.0 / self.configuration.hatch_rate as f32;
-        let sleep_duration = time::Duration::from_secs_f32(sleep_float);
+        let sleep_duration;
+        if !self.configuration.worker {
+            let sleep_float = 1.0 / self.hatch_rate as f32;
+            sleep_duration = time::Duration::from_secs_f32(sleep_float);
+        } else {
+            sleep_duration = time::Duration::from_secs_f32(0.0);
+        }
 
         // Start goose in manager mode.
         if self.configuration.manager {
@@ -2279,13 +2319,13 @@ pub struct GooseConfiguration {
     #[options(short = "m", meta = "NAME")]
     pub metrics_file: String,
     /// Sets metrics log format (csv, json, raw)
-    #[options(no_short, default = "json", meta = "FORMAT")]
+    #[options(no_short, meta = "FORMAT")]
     pub metrics_format: String,
     /// Sets debug log file name
     #[options(short = "d", meta = "NAME")]
     pub debug_file: String,
     /// Sets debug log format (json, raw)
-    #[options(no_short, default = "json", meta = "FORMAT")]
+    #[options(no_short, meta = "FORMAT")]
     pub debug_format: String,
     // Add a blank line and then an Advanced: header after this option
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
