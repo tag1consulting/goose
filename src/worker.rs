@@ -134,8 +134,9 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("failed to create socket");
 
-        // The initializer.config is the same for all users, grab only one.
-        if weighted_users.len() == 0 {
+        // The initializer.config and hatch_rate are the same for all users, grab
+        // only one copy.
+        if weighted_users.is_empty() {
             config = initializer.config;
             hatch_rate = initializer.hatch_rate;
         }

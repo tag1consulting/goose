@@ -1081,23 +1081,6 @@ impl GooseAttack {
                 });
             }
 
-            if self.configuration.manager_bind_host != "0.0.0.0" {
-                return Err(GooseError::InvalidOption {
-                    option: "--manager-bind-host".to_string(),
-                    value: self.configuration.manager_bind_host.clone(),
-                    detail: "The --manager-bind-host option can not be set together with the --worker flag.".to_string(),
-                });
-            }
-
-            let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
-            if self.configuration.manager_bind_port != default_port {
-                return Err(GooseError::InvalidOption {
-                    option: "--manager-bind-port".to_string(),
-                    value: self.configuration.manager_bind_port.to_string(),
-                    detail: "The --manager-bind-port option can not be set together with the --worker flag.".to_string(),
-                });
-            }
-
             if self.configuration.no_metrics {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
@@ -1218,6 +1201,91 @@ impl GooseAttack {
 
         // Overload configuration.expect_workers to make available in Worker process.
         self.configuration.expect_workers = expect_workers;
+
+        Ok(())
+    }
+
+    fn set_gaggle_host_and_port(&mut self) -> Result<(), GooseError> {
+        // Configure manager_bind_host and manager_bind_port.
+        if self.attack_mode == GooseMode::Manager {
+            // Use default if run-time option not set.
+            if self.configuration.manager_bind_host.is_empty() {
+                self.configuration.manager_bind_host =
+                    if let Some(host) = self.defaults.manager_bind_host.clone() {
+                        host
+                    } else {
+                        "0.0.0.0".to_string()
+                    }
+            }
+
+            // Use default if run-time option not set.
+            if self.configuration.manager_bind_port == 0 {
+                self.configuration.manager_bind_port =
+                    if let Some(port) = self.defaults.manager_bind_port {
+                        port
+                    } else {
+                        DEFAULT_PORT.to_string().parse().unwrap()
+                    };
+            }
+        } else {
+            if !self.configuration.manager_bind_host.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-bind-host".to_string(),
+                    value: self.configuration.manager_bind_host.clone(),
+                    detail: "The --manager-bind-host option can not be set together with the --worker flag.".to_string(),
+                });
+            }
+
+            if self.configuration.manager_bind_port != 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-bind-port".to_string(),
+                    value: self.configuration.manager_bind_port.to_string(),
+                    detail: "The --manager-bind-port option can not be set together with the --worker flag.".to_string(),
+                });
+            }
+        }
+
+        // Configure manager_host and manager_port.
+        if self.attack_mode == GooseMode::Worker {
+            // Use default if run-time option not set.
+            if self.configuration.manager_host.is_empty() {
+                self.configuration.manager_host =
+                    if let Some(host) = self.defaults.manager_host.clone() {
+                        host
+                    } else {
+                        "127.0.0.1".to_string()
+                    }
+            }
+
+            // Use default if run-time option not set.
+            if self.configuration.manager_port == 0 {
+                self.configuration.manager_port = if let Some(port) = self.defaults.manager_port {
+                    port
+                } else {
+                    DEFAULT_PORT.to_string().parse().unwrap()
+                };
+            }
+        } else {
+            if !self.configuration.manager_host.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-host".to_string(),
+                    value: self.configuration.manager_host.clone(),
+                    detail:
+                        "The --manager-host option must be set together with the --worker flag."
+                            .to_string(),
+                });
+            }
+
+            if self.configuration.manager_port != 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-port".to_string(),
+                    value: self.configuration.manager_port.to_string(),
+                    detail:
+                        "The --manager-port option must be set together with the --worker flag."
+                            .to_string(),
+                });
+            }
+        }
 
         Ok(())
     }
@@ -1420,7 +1488,7 @@ impl GooseAttack {
         }
 
         // Otherwise there is no metrics file.
-        return Ok(None);
+        Ok(None)
     }
 
     // Configure metrics log format.
@@ -1483,7 +1551,7 @@ impl GooseAttack {
         }
 
         // Otherwise there is no debug file.
-        return Ok(None);
+        Ok(None)
     }
 
     // Configure debug log format.
@@ -1580,6 +1648,9 @@ impl GooseAttack {
 
         // Set expect_workers if running in Manager attack mode.
         self.set_expect_workers()?;
+
+        // Set host and ports if running in a Gaggle distributed load test.
+        self.set_gaggle_host_and_port()?;
 
         // Determine how long to run.
         self.set_run_time()?;
@@ -2517,22 +2588,20 @@ pub struct GooseConfiguration {
     /// Tells Manager to ignore load test checksum
     #[options(no_short)]
     pub no_hash_check: bool,
-    /// Sets host Manager listens on
-    #[options(no_short, default = "0.0.0.0", meta = "HOST")]
+    /// Sets host Manager listens on (default: 0.0.0.0)
+    #[options(no_short, meta = "HOST")]
     pub manager_bind_host: String,
-    /// Sets port Manager listens on
-    // @TODO: use const for default
-    #[options(no_short, default = "5115", meta = "PORT")]
+    /// Sets port Manager listens on (default: 5115)
+    #[options(no_short, meta = "PORT")]
     pub manager_bind_port: u16,
     /// Enables distributed load test Worker mode
     #[options(no_short)]
     pub worker: bool,
-    /// Sets host Worker connects to
-    #[options(no_short, default = "127.0.0.1", meta = "HOST")]
+    /// Sets host Worker connects to (default: 127.0.0.1)
+    #[options(no_short, meta = "HOST")]
     pub manager_host: String,
-    /// Sets port Worker connects to
-    // @TODO: use const for default
-    #[options(no_short, default = "5115", meta = "PORT")]
+    /// Sets port Worker connects to (default: 5115)
+    #[options(no_short, meta = "PORT")]
     pub manager_port: u16,
 }
 

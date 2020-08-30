@@ -31,7 +31,11 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::Users
 // - GooseDefault::Manager
 // - GooseDefault::ExpectWorkers
+// - GooseDefault::ManagerBindHost
+// - GooseDefault::ManagerBindPort
 // - GooseDefault::Worker
+// - GooseDefault::ManagerHost
+// - GooseDefault::ManagerPort
 
 // Can't be tested:
 // - GooseDefault::LogFile (logger can only be configured once)
@@ -46,12 +50,6 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::StatusCodes
 // - GooseDefault::StickyFollow
 // - GooseDefault::NoHashCheck
-
-// Needs Gaggle test:
-// - GooseDefault::ManagerBindHost
-// - GooseDefault::ManagerBindPort
-// - GooseDefault::ManagerHost
-// - GooseDefault::ManagerPort
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
