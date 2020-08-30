@@ -208,9 +208,9 @@ Metrics:
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
   -m, --metrics-file NAME    Sets metrics log file name
-  --metrics-format FORMAT    Sets metrics log format (csv, json, raw) (default: json)
+  --metrics-format FORMAT    Sets metrics log format (csv, json, raw)
   -d, --debug-file NAME      Sets debug log file name
-  --debug-format FORMAT      Sets debug log format (json, raw) (default: json)
+  --debug-format FORMAT      Sets debug log format (json, raw)
   --status-codes             Tracks additional status code metrics
 
 Advanced:
@@ -353,7 +353,7 @@ In this example, Goose will launch 100 GooseUser threads, but the throttle will 
 
 Goose can optionally log details about all load test requests to a file. To enable, add the `--metrics-log-file=foo` command line option, where `foo` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
-When operating in Gaggle-mode, the `--metrics-log-file` option can be enabled on Worker processes and/or on the Manager process. You can therefor configure Goose to spread out the overhead of writing logs by enabling the option on Workers, or you can configure Goose to create a single combined log of all requests by enabling the option on the Manager.
+When operating in Gaggle-mode, the `--metrics-log-file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
 
 By default, logs are written in JSON Lines format. For example:
 

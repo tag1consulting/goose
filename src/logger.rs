@@ -5,21 +5,18 @@ use tokio::prelude::*;
 use tokio::sync::mpsc;
 
 use crate::goose::GooseDebug;
-use crate::{GooseConfiguration, GooseDefaults};
+use crate::GooseConfiguration;
 
 /// Logger thread, opens a log file (if configured) and waits for messages from
 /// GooseUser threads.
 pub async fn logger_main(
     configuration: GooseConfiguration,
-    defaults: GooseDefaults,
     mut log_receiver: mpsc::UnboundedReceiver<Option<GooseDebug>>,
 ) {
     // Determine if a debug file has been configured.
     let mut debug_file_path: Option<String> = None;
     if !configuration.debug_file.is_empty() {
         debug_file_path = Some(configuration.debug_file.clone());
-    } else if defaults.debug_file.is_some() {
-        debug_file_path = defaults.debug_file;
     }
 
     // If debug file is configured, prepare an asynchronous buffered file writer.

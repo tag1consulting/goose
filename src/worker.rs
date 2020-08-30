@@ -10,7 +10,7 @@ const EMPTY_ARGS: Vec<&str> = vec![];
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
 use crate::metrics::{GooseRequestMetrics, GooseTaskMetrics};
-use crate::{get_worker_id, GooseAttack, GooseConfiguration, WORKER_ID};
+use crate::{get_worker_id, GooseAttack, GooseConfiguration, GooseMode, WORKER_ID};
 
 /// Workers send GaggleMetrics to the Manager process to be aggregated together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,9 +85,8 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         false,
     );
 
-    let mut hatch_rate: Option<f32> = None;
-    let mut config: GooseConfiguration = GooseConfiguration::parse_args_default(&EMPTY_ARGS)
-        .expect("failed to generate default configuration");
+    let mut config: GooseConfiguration = GooseConfiguration::default();
+    let mut hatch_rate: usize = 0;
     let mut weighted_users: Vec<GooseUser> = Vec::new();
 
     // Wait for the manager to send user parameters.
@@ -135,19 +134,12 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("failed to create socket");
 
-        weighted_users.push(user);
-        if hatch_rate == None {
-            hatch_rate = Some(
-                1.0 / (initializer.config.hatch_rate as f32
-                    / (initializer.config.expect_workers as f32)),
-            );
+        // The initializer.config is the same for all users, grab only one.
+        if weighted_users.len() == 0 {
             config = initializer.config;
-            info!(
-                "[{}] prepared to start 1 user every {:.2} seconds",
-                worker_id,
-                hatch_rate.unwrap()
-            );
+            hatch_rate = initializer.hatch_rate;
         }
+        weighted_users.push(user);
     }
     WORKER_ID.store(worker_id, Ordering::Relaxed);
     info!(
@@ -201,17 +193,25 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         "[{}] entering gaggle mode, starting load test",
         get_worker_id()
     );
-    let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
-
-    let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone())
-        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
-        .expect("failed to launch GooseAttack");
-
+    let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone());
     worker_goose_attack.started = Some(time::Instant::now());
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
     worker_goose_attack.run_time = goose_attack.run_time;
+    worker_goose_attack.throttle_requests = goose_attack.throttle_requests;
+    worker_goose_attack.hatch_rate = hatch_rate;
     worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
+    worker_goose_attack.attack_mode = GooseMode::Worker;
+    worker_goose_attack.defaults = goose_attack.defaults.clone();
+
+    // Divide hatch_rate amongst all workers.
+    let hatch_rate = 1.0 / (worker_goose_attack.hatch_rate as f32 / (config.expect_workers as f32));
+    info!(
+        "[{}] prepared to start 1 user every {:.2} seconds",
+        worker_id, hatch_rate,
+    );
+    let sleep_duration = time::Duration::from_secs_f32(hatch_rate);
+
     worker_goose_attack
         .launch_users(sleep_duration, Some(manager))
         .await

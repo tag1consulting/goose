@@ -1,6 +1,7 @@
 use httpmock::Method::GET;
 use httpmock::{Mock, MockRef, MockServer};
 use std::io::{self, BufRead};
+use std::thread;
 
 mod common;
 
@@ -9,14 +10,48 @@ use goose::prelude::*;
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
-const USERS: usize = 2;
-const RUN_TIME: usize = 1;
-const HATCH_RATE: usize = 4;
+const USERS: usize = 3;
+const RUN_TIME: usize = 2;
+const HATCH_RATE: usize = 10;
 const LOG_LEVEL: usize = 0;
 const METRICS_FILE: &str = "metrics-test.log";
 const DEBUG_FILE: &str = "debug-test.log";
 const LOG_FORMAT: &str = "raw";
 const THROTTLE_REQUESTS: usize = 10;
+
+// Has tests:
+// - GooseDefault::Host
+// - GooseDefault::MetricsFile
+// - GooseDefault::MetricsFormat
+// - GooseDefault::DebugFile
+// - GooseDefault::DebugFormat
+// - GooseDefault::HatchRate
+// - GooseDefault::RunTime
+// - GooseDefault::ThrottleRequests
+// - GooseDefault::Users
+// - GooseDefault::Manager
+// - GooseDefault::Worker
+
+// Can't be tested:
+// - GooseDefault::LogFile (logger can only be configured once)
+// - GooseDefault::Verbose (logger can only be configured once)
+// - GooseDefault::LogLevel (can't validate due to logger limitation)
+
+// Doesn't have tests yet:
+// - GooseDefault::OnlySummary
+// - GooseDefault::NoResetMetrics
+// - GooseDefault::NoMetrics
+// - GooseDefault::NoTaskMetrics
+// - GooseDefault::StatusCodes
+// - GooseDefault::StickyFollow
+// - GooseDefault::NoHashCheck
+
+// Needs Gaggle test:
+// - GooseDefault::ManagerBindHost
+// - GooseDefault::ManagerBindPort
+// - GooseDefault::ExpectWorkers
+// - GooseDefault::ManagerHost
+// - GooseDefault::ManagerPort
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -83,7 +118,9 @@ fn test_defaults() {
         .execute()
         .unwrap();
 
-    validate_test(goose_metrics, index, about, &metrics_file, &debug_file);
+    let metrics_files = vec![metrics_file.to_string()];
+    let debug_files = vec![debug_file.to_string()];
+    validate_test(goose_metrics, index, about, &metrics_files, &debug_files);
 }
 
 #[test]
@@ -130,7 +167,123 @@ fn test_no_defaults() {
         .execute()
         .unwrap();
 
-    validate_test(goose_metrics, index, about, &metrics_file, &debug_file);
+    let metrics_files = vec![metrics_file.to_string()];
+    let debug_files = vec![debug_file.to_string()];
+    validate_test(goose_metrics, index, about, &metrics_files, &debug_files);
+}
+
+#[test]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+/// Load test confirming that Goose respects configured gaggle-related defaults.
+fn test_gaggle_defaults() {
+    // Multiple tests run together, so set a unique name.
+    let metrics_file = "gaggle-".to_string() + METRICS_FILE;
+    let debug_file = "gaggle-".to_string() + DEBUG_FILE;
+
+    // Be sure there's no files left over from an earlier test.
+    for i in 0..USERS {
+        let file = metrics_file.to_string() + &i.to_string();
+        cleanup_files(vec![&file]);
+        let file = debug_file.to_string() + &i.to_string();
+        cleanup_files(vec![&file]);
+    }
+
+    let server = MockServer::start();
+
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    const HOST: &str = "127.0.0.1";
+    const PORT: usize = 9988;
+
+    let mut configuration = common::build_configuration(&server);
+    let host = std::mem::take(&mut configuration.host);
+    configuration.no_metrics = false;
+    configuration.no_task_metrics = false;
+    configuration.users = None;
+    configuration.run_time = "".to_string();
+    configuration.hatch_rate = 0;
+    configuration.metrics_format = "".to_string();
+    configuration.debug_format = "".to_string();
+
+    // Launch workers in their own threads, storing the thread handle.
+    let mut worker_handles = Vec::new();
+    for i in 0..USERS {
+        let worker_configuration = configuration.clone();
+        let worker_host = host.clone();
+        let worker_metrics_file = metrics_file.clone() + &i.to_string();
+        let worker_debug_file = debug_file.clone() + &i.to_string();
+        //  //let worker_metrics_file = metrics_file.clone();
+        worker_handles.push(thread::spawn(move || {
+            let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
+                .setup()
+                .unwrap()
+                .register_taskset(taskset!("Index").register_task(task!(get_index)))
+                .register_taskset(taskset!("About").register_task(task!(get_about)))
+                // Start two users, required to run both TaskSets.
+                .set_default(GooseDefault::Host, worker_host.as_str())
+                .set_default(GooseDefault::Users, USERS)
+                .set_default(GooseDefault::RunTime, RUN_TIME)
+                .set_default(GooseDefault::HatchRate, HATCH_RATE)
+                .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
+                .set_default(GooseDefault::DebugFile, worker_debug_file.as_str())
+                .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
+                .set_default(GooseDefault::MetricsFile, worker_metrics_file.as_str())
+                .set_default(GooseDefault::MetricsFormat, LOG_FORMAT)
+                // Worker configuration using defaults instead of run-time options.
+                .set_default(GooseDefault::Worker, true)
+                .set_default(GooseDefault::ManagerHost, HOST)
+                .set_default(GooseDefault::ManagerPort, PORT)
+                .execute()
+                .unwrap();
+        }));
+    }
+
+    // @TODO: configure through defaults:
+    configuration.no_reset_metrics = true;
+    configuration.expect_workers = USERS as u16;
+
+    // Start manager instance in current thread and run a distributed load test.
+    let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
+        .setup()
+        .unwrap()
+        .register_taskset(taskset!("Index").register_task(task!(get_index)))
+        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        // Start two users, required to run both TaskSets.
+        .set_default(GooseDefault::Host, host.as_str())
+        .set_default(GooseDefault::Users, USERS)
+        .set_default(GooseDefault::RunTime, RUN_TIME)
+        .set_default(GooseDefault::HatchRate, HATCH_RATE)
+        // Manager configuration using defaults instead of run-time options.
+        .set_default(GooseDefault::Manager, true)
+        .set_default(GooseDefault::ExpectWorkers, USERS)
+        .set_default(GooseDefault::ManagerBindHost, HOST)
+        .set_default(GooseDefault::ManagerBindPort, PORT)
+        .execute()
+        .unwrap();
+
+    // Wait for both worker threads to finish and exit.
+    for worker_handle in worker_handles {
+        let _ = worker_handle.join();
+    }
+
+    let mut metrics_files: Vec<String> = vec![];
+    let mut debug_files: Vec<String> = vec![];
+    for i in 0..USERS {
+        let file = metrics_file.to_string() + &i.to_string();
+        metrics_files.push(file);
+        let file = debug_file.to_string() + &i.to_string();
+        debug_files.push(file);
+    }
+    validate_test(goose_metrics, index, about, &metrics_files, &debug_files);
 }
 
 // Helper to delete test artifact, if existing.
@@ -157,8 +310,8 @@ fn validate_test(
     goose_metrics: GooseMetrics,
     index: MockRef,
     about: MockRef,
-    metrics_file: &str,
-    debug_file: &str,
+    metrics_files: &Vec<String>,
+    debug_files: &Vec<String>,
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
@@ -186,19 +339,34 @@ fn validate_test(
     assert!(goose_metrics.users == USERS);
 
     // Verify that the metrics file was created and has the correct number of lines.
-    assert!(std::path::Path::new(metrics_file).exists());
-    assert!(file_length(metrics_file) == index.times_called() + about.times_called());
+    let mut metrics_lines = 0;
+    for metrics_file in metrics_files {
+        assert!(std::path::Path::new(metrics_file).exists());
+        metrics_lines += file_length(metrics_file);
+    }
+    assert!(metrics_lines == index.times_called() + about.times_called());
 
     // Verify that the debug file was created and is empty.
-    assert!(std::path::Path::new(debug_file).exists());
-    assert!(file_length(debug_file) == 0);
+    for debug_file in debug_files {
+        assert!(std::path::Path::new(debug_file).exists());
+        assert!(file_length(debug_file) == 0);
+    }
 
+    // Requests are made while GooseUsers are hatched, and then for run_time seconds.
     // Verify that the test ran as long as it was supposed to.
     assert!(goose_metrics.duration == RUN_TIME);
 
-    // Requests are made while GooseUsers are hatched, and then for run_time seconds.
-    assert!(file_length(metrics_file) <= (RUN_TIME + 1) * THROTTLE_REQUESTS);
+    // Be sure there were no more requests made than the throttle should allow.
+    // In the case of a gaggle, there's multiple processes running with the same
+    // throttle.
+    let number_of_processes = metrics_files.len();
+    assert!(metrics_lines <= (RUN_TIME + 1) * THROTTLE_REQUESTS * number_of_processes);
 
     // Cleanup from test.
-    cleanup_files(vec![metrics_file, debug_file]);
+    for file in metrics_files {
+        cleanup_files(vec![file]);
+    }
+    for file in debug_files {
+        cleanup_files(vec![file]);
+    }
 }

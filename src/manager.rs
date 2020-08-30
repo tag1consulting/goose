@@ -28,8 +28,10 @@ pub struct GooseUserInitializer {
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
-    /// A local copy of any configured GooseDefaults.
+    /// How long the load test should run, in seconds.
     pub run_time: usize,
+    /// How many users to launch per second.
+    pub hatch_rate: usize,
     /// Numerical identifier for worker.
     pub worker_id: usize,
 }
@@ -267,6 +269,15 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         .metrics
         .initialize_task_metrics(&goose_attack.task_sets, &goose_attack.configuration);
 
+    // Update metrics, which doesn't happen automatically on the Master as we
+    // don't invoke launch_users.
+    let maximum_hatched = goose_attack.hatch_rate * goose_attack.run_time;
+    if maximum_hatched < goose_attack.users {
+        goose_attack.metrics.users = maximum_hatched;
+    } else {
+        goose_attack.metrics.users = goose_attack.users;
+    }
+
     // Worker control loop.
     loop {
         // While running load test, check if any workers go away.
@@ -296,6 +307,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     || canceled.load(Ordering::SeqCst)
                 {
                     info!("stopping after {} seconds...", started.elapsed().as_secs());
+                    goose_attack.metrics.duration =
+                        goose_attack.started.unwrap().elapsed().as_secs() as usize;
                     load_test_finished = true;
                     exit_timer = time::Instant::now();
                 }
@@ -407,6 +420,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 max_wait: user.max_wait,
                                 config: user.config.clone(),
                                 run_time: goose_attack.run_time,
+                                hatch_rate: goose_attack.hatch_rate,
                                 worker_id: workers.len(),
                             });
                         }

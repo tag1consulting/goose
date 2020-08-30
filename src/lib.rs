@@ -468,6 +468,19 @@ impl From<io::Error> for GooseError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+/// A GooseAttack load test can operate in only one mode.
+pub enum GooseMode {
+    /// A mode has not yet been assigned.
+    Undefined,
+    /// A single standalone process performing a load test.
+    StandAlone,
+    /// The controlling process in a Gaggle distributed load test.
+    Manager,
+    /// One of one or more working processes in a Gaggle distributed load test.
+    Worker,
+}
+
 /// Optional default values for Goose run-time options.
 #[derive(Clone, Debug, Default)]
 pub struct GooseDefaults {
@@ -606,6 +619,8 @@ pub struct GooseAttack {
     hatch_rate: usize,
     /// Maximum requests per second.
     throttle_requests: usize,
+    /// Which mode this GooseAttack is operating in.
+    attack_mode: GooseMode,
     /// When the load test started.
     started: Option<time::Instant>,
     /// All metrics merged together.
@@ -636,6 +651,7 @@ impl GooseAttack {
             users: 0,
             hatch_rate: 0,
             throttle_requests: 0,
+            attack_mode: GooseMode::Undefined,
             started: None,
             metrics: GooseMetrics::default(),
         };
@@ -669,6 +685,7 @@ impl GooseAttack {
             users: 0,
             hatch_rate: 0,
             throttle_requests: 0,
+            attack_mode: GooseMode::Undefined,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -800,6 +817,8 @@ impl GooseAttack {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
+
+        // @TODO: this needs to move later so we respect defaults
 
         // Collecting metrics is required for the following options.
         if self.configuration.no_metrics {
@@ -992,11 +1011,206 @@ impl GooseAttack {
         }
     }
 
+    // Configure which mode this GooseAttack will run in.
+    fn set_attack_mode(&mut self) -> Result<(), GooseError> {
+        // Determine if Manager is enabled by default.
+        let manager_is_default = if let Some(value) = self.defaults.manager {
+            value
+        } else {
+            false
+        };
+
+        // Determine if Worker is enabled by default.
+        let worker_is_default = if let Some(value) = self.defaults.worker {
+            value
+        } else {
+            false
+        };
+
+        // Don't allow Manager and Worker to both be the default.
+        if manager_is_default && worker_is_default {
+            return Err(GooseError::InvalidOption {
+                option: "GooseDefault::Worker".to_string(),
+                value: "true".to_string(),
+                detail: "The GooseDefault::Worker default can not be set together with the GooseDefault::Manager default"
+                    .to_string(),
+            });
+        }
+
+        // Manager mode if --manager is set, or --worker is not set and Manager is default.
+        if self.configuration.manager || (!self.configuration.worker && manager_is_default) {
+            self.attack_mode = GooseMode::Manager;
+            if self.configuration.worker {
+                return Err(GooseError::InvalidOption {
+                    option: "--worker".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --worker flag can not be set together with the --manager flag"
+                        .to_string(),
+                });
+            }
+
+            if self.configuration.expect_workers < 1 {
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: "The --expect-workers option must be set to at least 1.".to_string(),
+                });
+            }
+            /*
+            @TODO: Check this after we set_users()
+            if self.configuration.expect_workers as usize > self.users {
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: "The --expect-workers option can not be set to a value larger than --users option.".to_string(),
+                });
+            }
+            */
+
+            if self.get_debug_file_path()?.is_some() {
+                return Err(GooseError::InvalidOption {
+                    option: "--debug-file".to_string(),
+                    value: self.configuration.debug_file.clone(),
+                    detail:
+                        "The --debug-file option can not be set together with the --manager flag."
+                            .to_string(),
+                });
+            }
+        }
+
+        // Worker mode if --worker is set, or --manager is not set and Worker is default.
+        if self.configuration.worker || (!self.configuration.manager && worker_is_default) {
+            self.attack_mode = GooseMode::Worker;
+            if self.configuration.manager {
+                return Err(GooseError::InvalidOption {
+                    option: "--manager".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --manager flag can not be set together with the --worker flag."
+                        .to_string(),
+                });
+            }
+
+            if self.configuration.expect_workers > 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: "The --expect-workers option can not be set together with the --worker flag.".to_string(),
+                });
+            }
+
+            if !self.configuration.host.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--host".to_string(),
+                    value: self.configuration.host.clone(),
+                    detail: "The --host option can not be set together with the --worker flag."
+                        .to_string(),
+                });
+            }
+
+            if self.configuration.manager_bind_host != "0.0.0.0" {
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-bind-host".to_string(),
+                    value: self.configuration.manager_bind_host.clone(),
+                    detail: "The --manager-bind-host option can not be set together with the --worker flag.".to_string(),
+                });
+            }
+
+            let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
+            if self.configuration.manager_bind_port != default_port {
+                return Err(GooseError::InvalidOption {
+                    option: "--manager-bind-port".to_string(),
+                    value: self.configuration.manager_bind_port.to_string(),
+                    detail: "The --manager-bind-port option can not be set together with the --worker flag.".to_string(),
+                });
+            }
+
+            if self.configuration.no_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-metrics".to_string(),
+                    value: self.configuration.no_metrics.to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --worker flag."
+                        .to_string(),
+                });
+            }
+
+            if self.configuration.no_task_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-task-metrics".to_string(),
+                    value: self.configuration.no_task_metrics.to_string(),
+                    detail:
+                        "The --no-task-metrics flag can not be set together with the --worker flag."
+                            .to_string(),
+                });
+            }
+
+            if self.configuration.only_summary {
+                return Err(GooseError::InvalidOption {
+                    option: "--only-summary".to_string(),
+                    value: self.configuration.only_summary.to_string(),
+                    detail:
+                        "The --only-summary flag can not be set together with the --worker flag."
+                            .to_string(),
+                });
+            }
+
+            if self.configuration.status_codes {
+                return Err(GooseError::InvalidOption {
+                    option: "--status-codes".to_string(),
+                    value: self.configuration.status_codes.to_string(),
+                    detail:
+                        "The --status-codes flag can not be set together with the --worker flag."
+                            .to_string(),
+                });
+            }
+
+            if self.configuration.no_reset_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-reset-metrics".to_string(),
+                    value: self.configuration.no_reset_metrics.to_string(),
+                    detail: "The --no-reset-metrics flag can not be set together with the --worker flag.".to_string(),
+                });
+            }
+
+            if self.configuration.no_hash_check {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-hash-check".to_string(),
+                    value: self.configuration.no_hash_check.to_string(),
+                    detail:
+                        "The --no-hash-check flag can not be set together with the --worker flag."
+                            .to_string(),
+                });
+            }
+        }
+
+        // Otherwise run in standalone attack mode.
+        if self.attack_mode == GooseMode::Undefined {
+            self.attack_mode = GooseMode::StandAlone;
+
+            if self.configuration.no_hash_check {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-hash-check".to_string(),
+                    value: self.configuration.no_hash_check.to_string(),
+                    detail: "The --no-hash-check flag can not be set without also setting the --manager flag.".to_string(),
+                });
+            }
+
+            if self.configuration.expect_workers > 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: self.configuration.expect_workers.to_string(),
+                    detail: "The --expect-workers flag can not be set without also setting the --manager flag.".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     // Configure how many Goose Users to hatch.
     fn set_users(&mut self) -> Result<(), GooseError> {
         // Use --users if set.
         self.users = if let Some(u) = self.configuration.users {
-            if self.configuration.worker {
+            if self.attack_mode == GooseMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: "--users".to_string(),
                     value: self.users.to_string(),
@@ -1007,14 +1221,14 @@ impl GooseAttack {
             u
         // Otherwise, use default if set, but not on Worker.
         } else if let Some(u) = self.defaults.users {
-            if self.configuration.worker {
+            if self.attack_mode == GooseMode::Worker {
                 0
             } else {
                 u
             }
         // Otherwise use number of CPUs.
         } else {
-            if !self.configuration.manager && !self.configuration.worker {
+            if self.attack_mode != GooseMode::Manager && self.attack_mode != GooseMode::Worker {
                 info!(
                     "concurrent users defaulted to {} (number of CPUs)",
                     self.number_of_cpus
@@ -1024,7 +1238,7 @@ impl GooseAttack {
         };
 
         // Be sure a valid users value was set.
-        if self.users == 0 && !self.configuration.worker {
+        if self.users == 0 && self.attack_mode != GooseMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: "--users".to_string(),
                 value: self.users.to_string(),
@@ -1032,7 +1246,7 @@ impl GooseAttack {
             });
         }
 
-        if !self.configuration.manager && !self.configuration.worker {
+        if self.attack_mode != GooseMode::Manager && self.attack_mode != GooseMode::Worker {
             debug!("users = {}", self.users);
         }
 
@@ -1043,7 +1257,7 @@ impl GooseAttack {
     fn set_run_time(&mut self) -> Result<(), GooseError> {
         // Use --run-time if set, don't allow on Worker.
         self.run_time = if !self.configuration.run_time.is_empty() {
-            if self.configuration.worker {
+            if self.attack_mode == GooseMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: "--run-time".to_string(),
                     value: "true".to_string(),
@@ -1054,7 +1268,7 @@ impl GooseAttack {
             util::parse_timespan(&self.configuration.run_time)
         // Otherwise, use default if set, but not on Worker.
         } else if let Some(r) = self.defaults.run_time {
-            if self.configuration.worker {
+            if self.attack_mode == GooseMode::Worker {
                 0
             } else {
                 r
@@ -1076,7 +1290,7 @@ impl GooseAttack {
     fn set_hatch_rate(&mut self) -> Result<(), GooseError> {
         self.hatch_rate = if self.configuration.hatch_rate > 0 {
             // Don't allow --hatch-rate with --worker.
-            if self.configuration.worker {
+            if self.attack_mode == GooseMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: "--hatch-rate".to_string(),
                     value: self.configuration.hatch_rate.to_string(),
@@ -1087,7 +1301,7 @@ impl GooseAttack {
             }
             self.configuration.hatch_rate
         } else if let Some(hatch_rate) = self.defaults.hatch_rate {
-            if self.configuration.worker {
+            if self.attack_mode == GooseMode::Worker {
                 self.hatch_rate
             } else {
                 hatch_rate
@@ -1097,7 +1311,7 @@ impl GooseAttack {
         };
 
         // If --hatch-rate isn't set, use default if set and not in Worker mode.
-        if self.hatch_rate == 0 && !self.configuration.worker {
+        if self.hatch_rate == 0 && self.attack_mode != GooseMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: "--hatch-rate".to_string(),
                 value: self.configuration.hatch_rate.to_string(),
@@ -1118,7 +1332,7 @@ impl GooseAttack {
             self.configuration.throttle_requests
         {
             // Don't allow --throttle-requests with --manager.
-            if self.configuration.manager {
+            if self.attack_mode == GooseMode::Manager {
                 return Err(GooseError::InvalidOption {
                     option: "--throttle-requests".to_string(),
                     value: self.configuration.throttle_requests.unwrap().to_string(),
@@ -1141,7 +1355,7 @@ impl GooseAttack {
             }
             throttle_requests
         } else if let Some(throttle_requests) = self.defaults.throttle_requests {
-            if self.configuration.manager {
+            if self.attack_mode == GooseMode::Manager {
                 0
             } else {
                 // Be sure throttle_requests is in allowed range.
@@ -1171,7 +1385,29 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Configure metric log format.
+    // If enabled, returns the path of the metrics_file, otherwise returns None.
+    fn get_metrics_file_path(&mut self) -> Result<Option<&str>, GooseError> {
+        // If metrics are disabled, or running in Manager mode, there is no
+        // metrics file, exit immediately.
+        if self.configuration.no_metrics || self.attack_mode == GooseMode::Manager {
+            return Ok(None);
+        }
+
+        // If --metrics-file is set, return it.
+        if !self.configuration.metrics_file.is_empty() {
+            return Ok(Some(&self.configuration.metrics_file));
+        }
+
+        // If GooseDefault::MetricFile is set, return it.
+        if let Some(default_metrics_file) = &self.defaults.metrics_file {
+            return Ok(Some(default_metrics_file));
+        }
+
+        // Otherwise there is no metrics file.
+        return Ok(None);
+    }
+
+    // Configure metrics log format.
     fn set_metrics_format(&mut self) -> Result<(), GooseError> {
         if self.configuration.metrics_format.is_empty() {
             if let Some(metrics_format) = &self.defaults.metrics_format {
@@ -1189,7 +1425,7 @@ impl GooseAttack {
                 });
             }
             // Log format isn't relevant if log not enabled.
-            else if self.configuration.metrics_file.is_empty() {
+            else if self.get_metrics_file_path()?.is_none() {
                 return Err(GooseError::InvalidOption {
                     option: "--metrics-format".to_string(),
                     value: self.configuration.metrics_format.clone(),
@@ -1211,6 +1447,27 @@ impl GooseAttack {
         }
 
         Ok(())
+    }
+
+    // If enabled, returns the path of the metrics_file, otherwise returns None.
+    fn get_debug_file_path(&self) -> Result<Option<&str>, GooseError> {
+        // If running in Manager mode there is no debug file, exit immediately.
+        if self.attack_mode == GooseMode::Manager {
+            return Ok(None);
+        }
+
+        // If --debug-file is set, return it.
+        if !self.configuration.debug_file.is_empty() {
+            return Ok(Some(&self.configuration.debug_file));
+        }
+
+        // If GooseDefault::DebugFile is set, return it.
+        if let Some(default_debug_file) = &self.defaults.debug_file {
+            return Ok(Some(default_debug_file));
+        }
+
+        // Otherwise there is no debug file.
+        return Ok(None);
     }
 
     // Configure debug log format.
@@ -1299,6 +1556,9 @@ impl GooseAttack {
         // Initialize logger.
         self.initialize_logger();
 
+        // Set run mode (StandAlone, Worker, Manager).
+        self.set_attack_mode()?;
+
         // Determine how many users to simulate.
         self.set_users()?;
 
@@ -1317,166 +1577,6 @@ impl GooseAttack {
         // Set up throttle if enabled.
         self.set_throttle_requests()?;
 
-        // Manager mode.
-        if self.configuration.manager {
-            // @TODO: support running in both manager and worker mode.
-            if self.configuration.worker {
-                return Err(GooseError::InvalidOption {
-                    option: "--worker".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --worker flag can not be set together with the --manager flag"
-                        .to_string(),
-                });
-            }
-
-            if self.configuration.expect_workers < 1 {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers option must be set to at least 1.".to_string(),
-                });
-            }
-            if self.configuration.expect_workers as usize > self.users {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers option can not be set to a value larger than --users option.".to_string(),
-                });
-            }
-
-            if !self.configuration.debug_file.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "--debug-file".to_string(),
-                    value: self.configuration.debug_file,
-                    detail:
-                        "The --debug-file option can not be set together with the --manager flag."
-                            .to_string(),
-                });
-            }
-        }
-
-        // Worker mode.
-        if self.configuration.worker {
-            // @TODO: support running in both manager and worker mode.
-            if self.configuration.manager {
-                return Err(GooseError::InvalidOption {
-                    option: "--manager".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --manager flag can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-
-            if self.configuration.expect_workers > 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers option can not be set together with the --worker flag.".to_string(),
-                });
-            }
-
-            if !self.configuration.host.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "--host".to_string(),
-                    value: self.configuration.host,
-                    detail: "The --host option can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-
-            if self.configuration.manager_bind_host != "0.0.0.0" {
-                return Err(GooseError::InvalidOption {
-                    option: "--manager-bind-host".to_string(),
-                    value: self.configuration.manager_bind_host,
-                    detail: "The --manager-bind-host option can not be set together with the --worker flag.".to_string(),
-                });
-            }
-
-            let default_port: u16 = DEFAULT_PORT.to_string().parse().unwrap();
-            if self.configuration.manager_bind_port != default_port {
-                return Err(GooseError::InvalidOption {
-                    option: "--manager-bind-port".to_string(),
-                    value: self.configuration.manager_bind_port.to_string(),
-                    detail: "The --manager-bind-port option can not be set together with the --worker flag.".to_string(),
-                });
-            }
-
-            if self.configuration.no_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: self.configuration.no_metrics.to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-
-            if self.configuration.no_task_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-task-metrics".to_string(),
-                    value: self.configuration.no_task_metrics.to_string(),
-                    detail:
-                        "The --no-task-metrics flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-
-            if self.configuration.only_summary {
-                return Err(GooseError::InvalidOption {
-                    option: "--only-summary".to_string(),
-                    value: self.configuration.only_summary.to_string(),
-                    detail:
-                        "The --only-summary flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-
-            if self.configuration.status_codes {
-                return Err(GooseError::InvalidOption {
-                    option: "--status-codes".to_string(),
-                    value: self.configuration.status_codes.to_string(),
-                    detail:
-                        "The --status-codes flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-
-            if self.configuration.no_reset_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-reset-metrics".to_string(),
-                    value: self.configuration.no_reset_metrics.to_string(),
-                    detail: "The --no-reset-metrics flag can not be set together with the --worker flag.".to_string(),
-                });
-            }
-
-            if self.configuration.no_hash_check {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-hash-check".to_string(),
-                    value: self.configuration.no_hash_check.to_string(),
-                    detail:
-                        "The --no-hash-check flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-        }
-
-        if !self.configuration.manager && !self.configuration.worker {
-            if self.configuration.no_hash_check {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-hash-check".to_string(),
-                    value: self.configuration.no_hash_check.to_string(),
-                    detail: "The --no-hash-check flag can not be set without also setting the --manager flag.".to_string(),
-                });
-            }
-
-            if self.configuration.expect_workers > 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers flag can not be set without also setting the --manager flag.".to_string(),
-                });
-            }
-        }
-
         // Confirm there's either a global host, or each task set has a host defined.
         if self.configuration.host.is_empty() {
             for task_set in &self.task_sets {
@@ -1493,7 +1593,7 @@ impl GooseAttack {
                             }
                         }
                         None => {
-                            if !self.configuration.worker {
+                            if self.attack_mode != GooseMode::Worker {
                                 return Err(GooseError::InvalidOption {
                                     option: "--host".to_string(),
                                     value: "".to_string(),
@@ -1524,7 +1624,7 @@ impl GooseAttack {
             );
         }
 
-        if !self.configuration.worker {
+        if self.attack_mode != GooseMode::Worker {
             // Allocate a state for each of the users we are about to start.
             self.weighted_users = self.weight_task_set_users()?;
 
@@ -1544,7 +1644,7 @@ impl GooseAttack {
         self.started = Some(time::Instant::now());
         // Hatch users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_duration;
-        if !self.configuration.worker {
+        if self.attack_mode != GooseMode::Worker {
             let sleep_float = 1.0 / self.hatch_rate as f32;
             sleep_duration = time::Duration::from_secs_f32(sleep_float);
         } else {
@@ -1552,7 +1652,7 @@ impl GooseAttack {
         }
 
         // Start goose in manager mode.
-        if self.configuration.manager {
+        if self.attack_mode == GooseMode::Manager {
             #[cfg(feature = "gaggle")]
             {
                 let mut rt = tokio::runtime::Runtime::new().unwrap();
@@ -1567,7 +1667,7 @@ impl GooseAttack {
             }
         }
         // Start goose in worker mode.
-        else if self.configuration.worker {
+        else if self.attack_mode == GooseMode::Worker {
             #[cfg(feature = "gaggle")]
             {
                 let mut rt = tokio::runtime::Runtime::new().unwrap();
@@ -1641,17 +1741,27 @@ impl GooseAttack {
     }
 
     // Helper to spawn a logger thread if configured.
-    fn setup_logger(
-        &self,
-    ) -> (
-        // A handle to later rejoin the logger thread.
-        Option<tokio::task::JoinHandle<()>>,
-        // A channel used by GooseClients to send logs.
-        Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
-    ) {
+    fn setup_debug_logger(
+        &mut self,
+    ) -> Result<
+        (
+            // A handle to later rejoin the logger thread.
+            Option<tokio::task::JoinHandle<()>>,
+            // A channel used by GooseClients to send logs.
+            Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
+        ),
+        GooseError,
+    > {
+        // Set configuration from default if available, making it available to
+        // GooseUser threads.
+        self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path()? {
+            debug_file.to_string()
+        } else {
+            "".to_string()
+        };
         // If the logger isn't configured, return immediately.
-        if self.configuration.debug_file.is_empty() && self.defaults.debug_file.is_none() {
-            return (None, None);
+        if self.configuration.debug_file == "" {
+            return Ok((None, None));
         }
 
         // Create an unbounded channel allowing GooseUser threads to log errors.
@@ -1662,10 +1772,9 @@ impl GooseAttack {
         // Launch a new thread for logging.
         let logger_thread = tokio::spawn(logger::logger_main(
             self.configuration.clone(),
-            self.defaults.clone(),
             logger_receiver,
         ));
-        (Some(logger_thread), Some(all_threads_logger))
+        Ok((Some(logger_thread), Some(all_threads_logger)))
     }
 
     // Helper to spawn a throttle thread if configured.
@@ -1713,6 +1822,17 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
+    // Prepare an asynchronous buffered file writer for metrics_file (if enabled).
+    async fn prepare_metrics_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
+        if let Some(metrics_file_path) = self.get_metrics_file_path()? {
+            Ok(Some(BufWriter::new(
+                File::create(&metrics_file_path).await?,
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -1725,8 +1845,8 @@ impl GooseAttack {
             socket
         );
 
-        // Initilize per-user states.
-        if !self.configuration.worker {
+        // Initialize per-user states.
+        if self.attack_mode != GooseMode::Worker {
             // First run global test_start_task, if defined.
             match &self.test_start_task {
                 Some(t) => {
@@ -1747,7 +1867,7 @@ impl GooseAttack {
         }
 
         // If enabled, spawn a logger thread.
-        let (logger_thread, all_threads_logger) = self.setup_logger();
+        let (logger_thread, all_threads_logger) = self.setup_debug_logger()?;
 
         // If enabled, spawn a throttle thread.
         let (all_threads_throttle, parent_to_throttle_tx) = self.setup_throttle().await;
@@ -1795,7 +1915,7 @@ impl GooseAttack {
             ) = mpsc::unbounded_channel();
             user_channels.push(parent_sender);
 
-            if !self.configuration.debug_file.is_empty() || self.defaults.debug_file.is_some() {
+            if self.get_debug_file_path()?.is_some() {
                 // Copy the GooseUser-to-logger sender channel, used by all threads.
                 thread_user.logger = Some(all_threads_logger.clone().unwrap());
             } else {
@@ -1819,7 +1939,7 @@ impl GooseAttack {
             // metrics.users starts at 0.
             let thread_number = self.metrics.users + 1;
 
-            let is_worker = self.configuration.worker;
+            let is_worker = self.attack_mode == GooseMode::Worker;
 
             // Launch a new user.
             let user = tokio::spawn(user::user_main(
@@ -1837,7 +1957,7 @@ impl GooseAttack {
             spawning_user_drift =
                 util::sleep_minus_drift(sleep_duration, spawning_user_drift).await;
         }
-        if self.configuration.worker {
+        if self.attack_mode == GooseMode::Worker {
             info!(
                 "[{}] launched {} users...",
                 get_worker_id(),
@@ -1861,30 +1981,7 @@ impl GooseAttack {
         let mut metrics_timer = time::Instant::now();
         let mut display_running_metrics = false;
 
-        // Prepare an asynchronous buffered file writer for metrics_file (if enabled).
-        let mut metrics_file = None;
-        if !self.configuration.no_metrics {
-            let mut file: Option<File> = None;
-            // Log metrics to --metrics-file if set.
-            if !self.configuration.metrics_file.is_empty() {
-                info!(
-                    "opening file to log metrics: {}",
-                    self.configuration.metrics_file
-                );
-                file = Some(File::create(&self.configuration.metrics_file).await?);
-            }
-            // Otherwise log metrics to defaults.metrics_file if set.
-            else if let Some(default_metrics_file) = &self.defaults.metrics_file {
-                info!(
-                    "opening default file to log metrics: {}",
-                    &default_metrics_file
-                );
-                file = Some(File::create(default_metrics_file).await?);
-            }
-            if let Some(file_created) = file {
-                metrics_file = Some(BufWriter::new(file_created));
-            }
-        }
+        let mut metrics_file = self.prepare_metrics_file().await?;
 
         // Initialize the optional task metrics.
         self.metrics
@@ -1897,7 +1994,7 @@ impl GooseAttack {
             if !self.configuration.no_metrics {
                 // Check if we're displaying running metrics.
                 if !self.configuration.only_summary
-                    && !self.configuration.worker
+                    && self.attack_mode != GooseMode::Worker
                     && util::timer_expired(metrics_timer, RUNNING_METRICS_EVERY)
                 {
                     metrics_timer = time::Instant::now();
@@ -1907,10 +2004,10 @@ impl GooseAttack {
                 // Load messages from user threads until the receiver queue is empty.
                 let received_message = self
                     .receive_metrics(&mut metric_receiver, &mut header, &mut metrics_file)
-                    .await;
+                    .await?;
 
                 // As worker, push metrics up to manager.
-                if self.configuration.worker && received_message {
+                if self.attack_mode == GooseMode::Worker && received_message {
                     #[cfg(feature = "gaggle")]
                     {
                         // Push metrics to manager process.
@@ -1970,7 +2067,7 @@ impl GooseAttack {
             if util::timer_expired(self.started.unwrap(), self.run_time)
                 || canceled.load(Ordering::SeqCst)
             {
-                if self.configuration.worker {
+                if self.attack_mode == GooseMode::Worker {
                     info!(
                         "[{}] stopping after {} seconds...",
                         get_worker_id(),
@@ -1992,7 +2089,7 @@ impl GooseAttack {
                         }
                     }
                 }
-                if self.configuration.worker {
+                if self.attack_mode == GooseMode::Worker {
                     info!("[{}] waiting for users to exit", get_worker_id());
                 } else {
                     info!("waiting for users to exit");
@@ -2006,7 +2103,7 @@ impl GooseAttack {
                 futures::future::join_all(users).await;
                 debug!("all users exited");
 
-                if !self.configuration.debug_file.is_empty() || self.defaults.debug_file.is_some() {
+                if self.get_debug_file_path()?.is_some() {
                     // Tell logger thread to flush and exit.
                     if let Err(e) = all_threads_logger.unwrap().send(None) {
                         warn!("unexpected error telling logger thread to exit: {}", e);
@@ -2019,13 +2116,13 @@ impl GooseAttack {
                 if !self.configuration.no_metrics {
                     let _received_message = self
                         .receive_metrics(&mut metric_receiver, &mut header, &mut metrics_file)
-                        .await;
+                        .await?;
                 }
 
                 #[cfg(feature = "gaggle")]
                 {
                     // As worker, push metrics up to manager.
-                    if self.configuration.worker {
+                    if self.attack_mode == GooseMode::Worker {
                         worker::push_metrics_to_manager(
                             &socket.clone().unwrap(),
                             vec![
@@ -2054,7 +2151,7 @@ impl GooseAttack {
         }
         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
 
-        if !self.configuration.worker {
+        if self.attack_mode != GooseMode::Worker {
             // Run global test_stop_task, if defined.
             match &self.test_stop_task {
                 Some(t) => {
@@ -2078,7 +2175,9 @@ impl GooseAttack {
         if let Some(file) = metrics_file.as_mut() {
             info!(
                 "flushing metrics_file: {}",
-                &self.configuration.metrics_file
+                // Unwrap is safe as we can't get here unless a metrics file path
+                // is defined.
+                self.get_metrics_file_path()?.unwrap()
             );
             let _ = file.flush().await;
         };
@@ -2093,7 +2192,7 @@ impl GooseAttack {
         metric_receiver: &mut mpsc::UnboundedReceiver<GooseMetric>,
         header: &mut bool,
         metrics_file: &mut Option<BufWriter<File>>,
-    ) -> bool {
+    ) -> Result<bool, GooseError> {
         let mut received_message = false;
         let mut message = metric_receiver.try_recv();
         while message.is_ok() {
@@ -2116,7 +2215,10 @@ impl GooseAttack {
                             Err(e) => {
                                 warn!(
                                     "failed to write metrics to {}: {}",
-                                    &self.configuration.metrics_file, e
+                                    // Unwrap is safe as we can't get here unless a metrics file path
+                                    // is defined.
+                                    self.get_metrics_file_path()?.unwrap(),
+                                    e
                                 );
                             }
                         }
@@ -2159,7 +2261,7 @@ impl GooseAttack {
             }
             message = metric_receiver.try_recv();
         }
-        received_message
+        Ok(received_message)
     }
 }
 
