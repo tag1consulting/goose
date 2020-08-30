@@ -30,6 +30,7 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::ThrottleRequests
 // - GooseDefault::Users
 // - GooseDefault::Manager
+// - GooseDefault::ExpectWorkers
 // - GooseDefault::Worker
 
 // Can't be tested:
@@ -49,7 +50,6 @@ const THROTTLE_REQUESTS: usize = 10;
 // Needs Gaggle test:
 // - GooseDefault::ManagerBindHost
 // - GooseDefault::ManagerBindPort
-// - GooseDefault::ExpectWorkers
 // - GooseDefault::ManagerHost
 // - GooseDefault::ManagerPort
 
@@ -249,7 +249,6 @@ fn test_gaggle_defaults() {
 
     // @TODO: configure through defaults:
     configuration.no_reset_metrics = true;
-    configuration.expect_workers = USERS as u16;
 
     // Start manager instance in current thread and run a distributed load test.
     let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)

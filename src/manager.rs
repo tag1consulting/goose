@@ -241,7 +241,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     info!(
         "manager listening on {}, waiting for {} workers",
-        &address, goose_attack.configuration.expect_workers
+        &address, goose_attack.configuration.expect_workers,
     );
 
     // Calculate how many users each worker will be responsible for.
@@ -392,7 +392,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         info!(
                             "worker {} of {} connected",
                             workers.len(),
-                            goose_attack.configuration.expect_workers
+                            goose_attack.configuration.expect_workers,
                         );
 
                         // Send new worker a batch of users.

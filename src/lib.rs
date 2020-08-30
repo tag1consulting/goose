@@ -1049,24 +1049,6 @@ impl GooseAttack {
                 });
             }
 
-            if self.configuration.expect_workers < 1 {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers option must be set to at least 1.".to_string(),
-                });
-            }
-            /*
-            @TODO: Check this after we set_users()
-            if self.configuration.expect_workers as usize > self.users {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers option can not be set to a value larger than --users option.".to_string(),
-                });
-            }
-            */
-
             if self.get_debug_file_path()?.is_some() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-file".to_string(),
@@ -1087,14 +1069,6 @@ impl GooseAttack {
                     value: "true".to_string(),
                     detail: "The --manager flag can not be set together with the --worker flag."
                         .to_string(),
-                });
-            }
-
-            if self.configuration.expect_workers > 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers option can not be set together with the --worker flag.".to_string(),
                 });
             }
 
@@ -1193,15 +1167,57 @@ impl GooseAttack {
                     detail: "The --no-hash-check flag can not be set without also setting the --manager flag.".to_string(),
                 });
             }
+        }
 
-            if self.configuration.expect_workers > 0 {
+        Ok(())
+    }
+
+    // Determine how many workers to expect.
+    fn set_expect_workers(&mut self) -> Result<(), GooseError> {
+        let expect_workers = if self.configuration.expect_workers > 0 {
+            self.configuration.expect_workers
+        } else if let Some(number) = self.defaults.expect_workers {
+            // Only set expect_workers from default if on Manager.
+            if self.attack_mode == GooseMode::Manager {
+                number
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // Generally disallow --expect-workers without --master.
+        if self.attack_mode != GooseMode::Manager && expect_workers > 0 {
+            return Err(GooseError::InvalidOption {
+                option: "--expect-workers".to_string(),
+                value: self.configuration.expect_workers.to_string(),
+                detail: "The --expect-workers flag can not be set without also setting the --manager flag.".to_string(),
+            });
+        }
+
+        if self.attack_mode == GooseMode::Manager {
+            // Must expect at least 1 Worker when running as Manager.
+            if expect_workers < 1 {
                 return Err(GooseError::InvalidOption {
                     option: "--expect-workers".to_string(),
-                    value: self.configuration.expect_workers.to_string(),
-                    detail: "The --expect-workers flag can not be set without also setting the --manager flag.".to_string(),
+                    value: expect_workers.to_string(),
+                    detail: "The --expect-workers option must be set to at least 1.".to_string(),
+                });
+            }
+
+            // Must not expect more Workers than Users.
+            if expect_workers as usize > self.users {
+                return Err(GooseError::InvalidOption {
+                    option: "--expect-workers".to_string(),
+                    value: expect_workers.to_string(),
+                    detail: "The --expect-workers option can not be set to a value larger than --users option.".to_string(),
                 });
             }
         }
+
+        // Overload configuration.expect_workers to make available in Worker process.
+        self.configuration.expect_workers = expect_workers;
 
         Ok(())
     }
@@ -1561,6 +1577,9 @@ impl GooseAttack {
 
         // Determine how many users to simulate.
         self.set_users()?;
+
+        // Set expect_workers if running in Manager attack mode.
+        self.set_expect_workers()?;
 
         // Determine how long to run.
         self.set_run_time()?;
