@@ -337,6 +337,75 @@ All 1024 users hatched.
  Aggregated              | 58,518 [200]
 ```
 
+## Defaults
+
+All run-time options can be configured with custom defaults. For example, you may want to default to the the host name of your local development environment, only requiring that `--host` be set when running against a production environment. Assuming your local development environment is at "http://local.dev/" you can do this as follows:
+
+```
+    GooseAttack::initialize()?
+        .register_taskset(taskset!("LoadtestTasks")
+            .register_task(task!(loadtest_index))
+        )
+        .set_default(GooseDefault::Host, "http://local.dev/")
+        .execute()?
+        .print();
+    
+    Ok(())
+```
+
+The following defaults can be configured with a `&str`:
+ o host: `GooseDefault::Host`
+ o log file name: `GooseDefault::LogFile`
+ o metrics log file name: `GooseDefault::MetricsFile`
+ o metrics log file format: `GooseDefault::MetricsFormat`
+ o debug log file name: `GooseDefault::DebugFile`
+ o debug log file format: `GooseDefault::DebugFormat`
+ o host to bind Manager to: `GooseDefault::ManagerBindHost`
+ o host for Worker to connect to: `GooseDefault::ManagerHost`
+
+The following defaults can be configured with a `usize` integer:
+ o total users to start: `GooseDefault::Users`
+ o users to start per second: `GooseDefault::HatchRate`
+ o number of seconds for test to run: `GooseDefault::RunTime`
+ o log level: `GooseDefault::LogLevel`
+ o verbosity: `GooseDefault::Verbose`
+ o maximum requests per second: `GooseDefault::ThrottleRequests`
+ o number of Workers to expect: `GooseDefault::ExpectWorkers`
+ o port to bind Manager to: `GooseDefault::ManagerBindPort`
+ o port for Worker to connect to: `GooseDefault::ManagerPort`
+
+The following defaults can be configured with a `bool`:
+ o only print final summary metrics: `GooseDefault::OnlySummary`
+ o do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
+ o do not track metrics: `GooseDefault::NoMetrics`
+ o do not track task metrics: `GooseDefault::NoTaskMetrics`
+ o track status codes: `GooseDefault::StatusCodes`
+ o follow redirect of base_url: `GooseDefault::StickyFollow`
+ o enable Manager mode: `GooseDefault::Manager`
+ o ignore load test checksum: `GooseDefault::NoHashCheck`
+ o enable Worker mode: `GooseDefault::Worker`
+
+For example, without any run-time options the following load test would automatically run against `local.dev`, logging metrics to `goose-metrics.log` and debug to `goose-debug.log`. It will automatically launch 20 users in 4 seconds, and run the load test for 15 minutes. Metrics will only be displayed when the load test completes, and will include additional status code metrics. The order the defaults are set is not important.
+
+```
+    GooseAttack::initialize()?
+        .register_taskset(taskset!("LoadtestTasks")
+            .register_task(task!(loadtest_index))
+        )
+        .set_default(GooseDefault::Host, "local.dev")
+        .set_default(GooseDefault::MetricsFile, "goose-metrics.log")
+        .set_default(GooseDefault::DebugFile, "goose-debug.log")
+        .set_default(GooseDefault::Users, 20)
+        .set_default(GooseDefault::HatchRate, 4)
+        .set_default(GooseDefault::RunTime, 900)
+        .set_default(GooseDefault::OnlySummary, true)
+        .set_default(GooseDefault::StatusCodes, true)
+        .execute()?
+        .print();
+    
+    Ok(())
+```
+
 ## Throttling Requests
 
 By default, Goose will generate as much load as it can. If this is not desirable, the throttle allows optionally limiting the maximum number of requests per second made during a load test. This can be helpful to ensure consistency when running a load test from multiple different servers with different available resources.

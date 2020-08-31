@@ -2484,10 +2484,11 @@ impl GooseAttack {
     }
 }
 
-/// Optionally configure a default host for the load test. This is used if no
-/// per-GooseTaskSet host is defined, no `--host` CLI option is configured, and if
-/// the GooseTask itself doesn't hard-code the host in the base url of its request.
-/// In that case, this host is added to all requests.
+/// All run-time options can optionally be configured with custom defaults. For
+/// example, you can optionally configure a default host for the load test. This is
+/// used if no per-GooseTaskSet host is defined, no `--host` CLI option is
+/// configured, and if the GooseTask itself doesn't hard-code the host in the base
+/// url of its request. In that case, this host is added to all requests.
 ///
 /// For example, a load test could be configured to default to running against a local
 /// development container, and the `--host` option could be used to override the host
@@ -2500,6 +2501,55 @@ impl GooseAttack {
 /// fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
 ///         .set_default(GooseDefault::Host, "local.dev");
+///
+///     Ok(())
+/// }
+/// ```
+///
+/// The following run-time options can be configured with a custom default using a
+/// borrowed string slice (`&str`):
+///  - GooseDefault::Host
+///  - GooseDefault::LogFile
+///  - GooseDefault::MetricsFile
+///  - GooseDefault::MetricsFormat
+///  - GooseDefault::DebugFile
+///  - GooseDefault::DebugFormat
+///  - GooseDefault::ManagerBindHost
+///  - GooseDefault::ManagerHost
+///
+/// The following run-time options can be configured with a custom default using a
+/// `usize` integer:
+///  - GooseDefault::Users
+///  - GooseDefault::HatchRate
+///  - GooseDefault::RunTime
+///  - GooseDefault::LogLevel
+///  - GooseDefault::Verbose
+///  - GooseDefault::ThrottleRequests
+///  - GooseDefault::ExpectWorkers
+///  - GooseDefault::ManagerBindPort
+///  - GooseDefault::ManagerPort
+///
+/// The following run-time flags can be configured with a custom default using a
+/// `bool` (and otherwise default to `false`).
+///  - GooseDefault::OnlySummary
+///  - GooseDefault::NoResetMetrics
+///  - GooseDefault::NoMetrics
+///  - GooseDefault::NoTaskMetrics
+///  - GooseDefault::StatusCodes
+///  - GooseDefault::StickyFollow
+///  - GooseDefault::Manager
+///  - GooseDefault::NoHashCheck
+///  - GooseDefault::Worker => panic!(format!(
+///
+/// # Another Example
+/// ```rust,no_run
+///     use goose::prelude::*;
+///
+/// fn main() -> Result<(), GooseError> {
+///     GooseAttack::initialize()?
+///         .set_default(GooseDefault::OnlySummary, true)
+///         .set_default(GooseDefault::Verbose, 1)
+///         .set_default(GooseDefault::MetricsFile, "goose-metrics.log");
 ///
 ///     Ok(())
 /// }
