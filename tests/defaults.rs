@@ -222,7 +222,6 @@ fn test_gaggle_defaults() {
     let mut worker_handles = Vec::new();
     for i in 0..USERS {
         let worker_configuration = configuration.clone();
-        let worker_host = host.clone();
         let worker_metrics_file = metrics_file.clone() + &i.to_string();
         let worker_debug_file = debug_file.clone() + &i.to_string();
         worker_handles.push(thread::spawn(move || {
@@ -232,10 +231,6 @@ fn test_gaggle_defaults() {
                 .register_taskset(taskset!("Index").register_task(task!(get_index)))
                 .register_taskset(taskset!("About").register_task(task!(get_about)))
                 // Start at least two users, required to run both TaskSets.
-                .set_default(GooseDefault::Host, worker_host.as_str())
-                .set_default(GooseDefault::Users, USERS)
-                .set_default(GooseDefault::RunTime, RUN_TIME)
-                .set_default(GooseDefault::HatchRate, HATCH_RATE)
                 .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
                 .set_default(GooseDefault::DebugFile, worker_debug_file.as_str())
                 .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
@@ -338,8 +333,8 @@ fn test_defaults_no_metrics() {
     assert!(goose_metrics.tasks.is_empty());
     assert!(goose_metrics.users == USERS);
     assert!(goose_metrics.duration == RUN_TIME);
-    assert!(goose_metrics.display_metrics == false);
-    assert!(goose_metrics.display_status_codes == false);
+    assert!(!goose_metrics.display_metrics);
+    assert!(!goose_metrics.display_status_codes);
 }
 
 // Helper to delete test artifact, if existing.
