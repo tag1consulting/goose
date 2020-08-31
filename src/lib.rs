@@ -1490,6 +1490,25 @@ impl GooseAttack {
         Ok(no_reset_metrics)
     }
 
+    #[cfg(feature = "gaggle")]
+    // Determine if no_hash_check is enabled.
+    fn no_hash_check(&self) -> bool {
+        let no_hash_check = if self.configuration.no_hash_check {
+            true
+        } else if let Some(default) = self.defaults.no_hash_check {
+            // Do not default to no_hash_check on Worker.
+            if self.attack_mode == GooseMode::Worker {
+                false
+            } else {
+                default
+            }
+        } else {
+            false
+        };
+
+        no_hash_check
+    }
+
     // If enabled, returns the path of the metrics_file, otherwise returns None.
     fn get_metrics_file_path(&mut self) -> Result<Option<&str>, GooseError> {
         // If metrics are disabled, or running in Manager mode, there is no

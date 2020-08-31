@@ -372,7 +372,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         let goose_metric = gaggle_metrics.pop().unwrap();
                         if let GaggleMetrics::WorkerInit(load_test_hash) = goose_metric {
                             if load_test_hash != goose_attack.metrics.hash {
-                                if goose_attack.configuration.no_hash_check {
+                                if goose_attack.no_hash_check() {
                                     warn!("worker is running a different load test, ignoring")
                                 } else {
                                     panic!("worker is running a different load test, set --no-hash-check to ignore");

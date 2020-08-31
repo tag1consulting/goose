@@ -30,13 +30,14 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::ThrottleRequests
 // - GooseDefault::Users
 // - GooseDefault::Manager
+// - GooseDefault::NoResetMetrics
 // - GooseDefault::ExpectWorkers
+// - GooseDefault::NoHashCheck
 // - GooseDefault::ManagerBindHost
 // - GooseDefault::ManagerBindPort
 // - GooseDefault::Worker
 // - GooseDefault::ManagerHost
 // - GooseDefault::ManagerPort
-// - GooseDefault::NoResetMetrics
 
 // Can't be tested:
 // - GooseDefault::LogFile (logger can only be configured once)
@@ -49,7 +50,6 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::NoTaskMetrics
 // - GooseDefault::StatusCodes
 // - GooseDefault::StickyFollow
-// - GooseDefault::NoHashCheck
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -102,7 +102,7 @@ fn test_defaults() {
         .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
         .register_taskset(taskset!("About").register_task(task!(get_about)))
-        // Start two users, required to run both TaskSets.
+        // Start at least two users, required to run both TaskSets.
         .set_default(GooseDefault::Host, host.as_str())
         .set_default(GooseDefault::Users, USERS)
         .set_default(GooseDefault::RunTime, RUN_TIME)
@@ -222,7 +222,7 @@ fn test_gaggle_defaults() {
                 .unwrap()
                 .register_taskset(taskset!("Index").register_task(task!(get_index)))
                 .register_taskset(taskset!("About").register_task(task!(get_about)))
-                // Start two users, required to run both TaskSets.
+                // Start at least two users, required to run both TaskSets.
                 .set_default(GooseDefault::Host, worker_host.as_str())
                 .set_default(GooseDefault::Users, USERS)
                 .set_default(GooseDefault::RunTime, RUN_TIME)
@@ -245,9 +245,10 @@ fn test_gaggle_defaults() {
     let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
         .setup()
         .unwrap()
-        .register_taskset(taskset!("Index").register_task(task!(get_index)))
+        // Alter the name of the task set so NoHashCheck is required for load test to run.
+        .register_taskset(taskset!("FooIndex").register_task(task!(get_index)))
         .register_taskset(taskset!("About").register_task(task!(get_about)))
-        // Start two users, required to run both TaskSets.
+        // Start at least two users, required to run both TaskSets.
         .set_default(GooseDefault::Host, host.as_str())
         .set_default(GooseDefault::Users, USERS)
         .set_default(GooseDefault::RunTime, RUN_TIME)
@@ -255,6 +256,7 @@ fn test_gaggle_defaults() {
         // Manager configuration using defaults instead of run-time options.
         .set_default(GooseDefault::Manager, true)
         .set_default(GooseDefault::ExpectWorkers, USERS)
+        .set_default(GooseDefault::NoHashCheck, true)
         .set_default(GooseDefault::ManagerBindHost, HOST)
         .set_default(GooseDefault::ManagerBindPort, PORT)
         .execute()
