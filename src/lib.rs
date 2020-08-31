@@ -1474,7 +1474,7 @@ impl GooseAttack {
 
     // Determine if no_reset_statics is enabled.
     fn no_reset_metrics(&self) -> bool {
-        let no_reset_metrics = if self.configuration.no_reset_metrics {
+        if self.configuration.no_reset_metrics {
             true
         } else if let Some(default) = self.defaults.no_reset_metrics {
             // Do not default to no_reset_metrics on Worker.
@@ -1485,9 +1485,7 @@ impl GooseAttack {
             }
         } else {
             false
-        };
-
-        no_reset_metrics
+        }
     }
 
     // Determine if the status_codes flag is enabled.
@@ -1509,10 +1507,29 @@ impl GooseAttack {
         self.configuration.status_codes
     }
 
+    // Determine if the only_summary flag is enabled.
+    fn set_only_summary(&mut self) -> bool {
+        // Overload self.configuration.only_summary so it's available on Worker.
+        if !self.configuration.only_summary {
+            self.configuration.only_summary = if let Some(default) = self.defaults.only_summary {
+                // Do not default to only_summary on Worker.
+                if self.attack_mode == GooseMode::Worker {
+                    false
+                } else {
+                    default
+                }
+            } else {
+                false
+            };
+        }
+
+        self.configuration.only_summary
+    }
+
     #[cfg(feature = "gaggle")]
     // Determine if no_hash_check is enabled.
     fn no_hash_check(&self) -> bool {
-        let no_hash_check = if self.configuration.no_hash_check {
+        if self.configuration.no_hash_check {
             true
         } else if let Some(default) = self.defaults.no_hash_check {
             // Do not default to no_hash_check on Worker.
@@ -1523,9 +1540,7 @@ impl GooseAttack {
             }
         } else {
             false
-        };
-
-        no_hash_check
+        }
     }
 
     // If enabled, returns the path of the metrics_file, otherwise returns None.
@@ -1728,6 +1743,9 @@ impl GooseAttack {
 
         // Set up status_codes flag.
         self.set_status_codes();
+
+        // Set up only_summary flag.
+        self.set_only_summary();
 
         // Confirm there's either a global host, or each task set has a host defined.
         if self.configuration.host.is_empty() {

@@ -31,6 +31,7 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::Users
 // - GooseDefault::NoResetMetrics
 // - GooseDefault::StatusCodes
+// - GooseDefault::OnlySummary
 // - GooseDefault::Manager
 // - GooseDefault::ExpectWorkers
 // - GooseDefault::NoHashCheck
@@ -46,7 +47,6 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::LogLevel (can't validate due to logger limitation)
 
 // Doesn't have tests yet:
-// - GooseDefault::OnlySummary
 // - GooseDefault::NoMetrics
 // - GooseDefault::NoTaskMetrics
 // - GooseDefault::StickyFollow
@@ -114,6 +114,7 @@ fn test_defaults() {
         .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
         .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
         .set_default(GooseDefault::StatusCodes, true)
+        .set_default(GooseDefault::OnlySummary, true)
         .execute()
         .unwrap();
 
@@ -156,6 +157,7 @@ fn test_no_defaults() {
     config.throttle_requests = Some(THROTTLE_REQUESTS);
     config.no_reset_metrics = true;
     config.status_codes = true;
+    config.only_summary = true;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -256,6 +258,7 @@ fn test_gaggle_defaults() {
         .set_default(GooseDefault::RunTime, RUN_TIME)
         .set_default(GooseDefault::HatchRate, HATCH_RATE)
         .set_default(GooseDefault::StatusCodes, true)
+        .set_default(GooseDefault::OnlySummary, true)
         // Manager configuration using defaults instead of run-time options.
         .set_default(GooseDefault::Manager, true)
         .set_default(GooseDefault::ExpectWorkers, USERS)
