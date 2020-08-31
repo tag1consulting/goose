@@ -358,6 +358,9 @@ lazy_static! {
 /// Internal representation of a weighted task list.
 type WeightedGooseTasks = Vec<Vec<usize>>;
 
+type DebugLoggerHandle = Option<tokio::task::JoinHandle<()>>;
+type DebugLoggerChannel = Option<mpsc::UnboundedSender<Option<GooseDebug>>>;
+
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
     WORKER_ID.load(Ordering::Relaxed)
@@ -1833,15 +1836,7 @@ impl GooseAttack {
     // Helper to spawn a logger thread if configured.
     fn setup_debug_logger(
         &mut self,
-    ) -> Result<
-        (
-            // A handle to later rejoin the logger thread.
-            Option<tokio::task::JoinHandle<()>>,
-            // A channel used by GooseClients to send logs.
-            Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
-        ),
-        GooseError,
-    > {
+    ) -> Result<(DebugLoggerHandle, DebugLoggerChannel), GooseError> {
         // Set configuration from default if available, making it available to
         // GooseUser threads.
         self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path()? {

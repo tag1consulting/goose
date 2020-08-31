@@ -116,9 +116,7 @@ fn test_defaults() {
         .execute()
         .unwrap();
 
-    let metrics_files = vec![metrics_file.to_string()];
-    let debug_files = vec![debug_file.to_string()];
-    validate_test(goose_metrics, index, about, &metrics_files, &debug_files);
+    validate_test(goose_metrics, index, about, &[metrics_file], &[debug_file]);
 }
 
 #[test]
@@ -165,9 +163,7 @@ fn test_no_defaults() {
         .execute()
         .unwrap();
 
-    let metrics_files = vec![metrics_file.to_string()];
-    let debug_files = vec![debug_file.to_string()];
-    validate_test(goose_metrics, index, about, &metrics_files, &debug_files);
+    validate_test(goose_metrics, index, about, &[metrics_file], &[debug_file]);
 }
 
 #[test]
@@ -307,8 +303,8 @@ fn validate_test(
     goose_metrics: GooseMetrics,
     index: MockRef,
     about: MockRef,
-    metrics_files: &Vec<String>,
-    debug_files: &Vec<String>,
+    metrics_files: &[String],
+    debug_files: &[String],
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
