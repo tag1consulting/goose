@@ -47,9 +47,11 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::Verbose (logger can only be configured once)
 // - GooseDefault::LogLevel (can't validate due to logger limitation)
 
-// Doesn't have tests yet:
-// - GooseDefault::NoMetrics
+// Needs followup:
+// - GooseDefault::NoMetrics:
+//     Gaggles depend on metrics, when disabled load test does not shut down clearly.
 // - GooseDefault::StickyFollow
+//     Needs more complex tests
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -116,6 +118,7 @@ fn test_defaults() {
         .set_default(GooseDefault::StatusCodes, true)
         .set_default(GooseDefault::OnlySummary, true)
         .set_default(GooseDefault::NoTaskMetrics, true)
+        .set_default(GooseDefault::StickyFollow, true)
         .execute()
         .unwrap();
 
@@ -160,6 +163,7 @@ fn test_no_defaults() {
     config.status_codes = true;
     config.only_summary = true;
     config.no_task_metrics = true;
+    config.sticky_follow = true;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -221,7 +225,6 @@ fn test_gaggle_defaults() {
         let worker_host = host.clone();
         let worker_metrics_file = metrics_file.clone() + &i.to_string();
         let worker_debug_file = debug_file.clone() + &i.to_string();
-        //  //let worker_metrics_file = metrics_file.clone();
         worker_handles.push(thread::spawn(move || {
             let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
                 .setup()
@@ -262,6 +265,7 @@ fn test_gaggle_defaults() {
         .set_default(GooseDefault::StatusCodes, true)
         .set_default(GooseDefault::OnlySummary, true)
         .set_default(GooseDefault::NoTaskMetrics, true)
+        .set_default(GooseDefault::StickyFollow, true)
         // Manager configuration using defaults instead of run-time options.
         .set_default(GooseDefault::Manager, true)
         .set_default(GooseDefault::ExpectWorkers, USERS)
@@ -285,6 +289,57 @@ fn test_gaggle_defaults() {
         debug_files.push(file);
     }
     validate_test(goose_metrics, index, about, &metrics_files, &debug_files);
+}
+
+#[test]
+/// Load test confirming that Goose respects configured defaults.
+fn test_defaults_no_metrics() {
+    let server = MockServer::start();
+
+    let index = Mock::new()
+        .expect_method(GET)
+        .expect_path(INDEX_PATH)
+        .return_status(200)
+        .create_on(&server);
+    let about = Mock::new()
+        .expect_method(GET)
+        .expect_path(ABOUT_PATH)
+        .return_status(200)
+        .create_on(&server);
+
+    let mut config = common::build_configuration(&server);
+    config.no_metrics = false;
+    config.users = None;
+    config.run_time = "".to_string();
+    config.hatch_rate = 0;
+    config.metrics_format = "".to_string();
+    config.debug_format = "".to_string();
+    config.no_reset_metrics = true;
+
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .setup()
+        .unwrap()
+        .register_taskset(taskset!("Index").register_task(task!(get_index)))
+        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        // Start at least two users, required to run both TaskSets.
+        .set_default(GooseDefault::Users, USERS)
+        .set_default(GooseDefault::RunTime, RUN_TIME)
+        .set_default(GooseDefault::HatchRate, HATCH_RATE)
+        .set_default(GooseDefault::NoMetrics, true)
+        .execute()
+        .unwrap();
+
+    // Confirm that we loaded the mock endpoints.
+    assert!(index.times_called() > 0);
+    assert!(about.times_called() > 0);
+
+    // Confirm that we did not track metrics.
+    assert!(goose_metrics.requests.is_empty());
+    assert!(goose_metrics.tasks.is_empty());
+    assert!(goose_metrics.users == USERS);
+    assert!(goose_metrics.duration == RUN_TIME);
+    assert!(goose_metrics.display_metrics == false);
+    assert!(goose_metrics.display_status_codes == false);
 }
 
 // Helper to delete test artifact, if existing.
