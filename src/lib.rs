@@ -1526,6 +1526,26 @@ impl GooseAttack {
         self.configuration.only_summary
     }
 
+    // Determine if the no_task_metrics flag is enabled.
+    fn set_no_task_metrics(&mut self) -> bool {
+        // Overload self.configuration.no_task_metrics so it's available to Users.
+        if !self.configuration.no_task_metrics {
+            self.configuration.no_task_metrics =
+                if let Some(default) = self.defaults.no_task_metrics {
+                    // Do not default to no_task_metrics on Worker.
+                    if self.attack_mode == GooseMode::Worker {
+                        false
+                    } else {
+                        default
+                    }
+                } else {
+                    false
+                };
+        }
+
+        self.configuration.no_task_metrics
+    }
+
     #[cfg(feature = "gaggle")]
     // Determine if no_hash_check is enabled.
     fn no_hash_check(&self) -> bool {
@@ -1746,6 +1766,9 @@ impl GooseAttack {
 
         // Set up only_summary flag.
         self.set_only_summary();
+
+        // Set up no_task_metrics flag.
+        self.set_no_task_metrics();
 
         // Confirm there's either a global host, or each task set has a host defined.
         if self.configuration.host.is_empty() {

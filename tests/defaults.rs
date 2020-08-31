@@ -32,6 +32,7 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::NoResetMetrics
 // - GooseDefault::StatusCodes
 // - GooseDefault::OnlySummary
+// - GooseDefault::NoTaskMetrics
 // - GooseDefault::Manager
 // - GooseDefault::ExpectWorkers
 // - GooseDefault::NoHashCheck
@@ -48,7 +49,6 @@ const THROTTLE_REQUESTS: usize = 10;
 
 // Doesn't have tests yet:
 // - GooseDefault::NoMetrics
-// - GooseDefault::NoTaskMetrics
 // - GooseDefault::StickyFollow
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
@@ -115,6 +115,7 @@ fn test_defaults() {
         .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
         .set_default(GooseDefault::StatusCodes, true)
         .set_default(GooseDefault::OnlySummary, true)
+        .set_default(GooseDefault::NoTaskMetrics, true)
         .execute()
         .unwrap();
 
@@ -158,6 +159,7 @@ fn test_no_defaults() {
     config.no_reset_metrics = true;
     config.status_codes = true;
     config.only_summary = true;
+    config.no_task_metrics = true;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -259,6 +261,7 @@ fn test_gaggle_defaults() {
         .set_default(GooseDefault::HatchRate, HATCH_RATE)
         .set_default(GooseDefault::StatusCodes, true)
         .set_default(GooseDefault::OnlySummary, true)
+        .set_default(GooseDefault::NoTaskMetrics, true)
         // Manager configuration using defaults instead of run-time options.
         .set_default(GooseDefault::Manager, true)
         .set_default(GooseDefault::ExpectWorkers, USERS)
@@ -335,6 +338,10 @@ fn validate_test(
 
     // Confirm that we tracked status codes.
     assert!(!index_metrics.status_code_counts.is_empty());
+    assert!(!about_metrics.status_code_counts.is_empty());
+
+    // Confirm that we did not track task metrics.
+    assert!(goose_metrics.tasks.is_empty());
 
     // Verify that Goose started the correct number of users.
     assert!(goose_metrics.users == USERS);
