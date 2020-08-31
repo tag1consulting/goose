@@ -98,7 +98,7 @@ fn merge_tasks_from_worker(
 fn merge_requests_from_worker(
     parent_request: &GooseRequest,
     user_request: &GooseRequest,
-    config: &GooseConfiguration,
+    status_codes: bool,
 ) -> GooseRequest {
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
@@ -126,7 +126,7 @@ fn merge_requests_from_worker(
     // Increment total fail counter.
     merged_request.fail_count += &user_request.fail_count;
     // Only accrue overhead of merging status_code_counts if we're going to display the results
-    if config.status_codes {
+    if status_codes {
         for (status_code, count) in &user_request.status_code_counts {
             let new_count;
             // Add user count into global count
@@ -186,7 +186,7 @@ fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestM
                 merged_request = merge_requests_from_worker(
                     parent_request,
                     &request,
-                    &goose_attack.configuration,
+                    goose_attack.configuration.status_codes,
                 );
             } else {
                 // First time seeing this request, simply insert it.

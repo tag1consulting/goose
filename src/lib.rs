@@ -1473,7 +1473,7 @@ impl GooseAttack {
     }
 
     // Determine if no_reset_statics is enabled.
-    fn no_reset_metrics(&self) -> Result<bool, GooseError> {
+    fn no_reset_metrics(&self) -> bool {
         let no_reset_metrics = if self.configuration.no_reset_metrics {
             true
         } else if let Some(default) = self.defaults.no_reset_metrics {
@@ -1487,7 +1487,26 @@ impl GooseAttack {
             false
         };
 
-        Ok(no_reset_metrics)
+        no_reset_metrics
+    }
+
+    // Determine if the status_codes flag is enabled.
+    fn set_status_codes(&mut self) -> bool {
+        // Overload self.configuration.status_codes so it's available on Worker.
+        if !self.configuration.status_codes {
+            self.configuration.status_codes = if let Some(default) = self.defaults.status_codes {
+                // Do not default to status_codes on Worker.
+                if self.attack_mode == GooseMode::Worker {
+                    false
+                } else {
+                    default
+                }
+            } else {
+                false
+            };
+        }
+
+        self.configuration.status_codes
     }
 
     #[cfg(feature = "gaggle")]
@@ -1706,6 +1725,9 @@ impl GooseAttack {
 
         // Set up throttle if enabled.
         self.set_throttle_requests()?;
+
+        // Set up status_codes flag.
+        self.set_status_codes();
 
         // Confirm there's either a global host, or each task set has a host defined.
         if self.configuration.host.is_empty() {
@@ -2154,7 +2176,7 @@ impl GooseAttack {
                 // Flush metrics collected prior to all user threads running
                 if !users_launched {
                     users_launched = true;
-                    if !self.no_reset_metrics()? {
+                    if !self.no_reset_metrics() {
                         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
                         self.metrics.print_running();
 

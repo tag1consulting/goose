@@ -29,8 +29,9 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::RunTime
 // - GooseDefault::ThrottleRequests
 // - GooseDefault::Users
-// - GooseDefault::Manager
 // - GooseDefault::NoResetMetrics
+// - GooseDefault::StatusCodes
+// - GooseDefault::Manager
 // - GooseDefault::ExpectWorkers
 // - GooseDefault::NoHashCheck
 // - GooseDefault::ManagerBindHost
@@ -48,7 +49,6 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::OnlySummary
 // - GooseDefault::NoMetrics
 // - GooseDefault::NoTaskMetrics
-// - GooseDefault::StatusCodes
 // - GooseDefault::StickyFollow
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
@@ -113,6 +113,7 @@ fn test_defaults() {
         .set_default(GooseDefault::DebugFile, debug_file.as_str())
         .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
         .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
+        .set_default(GooseDefault::StatusCodes, true)
         .execute()
         .unwrap();
 
@@ -154,6 +155,7 @@ fn test_no_defaults() {
     config.debug_format = LOG_FORMAT.to_string();
     config.throttle_requests = Some(THROTTLE_REQUESTS);
     config.no_reset_metrics = true;
+    config.status_codes = true;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -253,6 +255,7 @@ fn test_gaggle_defaults() {
         .set_default(GooseDefault::Users, USERS)
         .set_default(GooseDefault::RunTime, RUN_TIME)
         .set_default(GooseDefault::HatchRate, HATCH_RATE)
+        .set_default(GooseDefault::StatusCodes, true)
         // Manager configuration using defaults instead of run-time options.
         .set_default(GooseDefault::Manager, true)
         .set_default(GooseDefault::ExpectWorkers, USERS)
@@ -326,6 +329,9 @@ fn validate_test(
     assert!(about_metrics.response_time_counter == about.times_called());
     assert!(about_metrics.success_count == about.times_called());
     assert!(about_metrics.fail_count == 0);
+
+    // Confirm that we tracked status codes.
+    assert!(!index_metrics.status_code_counts.is_empty());
 
     // Verify that Goose started the correct number of users.
     assert!(goose_metrics.users == USERS);
