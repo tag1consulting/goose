@@ -36,6 +36,7 @@ const THROTTLE_REQUESTS: usize = 10;
 // - GooseDefault::Worker
 // - GooseDefault::ManagerHost
 // - GooseDefault::ManagerPort
+// - GooseDefault::NoResetMetrics
 
 // Can't be tested:
 // - GooseDefault::LogFile (logger can only be configured once)
@@ -44,7 +45,6 @@ const THROTTLE_REQUESTS: usize = 10;
 
 // Doesn't have tests yet:
 // - GooseDefault::OnlySummary
-// - GooseDefault::NoResetMetrics
 // - GooseDefault::NoMetrics
 // - GooseDefault::NoTaskMetrics
 // - GooseDefault::StatusCodes
@@ -94,8 +94,8 @@ fn test_defaults() {
     config.hatch_rate = 0;
     config.metrics_format = "".to_string();
     config.debug_format = "".to_string();
-
     config.no_reset_metrics = true;
+
     let host = std::mem::take(&mut config.host);
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
@@ -153,8 +153,8 @@ fn test_no_defaults() {
     config.debug_file = debug_file.to_string();
     config.debug_format = LOG_FORMAT.to_string();
     config.throttle_requests = Some(THROTTLE_REQUESTS);
-
     config.no_reset_metrics = true;
+
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .setup()
         .unwrap()
@@ -240,9 +240,6 @@ fn test_gaggle_defaults() {
                 .unwrap();
         }));
     }
-
-    // @TODO: configure through defaults:
-    configuration.no_reset_metrics = true;
 
     // Start manager instance in current thread and run a distributed load test.
     let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)

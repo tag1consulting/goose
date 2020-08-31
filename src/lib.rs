@@ -1472,6 +1472,24 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Determine if no_reset_statics is enabled.
+    fn no_reset_metrics(&self) -> Result<bool, GooseError> {
+        let no_reset_metrics = if self.configuration.no_reset_metrics {
+            true
+        } else if let Some(default) = self.defaults.no_reset_metrics {
+            // Do not default to no_reset_metrics on Worker.
+            if self.attack_mode == GooseMode::Worker {
+                false
+            } else {
+                default
+            }
+        } else {
+            false
+        };
+
+        Ok(no_reset_metrics)
+    }
+
     // If enabled, returns the path of the metrics_file, otherwise returns None.
     fn get_metrics_file_path(&mut self) -> Result<Option<&str>, GooseError> {
         // If metrics are disabled, or running in Manager mode, there is no
@@ -2117,7 +2135,7 @@ impl GooseAttack {
                 // Flush metrics collected prior to all user threads running
                 if !users_launched {
                     users_launched = true;
-                    if !self.configuration.no_reset_metrics {
+                    if !self.no_reset_metrics()? {
                         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
                         self.metrics.print_running();
 
