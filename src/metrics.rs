@@ -287,16 +287,16 @@ impl GooseMetrics {
         // Display metrics from merged HashMap
         writeln!(
             fmt,
-            "\n=== PER REQUEST METRICS ===\n------------------------------------------------------------------------------ "
+            "\n === PER REQUEST METRICS ===\n ------------------------------------------------------------------------------"
         )?;
         writeln!(
             fmt,
-            " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+            " {:<24} | {:>13} | {:>14} | {:>8} | {:>7}",
             "Name", "# reqs", "# fails", "req/s", "fail/s"
         )?;
         writeln!(
             fmt,
-            " ----------------------------------------------------------------------------- "
+            " ------------------------------------------------------------------------------"
         )?;
         let mut aggregate_fail_count = 0;
         let mut aggregate_total_count = 0;
@@ -307,36 +307,42 @@ impl GooseMetrics {
             } else {
                 0.0
             };
-            let (req_s, fail_s) =
+            let (reqs, fails) =
                 per_second_calculations(self.duration, total_count, request.fail_count);
+            let reqs_precision = determine_precision(reqs);
+            let fails_precision = determine_precision(fails);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if fail_percent as usize == 100 || fail_percent as usize == 0 {
                 writeln!(
                     fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-                    util::truncate_string(&request_key, 23),
+                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
+                    util::truncate_string(&request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
                     format!(
                         "{} ({}%)",
                         request.fail_count.to_formatted_string(&Locale::en),
                         fail_percent as usize
                     ),
-                    req_s,
-                    fail_s,
+                    reqs,
+                    fails,
+                    reqs_p = reqs_precision,
+                    fails_p = fails_precision,
                 )?;
             } else {
                 writeln!(
                     fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
-                    util::truncate_string(&request_key, 23),
+                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
+                    util::truncate_string(&request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
                     format!(
                         "{} ({:.1}%)",
                         request.fail_count.to_formatted_string(&Locale::en),
                         fail_percent
                     ),
-                    req_s,
-                    fail_s,
+                    reqs,
+                    fails,
+                    reqs_p = reqs_precision,
+                    fails_p = fails_precision,
                 )?;
             }
             aggregate_total_count += total_count;
@@ -350,15 +356,17 @@ impl GooseMetrics {
             };
             writeln!(
                 fmt,
-                " ------------------------+----------------+----------------+--------+--------- "
+                " -------------------------+---------------+----------------+----------+--------"
             )?;
-            let (req_s, fail_s) =
+            let (reqs, fails) =
                 per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
+            let reqs_precision = determine_precision(reqs);
+            let fails_precision = determine_precision(fails);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
                 writeln!(
                     fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
                     format!(
@@ -366,13 +374,15 @@ impl GooseMetrics {
                         aggregate_fail_count.to_formatted_string(&Locale::en),
                         aggregate_fail_percent as usize
                     ),
-                    req_s,
-                    fail_s,
+                    reqs,
+                    fails,
+                    reqs_p = reqs_precision,
+                    fails_p = fails_precision,
                 )?;
             } else {
                 writeln!(
                     fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
                     format!(
@@ -380,8 +390,10 @@ impl GooseMetrics {
                         aggregate_fail_count.to_formatted_string(&Locale::en),
                         aggregate_fail_percent
                     ),
-                    req_s,
-                    fail_s,
+                    reqs,
+                    fails,
+                    reqs_p = reqs_precision,
+                    fails_p = fails_precision,
                 )?;
             }
         }
@@ -399,16 +411,16 @@ impl GooseMetrics {
         // Display metrics from tasks Vector
         writeln!(
             fmt,
-            "\n=== PER TASK METRICS ===\n------------------------------------------------------------------------------ "
+            "\n === PER TASK METRICS ===\n ------------------------------------------------------------------------------"
         )?;
         writeln!(
             fmt,
-            " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+            " {:<24} | {:>13} | {:>14} | {:>8} | {:>7}",
             "Name", "# times run", "# fails", "task/s", "fail/s"
         )?;
         writeln!(
             fmt,
-            " ----------------------------------------------------------------------------- "
+            " ------------------------------------------------------------------------------"
         )?;
         let mut aggregate_fail_count = 0;
         let mut aggregate_total_count = 0;
@@ -423,14 +435,16 @@ impl GooseMetrics {
                 } else {
                     0.0
                 };
-                let (run_s, fail_s) =
+                let (runs, fails) =
                     per_second_calculations(self.duration, total_count, task.fail_count);
+                let runs_precision = determine_precision(runs);
+                let fails_precision = determine_precision(fails);
 
                 // First time through display name of task set.
                 if !displayed_task_set {
                     writeln!(
                         fmt,
-                        " {:23 } |",
+                        " {:24 } |",
                         util::truncate_string(
                             &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
                             60
@@ -442,10 +456,10 @@ impl GooseMetrics {
                 if fail_percent as usize == 100 || fail_percent as usize == 0 {
                     writeln!(
                         fmt,
-                        " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                        " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                         util::truncate_string(
                             &format!("  {}: {}", task.task_index + 1, task.task_name),
-                            23
+                            24
                         ),
                         total_count.to_formatted_string(&Locale::en),
                         format!(
@@ -453,16 +467,18 @@ impl GooseMetrics {
                             task.fail_count.to_formatted_string(&Locale::en),
                             fail_percent as usize
                         ),
-                        run_s,
-                        fail_s,
+                        runs,
+                        fails,
+                        runs_p = runs_precision,
+                        fails_p = fails_precision,
                     )?;
                 } else {
                     writeln!(
                         fmt,
-                        " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                        " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                         util::truncate_string(
                             &format!("  {}: {}", task.task_index + 1, task.task_name),
-                            23
+                            24
                         ),
                         total_count.to_formatted_string(&Locale::en),
                         format!(
@@ -470,8 +486,10 @@ impl GooseMetrics {
                             task.fail_count.to_formatted_string(&Locale::en),
                             fail_percent
                         ),
-                        run_s,
-                        fail_s,
+                        runs,
+                        fails,
+                        runs_p = runs_precision,
+                        fails_p = fails_precision,
                     )?;
                 }
                 aggregate_total_count += total_count;
@@ -486,15 +504,18 @@ impl GooseMetrics {
             };
             writeln!(
                 fmt,
-                " ------------------------+----------------+----------------+--------+--------- "
+                " -------------------------+---------------+----------------+----------+--------"
             )?;
-            let (run_s, fail_s) =
+            let (runs, fails) =
                 per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
+            let runs_precision = determine_precision(runs);
+            let fails_precision = determine_precision(fails);
+
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
                 writeln!(
                     fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
                     format!(
@@ -502,13 +523,15 @@ impl GooseMetrics {
                         aggregate_fail_count.to_formatted_string(&Locale::en),
                         aggregate_fail_percent as usize
                     ),
-                    run_s,
-                    fail_s,
+                    runs,
+                    fails,
+                    runs_p = runs_precision,
+                    fails_p = fails_precision,
                 )?;
             } else {
                 writeln!(
                     fmt,
-                    " {:<23} | {:<14} | {:<14} | {:<6} | {:<5}",
+                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
                     format!(
@@ -516,8 +539,10 @@ impl GooseMetrics {
                         aggregate_fail_count.to_formatted_string(&Locale::en),
                         aggregate_fail_percent
                     ),
-                    run_s,
-                    fail_s,
+                    runs,
+                    fails,
+                    runs_p = runs_precision,
+                    fails_p = fails_precision,
                 )?;
             }
         }
@@ -539,16 +564,16 @@ impl GooseMetrics {
         let mut aggregate_max_task_time: usize = 0;
         writeln!(
             fmt,
-            "-------------------------------------------------------------------------------"
+            " ------------------------------------------------------------------------------"
         )?;
         writeln!(
             fmt,
-            " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
+            " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
             "Name", "Avg (ms)", "Min", "Max", "Median"
         )?;
         writeln!(
             fmt,
-            " ----------------------------------------------------------------------------- "
+            " ------------------------------------------------------------------------------"
         )?;
         let mut task_count = 0;
         for task_set in &self.tasks {
@@ -559,7 +584,7 @@ impl GooseMetrics {
                 if !displayed_task_set {
                     writeln!(
                         fmt,
-                        " {:23 } |",
+                        " {:24 } |",
                         util::truncate_string(
                             &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
                             60
@@ -584,45 +609,56 @@ impl GooseMetrics {
                 aggregate_max_task_time = update_max_time(aggregate_max_task_time, task.max_time);
 
                 let average = match task.counter {
-                    0 => 0,
-                    _ => task.total_time / task.counter,
+                    0 => 0.00,
+                    _ => task.total_time as f32 / task.counter as f32,
                 };
+                let average_precision = determine_precision(average);
 
                 writeln!(
                     fmt,
-                    " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                    " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
                     util::truncate_string(
                         &format!("  {}: {}", task.task_index + 1, task.task_name),
-                        23
+                        24
                     ),
                     average,
-                    task.min_time,
-                    task.max_time,
-                    util::median(&task.times, task.counter, task.min_time, task.max_time),
+                    format_number(task.min_time),
+                    format_number(task.max_time),
+                    format_number(util::median(
+                        &task.times,
+                        task.counter,
+                        task.min_time,
+                        task.max_time
+                    )),
+                    avg_precision = average_precision,
                 )?;
             }
         }
         if task_count > 1 {
+            let average = match aggregate_task_time_counter {
+                0 => 0.00,
+                _ => aggregate_total_task_time as f32 / aggregate_task_time_counter as f32,
+            };
+            let average_precision = determine_precision(average);
+
             writeln!(
                 fmt,
-                " ------------------------+------------+------------+------------+------------- "
+                " -------------------------+-------------+------------+-------------+-----------"
             )?;
-            if aggregate_task_time_counter == 0 {
-                aggregate_task_time_counter = 1;
-            }
             writeln!(
                 fmt,
-                " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
                 "Aggregated",
-                aggregate_total_task_time / aggregate_task_time_counter,
-                aggregate_min_task_time,
-                aggregate_max_task_time,
-                util::median(
+                average,
+                format_number(aggregate_min_task_time),
+                format_number(aggregate_max_task_time),
+                format_number(util::median(
                     &aggregate_task_times,
                     aggregate_task_time_counter,
                     aggregate_min_task_time,
                     aggregate_max_task_time
-                ),
+                )),
+                avg_precision = average_precision,
             )?;
         }
 
@@ -643,18 +679,24 @@ impl GooseMetrics {
         let mut aggregate_max_response_time: usize = 0;
         writeln!(
             fmt,
-            "-------------------------------------------------------------------------------"
+            " ------------------------------------------------------------------------------"
         )?;
         writeln!(
             fmt,
-            " {:<23} | {:<10} | {:<10} | {:<10} | {:<10}",
+            " {:<24} | {:>11} | {:>10} | {:>10} | {:>11}",
             "Name", "Avg (ms)", "Min", "Max", "Median"
         )?;
         writeln!(
             fmt,
-            " ----------------------------------------------------------------------------- "
+            " ------------------------------------------------------------------------------"
         )?;
         for (request_key, request) in self.requests.iter().sorted() {
+            let average = match request.response_time_counter {
+                0 => 0.0,
+                _ => request.total_response_time as f32 / request.response_time_counter as f32,
+            };
+            let average_precision = determine_precision(average);
+
             // Iterate over user response times, and merge into global response times.
             aggregate_response_times =
                 merge_times(aggregate_response_times, request.response_times.clone());
@@ -675,47 +717,52 @@ impl GooseMetrics {
 
             writeln!(
                 fmt,
-                " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
-                util::truncate_string(&request_key, 23),
-                request.total_response_time / request.response_time_counter,
-                request.min_response_time,
-                request.max_response_time,
-                util::median(
+                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
+                util::truncate_string(&request_key, 24),
+                average,
+                format_number(request.min_response_time),
+                format_number(request.max_response_time),
+                format_number(util::median(
                     &request.response_times,
                     request.response_time_counter,
                     request.min_response_time,
                     request.max_response_time
-                ),
+                )),
+                avg_precision = average_precision,
             )?;
         }
         if self.requests.len() > 1 {
+            let average = match aggregate_response_time_counter {
+                0 => 0.0,
+                _ => aggregate_total_response_time as f32 / aggregate_response_time_counter as f32,
+            };
+            let average_precision = determine_precision(average);
+
             writeln!(
                 fmt,
-                " ------------------------+------------+------------+------------+------------- "
+                " -------------------------+-------------+------------+-------------+-----------"
             )?;
-            if aggregate_response_time_counter == 0 {
-                aggregate_response_time_counter = 1;
-            }
             writeln!(
                 fmt,
-                " {:<23} | {:<10.2} | {:<10.2} | {:<10.2} | {:<10.2}",
+                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
                 "Aggregated",
-                aggregate_total_response_time / aggregate_response_time_counter,
-                aggregate_min_response_time,
-                aggregate_max_response_time,
-                util::median(
+                average,
+                format_number(aggregate_min_response_time),
+                format_number(aggregate_max_response_time),
+                format_number(util::median(
                     &aggregate_response_times,
                     aggregate_response_time_counter,
                     aggregate_min_response_time,
                     aggregate_max_response_time
-                ),
+                )),
+                avg_precision = average_precision,
             )?;
         }
 
         Ok(())
     }
 
-    // Optionallyl prepares a table of slowest response times within several percentiles.
+    // Optionally prepares a table of slowest response times within several percentiles.
     pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_percentile {
@@ -729,7 +776,7 @@ impl GooseMetrics {
         let mut aggregate_max_response_time: usize = 0;
         writeln!(
             fmt,
-            "-------------------------------------------------------------------------------"
+            " ------------------------------------------------------------------------------"
         )?;
         writeln!(
             fmt,
@@ -741,12 +788,12 @@ impl GooseMetrics {
         )?;
         writeln!(
             fmt,
-            " {:<23} | {:<6} | {:<6} | {:<6} | {:<6} | {:<6} | {:6}",
+            " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
             "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%"
         )?;
         writeln!(
             fmt,
-            " ----------------------------------------------------------------------------- "
+            " ------------------------------------------------------------------------------"
         )?;
         for (request_key, request) in self.requests.iter().sorted() {
             // Iterate over user response times, and merge into global response times.
@@ -769,8 +816,8 @@ impl GooseMetrics {
             // Sort response times so we can calculate a mean.
             writeln!(
                 fmt,
-                " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
-                util::truncate_string(&request_key, 23),
+                " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+                util::truncate_string(&request_key, 24),
                 calculate_response_time_percentile(
                     &request.response_times,
                     request.response_time_counter,
@@ -818,11 +865,11 @@ impl GooseMetrics {
         if self.requests.len() > 1 {
             writeln!(
                 fmt,
-                " ------------------------+--------+--------+--------+--------+--------+------- "
+                " -------------------------+--------+--------+--------+--------+--------+-------"
             )?;
             writeln!(
                 fmt,
-                " {:<23} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:<6.2} | {:6.2}",
+                " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                 "Aggregated",
                 calculate_response_time_percentile(
                     &aggregate_response_times,
@@ -881,12 +928,12 @@ impl GooseMetrics {
 
         writeln!(
             fmt,
-            "-------------------------------------------------------------------------------"
+            " ------------------------------------------------------------------------------"
         )?;
-        writeln!(fmt, " {:<23} | {:<25} ", "Name", "Status codes")?;
+        writeln!(fmt, " {:<24} | {:>51} ", "Name", "Status codes")?;
         writeln!(
             fmt,
-            " ----------------------------------------------------------------------------- "
+            " ------------------------------------------------------------------------------"
         )?;
         let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
         for (request_key, request) in self.requests.iter().sorted() {
@@ -919,14 +966,14 @@ impl GooseMetrics {
 
             writeln!(
                 fmt,
-                " {:<23} | {:<25}",
-                util::truncate_string(&request_key, 23),
+                " {:<24} | {:>51}",
+                util::truncate_string(&request_key, 24),
                 codes,
             )?;
         }
         writeln!(
             fmt,
-            "-------------------------------------------------------------------------------"
+            " -------------------------+----------------------------------------------------"
         )?;
         let mut codes: String = "".to_string();
         for (status_code, count) in &aggregated_status_code_counts {
@@ -945,7 +992,7 @@ impl GooseMetrics {
                 );
             }
         }
-        writeln!(fmt, " {:<23} | {:<25} ", "Aggregated", codes)?;
+        writeln!(fmt, " {:<24} | {:>51} ", "Aggregated", codes)?;
 
         Ok(())
     }
@@ -965,17 +1012,30 @@ impl fmt::Display for GooseMetrics {
 }
 
 /// Helper to calculate requests and fails per seconds.
-fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (String, String) {
+fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
     let requests_per_second;
     let fails_per_second;
     if duration == 0 {
-        requests_per_second = 0.to_formatted_string(&Locale::en);
-        fails_per_second = 0.to_formatted_string(&Locale::en);
+        requests_per_second = 0.0;
+        fails_per_second = 0.0;
     } else {
-        requests_per_second = (total / duration).to_formatted_string(&Locale::en);
-        fails_per_second = (fail / duration).to_formatted_string(&Locale::en);
+        requests_per_second = total as f32 / duration as f32;
+        fails_per_second = fail as f32 / duration as f32;
     }
     (requests_per_second, fails_per_second)
+}
+
+fn determine_precision(value: f32) -> usize {
+    if value < 1000.0 {
+        2
+    } else {
+        0
+    }
+}
+
+// Format large number in locale appropriate style.
+fn format_number(number: usize) -> String {
+    (number).to_formatted_string(&Locale::en)
 }
 
 /// A helper function that merges together times.
@@ -1022,7 +1082,7 @@ fn calculate_response_time_percentile(
     min: usize,
     max: usize,
     percent: f32,
-) -> usize {
+) -> String {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!(
         "percentile: {}, request {} of total {}",
@@ -1035,15 +1095,15 @@ fn calculate_response_time_percentile(
         total_count += counter;
         if total_count >= percentile_request {
             if *value < min {
-                return min;
+                return format_number(min);
             } else if *value > max {
-                return max;
+                return format_number(max);
             } else {
-                return *value;
+                return format_number(*value);
             }
         }
     }
-    0
+    format_number(0)
 }
 
 #[cfg(test)]
@@ -1091,42 +1151,21 @@ mod test {
         response_times.insert(2, 1);
         response_times.insert(3, 1);
         // 3 * .5 = 1.5, rounds to 2.
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5) == "2");
         response_times.insert(3, 2);
         // 4 * .5 = 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5) == "2");
         // 4 * .25 = 1
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25),
-            1
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25) == "1");
         // 4 * .75 = 3
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75),
-            3
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75) == "3");
         // 4 * 1 = 4 (and the 4th response time is also 3)
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0),
-            3
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0) == "3");
 
         // 4 * .5 = 2, but uses specified minimum of 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25) == "2");
         // 4 * .75 = 3, but uses specified maximum of 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75),
-            2
-        );
+        assert!(calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75) == "2");
 
         response_times.insert(10, 25);
         response_times.insert(20, 25);
@@ -1134,18 +1173,9 @@ mod test {
         response_times.insert(50, 25);
         response_times.insert(100, 10);
         response_times.insert(200, 1);
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9),
-            50
-        );
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99),
-            100
-        );
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999),
-            200
-        );
+        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9) == "50");
+        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99) == "100");
+        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999) == "200");
     }
 
     #[test]
@@ -1156,20 +1186,20 @@ mod test {
         let fail = 10;
         let (requests_per_second, fails_per_second) =
             per_second_calculations(duration, total, fail);
-        assert!(requests_per_second == "0");
-        assert!(fails_per_second == "0");
+        assert!(requests_per_second == 0.0);
+        assert!(fails_per_second == 0.0);
         // Changing total doesn't affect requests and fails as duration is still 0.
         total = 100;
         let (requests_per_second, fails_per_second) =
             per_second_calculations(duration, total, fail);
-        assert!(requests_per_second == "0");
-        assert!(fails_per_second == "0");
+        assert!(requests_per_second == 0.0);
+        assert!(fails_per_second == 0.0);
 
         // With non-zero duration, requests and fails per second return properly.
         duration = 10;
         let (requests_per_second, fails_per_second) =
             per_second_calculations(duration, total, fail);
-        assert!(requests_per_second == "10");
-        assert!(fails_per_second == "1");
+        assert!((requests_per_second - 10.0).abs() < f32::EPSILON);
+        assert!((fails_per_second - 1.0).abs() < f32::EPSILON);
     }
 }
