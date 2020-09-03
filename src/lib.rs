@@ -506,7 +506,7 @@ impl GooseAttack {
     /// ```
     pub fn initialize() -> Result<GooseAttack, GooseError> {
         let configuration = GooseConfiguration::parse_args_default_or_exit();
-        let users = GooseAttack::set_users(&configuration)?;
+        let users = GooseAttack::calculate_users(&configuration)?;
         let goose_attack = GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -537,7 +537,7 @@ impl GooseAttack {
     pub fn initialize_with_config(
         configuration: GooseConfiguration,
     ) -> Result<GooseAttack, GooseError> {
-        let users = GooseAttack::set_users(&configuration)?;
+        let users = GooseAttack::calculate_users(&configuration)?;
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -597,9 +597,9 @@ impl GooseAttack {
         info!("Writing to log file: {}", log_file.display());
     }
 
-    // Helper to determine the number of user threads to launch, defaulting to the
-    // number of CPU cores available.
-    fn set_users(config: &GooseConfiguration) -> Result<usize, GooseError> {
+    // Helper to calculate the number of user threads to launch, defaulting to
+    // the number of CPU cores available.
+    fn calculate_users(config: &GooseConfiguration) -> Result<usize, GooseError> {
         match config.users {
             Some(u) => {
                 if u == 0 {
