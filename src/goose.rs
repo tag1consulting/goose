@@ -2207,11 +2207,14 @@ impl Hash for GooseTask {
 mod tests {
     use super::*;
 
+    use gumdrop::Options;
     use httpmock::Method::{GET, POST};
     use httpmock::{Mock, MockServer};
 
+    const EMPTY_ARGS: Vec<&str> = vec![];
+
     async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
-        let configuration = GooseConfiguration::default();
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
         GooseUser::single(base_url, &configuration)
     }
@@ -2639,7 +2642,7 @@ mod tests {
     #[tokio::test]
     async fn goose_user() {
         const HOST: &str = "http://example.com/";
-        let configuration = GooseConfiguration::default();
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
         let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0).unwrap();
         assert_eq!(user.task_sets_index, 0);

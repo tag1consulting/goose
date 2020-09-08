@@ -1,8 +1,11 @@
+use gumdrop::Options;
 use nng::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 use std::{thread, time};
 use url::Url;
+
+const EMPTY_ARGS: Vec<&str> = vec![];
 
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
@@ -84,7 +87,8 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     );
 
     let mut hatch_rate: Option<f32> = None;
-    let mut config: GooseConfiguration = GooseConfiguration::default();
+    let mut config: GooseConfiguration = GooseConfiguration::parse_args_default(&EMPTY_ARGS)
+        .expect("failed to generate default configuration");
     let mut weighted_users: Vec<GooseUser> = Vec::new();
 
     // Wait for the manager to send user parameters.
@@ -200,7 +204,10 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     );
     let sleep_duration = time::Duration::from_secs_f32(hatch_rate.unwrap());
 
-    let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone());
+    let mut worker_goose_attack = GooseAttack::initialize_with_config(config.clone())
+        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+        .expect("failed to launch GooseAttack");
+
     worker_goose_attack.started = Some(time::Instant::now());
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
     if config.run_time != "" {
