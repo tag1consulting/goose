@@ -89,17 +89,16 @@ fn test_defaults() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.no_metrics = false;
+    let mut config = common::build_configuration(&server, vec![]);
+
+    // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
     config.run_time = "".to_string();
     config.hatch_rate = 0;
-    config.metrics_format = "".to_string();
-    config.debug_format = "".to_string();
-    config.no_reset_metrics = true;
-
     let host = std::mem::take(&mut config.host);
+
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
         .setup()
         .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
@@ -118,6 +117,7 @@ fn test_defaults() {
         .set_default(GooseDefault::StatusCodes, true)
         .set_default(GooseDefault::OnlySummary, true)
         .set_default(GooseDefault::NoTaskMetrics, true)
+        .set_default(GooseDefault::NoResetMetrics, true)
         .set_default(GooseDefault::StickyFollow, true)
         .execute()
         .unwrap();
@@ -148,24 +148,35 @@ fn test_no_defaults() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.no_metrics = false;
-    config.users = Some(USERS);
-    config.run_time = RUN_TIME.to_string();
-    config.hatch_rate = HATCH_RATE;
-    config.log_level = LOG_LEVEL as u8;
-    config.metrics_file = metrics_file.to_string();
-    config.metrics_format = LOG_FORMAT.to_string();
-    config.debug_file = debug_file.to_string();
-    config.debug_format = LOG_FORMAT.to_string();
-    config.throttle_requests = Some(THROTTLE_REQUESTS);
-    config.no_reset_metrics = true;
-    config.status_codes = true;
-    config.only_summary = true;
-    config.no_task_metrics = true;
-    config.sticky_follow = true;
+    let config = common::build_configuration(
+        &server,
+        vec![
+            "--users",
+            &USERS.to_string(),
+            "--hatch-rate",
+            &HATCH_RATE.to_string(),
+            "--run-time",
+            &RUN_TIME.to_string(),
+            "--metrics-file",
+            &metrics_file,
+            "--metrics-format",
+            LOG_FORMAT,
+            "--debug-file",
+            &debug_file,
+            "--debug-format",
+            LOG_FORMAT,
+            "--throttle-requests",
+            &THROTTLE_REQUESTS.to_string(),
+            "--no-reset-metrics",
+            "--no-task-metrics",
+            "--status-codes",
+            "--only-summary",
+            "--sticky-follow",
+        ],
+    );
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
         .setup()
         .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
@@ -208,15 +219,13 @@ fn test_gaggle_defaults() {
     const HOST: &str = "127.0.0.1";
     const PORT: usize = 9988;
 
-    let mut configuration = common::build_configuration(&server);
-    let host = std::mem::take(&mut configuration.host);
-    configuration.no_metrics = false;
-    configuration.no_task_metrics = false;
+    let mut configuration = common::build_configuration(&server, vec![]);
+
+    // Unset options set in common.rs so set_default() is instead used.
     configuration.users = None;
     configuration.run_time = "".to_string();
     configuration.hatch_rate = 0;
-    configuration.metrics_format = "".to_string();
-    configuration.debug_format = "".to_string();
+    let host = std::mem::take(&mut configuration.host);
 
     // Launch workers in their own threads, storing the thread handle.
     let mut worker_handles = Vec::new();
@@ -226,6 +235,7 @@ fn test_gaggle_defaults() {
         let worker_debug_file = debug_file.clone() + &i.to_string();
         worker_handles.push(thread::spawn(move || {
             let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
+                .unwrap()
                 .setup()
                 .unwrap()
                 .register_taskset(taskset!("Index").register_task(task!(get_index)))
@@ -247,6 +257,7 @@ fn test_gaggle_defaults() {
 
     // Start manager instance in current thread and run a distributed load test.
     let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
+        .unwrap()
         .setup()
         .unwrap()
         // Alter the name of the task set so NoHashCheck is required for load test to run.
@@ -302,16 +313,15 @@ fn test_defaults_no_metrics() {
         .return_status(200)
         .create_on(&server);
 
-    let mut config = common::build_configuration(&server);
-    config.no_metrics = false;
+    let mut config = common::build_configuration(&server, vec!["--no-reset-metrics"]);
+
+    // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
     config.run_time = "".to_string();
     config.hatch_rate = 0;
-    config.metrics_format = "".to_string();
-    config.debug_format = "".to_string();
-    config.no_reset_metrics = true;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
         .setup()
         .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
