@@ -618,8 +618,6 @@ pub struct GooseAttack {
     run_time: usize,
     /// Track total number of users to run for this load test.
     users: usize,
-    /// Maximum requests per second.
-    throttle_requests: usize,
     /// Which mode this GooseAttack is operating in.
     attack_mode: GooseMode,
     /// When the load test started.
@@ -650,7 +648,6 @@ impl GooseAttack {
             number_of_cpus: num_cpus::get(),
             run_time: 0,
             users,
-            throttle_requests: 0,
             attack_mode: GooseMode::Undefined,
             started: None,
             metrics: GooseMetrics::default(),
@@ -683,7 +680,6 @@ impl GooseAttack {
             number_of_cpus: num_cpus::get(),
             run_time: 0,
             users,
-            throttle_requests: 0,
             attack_mode: GooseMode::Undefined,
             started: None,
             metrics: GooseMetrics::default(),
@@ -1416,58 +1412,44 @@ impl GooseAttack {
 
     // Configure maximum requests per second if throttle enabled.
     fn set_throttle_requests(&mut self) -> Result<(), GooseError> {
-        self.throttle_requests = if let Some(throttle_requests) =
-            self.configuration.throttle_requests
-        {
-            // Don't allow --throttle-requests with --manager.
-            if self.attack_mode == GooseMode::Manager {
-                return Err(GooseError::InvalidOption {
-                    option: "--throttle-requests".to_string(),
-                    value: self.configuration.throttle_requests.unwrap().to_string(),
-                    detail: "The --throttle-requests option can not be set together with the --manager flag.".to_string(),
-                });
-            }
-            // Be sure throttle_requests is in allowed range.
-            if throttle_requests == 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "--throttle-requests".to_string(),
-                    value: throttle_requests.to_string(),
-                    detail: "The --throttle-requests option must be set to at least 1 request per second.".to_string(),
-                });
-            } else if throttle_requests > 1_000_000 {
-                return Err(GooseError::InvalidOption {
-                    option: "--throttle-requests".to_string(),
-                    value: throttle_requests.to_string(),
-                    detail: "The --throttle-requests option can not be set to more than 1,000,000 requests per second.".to_string(),
-                });
-            }
-            throttle_requests
-        } else if let Some(throttle_requests) = self.defaults.throttle_requests {
-            if self.attack_mode == GooseMode::Manager {
-                0
-            } else {
+        if self.configuration.throttle_requests > 0 && self.attack_mode == GooseMode::Manager {
+            return Err(GooseError::InvalidOption {
+                option: "--throttle-requests".to_string(),
+                value: self.configuration.throttle_requests.to_string(),
+                detail: "The --throttle-requests option can not be set together with the --manager flag.".to_string(),
+            });
+        }
+
+        // Use default for throttle_requests if set and not on Worker.
+        if self.configuration.throttle_requests == 0 {
+            if let Some(throttle_requests) = self.defaults.throttle_requests {
                 // Be sure throttle_requests is in allowed range.
                 if throttle_requests == 0 {
                     return Err(GooseError::InvalidOption {
-                        option: "GooseDefault::ThrottleRequests".to_string(),
+                        option: "--throttle-requests".to_string(),
                         value: throttle_requests.to_string(),
-                        detail: "The GooseDefault::ThrottleRequests default must be set to at least 1 request per second.".to_string(),
+                        detail: "The --throttle-requests option must be set to at least 1 request per second.".to_string(),
                     });
                 } else if throttle_requests > 1_000_000 {
                     return Err(GooseError::InvalidOption {
-                        option: "GooseDefault::ThrottleRequests".to_string(),
+                        option: "--throttle-requests".to_string(),
                         value: throttle_requests.to_string(),
-                        detail: "The GooseDefault::ThrottleRequests default can not be set to more than 1,000,000 requests per second.".to_string(),
+                        detail: "The --throttle-requests option can not be set to more than 1,000,000 requests per second.".to_string(),
                     });
                 }
-                throttle_requests
-            }
-        } else {
-            0
-        };
 
-        if self.throttle_requests > 0 {
-            info!("throttle_requests = {}", self.throttle_requests);
+                // In Gaggles, throttle_requests is only set on Worker.
+                if self.attack_mode != GooseMode::Manager {
+                    self.configuration.throttle_requests = throttle_requests;
+                }
+            }
+        }
+
+        if self.configuration.throttle_requests > 0 {
+            info!(
+                "throttle_requests = {}",
+                self.configuration.throttle_requests
+            );
         }
 
         Ok(())
@@ -2007,14 +1989,14 @@ impl GooseAttack {
         Option<mpsc::Sender<bool>>,
     ) {
         // If the throttle isn't enabled, return immediately.
-        if self.throttle_requests == 0 {
+        if self.configuration.throttle_requests == 0 {
             return (None, None);
         }
 
         // Create a bounded channel allowing single-sender multi-receiver to throttle
         // GooseUser threads.
         let (all_threads_throttle, throttle_receiver): (mpsc::Sender<bool>, mpsc::Receiver<bool>) =
-            mpsc::channel(self.throttle_requests);
+            mpsc::channel(self.configuration.throttle_requests);
 
         // Create a channel allowing the parent to inform the throttle thread when the
         // load test is finished. Even though we only send one message, we can't use a
@@ -2023,7 +2005,7 @@ impl GooseAttack {
 
         // Launch a new thread for throttling, no need to rejoin it.
         let _ = Some(tokio::spawn(throttle::throttle_main(
-            self.throttle_requests,
+            self.configuration.throttle_requests,
             throttle_receiver,
             throttle_rx,
         )));
@@ -2035,7 +2017,7 @@ impl GooseAttack {
         // add a token to the bucket before making a request, and are blocked until this
         // throttle thread "leaks out" a token thereby creating space. More information
         // can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
-        for _ in 1..self.throttle_requests {
+        for _ in 1..self.configuration.throttle_requests {
             let _ = sender.send(true).await;
         }
 
@@ -2143,7 +2125,7 @@ impl GooseAttack {
             }
 
             // Copy the GooseUser-throttle receiver channel, used by all threads.
-            thread_user.throttle = if self.throttle_requests > 0 {
+            thread_user.throttle = if self.configuration.throttle_requests > 0 {
                 Some(all_threads_throttle.clone().unwrap())
             } else {
                 None
@@ -2752,7 +2734,7 @@ pub struct GooseConfiguration {
 
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
-    pub throttle_requests: Option<usize>,
+    pub throttle_requests: usize,
     #[options(
         no_short,
         help = "Follows base_url redirect with subsequent requests\n\nGaggle:"

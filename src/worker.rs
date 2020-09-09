@@ -199,9 +199,11 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     worker_goose_attack.started = Some(time::Instant::now());
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
     worker_goose_attack.run_time = goose_attack.run_time;
-    worker_goose_attack.throttle_requests = goose_attack.throttle_requests;
     worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
+    // The throttle_requests configuration option is set on the Worker.
+    worker_goose_attack.configuration.throttle_requests =
+        goose_attack.configuration.throttle_requests;
     worker_goose_attack.attack_mode = GooseMode::Worker;
     worker_goose_attack.defaults = goose_attack.defaults.clone();
 
