@@ -30,8 +30,6 @@ pub struct GooseUserInitializer {
     pub config: GooseConfiguration,
     /// How long the load test should run, in seconds.
     pub run_time: usize,
-    /// How many users to launch per second.
-    pub hatch_rate: usize,
     /// Numerical identifier for worker.
     pub worker_id: usize,
 }
@@ -271,7 +269,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     // Update metrics, which doesn't happen automatically on the Master as we
     // don't invoke launch_users.
-    let maximum_hatched = goose_attack.hatch_rate * goose_attack.run_time;
+    let maximum_hatched = goose_attack.configuration.hatch_rate * goose_attack.run_time;
     if maximum_hatched < goose_attack.users {
         goose_attack.metrics.users = maximum_hatched;
     } else {
@@ -420,7 +418,6 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 max_wait: user.max_wait,
                                 config: user.config.clone(),
                                 run_time: goose_attack.run_time,
-                                hatch_rate: goose_attack.hatch_rate,
                                 worker_id: workers.len(),
                             });
                         }
