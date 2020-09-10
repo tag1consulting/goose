@@ -59,7 +59,7 @@
 //!   let _goose = user.get("/path/to/foo").await?;
 //!
 //!   Ok(())
-//! }   
+//! }
 //! ```
 //!
 //! In the above example, we're using the GooseUser helper method `get` to load a path
@@ -78,7 +78,7 @@
 //!     let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
 //!
 //!     Ok(())
-//! }   
+//! }
 //! ```
 //!
 //! We pass the `request_builder` object to `goose_send` which builds and executes it, also
@@ -114,13 +114,13 @@
 //!     let _goose = user.get("/path/to/foo").await?;
 //!
 //!     Ok(())
-//! }   
+//! }
 //!
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/path/to/bar").await?;
 //!
 //!     Ok(())
-//! }   
+//! }
 //! ```
 //!
 //! Goose now spins up a configurable number of users, each simulating a user on your
@@ -203,10 +203,10 @@
 //! ------------------------------------------------------------------------------
 //!  Name                    | # reqs         | # fails        | req/s  | fail/s
 //!  -----------------------------------------------------------------------------
-//!  GET /path/to/foo        | 15,795         | 0 (0%)         | 1,053  | 0    
-//!  GET bar                 | 3,161          | 0 (0%)         | 210    | 0    
+//!  GET /path/to/foo        | 15,795         | 0 (0%)         | 1,053  | 0
+//!  GET bar                 | 3,161          | 0 (0%)         | 210    | 0
 //!  ------------------------+----------------+----------------+--------+---------
-//!  Aggregated              | 18,956         | 0 (0%)         | 1,263  | 0    
+//!  Aggregated              | 18,956         | 0 (0%)         | 1,263  | 0
 //! ------------------------------------------------------------------------------
 //! ```
 //!
@@ -221,12 +221,12 @@
 //! metrics, whereas we did name the `bar` task so we see the name in the metrics.
 //!
 //! ```bash
-//!  Name                    | Avg (ms)   | Min        | Max        | Mean      
+//!  Name                    | Avg (ms)   | Min        | Max        | Mean
 //!  -----------------------------------------------------------------------------
-//!  GET /path/to/foo        | 67         | 31         | 1351       | 53      
-//!  GET bar                 | 60         | 33         | 1342       | 53      
+//!  GET /path/to/foo        | 67         | 31         | 1351       | 53
+//!  GET bar                 | 60         | 33         | 1342       | 53
 //!  ------------------------+------------+------------+------------+-------------
-//!  Aggregated              | 66         | 31         | 1351       | 56      
+//!  Aggregated              | 66         | 31         | 1351       | 56
 //! ```
 //!
 //! The second table in running metrics provides details on response times. In our
@@ -250,17 +250,17 @@
 //! ------------------------------------------------------------------------------
 //!  Name                    | # reqs         | # fails        | req/s  | fail/s
 //!  -----------------------------------------------------------------------------
-//!  GET bar                 | 6,050          | 0 (0%)         | 201    | 0    
-//!  GET /path/to/foo        | 30,257         | 0 (0%)         | 1,008  | 0    
+//!  GET bar                 | 6,050          | 0 (0%)         | 201    | 0
+//!  GET /path/to/foo        | 30,257         | 0 (0%)         | 1,008  | 0
 //!  ------------------------+----------------+----------------+--------+----------
-//!  Aggregated              | 36,307         | 0 (0%)         | 1,210  | 0    
+//!  Aggregated              | 36,307         | 0 (0%)         | 1,210  | 0
 //! -------------------------------------------------------------------------------
-//!  Name                    | Avg (ms)   | Min        | Max        | Mean      
+//!  Name                    | Avg (ms)   | Min        | Max        | Mean
 //!  -----------------------------------------------------------------------------
-//!  GET bar                 | 66         | 32         | 1388       | 53      
-//!  GET /path/to/foo        | 68         | 31         | 1395       | 53      
+//!  GET bar                 | 66         | 32         | 1388       | 53
+//!  GET /path/to/foo        | 68         | 31         | 1395       | 53
 //!  ------------------------+------------+------------+------------+-------------
-//!  Aggregated              | 67         | 31         | 1395       | 50      
+//!  Aggregated              | 67         | 31         | 1395       | 50
 //! -------------------------------------------------------------------------------
 //! ```
 //!
@@ -1641,11 +1641,11 @@ impl GooseAttack {
 
                         if self.metrics.display_metrics {
                             if self.metrics.users < self.users {
-                                println!(
+                                info!(
                                     "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, self.users
                                 );
                             } else {
-                                println!(
+                                info!(
                                     "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users
                                 );
                             }
@@ -1657,12 +1657,12 @@ impl GooseAttack {
                         // Restart the timer now that all threads are launched.
                         self.started = Some(time::Instant::now());
                     } else if self.metrics.users < self.users {
-                        println!(
+                        info!(
                             "{} of {} users hatched, timer expired.\n",
                             self.metrics.users, self.users
                         );
                     } else {
-                        println!("All {} users hatched.\n", self.metrics.users);
+                        info!("All {} users hatched.\n", self.metrics.users);
                     }
                 }
             }
