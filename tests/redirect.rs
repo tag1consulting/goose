@@ -100,8 +100,6 @@ fn test_redirect() {
         vec!["--no-metrics"],
     ))
     .unwrap()
-    .setup()
-    .unwrap()
     .register_taskset(
         taskset!("LoadTest")
             // Load index directly.
@@ -169,8 +167,6 @@ fn test_domain_redirect() {
         vec!["--no-metrics"],
     ))
     .unwrap()
-    .setup()
-    .unwrap()
     .register_taskset(
         taskset!("LoadTest")
             // First load redirect, takes this request only to another domain.
@@ -233,8 +229,6 @@ fn test_sticky_domain_redirect() {
     let configuration =
         common::build_configuration(&server1, vec!["--no-metrics", "--sticky-follow"]);
     let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")

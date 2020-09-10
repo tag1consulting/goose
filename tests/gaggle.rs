@@ -54,8 +54,6 @@ fn test_gaggle() {
         worker_handles.push(thread::spawn(move || {
             let _goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .setup()
-                .unwrap()
                 .register_taskset(taskset!("User1").register_task(task!(get_index)))
                 .register_taskset(taskset!("User2").register_task(task!(get_about)))
                 .execute()
@@ -81,8 +79,6 @@ fn test_gaggle() {
         ],
     );
     let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(taskset!("User1").register_task(task!(get_index)))
         .register_taskset(taskset!("User2").register_task(task!(get_about)))

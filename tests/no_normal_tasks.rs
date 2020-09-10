@@ -40,8 +40,6 @@ fn test_no_normal_tasks() {
         vec!["--no-metrics"],
     ))
     .unwrap()
-    .setup()
-    .unwrap()
     .register_taskset(
         taskset!("LoadTest")
             .register_task(task!(login).set_on_start())

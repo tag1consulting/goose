@@ -52,8 +52,6 @@ fn test_start() {
         vec!["--no-metrics"],
     ))
     .unwrap()
-    .setup()
-    .unwrap()
     .test_start(task!(setup))
     .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()))
     .execute()
@@ -94,8 +92,6 @@ fn test_stop() {
         &server,
         vec!["--no-metrics"],
     ))
-    .unwrap()
-    .setup()
     .unwrap()
     .test_stop(task!(teardown))
     .register_taskset(taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()))
@@ -139,8 +135,6 @@ fn test_setup_teardown() {
     );
 
     let _goose_stats = crate::GooseAttack::initialize_with_config(configuration)
-        .unwrap()
-        .setup()
         .unwrap()
         .test_start(task!(setup))
         .register_taskset(

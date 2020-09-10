@@ -51,8 +51,6 @@ fn test_single_taskset() {
     );
     let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
         .unwrap()
-        .setup()
-        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_index).set_weight(9).unwrap())
@@ -185,8 +183,6 @@ fn test_single_taskset_closure() {
     // Run the loadtest.
     let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
         .unwrap()
-        .setup()
-        .unwrap()
         .register_taskset(taskset)
         .execute()
         .unwrap();
@@ -282,8 +278,6 @@ fn test_single_taskset_reset_metrics() {
         ],
     );
     let goose_metrics = crate::GooseAttack::initialize_with_config(config.clone())
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")

@@ -99,8 +99,6 @@ fn test_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .setup()
-        .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
         .register_taskset(taskset!("About").register_task(task!(get_about)))
         // Start at least two users, required to run both TaskSets.
@@ -177,8 +175,6 @@ fn test_no_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .setup()
-        .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
         .register_taskset(taskset!("About").register_task(task!(get_about)))
         .execute()
@@ -236,8 +232,6 @@ fn test_gaggle_defaults() {
         worker_handles.push(thread::spawn(move || {
             let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
-                .setup()
-                .unwrap()
                 .register_taskset(taskset!("Index").register_task(task!(get_index)))
                 .register_taskset(taskset!("About").register_task(task!(get_about)))
                 // Start at least two users, required to run both TaskSets.
@@ -257,8 +251,6 @@ fn test_gaggle_defaults() {
 
     // Start manager instance in current thread and run a distributed load test.
     let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
-        .unwrap()
-        .setup()
         .unwrap()
         // Alter the name of the task set so NoHashCheck is required for load test to run.
         .register_taskset(taskset!("FooIndex").register_task(task!(get_index)))
@@ -321,8 +313,6 @@ fn test_defaults_no_metrics() {
     config.hatch_rate = 0;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
         .register_taskset(taskset!("About").register_task(task!(get_about)))

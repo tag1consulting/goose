@@ -638,7 +638,7 @@ impl GooseAttack {
     pub fn initialize() -> Result<GooseAttack, GooseError> {
         let configuration = GooseConfiguration::parse_args_default_or_exit();
         let users = GooseAttack::calculate_users(&configuration)?;
-        let goose_attack = GooseAttack {
+        Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
             task_sets: Vec::new(),
@@ -651,8 +651,7 @@ impl GooseAttack {
             attack_mode: GooseMode::Undefined,
             started: None,
             metrics: GooseMetrics::default(),
-        };
-        Ok(goose_attack.setup()?)
+        })
     }
 
     /// Initialize a GooseAttack with an already loaded configuration.
@@ -804,48 +803,6 @@ impl GooseAttack {
                 Ok(u)
             }
         }
-    }
-
-    pub fn setup(self) -> Result<Self, GooseError> {
-        // If version flag is set, display package name and version and exit.
-        if self.configuration.version {
-            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-            std::process::exit(0);
-        }
-
-        // @TODO: this needs to move later so we respect defaults
-
-        // Collecting metrics is required for the following options.
-        if self.configuration.no_metrics {
-            // Don't allow overhead of collecting metrics unless we're printing them.
-            if self.configuration.status_codes {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --status-codes flag.".to_string(),
-                });
-            }
-
-            // Don't allow overhead of collecting metrics unless we're printing them.
-            if self.configuration.only_summary {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --only-summary flag.".to_string(),
-                });
-            }
-
-            // There is nothing to log if metrics are disabled.
-            if !self.configuration.metrics_file.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --metrics-file option.".to_string(),
-                });
-            }
-        }
-
-        Ok(self)
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
@@ -1241,21 +1198,21 @@ impl GooseAttack {
                 });
             }
             u
-        // Otherwise, use default if set, but not on Worker.
+        // Otherwise use default if set (but not on Worker).
         } else if let Some(u) = self.defaults.users {
             if self.attack_mode == GooseMode::Worker {
                 0
             } else {
                 u
             }
-        // Otherwise use number of CPUs.
+        // Otherwise use number of CPUs (but not on Worker).
+        } else if self.attack_mode == GooseMode::Worker {
+            0
         } else {
-            if self.attack_mode != GooseMode::Manager && self.attack_mode != GooseMode::Worker {
-                info!(
-                    "concurrent users defaulted to {} (number of CPUs)",
-                    self.number_of_cpus
-                );
-            }
+            info!(
+                "concurrent users defaulted to {} (number of CPUs)",
+                self.number_of_cpus
+            );
             self.number_of_cpus
         };
 
@@ -1513,6 +1470,35 @@ impl GooseAttack {
             }
         }
 
+        // Don't allow overhead of collecting metrics unless we're printing them.
+        if self.configuration.no_metrics {
+            if self.configuration.status_codes {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-metrics".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --status-codes flag.".to_string(),
+                });
+            }
+
+            // Don't allow overhead of collecting metrics unless we're printing them.
+            if self.configuration.only_summary {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-metrics".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --only-summary flag.".to_string(),
+                });
+            }
+
+            // There is nothing to log if metrics are disabled.
+            if !self.configuration.metrics_file.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-metrics".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --metrics-file option.".to_string(),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -1712,6 +1698,12 @@ impl GooseAttack {
     /// }
     /// ```
     pub fn execute(mut self) -> Result<GooseMetrics, GooseError> {
+        // If version flag is set, display package name and version and exit.
+        if self.configuration.version {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+
         // At least one task set is required.
         if self.task_sets.is_empty() {
             return Err(GooseError::NoTaskSets {
