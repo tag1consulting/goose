@@ -1075,63 +1075,6 @@ impl GooseAttack {
                         .to_string(),
                 });
             }
-
-            if self.configuration.no_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: self.configuration.no_metrics.to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-
-            if self.configuration.no_task_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-task-metrics".to_string(),
-                    value: self.configuration.no_task_metrics.to_string(),
-                    detail:
-                        "The --no-task-metrics flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-
-            if self.configuration.only_summary {
-                return Err(GooseError::InvalidOption {
-                    option: "--only-summary".to_string(),
-                    value: self.configuration.only_summary.to_string(),
-                    detail:
-                        "The --only-summary flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-
-            if self.configuration.status_codes {
-                return Err(GooseError::InvalidOption {
-                    option: "--status-codes".to_string(),
-                    value: self.configuration.status_codes.to_string(),
-                    detail:
-                        "The --status-codes flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-
-            if self.configuration.no_reset_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-reset-metrics".to_string(),
-                    value: self.configuration.no_reset_metrics.to_string(),
-                    detail: "The --no-reset-metrics flag can not be set together with the --worker flag.".to_string(),
-                });
-            }
-
-            if self.configuration.no_hash_check {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-hash-check".to_string(),
-                    value: self.configuration.no_hash_check.to_string(),
-                    detail:
-                        "The --no-hash-check flag can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
         }
 
         // Otherwise run in standalone attack mode.
@@ -1412,6 +1355,7 @@ impl GooseAttack {
 
     // Configure maximum requests per second if throttle enabled.
     fn set_throttle_requests(&mut self) -> Result<(), GooseError> {
+        // Setting --throttle-requests with --worker is not allowed.
         if self.configuration.throttle_requests > 0 && self.attack_mode == GooseMode::Manager {
             return Err(GooseError::InvalidOption {
                 option: "--throttle-requests".to_string(),
@@ -1456,122 +1400,167 @@ impl GooseAttack {
     }
 
     // Determine if no_reset_statics is enabled.
-    fn no_reset_metrics(&self) -> bool {
-        if self.configuration.no_reset_metrics {
-            true
-        } else if let Some(default) = self.defaults.no_reset_metrics {
-            // Do not default to no_reset_metrics on Worker.
-            if self.attack_mode == GooseMode::Worker {
-                false
-            } else {
-                default
-            }
-        } else {
-            false
+    fn set_no_reset_metrics(&mut self) -> Result<(), GooseError> {
+        // Setting --no-reset-metrics with --worker is not allowed.
+        if self.configuration.no_reset_metrics && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: "--no-reset-metrics".to_string(),
+                value: self.configuration.no_reset_metrics.to_string(),
+                detail:
+                    "The --no-reset-metrics flag can not be set together with the --worker flag."
+                        .to_string(),
+            });
         }
+
+        // If not otherwise set and not Worker, check if there's a default.
+        if !self.configuration.no_reset_metrics && self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.no_reset_metrics {
+                self.configuration.no_reset_metrics = default;
+            }
+        }
+
+        Ok(())
     }
 
     // Determine if the status_codes flag is enabled.
-    fn set_status_codes(&mut self) {
-        // Overload self.configuration.status_codes so it's available on Worker.
-        if !self.configuration.status_codes {
-            self.configuration.status_codes = if let Some(default) = self.defaults.status_codes {
-                // Do not default to status_codes on Worker.
-                if self.attack_mode == GooseMode::Worker {
-                    false
-                } else {
-                    default
-                }
-            } else {
-                false
-            };
+    fn set_status_codes(&mut self) -> Result<(), GooseError> {
+        // Setting --status-codes with --worker is not allowed.
+        if self.configuration.status_codes && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: "--status-codes".to_string(),
+                value: self.configuration.status_codes.to_string(),
+                detail: "The --status-codes flag can not be set together with the --worker flag."
+                    .to_string(),
+            });
         }
+
+        // If not otherwise set and not Worker, check if there's a default.
+        if !self.configuration.status_codes && self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.status_codes {
+                self.configuration.status_codes = default;
+            }
+        }
+
+        Ok(())
     }
 
     // Determine if the only_summary flag is enabled.
-    fn set_only_summary(&mut self) {
-        // Overload self.configuration.only_summary so it's available on Worker.
-        if !self.configuration.only_summary {
-            self.configuration.only_summary = if let Some(default) = self.defaults.only_summary {
-                // Do not default to only_summary on Worker.
-                if self.attack_mode == GooseMode::Worker {
-                    false
-                } else {
-                    default
-                }
-            } else {
-                false
-            };
+    fn set_only_summary(&mut self) -> Result<(), GooseError> {
+        // Setting --only-summary with --worker is not allowed.
+        if self.configuration.only_summary && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: "--only-summary".to_string(),
+                value: self.configuration.only_summary.to_string(),
+                detail: "The --only-summary flag can not be set together with the --worker flag."
+                    .to_string(),
+            });
         }
+
+        // If not otherwise set and not Worker, check if there's a default.
+        if !self.configuration.only_summary && self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.only_summary {
+                self.configuration.only_summary = default;
+            }
+        }
+
+        Ok(())
     }
 
     // Determine if the no_task_metrics flag is enabled.
-    fn set_no_task_metrics(&mut self) {
-        // Overload self.configuration.no_task_metrics so it's available to Users.
-        if !self.configuration.no_task_metrics {
-            self.configuration.no_task_metrics =
-                if let Some(default) = self.defaults.no_task_metrics {
-                    // Do not default to no_task_metrics on Worker.
-                    if self.attack_mode == GooseMode::Worker {
-                        false
-                    } else {
-                        default
-                    }
-                } else {
-                    false
-                };
+    fn set_no_task_metrics(&mut self) -> Result<(), GooseError> {
+        // Setting --no-task-metrics with --worker is not allowed.
+        if self.configuration.no_task_metrics && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: "--no-task-metrics".to_string(),
+                value: self.configuration.no_task_metrics.to_string(),
+                detail:
+                    "The --no-task-metrics flag can not be set together with the --worker flag."
+                        .to_string(),
+            });
         }
+
+        // If not otherwise set and not Worker, check if there's a default.
+        if !self.configuration.no_task_metrics && self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.no_task_metrics {
+                self.configuration.no_task_metrics = default;
+            }
+        }
+
+        Ok(())
     }
 
     // Determine if the no_metrics flag is enabled.
-    fn set_no_metrics(&mut self) {
-        // Overload self.configuration.no_metrics so it's available to Users.
-        if !self.configuration.no_metrics {
-            self.configuration.no_metrics = if let Some(default) = self.defaults.no_metrics {
-                // Do not default to no_metrics on Worker.
-                if self.attack_mode == GooseMode::Worker {
-                    false
-                } else {
-                    default
-                }
-            } else {
-                false
-            };
+    fn set_no_metrics(&mut self) -> Result<(), GooseError> {
+        // Setting --no-metrics with --worker is not allowed.
+        if self.configuration.no_metrics && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: "--no-metrics".to_string(),
+                value: self.configuration.no_metrics.to_string(),
+                detail: "The --no-metrics flag can not be set together with the --worker flag."
+                    .to_string(),
+            });
         }
+
+        // If not otherwise set and not Worker, check if there's a default.
+        if !self.configuration.no_metrics && self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.no_metrics {
+                self.configuration.no_metrics = default;
+            }
+        }
+
+        Ok(())
     }
 
     // Determine if the sticky_follow flag is enabled.
-    fn set_sticky_follow(&mut self) {
-        // Overload self.configuration.sticky_follow so it's available to Users.
-        if !self.configuration.sticky_follow {
-            self.configuration.sticky_follow = if let Some(default) = self.defaults.sticky_follow {
-                // Do not default to sticky_follow on Worker.
-                if self.attack_mode == GooseMode::Worker {
-                    false
-                } else {
-                    default
-                }
-            } else {
-                false
-            };
+    fn set_sticky_follow(&mut self) -> Result<(), GooseError> {
+        // Setting --sticky-follow with --worker is not allowed.
+        if self.configuration.sticky_follow && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: "--sticky-follow".to_string(),
+                value: self.configuration.sticky_follow.to_string(),
+                detail: "The --sticky-follow flag can not be set together with the --worker flag."
+                    .to_string(),
+            });
         }
+
+        // If not otherwise set and not Worker, check if there's a default.
+        if !self.configuration.sticky_follow && self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.sticky_follow {
+                self.configuration.sticky_follow = default;
+            }
+        }
+
+        Ok(())
     }
 
     #[cfg(feature = "gaggle")]
-    // Determine if no_hash_check is enabled.
-    fn no_hash_check(&self) -> bool {
-        if self.configuration.no_hash_check {
-            true
-        } else if let Some(default) = self.defaults.no_hash_check {
-            // Do not default to no_hash_check on Worker.
-            if self.attack_mode == GooseMode::Worker {
-                false
-            } else {
-                default
-            }
-        } else {
-            false
+    // Determine if no_hash_check flag is enabled.
+    fn set_no_hash_check(&mut self) -> Result<(), GooseError> {
+        // Setting --no-hash-check with --worker is not allowed.
+        if self.configuration.no_hash_check && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: "--no-hash-check".to_string(),
+                value: self.configuration.no_hash_check.to_string(),
+                detail: "The --no-hash-check flag can not be set together with the --worker flag."
+                    .to_string(),
+            });
         }
+
+        // If not otherwise set and not Worker, check if there's a default.
+        if !self.configuration.no_hash_check && self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.no_hash_check {
+                self.configuration.no_hash_check = default;
+            }
+        }
+
+        Ok(())
     }
 
     // If enabled, returns the path of the metrics_file, otherwise returns None.
@@ -1745,47 +1734,54 @@ impl GooseAttack {
         // Initialize logger.
         self.initialize_logger();
 
-        // Set run mode (StandAlone, Worker, Manager).
+        // Configure run mode (StandAlone, Worker, Manager).
         self.set_attack_mode()?;
 
-        // Determine how many users to simulate.
+        // Configure number of users to simulate.
         self.set_users()?;
 
-        // Set expect_workers if running in Manager attack mode.
+        // Configurate expect_workers if running in Manager attack mode.
         self.set_expect_workers()?;
 
-        // Set host and ports if running in a Gaggle distributed load test.
+        // Configure host and ports if running in a Gaggle distributed load test.
         self.set_gaggle_host_and_port()?;
 
-        // Determine how long to run.
+        // Configure how long to run.
         self.set_run_time()?;
 
-        // Determine how many users to hatch per second.
+        // Configure how many users to hatch per second.
         self.set_hatch_rate()?;
 
-        // Determine the metrics log format.
+        // Configure the metrics log format.
         self.set_metrics_format()?;
 
-        // Determine the debug log format.
+        // Configure the debug log format.
         self.set_debug_format()?;
 
-        // Set up throttle if enabled.
+        // Configure throttle if enabled.
         self.set_throttle_requests()?;
 
-        // Set up status_codes flag.
-        self.set_status_codes();
+        // Configure status_codes flag.
+        self.set_status_codes()?;
 
-        // Set up only_summary flag.
-        self.set_only_summary();
+        // Configure only_summary flag.
+        self.set_only_summary()?;
 
-        // Set up no_task_metrics flag.
-        self.set_no_task_metrics();
+        // Configure no_reset_metrics flag.
+        self.set_no_reset_metrics()?;
 
-        // Set up no_metrics flag.
-        self.set_no_metrics();
+        // Configure no_task_metrics flag.
+        self.set_no_task_metrics()?;
 
-        // Set up sticky_follow flag.
-        self.set_sticky_follow();
+        // Configure no_metrics flag.
+        self.set_no_metrics()?;
+
+        // Configure sticky_follow flag.
+        self.set_sticky_follow()?;
+
+        // Configure no_hash_check flag.
+        #[cfg(feature = "gaggle")]
+        self.set_no_hash_check()?;
 
         // Confirm there's either a global host, or each task set has a host defined.
         if self.configuration.host.is_empty() {
@@ -2234,7 +2230,7 @@ impl GooseAttack {
                 // Flush metrics collected prior to all user threads running
                 if !users_launched {
                     users_launched = true;
-                    if !self.no_reset_metrics() {
+                    if !self.configuration.no_reset_metrics {
                         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
                         self.metrics.print_running();
 
