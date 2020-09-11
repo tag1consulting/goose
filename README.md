@@ -495,7 +495,7 @@ When writing load test applications, you can default to compiling in the Gaggle 
 
 ```toml
 [dependencies]
-goose = { version = "^0.9", features = ["gaggle"] }
+goose = { version = "^0.10", features = ["gaggle"] }
 ```
 
 ### Gaggle Manager
@@ -555,5 +555,5 @@ By default Reqwest (and therefore Goose) uses the system-native transport layer 
 
 ```toml
 [dependencies]
-goose = { version = "^0.9", default-features = false, features = ["rustls"] }
+goose = { version = "^0.10", default-features = false, features = ["rustls"] }
 ```

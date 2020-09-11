@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0-dev
+## 0.10.0 Sep 11, 2020
  - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
  - only run gaggle integration tests when feature is enabled
  - prevent time-drift when launching users and throttling requests
