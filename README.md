@@ -50,7 +50,7 @@ To create an actual load test, you first have to add the following boilerplate t
 use goose::prelude::*;
 ```
 
-Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the Reqwest library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, which helps ensure that your simulated users don't become CPU-locked.
+Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the Reqwest library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, which helps ensure that your simulated users don't become CPU-locked.
 
 In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. The following `loadtest_index` function simply loads the front page of our web page:
 
@@ -62,9 +62,9 @@ async fn loadtest_index(user: &GooseUser) -> GooseTaskResult {
 }
 ```
 
-The function is declared `async` so that we don't block a CPU-core while loading web pages. All Goose load test functions are passed in a reference to a `GooseUser` object, and return a `GooseTaskResult` which is either an empty `Ok(())` on success, or a `GooseTaskError` on failure. We use the `GooseUser` object to make requests, in this case we make a `GET` request for the front page, `/`. The `.await` tells frees up the CPU-core while we wait for the web page to respond, and the tailing `?` passes up any unexpected errors that may be returned from this request. When the request completes, Goose returns metrics which we store in `_goose_metrics` variable. The variable is prefixed with an underscore (`_`) to tell the compiler we are intentionally not using the results. Finally, after making a single successful request, we return `Ok(())` to let Goose know this task function completed successfully.
+The function is declared `async` so that we don't block a CPU-core while loading web pages. All Goose load test functions are passed in a reference to a `GooseUser` object, and return a `GooseTaskResult` which is either an empty `Ok(())` on success, or a `GooseTaskError` on failure. We use the `GooseUser` object to make requests, in this case we make a `GET` request for the front page, `/`. The `.await` frees up the CPU-core while we wait for the web page to respond, and the tailing `?` passes up any unexpected errors that may be returned from this request. When the request completes, Goose returns metrics which we store in the  `_goose_metrics` variable. The variable is prefixed with an underscore (`_`) to tell the compiler we are intentionally not using the results. Finally, after making a single successful request, we return `Ok(())` to let Goose know this task function completed successfully.
 
-Finally, we have to tell Goose about our new task function. Edit the `main()` function, setting a return type and replacing the hello world text as follows:
+We have to tell Goose about our new task function. Edit the `main()` function, setting a return type and replacing the hello world text as follows:
 
 ```rust
 fn main() -> Result<(), GooseError> {
@@ -161,11 +161,11 @@ The per-task metrics are displayed first, starting with the name of our Task Set
 
 Next comes the per-request metrics. Our single task makes a `GET` request for the `/` path, so it shows up in the metrics as `GET /`. Comparing the per-task metrics collected for `1: ` to the per-request metrics collected for `GET /`, you can see that they are the same.
 
-There are two common tables found in each type of metrics. The first shows the total number of requests made (1,274), how many of those failed (0), the average number of requests per second (424), and the average number of failed requests per second (0).
+There are two common tables found in each type of metrics. The first shows the total number of requests made (2,054), how many of those failed (0), the average number of requests per second (410.8), and the average number of failed requests per second (0).
 
-The second table shows the average time required to load a page (20 milliseconds), the minimum time to load a page (8 ms), the maximum time to load a page (213 ms) and the median time to load a page (19 ms).
+The second table shows the average time required to load a page (20.68 milliseconds), the minimum time to load a page (7 ms), the maximum time to load a page (254 ms) and the median time to load a page (19 ms).
 
-The per-request metrics include a third table, showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 18 ms. In the 75% fastest page loads, the slowest page loaded in 21 ms, etc.
+The per-request metrics include a third table, showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 19 ms. In the 75% fastest page loads, the slowest page loaded in 21 ms, etc.
 
 In real load tests, you'll most likely have multiple task sets each with multiple tasks, and Goose will show you metrics for each along with an aggregate of them all together.
 
@@ -181,7 +181,7 @@ optimized code. This can generate considerably more load test traffic.
 
 ## Simple Example
 
-The `-h` flag will show all run-time configuration options available to Goose load tests. For example, pass the `-h` flag to the `simple` example, `cargo run --example simple -- -h`:
+The `-h` flag will show all run-time configuration options available to Goose load tests. For example, you can pass the `-h` flag to the `simple` example as follows, `cargo run --example simple -- -h`:
 
 ```
 Usage: target/debug/examples/simple [OPTIONS]
@@ -243,7 +243,7 @@ MiB Swap:  10237.0 total,  10237.0 free,      0.0 used.   8606.9 avail Mem
  1339 goose     20   0 1235480 758292   8984 R   3.0   7.4   0:06.56 simple     
 ```
 
-Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP Status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to start tracking the 10m run-time from when the first user starts, instead of the default which is to flush all metrics and start timing after all users have started. And finally, the `--only-summary` flag tells Goose to only display the final metrics after the load test finishes, otherwise it would display running metrics every 15 seconds for the duration of the test.
+Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to start tracking the 10m run-time from when the first user starts, instead of the default which is to flush all metrics and start timing after all users have started. And finally, the `--only-summary` flag tells Goose to only display the final metrics after the load test finishes, otherwise it would display running metrics every 15 seconds for the duration of the test.
 
 ```
 $ cargo run --release --example simple -- --host http://local.dev -v -u1024 -r32 -t10m --status-codes --no-reset-metrics --only-summary
@@ -434,8 +434,7 @@ By default, logs are written in JSON Lines format. For example:
 ```
 
 Logs include the entire `GooseRawRequest` object as defined in `src/goose.rs`, which are created on all requests. This object includes the following fields:
- - `elapsed`: total milliseconds between when the `GooseUser` thread started and this
-   request was made;
+ - `elapsed`: total milliseconds between when the `GooseUser` thread started and this request was made;
  - `method`: the type of HTTP request made;
  - `name`: the name of the request;
  - `url`: the URL that was requested;
@@ -444,10 +443,7 @@ Logs include the entire `GooseRawRequest` object as defined in `src/goose.rs`, w
  - `response_time`: how many milliseconds the request took;
  - `status_code`: the HTTP response code returned for this request;
  - `success`: true or false if this was a successful request;
- - `update`: true or false if this is a recurrence of a previous log entry, but with
-   `success` toggling between `true` and `false`. This happens when a load test calls
-   `set_success()` on a request that Goose previously interpreted as a failure, or
-   `set_failure()` on a request previously interpreted as a success;
+ - `update`: true or false if this is a recurrence of a previous log entry, but with `success` toggling between `true` and `false`. This happens when a load test calls `set_success()` on a request that Goose previously interpreted as a failure, or `set_failure()` on a request previously interpreted as a success;
  - `user`: an integer value indicating which `GooseUser` thread made this request.
 
 In the first line of the above example, `GooseUser` thread 0 made a `POST` request to `/login` and was successfully redirected to `/user/42` in 220 milliseconds. The second line is the same `GooseUser` thread which then made a `GET` request to `/` in 3 milliseconds. The third and fourth lines are a second `GooseUser` thread doing the same thing, first logging in and then loading the front page.
@@ -465,11 +461,11 @@ elapsed,method,name,url,final_url,redirected,response_time,status_code,success,u
 
 ## Load Test Debug Logging
 
-Goose can optionally log details about requests and responses for debug purposes. When writing a load test you must invoke `client.log_debug(tag, Option<request>, Option<headers>, Option<body>)` where `tag` is an arbitrary string to identify where in the load test and/or why debug is being written, `request` is a `GooseRawRequest` object, `headers` are the HTTP headers returned by the server, and `body` is the web page body returned by the server.
+Goose can optionally log details about requests and responses for debug purposes. When writing a load test you must invoke `client.log_debug(tag, Option<request>, Option<headers>, Option<body>)` where `tag` is an arbitrary string to identify where in the load test and/or why debug is being written, `request` is an optional reference to a `GooseRawRequest` object, `headers` are an optional reference to the HTTP headers returned by the server, and `body` is an optionial reference to the web page body returned by the server.
 
 For an example on how to correctly use `client.log_debug()`, including how to obtain the response headers and body, see `examples/drupal_loadtest`.
 
-If the load test is run with the `--debug-log-file=foo` command line option, where `foo` is either a relative or an absolute path, Goose will log all debug generated by calls to `client.log_debug()` to this file. Debug is logged in JSON Lines format. For example:
+If the load test is run with the `--debug-log-file=foo` command line option, where `foo` is either a relative or an absolute path, Goose will log all debug generated by calls to `client.log_debug()` to this file. For example:
 
 ```json
 {"body":"<!DOCTYPE html>\n<html>\n  <head>\n    <title>503 Backend fetch failed</title>\n  </head>\n  <body>\n    <h1>Error 503 Backend fetch failed</h1>\n    <p>Backend fetch failed</p>\n    <h3>Guru Meditation:</h3>\n    <p>XID: 923425</p>\n    <hr>\n    <p>Varnish cache server</p>\n  </body>\n</html>\n","header":"{\"date\": \"Wed, 01 Jul 2020 10:27:31 GMT\", \"server\": \"Varnish\", \"content-type\": \"text/html; charset=utf-8\", \"retry-after\": \"5\", \"x-varnish\": \"923424\", \"age\": \"0\", \"via\": \"1.1 varnish (Varnish/6.1)\", \"x-varnish-cache\": \"MISS\", \"x-varnish-cookie\": \"SESSd7e04cba6a8ba148c966860632ef3636=hejsW1mQnnsHlua0AicCjEpUjnCRTkOLubwL33UJXRU\", \"content-length\": \"283\", \"connection\": \"keep-alive\"}","request":{"elapsed":4192,"final_url":"http://local.dev/node/3247","method":"GET","name":"(Auth) comment form","redirected":false,"response_time":8,"status_code":503,"success":false,"update":false,"url":"http://local.dev/node/3247","user":4},"tag":"post_comment: no form_build_id found on node/3247"}
