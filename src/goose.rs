@@ -925,8 +925,6 @@ pub struct GooseUser {
     pub weighted_on_stop_tasks: Vec<Vec<usize>>,
     /// Optional name of all requests made within the current task.
     pub task_request_name: Option<String>,
-    /// Optional name of all requests made within the current task.
-    pub request_name: Option<String>,
     /// Load test hash.
     pub load_test_hash: u64,
 }
@@ -966,7 +964,6 @@ impl GooseUser {
             weighted_tasks: Vec::new(),
             weighted_on_stop_tasks: Vec::new(),
             task_request_name: None,
-            request_name: None,
             load_test_hash,
         })
     }
@@ -2653,7 +2650,6 @@ mod tests {
         assert_eq!(user.weighted_tasks.len(), 0);
         assert_eq!(user.weighted_on_stop_tasks.len(), 0);
         assert_eq!(user.task_request_name, None);
-        assert_eq!(user.request_name, None);
 
         // Confirm the URLs are correctly built using the default_host.
         let url = user.build_url("/foo").await.unwrap();
