@@ -13,22 +13,22 @@ pub async fn logger_main(
     configuration: GooseConfiguration,
     mut log_receiver: mpsc::UnboundedReceiver<Option<GooseDebug>>,
 ) {
-    // Prepare an asynchronous buffered file writer for metrics_log_file (if enabled).
-    let mut debug_file = None;
+    // Determine if a debug file has been configured.
+    let mut debug_file_path: Option<String> = None;
     if !configuration.debug_file.is_empty() {
-        debug_file = match File::create(&configuration.debug_file).await {
+        debug_file_path = Some(configuration.debug_file.clone());
+    }
+
+    // If debug file is configured, prepare an asynchronous buffered file writer.
+    let mut debug_file = None;
+    if let Some(file_path) = debug_file_path {
+        debug_file = match File::create(&file_path).await {
             Ok(f) => {
-                info!(
-                    "writing errors to debug_file: {}",
-                    &configuration.debug_file
-                );
+                info!("writing errors to debug_file: {}", &file_path);
                 Some(BufWriter::new(f))
             }
             Err(e) => {
-                panic!(
-                    "failed to create debug_file ({}): {}",
-                    configuration.debug_file, e
-                );
+                panic!("failed to create debug_file ({}): {}", file_path, e);
             }
         }
     }

@@ -28,6 +28,8 @@ pub struct GooseUserInitializer {
     pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
+    /// How long the load test should run, in seconds.
+    pub run_time: usize,
     /// Numerical identifier for worker.
     pub worker_id: usize,
 }
@@ -94,7 +96,7 @@ fn merge_tasks_from_worker(
 fn merge_requests_from_worker(
     parent_request: &GooseRequest,
     user_request: &GooseRequest,
-    config: &GooseConfiguration,
+    status_codes: bool,
 ) -> GooseRequest {
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
@@ -122,7 +124,7 @@ fn merge_requests_from_worker(
     // Increment total fail counter.
     merged_request.fail_count += &user_request.fail_count;
     // Only accrue overhead of merging status_code_counts if we're going to display the results
-    if config.status_codes {
+    if status_codes {
         for (status_code, count) in &user_request.status_code_counts {
             let new_count;
             // Add user count into global count
@@ -182,7 +184,7 @@ fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestM
                 merged_request = merge_requests_from_worker(
                     parent_request,
                     &request,
-                    &goose_attack.configuration,
+                    goose_attack.configuration.status_codes,
                 );
             } else {
                 // First time seeing this request, simply insert it.
@@ -237,7 +239,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     info!(
         "manager listening on {}, waiting for {} workers",
-        &address, goose_attack.configuration.expect_workers
+        &address, goose_attack.configuration.expect_workers,
     );
 
     // Calculate how many users each worker will be responsible for.
@@ -264,6 +266,15 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     goose_attack
         .metrics
         .initialize_task_metrics(&goose_attack.task_sets, &goose_attack.configuration);
+
+    // Update metrics, which doesn't happen automatically on the Master as we
+    // don't invoke launch_users.
+    let maximum_hatched = goose_attack.configuration.hatch_rate * goose_attack.run_time;
+    if maximum_hatched < goose_attack.users {
+        goose_attack.metrics.users = maximum_hatched;
+    } else {
+        goose_attack.metrics.users = goose_attack.users;
+    }
 
     // Worker control loop.
     loop {
@@ -294,6 +305,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     || canceled.load(Ordering::SeqCst)
                 {
                     info!("stopping after {} seconds...", started.elapsed().as_secs());
+                    goose_attack.metrics.duration =
+                        goose_attack.started.unwrap().elapsed().as_secs() as usize;
                     load_test_finished = true;
                     exit_timer = time::Instant::now();
                 }
@@ -377,7 +390,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         info!(
                             "worker {} of {} connected",
                             workers.len(),
-                            goose_attack.configuration.expect_workers
+                            goose_attack.configuration.expect_workers,
                         );
 
                         // Send new worker a batch of users.
@@ -404,6 +417,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 min_wait: user.min_wait,
                                 max_wait: user.max_wait,
                                 config: user.config.clone(),
+                                run_time: goose_attack.run_time,
                                 worker_id: workers.len(),
                             });
                         }

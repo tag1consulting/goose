@@ -23,6 +23,33 @@
  - update prelude documentation
  - increase precision of metrics for smaller values
  - consistently build configuration from arguments
+ - replace `GooseAttack::set_host()` with more generic `GooseAttack::set_default()`, exposes the following defaults:
+    o default host: `GooseDefault::Host` (&str)
+    o default users to start: `GooseDefault::Users` (usize)
+    o default users to start per second: `GooseDefault::HatchRate` (usize)
+    o default number of seconds for test to run: `GooseDefault::RunTime` (usize)
+    o default log level: `GooseDefault::LogLevel` (usize)
+    o default log file name: `GooseDefault::LogFile` (&str)
+    o default verbosity: `GooseDefault::Verbose` (usize)
+    o default to only printing final summary metrics: `GooseDefault::OnlySummary` (bool)
+    o default to not resetting metrics after all users start: `GooseDefault::NoResetMetrics` (bool)
+    o default to not tracking metrics: `GooseDefault::NoMetrics` (bool)
+    o default to not tracking task metrics: `GooseDefault::NoTaskMetrics` (bool)
+    o default metrics log file name: `GooseDefault::MetricsFile` (&str)
+    o default metrics log file format: `GooseDefault::MetricsFormat` (&str)
+    o default debug log file name: `GooseDefault::DebugFile` (&str)
+    o default debug log file format: `GooseDefault::DebugFormat` (&str)
+    o default to tracking status codes: `GooseDefault::StatusCodes` (bool)
+    o default maximum requests per second: `GooseDefault::ThrottleRequests` (usize)
+    o default to following redirect of base_url: `GooseDefault::StickyFollow` (bool)
+    o default to enabling Manager mode: `GooseDefault::Manager` (bool)
+    o default number of Workers to expect: `GooseDefault::ExpectWorkers` (usize)
+    o default to ignoring load test checksum: `GooseDefault::NoHashCheck` (bool)
+    o default host to bind Manager to: `GooseDefault::ManagerBindHost` (&str)
+    o default port to bind Manager to: `GooseDefault::ManagerBindPort` (usize)
+    o default to enabling Worker mode: `GooseDefault::Worker` (bool)
+    o default host for Worker to connect to: `GooseDefault::ManagerHost` (&str)
+    o default port for Worker to connect to: `GooseDefault::ManagerPort` (usize)
 
 ## 0.9.1 Aug 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`

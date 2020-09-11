@@ -55,8 +55,6 @@ fn test_metrics_logs_json() {
     let config = common::build_configuration(&server, vec!["--metrics-file", METRICS_FILE]);
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .setup()
-        .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
         .execute()
         .unwrap();
@@ -93,8 +91,6 @@ fn test_metrics_logs_csv() {
     );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .setup()
-        .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
         .execute()
         .unwrap();
@@ -127,8 +123,6 @@ fn test_metrics_logs_raw() {
         vec!["--metrics-file", METRICS_FILE, "--metrics-format", "raw"],
     );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(taskset!("LoadTest").register_task(task!(get_index)))
         .execute()
@@ -167,8 +161,6 @@ fn test_debug_logs_raw() {
         vec!["--debug-file", DEBUG_FILE, "--debug-format", "raw"],
     );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")
@@ -209,8 +201,6 @@ fn test_debug_logs_json() {
 
     let config = common::build_configuration(&server, vec!["--debug-file", DEBUG_FILE]);
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")
@@ -261,8 +251,6 @@ fn test_metrics_and_debug_logs() {
         ],
     );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")

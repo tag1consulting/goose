@@ -41,14 +41,18 @@ fn test_gaggle() {
     // Launch workers in their own threads, storing the thread handle.
     let mut worker_handles = Vec::new();
     // Each worker has the same identical configuration.
-    let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
+    let mut worker_configuration = common::build_configuration(&server, vec!["--worker"]);
+
+    // Unset options set in common.rs as they can't be set on the Worker.
+    worker_configuration.users = None;
+    worker_configuration.run_time = "".to_string();
+    worker_configuration.hatch_rate = 0;
+
     for _ in 0..2 {
         let configuration = worker_configuration.clone();
         // Start worker instance of the load test.
         worker_handles.push(thread::spawn(move || {
             let _goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
-                .unwrap()
-                .setup()
                 .unwrap()
                 .register_taskset(taskset!("User1").register_task(task!(get_index)))
                 .register_taskset(taskset!("User2").register_task(task!(get_about)))
@@ -75,8 +79,6 @@ fn test_gaggle() {
         ],
     );
     let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(taskset!("User1").register_task(task!(get_index)))
         .register_taskset(taskset!("User2").register_task(task!(get_about)))

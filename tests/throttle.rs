@@ -60,8 +60,6 @@ fn test_throttle() {
     );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .setup()
-        .unwrap()
         .register_taskset(
             taskset!("LoadTest")
                 .register_task(task!(get_about))
@@ -108,8 +106,6 @@ fn test_throttle() {
         ],
     );
     let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .setup()
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")

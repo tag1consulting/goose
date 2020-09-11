@@ -1459,7 +1459,7 @@ impl GooseUser {
         request_name: Option<&str>,
     ) -> Result<GooseResponse, GooseTaskError> {
         // If throttle-requests is enabled...
-        if self.is_throttled && self.config.throttle_requests.is_some() {
+        if self.is_throttled && self.throttle.is_some() {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
             debug!("GooseUser: waiting on throttle");
             // Will result in GooseTaskError::RequestCanceled if this fails.
@@ -1926,7 +1926,7 @@ pub fn get_base_url(
                     Ok(
                         Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
                             host,
-                            detail: "There was a failure parsing the host specified with the GooseTaskSet.set_host()l function.".to_string(),
+                            detail: "There was a failure parsing the host specified with the GooseTaskSet.set_host() function.".to_string(),
                             parse_error,
                         })?,
                     )
@@ -1938,7 +1938,7 @@ pub fn get_base_url(
                     Ok(
                         Url::parse(&default_host).map_err(|parse_error| GooseError::InvalidHost {
                             host: default_host.to_string(),
-                            detail: "There was a failure parsing the host specified globally with the GooseAttack.set_host() function.".to_string(),
+                            detail: "There was a failure parsing the host specified globally with the GooseAttack.set_default() function.".to_string(),
                             parse_error,
                         })?,
                     )
