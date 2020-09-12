@@ -36,19 +36,16 @@ pub async fn user_main(
             if sequence.len() > 1 {
                 sequence.shuffle(&mut thread_rng());
             }
-            for task_index in &sequence {
+            for (thread_task_index, thread_task_name) in &sequence {
                 // Determine which task we're going to run next.
-                let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = &thread_task_set.tasks[*task_index].function;
+                let function = &thread_task_set.tasks[*thread_task_index].function;
                 debug!(
                     "launching on_start {} task from {}",
                     thread_task_name, thread_task_set.name
                 );
-                if thread_task_name != "" {
-                    thread_user.task_request_name = Some(thread_task_name.to_string());
-                }
                 // Invoke the task function.
-                invoke_task_function(function, &thread_user, *task_index, thread_task_name).await;
+                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                    .await;
             }
         }
     }
@@ -86,25 +83,20 @@ pub async fn user_main(
         }
 
         // Determine which task we're going to run next.
-        let thread_weighted_task =
-            thread_user.weighted_tasks[weighted_bucket][weighted_bucket_position];
-        let thread_task_name = &thread_task_set.tasks[thread_weighted_task].name;
+        let (thread_weighted_task, thread_task_name) =
+            thread_user.weighted_tasks[weighted_bucket][weighted_bucket_position].clone();
         let function = &thread_task_set.tasks[thread_weighted_task].function;
         debug!(
             "launching {} task from {}",
             thread_task_name, thread_task_set.name
         );
-        // If task name is set, it will be used for storing request metrics instead of the raw url.
-        if thread_task_name != "" {
-            thread_user.task_request_name = Some(thread_task_name.to_string());
-        }
 
         // Invoke the task function.
         invoke_task_function(
             function,
             &thread_user,
             thread_weighted_task,
-            thread_task_name,
+            &thread_task_name,
         )
         .await;
 
@@ -163,19 +155,16 @@ pub async fn user_main(
             if sequence.len() > 1 {
                 sequence.shuffle(&mut thread_rng());
             }
-            for task_index in &sequence {
+            for (thread_task_index, thread_task_name) in &sequence {
                 // Determine which task we're going to run next.
-                let thread_task_name = &thread_task_set.tasks[*task_index].name;
-                let function = &thread_task_set.tasks[*task_index].function;
+                let function = &thread_task_set.tasks[*thread_task_index].function;
                 debug!(
                     "launching on_stop {} task from {}",
                     thread_task_name, thread_task_set.name
                 );
-                if thread_task_name != "" {
-                    thread_user.task_request_name = Some(thread_task_name.to_string());
-                }
                 // Invoke the task function.
-                invoke_task_function(function, &thread_user, *task_index, thread_task_name).await;
+                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                    .await;
             }
         }
     }
@@ -200,14 +189,14 @@ pub async fn user_main(
 async fn invoke_task_function(
     function: &GooseTaskFunction,
     thread_user: &GooseUser,
-    task_index: usize,
+    thread_task_index: usize,
     thread_task_name: &str,
 ) {
     let started = time::Instant::now();
     let mut raw_task = GooseRawTask::new(
         thread_user.started.elapsed().as_millis(),
         thread_user.task_sets_index,
-        task_index,
+        thread_task_index,
         thread_task_name.to_string(),
         thread_user.weighted_users_index,
     );
