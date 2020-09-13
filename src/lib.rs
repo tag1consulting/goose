@@ -44,13 +44,14 @@
 //!     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
 //! };
 //! use goose::metrics::GooseMetrics;
-//! use goose::{task, taskset, GooseAttack, GooseError};
+//! use goose::{task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError};
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
 //! one or more load test functions. The names of these functions are arbitrary, but it is
 //! recommended you use self-documenting names. Load test functions must be async. Each load
-//! test function must accept a GooseUser pointer. For example:
+//! test function must accept a reference to a `GooseUser` object and return a
+//! `GooseTaskResult`. For example:
 //!
 //! ```rust
 //! use goose::prelude::*;
@@ -66,7 +67,7 @@
 //! on the website we are load testing. This helper creates a Reqwest request builder, and
 //! uses it to build and execute a request for the above path. If you want access to the
 //! request builder object, you can instead use the `goose_get` helper, for example to
-//! set a timout on this specific request:
+//! set a timeout on this specific request:
 //!
 //! ```rust
 //! use std::time;
@@ -95,7 +96,6 @@
 //! fn main() -> Result<(), GooseError> {
 //!     let _goose_metrics = GooseAttack::initialize()?
 //!         .register_taskset(taskset!("LoadtestTasks")
-//!             .set_wait_time(0, 3)?
 //!             // Register the foo task, assigning it a weight of 10.
 //!             .register_task(task!(loadtest_foo).set_weight(10)?)
 //!             // Register the bar task, assigning it a weight of 2 (so it
@@ -110,12 +110,14 @@
 //!     Ok(())
 //! }
 //!
+//! // A task function that loads `/path/to/foo`.
 //! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/path/to/foo").await?;
 //!
 //!     Ok(())
 //! }   
 //!
+//! // A task function that loads `/path/to/bar`.
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/path/to/bar").await?;
 //!
@@ -133,14 +135,14 @@
 //! Attempts to run our example will result in an error, as we have not yet defined the
 //! host against which this load test should be run. We intentionally do not hard code the
 //! host in the individual tasks, as this allows us to run the test against different
-//! environments, such as local and staging.
+//! environments, such as local development, staging, and production.
 //!
 //! ```bash
 //! $ cargo run --release
 //!    Compiling loadtest v0.1.0 (~/loadtest)
 //!     Finished release [optimized] target(s) in 1.52s
 //!      Running `target/release/loadtest`
-//! 05:33:06 [ERROR] Host must be defined globally or per-TaskSet. No host defined for LoadtestTasks.
+//! Error: InvalidOption { option: "--host", value: "", detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for WebsiteUser)." }
 //! ```
 //! Pass in the `-h` flag to see all available run-time options. For now, we'll use a few
 //! options to customize our load test.
@@ -150,139 +152,236 @@
 //! ```
 //!
 //! The first option we specified is `--host`, and in this case tells Goose to run the load test
-//! against an 8-core VM on my local network. The `-t 30s` option tells Goose to end the load test
-//! after 30 seconds (for real load tests you'll certainly want to run it longer, you can use `m` to
-//! specify minutes and `h` to specify hours. For example, `-t 1h30m` would run the load test for 1
-//! hour 30 minutes). Finally, the `-v` flag tells goose to display INFO and higher level logs to
-//! stdout, giving more insight into what is happening. (Additional `-v` flags will result in
-//! considerably more debug output, and are not recommended for running actual load tests; they're
-//! only useful if you're trying to debug Goose itself.)
+//! against a VM on my local network. The `-t 30s` option tells Goose to end the load test after 30
+//! seconds (for real load tests you'll certainly want to run it longer, you can use `h`, `m`, and
+//! `s` to specify hours, minutes and seconds respectively. For example, `-t1h30m` would run the
+//! load test for 1 hour 30 minutes). Finally, the `-v` flag tells goose to display INFO and higher
+//! level logs to stdout, giving more insight into what is happening. (Additional `-v` flags will
+//! result in considerably more debug output, and are not recommended for running actual load tests;
+//! they're only useful if you're trying to debug Goose itself.)
 //!
 //! Running the test results in the following output (broken up to explain it as it goes):
 //!
 //! ```bash
 //!    Finished release [optimized] target(s) in 0.05s
 //!     Running `target/release/loadtest --host 'http://dev.local' -t 30s -v`
-//! 05:56:30 [ INFO] Output verbosity level: INFO
-//! 05:56:30 [ INFO] Logfile verbosity level: INFO
-//! 05:56:30 [ INFO] Writing to log file: goose.log
-
+//! 15:42:23 [ INFO] Output verbosity level: INFO
+//! 15:42:23 [ INFO] Logfile verbosity level: WARN
 //! ```
 //!
-//! By default Goose will write a log file with INFO and higher level logs into the same directory
-//! as you run the test from.
+//! If we set the `--log-file` flag, Goose will write a log file with WARN and higher level logs
+//! as you run the test from (add a `-g` flag to log all INFO and higher level logs).
 //!
 //! ```bash
-//! 05:56:30 [ INFO] run_time = 30
-//! 05:56:30 [ INFO] concurrent users defaulted to 8 (number of CPUs)
+//! 15:42:23 [ INFO] concurrent users defaulted to 8 (number of CPUs)
+//! 15:42:23 [ INFO] run_time = 30
+//! 15:42:23 [ INFO] hatch_rate = 1
 //! ```
 //!
 //! Goose will default to launching 1 user per available CPU core, and will launch them all in
 //! one second. You can change how many users are launched with the `-u` option, and you can
-//! change how many users are launched per second with the `-r` option. For example, `-u 30 -r 2`
-//! would launch 30 users over 15 seconds, or two users per second.
+//! change how many users are launched per second with the `-r` option. For example, `-u30 -r2`
+//! would launch 30 users over 15 seconds (two users per second).
 //!
 //! ```bash
-//! 05:56:30 [ INFO] global host configured: http://dev.local
-//! 05:56:30 [ INFO] launching user 1 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching user 2 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching user 3 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching user 4 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching user 5 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching user 6 from LoadtestTasks...
-//! 05:56:30 [ INFO] launching user 7 from LoadtestTasks...
-//! 05:56:31 [ INFO] launching user 8 from LoadtestTasks...
-//! 05:56:31 [ INFO] launched 8 users...
+//! 15:42:23 [ INFO] global host configured: http://dev.local/
+//! 15:42:23 [ INFO] initializing user states...
+//! 15:42:23 [ INFO] launching user 1 from LoadtestTasks...
+//! 15:42:24 [ INFO] launching user 2 from LoadtestTasks...
+//! 15:42:25 [ INFO] launching user 3 from LoadtestTasks...
+//! 15:42:26 [ INFO] launching user 4 from LoadtestTasks...
+//! 15:42:27 [ INFO] launching user 5 from LoadtestTasks...
+//! 15:42:28 [ INFO] launching user 6 from LoadtestTasks...
+//! 15:42:29 [ INFO] launching user 7 from LoadtestTasks...
+//! 15:42:30 [ INFO] launching user 8 from LoadtestTasks...
+//! 15:42:31 [ INFO] launched 8 users...
+//! 15:42:31 [ INFO] printing running metrics after 8 seconds...
 //! ```
 //!
 //! Each user is launched in its own thread with its own user state. Goose is able to make
-//! very efficient use of server resources.
+//! very efficient use of server resources. By default Goose resets the metrics after all
+//! users are launched, but first it outputs the metrics collected while ramping up:
 //!
 //! ```bash
-//! 05:56:46 [ INFO] printing running metrics after 15 seconds...
-//! ------------------------------------------------------------------------------
-//!  Name                    | # reqs         | # fails        | req/s  | fail/s
-//!  -----------------------------------------------------------------------------
-//!  GET /path/to/foo        | 15,795         | 0 (0%)         | 1,053  | 0    
-//!  GET bar                 | 3,161          | 0 (0%)         | 210    | 0    
-//!  ------------------------+----------------+----------------+--------+---------
-//!  Aggregated              | 18,956         | 0 (0%)         | 1,263  | 0    
-//! ------------------------------------------------------------------------------
+//! 15:42:31 [ INFO] printing running metrics after 8 seconds...
+//!
+//!  === PER TASK METRICS ===
+//!  ------------------------------------------------------------------------------
+//!  Name                     |   # times run |        # fails |   task/s |  fail/s
+//!  ------------------------------------------------------------------------------
+//!  1: LoadtestTasks         |
+//!    1:                     |         2,033 |         0 (0%) |   254.12 |    0.00
+//!    2: bar                 |           407 |         0 (0%) |    50.88 |    0.00
+//!  -------------------------+---------------+----------------+----------+--------
+//!  Aggregated               |         2,440 |         0 (0%) |   305.00 |    0.00
+//!  ------------------------------------------------------------------------------
+//!  Name                     |    Avg (ms) |        Min |         Max |     Median
+//!  ------------------------------------------------------------------------------
+//!  1: LoadtestTasks         |
+//!    1:                     |       14.23 |          6 |          32 |         14
+//!    2: bar                 |       14.13 |          6 |          30 |         14
+//!  -------------------------+-------------+------------+-------------+-----------
+//!  Aggregated               |       14.21 |          6 |          32 |         14
+//!
+//!  === PER REQUEST METRICS ===
+//!  ------------------------------------------------------------------------------
+//!  Name                     |        # reqs |        # fails |    req/s |  fail/s
+//!  ------------------------------------------------------------------------------
+//!  GET /                    |         2,033 |         0 (0%) |   254.12 |    0.00
+//!  GET bar                  |           407 |         0 (0%) |    50.88 |    0.00
+//!  -------------------------+---------------+----------------+----------+--------
+//!  Aggregated               |         2,440 |         0 (0%) |   305.00 |    0.00
+//!  ------------------------------------------------------------------------------
+//!  Name                     |    Avg (ms) |        Min |        Max |      Median
+//!  ------------------------------------------------------------------------------
+//!  GET /                    |       14.18 |          6 |          32 |         14
+//!  GET bar                  |       14.08 |          6 |          30 |         14
+//!  -------------------------+-------------+------------+-------------+-----------
+//!  Aggregated               |       14.16 |          6 |          32 |         14
+//!
+//! All 8 users hatched, resetting metrics (disable with --no-reset-metrics).
 //! ```
 //!
 //! When printing metrics, by default Goose will display running values approximately
-//! every 15 seconds. Running metrics are broken into two tables. The first, above,
-//! shows how many requests have been made, how many of them failed (non-2xx response),
-//! and the corresponding per-second rates.
+//! every 15 seconds. Running metrics are broken into several tables. First are the
+//! per-task metrics which are further split into two sections. The first section shows
+//! how many requests have been made, how many of them failed (non-2xx response), and
+//! the corresponding per-second rates.
 //!
-//! Note that Goose respected the per-task weights we set, and `foo` (with a weight of
-//! 10) is being loaded five times as often as `bar` (with a weight of 2). Also notice
-//! that because we didn't name the `foo` task by default we see the URL loaded in the
-//! metrics, whereas we did name the `bar` task so we see the name in the metrics.
+//! This table shows details for all Task Sets and all Tasks defined by your load test,
+//! regardless of if they actually run. This can be useful to ensure that you have set
+//! up weighting as intended, and that you are simulating enough users. As our first
+//! task wasn't named, it just showed up as "1:". Our second task was named, so it shows
+//! up as the name we gave it, "bar".
 //!
 //! ```bash
-//!  Name                    | Avg (ms)   | Min        | Max        | Mean      
-//!  -----------------------------------------------------------------------------
-//!  GET /path/to/foo        | 67         | 31         | 1351       | 53      
-//!  GET bar                 | 60         | 33         | 1342       | 53      
-//!  ------------------------+------------+------------+------------+-------------
-//!  Aggregated              | 66         | 31         | 1351       | 56      
+//! 15:42:46 [ INFO] printing running metrics after 15 seconds...
+//!
+//!  === PER TASK METRICS ===
+//!  ------------------------------------------------------------------------------
+//!  Name                     |   # times run |        # fails |   task/s |  fail/s
+//!  ------------------------------------------------------------------------------
+//!  1: LoadtestTasks         |
+//!    1:                     |         4,618 |         0 (0%) |   307.87 |    0.00
+//!    2: bar                 |           924 |         0 (0%) |    61.60 |    0.00
+//!  -------------------------+---------------+----------------+----------+--------
+//!  Aggregated               |         5,542 |         0 (0%) |   369.47 |    0.00
+//!  ------------------------------------------------------------------------------
+//!  Name                     |    Avg (ms) |        Min |         Max |     Median
+//!  ------------------------------------------------------------------------------
+//!  1: LoadtestTasks         |
+//!    1:                     |       21.17 |          8 |         151 |         19
+//!    2: bar                 |       21.62 |          9 |         156 |         19
+//!  -------------------------+-------------+------------+-------------+-----------
+//!  Aggregated               |       21.24 |          8 |         156 |         19
 //! ```
 //!
-//! The second table in running metrics provides details on response times. In our
-//! example (which is running over wifi from my development laptop), on average each
-//! page is returning within `66` milliseconds. The quickest page response was for
-//! `foo` in `31` milliseconds. The slowest page response was also for `foo` in `1351`
-//! milliseconds.
-//!
+//! The second table breaks down the same metrics by Request instead of by Task. For
+//! our simple load test, each Task only makes a single Request, so the metrics are
+//! the same. There are two main differences. First, metrics are listed by request
+//! type and path or name. The first request shows up as `GET /path/to/foo` as the
+//! request was not named. The second request shows up as `GET bar` as the request
+//! was named. The times to complete each are slightly smaller as this is only the
+//! time to make the request, not the time for Goose to execute the entire task.
 //!
 //! ```bash
-//! 05:37:10 [ INFO] stopping after 30 seconds...
-//! 05:37:10 [ INFO] waiting for users to exit
+//!  === PER REQUEST METRICS ===
+//!  ------------------------------------------------------------------------------
+//!  Name                     |        # reqs |        # fails |    req/s |  fail/s
+//!  ------------------------------------------------------------------------------
+//!  GET /path/to/foo         |         4,618 |         0 (0%) |   307.87 |    0.00
+//!  GET bar                  |           924 |         0 (0%) |    61.60 |    0.00
+//!  -------------------------+---------------+----------------+----------+--------
+//!  Aggregated               |         5,542 |         0 (0%) |   369.47 |    0.00
+//!  ------------------------------------------------------------------------------
+//!  Name                     |    Avg (ms) |        Min |        Max |      Median
+//!  ------------------------------------------------------------------------------
+//!  GET /path/to/foo         |       21.13 |          8 |         151 |         19
+//!  GET bar                  |       21.58 |          9 |         156 |         19
+//!  -------------------------+-------------+------------+-------------+-----------
+//!  Aggregated               |       21.20 |          8 |         156 |         19
+//! ```
+//!
+//! Note that Goose respected the per-task weights we set, and `foo` (with a weight of
+//! 10) is being loaded five times as often as `bar` (with a weight of 2). On average
+//! each page is returning within `21.2` milliseconds. The quickest page response was
+//! for `foo` in `8` milliseconds. The slowest page response was for `bar` in `156`
+//! milliseconds.
+//!
+//! ```bash
+//! 15:43:02 [ INFO] stopping after 30 seconds...
+//! 15:43:02 [ INFO] waiting for users to exit
+//! 15:43:02 [ INFO] exiting user 3 from LoadtestTasks...
+//! 15:43:02 [ INFO] exiting user 4 from LoadtestTasks...
+//! 15:43:02 [ INFO] exiting user 5 from LoadtestTasks...
+//! 15:43:02 [ INFO] exiting user 8 from LoadtestTasks...
+//! 15:43:02 [ INFO] exiting user 2 from LoadtestTasks...
+//! 15:43:02 [ INFO] exiting user 7 from LoadtestTasks...
+//! 15:43:02 [ INFO] exiting user 6 from LoadtestTasks...
+//! 15:43:02 [ INFO] exiting user 1 from LoadtestTasks...
+//! 15:43:02 [ INFO] printing metrics after 30 seconds...
 //! ```
 //!
 //! Our example only runs for 30 seconds, so we only see running metrics once. When
 //! the test completes, we get more detail in the final summary. The first two tables
 //! are the same as what we saw earlier, however now they include all metrics for the
-//! entire load test:
+//! entire length of the load test:
 //!
 //! ```bash
-//! ------------------------------------------------------------------------------
-//!  Name                    | # reqs         | # fails        | req/s  | fail/s
-//!  -----------------------------------------------------------------------------
-//!  GET bar                 | 6,050          | 0 (0%)         | 201    | 0    
-//!  GET /path/to/foo        | 30,257         | 0 (0%)         | 1,008  | 0    
-//!  ------------------------+----------------+----------------+--------+----------
-//!  Aggregated              | 36,307         | 0 (0%)         | 1,210  | 0    
-//! -------------------------------------------------------------------------------
-//!  Name                    | Avg (ms)   | Min        | Max        | Mean      
-//!  -----------------------------------------------------------------------------
-//!  GET bar                 | 66         | 32         | 1388       | 53      
-//!  GET /path/to/foo        | 68         | 31         | 1395       | 53      
-//!  ------------------------+------------+------------+------------+-------------
-//!  Aggregated              | 67         | 31         | 1395       | 50      
-//! -------------------------------------------------------------------------------
+//!  === PER TASK METRICS ===
+//!  ------------------------------------------------------------------------------
+//!  Name                     |   # times run |        # fails |   task/s |  fail/s
+//!  ------------------------------------------------------------------------------
+//!  1: LoadtestTasks         |
+//!    1:                     |         9,974 |         0 (0%) |   332.47 |    0.00
+//!    2: bar                 |         1,995 |         0 (0%) |    66.50 |    0.00
+//!  -------------------------+---------------+----------------+----------+--------
+//!  Aggregated               |        11,969 |         0 (0%) |   398.97 |    0.00
+//!  ------------------------------------------------------------------------------
+//!  Name                     |    Avg (ms) |        Min |         Max |     Median
+//!  ------------------------------------------------------------------------------
+//!  1: LoadtestTasks         |
+//!    1:                     |       19.65 |          8 |         151 |         18
+//!    2: bar                 |       19.92 |          9 |         156 |         18
+//!  -------------------------+-------------+------------+-------------+-----------
+//!  Aggregated               |       19.69 |          8 |         156 |         18
+//!
+//!  === PER REQUEST METRICS ===
+//!  ------------------------------------------------------------------------------
+//!  Name                     |        # reqs |        # fails |    req/s |  fail/s
+//!  ------------------------------------------------------------------------------
+//!  GET /                    |         9,974 |         0 (0%) |   332.47 |    0.00
+//!  GET bar                  |         1,995 |         0 (0%) |    66.50 |    0.00
+//!  -------------------------+---------------+----------------+----------+--------
+//!  Aggregated               |        11,969 |         0 (0%) |   398.97 |    0.00
+//!  ------------------------------------------------------------------------------
+//!  Name                     |    Avg (ms) |        Min |        Max |      Median
+//!  ------------------------------------------------------------------------------
+//!  GET /                    |       19.61 |          8 |         151 |         18
+//!  GET bar                  |       19.88 |          9 |         156 |         18
+//!  -------------------------+-------------+------------+-------------+-----------
+//!  Aggregated               |       19.66 |          8 |         156 |         18
+//!  ------------------------------------------------------------------------------
 //! ```
 //!
-//! The ratio between `foo` and `bar` remained 5:2 as expected. As the test ran,
-//! however, we saw some slower page loads, with the slowest again `foo` this time
-//! at 1395 milliseconds.
+//! The ratio between `foo` and `bar` remained 5:2 as expected.
 //!
 //! ```bash
-//! Slowest page load within specified percentile of requests (in ms):
-//! ------------------------------------------------------------------------------
-//! Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
-//! -----------------------------------------------------------------------------
-//! GET bar                 | 53     | 66     | 217   | 537     | 1872   | 12316
-//! GET /path/to/foo        | 53     | 66     | 265   | 1060    | 1800   | 10732
-//! ------------------------+--------+--------+-------+---------+--------+-------
-//! Aggregated              | 53     | 66     | 237   | 645     | 1832   | 10818
+//!  ------------------------------------------------------------------------------
+//!  Slowest page load within specified percentile of requests (in ms):
+//!  ------------------------------------------------------------------------------
+//!  Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+//!  ------------------------------------------------------------------------------
+//!  GET /                    |     18 |     21 |     29 |     79 |    140 |    140
+//!  GET bar                  |     18 |     21 |     29 |    120 |    150 |    150
+//!  -------------------------+--------+--------+--------+--------+--------+-------
+//!  Aggregated               |     18 |     21 |     29 |     84 |    140 |    156
 //! ```
 //!
 //! A new table shows additional information, breaking down response-time by
 //! percentile. This shows that the slowest page loads only happened in the
-//! slowest .001% of page loads, so were very much an edge case. 99.9% of the time
-//! page loads happened in less than 2 seconds.
+//! slowest 1% of page loads, so were an edge case. 98% of the time page loads
+//! happened in 29 milliseconds or less.
 //!
 //! ## License
 //!
