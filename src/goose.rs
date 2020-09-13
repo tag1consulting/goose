@@ -75,7 +75,7 @@
 //!
 //!     let mut a_task = task!(task_function);
 //!
-//!     /// A very simple task that simply loads the front page.
+//!     /// A very simple task that loads the front page.
 //!     async fn task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/").await?;
 //!
@@ -93,7 +93,7 @@
 //!
 //!     let mut a_task = task!(task_function).set_name("a");
 //!
-//!     /// A very simple task that simply loads the front page.
+//!     /// A very simple task that loads the front page.
 //!     async fn task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/").await?;
 //!
@@ -117,14 +117,14 @@
 //!     Ok(())
 //! }
 //!
-//! /// A very simple task that simply loads the "a" page.
+//! /// A very simple task that loads the "a" page.
 //! async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/a/").await?;
 //!
 //!     Ok(())
 //! }
 //!
-//! /// Another very simple task that simply loads the "b" page.
+//! /// Another very simple task that loads the "b" page.
 //! async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/b/").await?;
 //!
@@ -139,7 +139,7 @@
 //! be applied to sequenced tasks, so for example a task with a weight of `2` and a sequence
 //! of `1` will run two times before a task with a sequence of `2`. Task sets can contain
 //! tasks with sequence values and without sequence values, and in this case all tasks with
-//! a sequence value will run before tasks without a sequence value. In the folllowing example,
+//! a sequence value will run before tasks without a sequence value. In the following example,
 //! `a_task` runs before `b_task`, which runs before `c_task`:
 //!
 //! ```rust
@@ -149,21 +149,21 @@
 //!     let mut b_task = task!(b_task_function).set_sequence(2);
 //!     let mut c_task = task!(c_task_function);
 //!
-//!     /// A very simple task that simply loads the "a" page.
+//!     /// A very simple task that loads the "a" page.
 //!     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/a/").await?;
 //!
 //!       Ok(())
 //!     }
 //!
-//!     /// Another very simple task that simply loads the "b" page.
+//!     /// Another very simple task that loads the "b" page.
 //!     async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/b/").await?;
 //!
 //!       Ok(())
 //!     }
 //!
-//!     /// Another very simple task that simply loads the "c" page.
+//!     /// Another very simple task that loads the "c" page.
 //!     async fn c_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/c/").await?;
 //!
@@ -184,7 +184,7 @@
 //!
 //!     let mut a_task = task!(a_task_function).set_sequence(1).set_on_start();
 //!
-//!     /// A very simple task that simply loads the "a" page.
+//!     /// A very simple task that loads the "a" page.
 //!     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/a/").await?;
 //!
@@ -195,7 +195,7 @@
 //! ### Task On Stop
 //!
 //! Tasks can be flagged to only run when a user stops. This can be useful if you'd like your
-//! load test to simluate a user logging out when it finishes. It is possible to assign sequences
+//! load test to simulate a user logging out when it finishes. It is possible to assign sequences
 //! and weights to `on_stop` functions if you want to have multiple tasks run in a specific order
 //! at stop time, and/or the tasks to run multiple times. A task can be flagged to run both on
 //! start and on stop.
@@ -205,7 +205,7 @@
 //!
 //!     let mut b_task = task!(b_task_function).set_sequence(2).set_on_stop();
 //!
-//!     /// Another very simple task that simply loads the "b" page.
+//!     /// Another very simple task that loads the "b" page.
 //!     async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
 //!       let _goose = user.get("/b/").await?;
 //!
@@ -243,7 +243,7 @@
 //!     }
 //! ```
 //!
-//! The returned response is a [`reqwest::blocking::Response`](https://docs.rs/reqwest/*/reqwest/blocking/struct.Response.html)
+//! The returned response is a [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)
 //! struct. You can use it as you would any Reqwest Response.
 //!
 //!
@@ -508,7 +508,7 @@ impl GooseTaskSet {
     ///     let mut example_tasks = taskset!("ExampleTasks");
     ///     example_tasks.register_task(task!(a_task_function));
     ///
-    ///     /// A very simple task that simply loads the "a" page.
+    ///     /// A very simple task that loads the "a" page.
     ///     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
     ///       let _goose = user.get("/a/").await?;
     ///

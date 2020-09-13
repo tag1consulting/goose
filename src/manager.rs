@@ -114,7 +114,7 @@ fn merge_requests_from_worker(
         merged_request.min_response_time,
         user_request.min_response_time,
     );
-    // If user had new slowest response time, update global slowest resposne time.
+    // If user had new slowest response time, update global slowest response time.
     merged_request.max_response_time = metrics::update_max_time(
         merged_request.max_response_time,
         user_request.max_response_time,
@@ -285,7 +285,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 // If worked goes away during load test, exit gracefully.
                 if load_test_running {
                     info!(
-                        "worker went away, stopping gracefully afer {} seconds...",
+                        "worker went away, stopping gracefully after {} seconds...",
                         started.elapsed().as_secs()
                     );
                     load_test_finished = true;

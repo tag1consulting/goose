@@ -711,7 +711,7 @@ impl GooseMetrics {
             aggregate_min_response_time =
                 update_min_time(aggregate_min_response_time, request.min_response_time);
 
-            // If user had new slowest response time, update global slowest resposne time.
+            // If user had new slowest response time, update global slowest response time.
             aggregate_max_response_time =
                 update_max_time(aggregate_max_response_time, request.max_response_time);
 
@@ -810,7 +810,7 @@ impl GooseMetrics {
             aggregate_min_response_time =
                 update_min_time(aggregate_min_response_time, request.min_response_time);
 
-            // If user had new slowest response time, update global slowest resposne time.
+            // If user had new slowest response time, update global slowest response time.
             aggregate_max_response_time =
                 update_max_time(aggregate_max_response_time, request.max_response_time);
             // Sort response times so we can calculate a mean.
