@@ -60,7 +60,7 @@ pub async fn sleep_minus_drift(
     tokio::time::Instant::now()
 }
 
-/// Calculate the greatest commond divisor using binary GCD (or Stein's) algorithm.
+/// Calculate the greatest common divisor using binary GCD (or Stein's) algorithm.
 /// More detail: https://en.wikipedia.org/wiki/Binary_GCD_algorithm
 pub fn gcd(u: usize, v: usize) -> usize {
     match ((u, v), (u & 1, v & 1)) {

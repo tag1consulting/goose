@@ -1831,7 +1831,7 @@ impl GooseAttack {
         // Configure number of users to simulate.
         self.set_users()?;
 
-        // Configurate expect_workers if running in Manager attack mode.
+        // Configure expect_workers if running in Manager attack mode.
         self.set_expect_workers()?;
 
         // Configure host and ports if running in a Gaggle distributed load test.

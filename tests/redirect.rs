@@ -23,7 +23,7 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-// Task function, load REDRECT_PATH and follow redirects to ABOUT_PATH.
+// Task function, load REDIRECT_PATH and follow redirects to ABOUT_PATH.
 pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
     let mut goose = user.get(REDIRECT_PATH).await?;
 
@@ -53,7 +53,7 @@ pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-// Task function, load REDRECT_PATH and follow redirect to new domain.
+// Task function, load REDIRECT_PATH and follow redirect to new domain.
 pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(REDIRECT_PATH).await?;
     Ok(())
@@ -179,7 +179,7 @@ fn test_domain_redirect() {
     .execute()
     .unwrap();
 
-    // Confirm that we load the index, about and redirect pages on the orginal domain.
+    // Confirm that we load the index, about and redirect pages on the original domain.
     assert!(server1_index.times_called() > 0);
     assert!(server1_redirect.times_called() > 0);
     assert!(server1_about.times_called() > 0);

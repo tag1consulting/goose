@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 Sep 11, 2020
+## 0.10.0 Sep 13, 2020
  - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
  - only run gaggle integration tests when feature is enabled
  - prevent time-drift when launching users and throttling requests
@@ -67,7 +67,7 @@
  - introduce `GooseError` and `GooseTaskError`
  - change task function signature, tasks must return a `GooseTaskResult`
  - change `GooseAttack` method signatures where an error is possible
- - where possible, passs error up the stack instead of calling `exit(1)`
+ - where possible, pass error up the stack instead of calling `exit(1)`
  - introduce `GooseAttack.display()` which consumes the load test state and displays statistics
  - `panic!()` on unexpected errors instead of `exit(1)`
 
