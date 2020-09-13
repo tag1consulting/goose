@@ -290,14 +290,14 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{self, AtomicUsize};
 use std::sync::Arc;
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use url::Url;
 
 use crate::metrics::GooseMetric;
-use crate::{GooseConfiguration, GooseError};
+use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -464,11 +464,11 @@ pub struct GooseTaskSet {
     /// A vector containing one copy of each GooseTask that will run by users running this task set.
     pub tasks: Vec<GooseTask>,
     /// A vector of vectors of integers, controlling the sequence and order GooseTasks are run.
-    pub weighted_tasks: Vec<Vec<usize>>,
+    pub weighted_tasks: WeightedGooseTasks,
     /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when the user first starts.
-    pub weighted_on_start_tasks: Vec<Vec<usize>>,
+    pub weighted_on_start_tasks: WeightedGooseTasks,
     /// A vector of vectors of integers, controlling the sequence and order on_stop GooseTasks are run when the user stops.
-    pub weighted_on_stop_tasks: Vec<Vec<usize>>,
+    pub weighted_on_stop_tasks: WeightedGooseTasks,
     /// An optional default host to run this TaskSet against.
     pub host: Option<String>,
 }
@@ -918,15 +918,11 @@ pub struct GooseUser {
     /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
     pub weighted_users_index: usize,
     /// A weighted list of all tasks that run when the user first starts.
-    pub weighted_on_start_tasks: Vec<Vec<usize>>,
+    pub weighted_on_start_tasks: WeightedGooseTasks,
     /// A weighted list of all tasks that this user runs once started.
-    pub weighted_tasks: Vec<Vec<usize>>,
+    pub weighted_tasks: WeightedGooseTasks,
     /// A weighted list of all tasks that run when the user stops.
-    pub weighted_on_stop_tasks: Vec<Vec<usize>>,
-    /// Optional name of all requests made within the current task.
-    pub task_request_name: Option<String>,
-    /// Optional name of all requests made within the current task.
-    pub request_name: Option<String>,
+    pub weighted_on_stop_tasks: WeightedGooseTasks,
     /// Load test hash.
     pub load_test_hash: u64,
 }
@@ -965,8 +961,6 @@ impl GooseUser {
             weighted_on_start_tasks: Vec::new(),
             weighted_tasks: Vec::new(),
             weighted_on_stop_tasks: Vec::new(),
-            task_request_name: None,
-            request_name: None,
             load_test_hash,
         })
     }
@@ -1549,15 +1543,31 @@ impl GooseUser {
         Ok(())
     }
 
-    /// If `request_name` is set, unwrap and use this. Otherwise, if `task_request_name`
-    /// is set, use this. Otherwise, use path.
+    /// If `request_name` is set, unwrap and use this. Otherwise, if the GooseTask has a name
+    /// set use it. Otherwise use the path.
     fn get_request_name(&self, path: &str, request_name: Option<&str>) -> String {
         match request_name {
+            // If a request_name was passed in, unwrap and return a copy of it.
             Some(rn) => rn.to_string(),
-            None => match &self.task_request_name {
-                Some(trn) => trn.to_string(),
-                None => path.to_string(),
-            },
+            None => {
+                // Otherwise determine if the current GooseTask is named, and if so return
+                // a copy of it.
+                let weighted_bucket = self.weighted_bucket.load(atomic::Ordering::SeqCst);
+                let weighted_bucket_position =
+                    self.weighted_bucket_position.load(atomic::Ordering::SeqCst);
+                if !self.weighted_tasks.is_empty()
+                    && !self.weighted_tasks[weighted_bucket][weighted_bucket_position]
+                        .1
+                        .is_empty()
+                {
+                    self.weighted_tasks[weighted_bucket][weighted_bucket_position]
+                        .1
+                        .clone()
+                } else {
+                    // Otherwise return a copy of the the path.
+                    path.to_string()
+                }
+            }
         }
     }
 
@@ -2652,12 +2662,9 @@ mod tests {
         assert_eq!(user.weighted_on_start_tasks.len(), 0);
         assert_eq!(user.weighted_tasks.len(), 0);
         assert_eq!(user.weighted_on_stop_tasks.len(), 0);
-        assert_eq!(user.task_request_name, None);
-        assert_eq!(user.request_name, None);
 
         // Confirm the URLs are correctly built using the default_host.
         let url = user.build_url("/foo").await.unwrap();
-        eprintln!("url: {}", url);
         assert_eq!(&url, &[HOST, "foo"].concat());
         let url = user.build_url("bar/").await.unwrap();
         assert_eq!(&url, &[HOST, "bar/"].concat());

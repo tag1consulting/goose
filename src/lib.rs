@@ -356,7 +356,7 @@ lazy_static! {
 }
 
 /// Internal representation of a weighted task list.
-type WeightedGooseTasks = Vec<Vec<usize>>;
+type WeightedGooseTasks = Vec<Vec<(usize, String)>>;
 
 type DebugLoggerHandle = Option<tokio::task::JoinHandle<()>>;
 type DebugLoggerChannel = Option<mpsc::UnboundedSender<Option<GooseDebug>>>;
@@ -2755,7 +2755,7 @@ pub struct GooseConfiguration {
     pub manager_port: u16,
 }
 
-/// Returns a sequenced bucket of weighted usize pointers to Goose Tasks
+/// Returns sequenced buckets of weighted usize pointers to and names of Goose Tasks
 fn weight_tasks(
     task_set: &GooseTaskSet,
 ) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
@@ -2770,6 +2770,7 @@ fn weight_tasks(
     let mut unsequenced_on_stop_tasks: Vec<GooseTask> = Vec::new();
     let mut u: usize = 0;
     let mut v: usize;
+
     // Handle ordering of tasks.
     for task in &task_set.tasks {
         if task.sequence > 0 {
@@ -2825,7 +2826,7 @@ fn weight_tasks(
     // 'u' will always be the greatest common divisor
     debug!("gcd: {}", u);
 
-    // Apply weight to sequenced tasks.
+    // First apply weights to sequenced tasks.
     let mut weighted_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_tasks.iter() {
         let mut sequence_weighted_tasks = Vec::new();
@@ -2839,12 +2840,15 @@ fn weight_tasks(
                 task.weight,
                 weight
             );
-            let mut tasks = vec![task.tasks_index; weight];
+            // Weighted list of tuples holding the id and name of the task.
+            let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
             sequence_weighted_tasks.append(&mut tasks);
         }
+        // Add in vectors grouped by sequence value, ordered lowest to highest value.
         weighted_tasks.push(sequence_weighted_tasks);
     }
-    // Apply weight to unsequenced tasks.
+
+    // Next apply weights to unsequenced tasks.
     trace!("created weighted_tasks: {:?}", weighted_tasks);
     let mut weighted_unsequenced_tasks = Vec::new();
     for task in unsequenced_tasks {
@@ -2857,15 +2861,16 @@ fn weight_tasks(
             task.weight,
             weight
         );
-        let mut tasks = vec![task.tasks_index; weight];
+        // Weighted list of tuples holding the id and name of the task.
+        let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
         weighted_unsequenced_tasks.append(&mut tasks);
     }
-    // Unsequenced tasks come last.
+    // Add final vector of unsequenced tasks last.
     if !weighted_unsequenced_tasks.is_empty() {
         weighted_tasks.push(weighted_unsequenced_tasks);
     }
 
-    // Apply weight to on_start sequenced tasks.
+    // Next apply weights to on_start sequenced tasks.
     let mut weighted_on_start_tasks: WeightedGooseTasks = Vec::new();
     for (_sequence, tasks) in sequenced_on_start_tasks.iter() {
         let mut sequence_on_start_weighted_tasks = Vec::new();
@@ -2879,12 +2884,15 @@ fn weight_tasks(
                 task.weight,
                 weight
             );
-            let mut tasks = vec![task.tasks_index; weight];
+            // Weighted list of tuples holding the id and name of the task.
+            let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
             sequence_on_start_weighted_tasks.append(&mut tasks);
         }
+        // Add in vectors grouped by sequence value, ordered lowest to highest value.
         weighted_on_start_tasks.push(sequence_on_start_weighted_tasks);
     }
-    // Apply weight to unsequenced on_start tasks.
+
+    // Next apply weights to unsequenced on_start tasks.
     trace!("created weighted_on_start_tasks: {:?}", weighted_tasks);
     let mut weighted_on_start_unsequenced_tasks = Vec::new();
     for task in unsequenced_on_start_tasks {
@@ -2897,10 +2905,11 @@ fn weight_tasks(
             task.weight,
             weight
         );
-        let mut tasks = vec![task.tasks_index; weight];
+        // Weighted list of tuples holding the id and name of the task.
+        let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
         weighted_on_start_unsequenced_tasks.append(&mut tasks);
     }
-    // Unsequenced tasks come lost.
+    // Add final vector of unsequenced on_start tasks last.
     weighted_on_start_tasks.push(weighted_on_start_unsequenced_tasks);
 
     // Apply weight to on_stop sequenced tasks.
@@ -2917,12 +2926,15 @@ fn weight_tasks(
                 task.weight,
                 weight
             );
-            let mut tasks = vec![task.tasks_index; weight];
+            // Weighted list of tuples holding the id and name of the task.
+            let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
             sequence_on_stop_weighted_tasks.append(&mut tasks);
         }
+        // Add in vectors grouped by sequence value, ordered lowest to highest value.
         weighted_on_stop_tasks.push(sequence_on_stop_weighted_tasks);
     }
-    // Apply weight to unsequenced on_stop tasks.
+
+    // Finally apply weight to unsequenced on_stop tasks.
     trace!("created weighted_on_stop_tasks: {:?}", weighted_tasks);
     let mut weighted_on_stop_unsequenced_tasks = Vec::new();
     for task in unsequenced_on_stop_tasks {
@@ -2935,12 +2947,14 @@ fn weight_tasks(
             task.weight,
             weight
         );
-        let mut tasks = vec![task.tasks_index; weight];
+        // Weighted list of tuples holding the id and name of the task.
+        let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
         weighted_on_stop_unsequenced_tasks.append(&mut tasks);
     }
-    // Unsequenced tasks come last.
+    // Add final vector of unsequenced on_stop tasks last.
     weighted_on_stop_tasks.push(weighted_on_stop_unsequenced_tasks);
 
+    // Return sequenced buckets of weighted usize pointers to and names of Goose Tasks
     (
         weighted_on_start_tasks,
         weighted_tasks,
