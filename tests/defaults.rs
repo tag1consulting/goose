@@ -94,7 +94,7 @@ fn test_defaults() {
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
     config.run_time = "".to_string();
-    config.hatch_rate = 0;
+    config.hatch_rate = None;
     let host = std::mem::take(&mut config.host);
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
@@ -220,7 +220,7 @@ fn test_gaggle_defaults() {
     // Unset options set in common.rs so set_default() is instead used.
     configuration.users = None;
     configuration.run_time = "".to_string();
-    configuration.hatch_rate = 0;
+    configuration.hatch_rate = None;
     let host = std::mem::take(&mut configuration.host);
 
     // Launch workers in their own threads, storing the thread handle.
@@ -310,7 +310,7 @@ fn test_defaults_no_metrics() {
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
     config.run_time = "".to_string();
-    config.hatch_rate = 0;
+    config.hatch_rate = None;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
