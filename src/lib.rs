@@ -2676,7 +2676,15 @@ impl GooseDefaultType<usize> for GooseAttack {
         match key {
             // Set valid defaults.
             GooseDefault::Users => self.defaults.users = Some(value),
-            GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value),
+            GooseDefault::HatchRate => {
+                if value > 0 {
+                    self.defaults.hatch_rate = Some(value);
+                } else {
+                    panic!(
+                        "set_default(GooseDefault::HatchRate, 0) invalid, must be set to at least 1"
+                    );
+                }
+            }
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
