@@ -715,8 +715,6 @@ pub struct GooseAttack {
     number_of_cpus: usize,
     /// Track how long the load test should run.
     run_time: usize,
-    /// Track total number of users to run for this load test.
-    users: usize,
     /// Which mode this GooseAttack is operating in.
     attack_mode: GooseMode,
     /// When the load test started.
@@ -735,8 +733,6 @@ impl GooseAttack {
     ///     let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> Result<GooseAttack, GooseError> {
-        let configuration = GooseConfiguration::parse_args_default_or_exit();
-        let users = GooseAttack::calculate_users(&configuration)?;
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -746,7 +742,6 @@ impl GooseAttack {
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users,
             attack_mode: GooseMode::Undefined,
             started: None,
             metrics: GooseMetrics::default(),
@@ -767,7 +762,6 @@ impl GooseAttack {
     pub fn initialize_with_config(
         configuration: GooseConfiguration,
     ) -> Result<GooseAttack, GooseError> {
-        let users = GooseAttack::calculate_users(&configuration)?;
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -777,7 +771,6 @@ impl GooseAttack {
             configuration,
             number_of_cpus: num_cpus::get(),
             run_time: 0,
-            users,
             attack_mode: GooseMode::Undefined,
             started: None,
             metrics: GooseMetrics::default(),
@@ -865,43 +858,6 @@ impl GooseAttack {
 
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
-    }
-
-    // Helper to calculate the number of user threads to launch, defaulting to
-    // the number of CPU cores available.
-    fn calculate_users(config: &GooseConfiguration) -> Result<usize, GooseError> {
-        match config.users {
-            Some(u) => {
-                if u == 0 {
-                    if config.worker {
-                        return Err(GooseError::InvalidOption {
-                            option: "--users".to_string(),
-                            value: u.to_string(),
-                            detail: "The --users option must be set to at least 1.".to_string(),
-                        });
-                    }
-                    Ok(0)
-                } else {
-                    if config.worker {
-                        return Err(GooseError::InvalidOption {
-                            option: "--users".to_string(),
-                            value: u.to_string(),
-                            detail:
-                                "The --users option can not be set together with the --worker flag."
-                                    .to_string(),
-                        });
-                    }
-                    Ok(u)
-                }
-            }
-            None => {
-                let u = num_cpus::get();
-                if !config.manager && !config.worker {
-                    info!("concurrent users defaulted to {} (number of CPUs)", u);
-                }
-                Ok(u)
-            }
-        }
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
@@ -1054,7 +1010,8 @@ impl GooseAttack {
                     self.metrics.hash,
                 )?);
                 user_count += 1;
-                if user_count >= self.users {
+                // Users are required here so unwrap() is safe.
+                if user_count >= self.configuration.users.unwrap() {
                     trace!("created {} weighted_users", user_count);
                     return Ok(weighted_users);
                 }
@@ -1183,8 +1140,9 @@ impl GooseAttack {
                 });
             }
 
-            // Must not expect more Workers than Users.
-            if expect_workers as usize > self.users {
+            // Must not expect more Workers than Users. Users are required at this point so
+            // using unwrap() is safe.
+            if expect_workers as usize > self.configuration.users.unwrap() {
                 return Err(GooseError::InvalidOption {
                     option: "--expect-workers".to_string(),
                     value: expect_workers.to_string(),
@@ -1286,46 +1244,46 @@ impl GooseAttack {
 
     // Configure how many Goose Users to hatch.
     fn set_users(&mut self) -> Result<(), GooseError> {
-        // Use --users if set.
-        self.users = if let Some(u) = self.configuration.users {
+        // Check if --users is set.
+        if let Some(users) = self.configuration.users {
+            // Setting --users with --worker is not allowed.
             if self.attack_mode == GooseMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: "--users".to_string(),
-                    value: self.users.to_string(),
+                    value: users.to_string(),
                     detail: "The --users option can not be set together with the --worker flag."
                         .to_string(),
                 });
             }
-            u
-        // Otherwise use default if set (but not on Worker).
-        } else if let Some(u) = self.defaults.users {
-            if self.attack_mode == GooseMode::Worker {
-                0
-            } else {
-                u
+
+            // Setting --users to 0 is not allowed.
+            if users == 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--users".to_string(),
+                    value: "0".to_string(),
+                    detail: "The --users option must be set to at least 1.".to_string(),
+                });
             }
-        // Otherwise use number of CPUs (but not on Worker).
-        } else if self.attack_mode == GooseMode::Worker {
-            0
-        } else {
+        // If not, check if a default for users is set.
+        } else if let Some(default_users) = self.defaults.users {
+            // On Worker hatch_rate comes from the Manager.
+            if self.attack_mode == GooseMode::Worker {
+                self.configuration.users = None;
+            // Otherwise use default.
+            } else {
+                self.configuration.users = Some(default_users);
+            }
+        // If not and if not running on Worker, default to 1.
+        } else if self.attack_mode != GooseMode::Worker {
             info!(
                 "concurrent users defaulted to {} (number of CPUs)",
                 self.number_of_cpus
             );
-            self.number_of_cpus
-        };
-
-        // Be sure a valid users value was set.
-        if self.users == 0 && self.attack_mode != GooseMode::Worker {
-            return Err(GooseError::InvalidOption {
-                option: "--users".to_string(),
-                value: self.users.to_string(),
-                detail: "The --users option must be set to at least 1.".to_string(),
-            });
+            self.configuration.users = Some(self.number_of_cpus);
         }
 
-        if self.attack_mode != GooseMode::Manager && self.attack_mode != GooseMode::Worker {
-            debug!("users = {}", self.users);
+        if let Some(users) = self.configuration.users {
+            info!("users = {}", users);
         }
 
         Ok(())
@@ -2322,18 +2280,20 @@ impl GooseAttack {
                 // Flush metrics collected prior to all user threads running
                 if !users_launched {
                     users_launched = true;
+                    let users = self.configuration.users.clone().unwrap();
                     if !self.configuration.no_reset_metrics {
                         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
                         self.metrics.print_running();
 
                         if self.metrics.display_metrics {
-                            if self.metrics.users < self.users {
+                            // Users is required here so unwrap() is safe.
+                            if self.metrics.users < users {
                                 println!(
-                                    "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, self.users
+                                    "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
                                 );
                             } else {
                                 println!(
-                                    "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users
+                                    "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
                                 );
                             }
                         }
@@ -2343,10 +2303,10 @@ impl GooseAttack {
                             .initialize_task_metrics(&self.task_sets, &self.configuration);
                         // Restart the timer now that all threads are launched.
                         self.started = Some(time::Instant::now());
-                    } else if self.metrics.users < self.users {
+                    } else if self.metrics.users < users {
                         println!(
                             "{} of {} users hatched, timer expired.\n",
-                            self.metrics.users, self.users
+                            self.metrics.users, users
                         );
                     } else {
                         println!("All {} users hatched.\n", self.metrics.users);
@@ -2675,7 +2635,15 @@ impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Self {
         match key {
             // Set valid defaults.
-            GooseDefault::Users => self.defaults.users = Some(value),
+            GooseDefault::Users => {
+                if value > 0 {
+                    self.defaults.users = Some(value);
+                } else {
+                    panic!(
+                        "set_default(GooseDefault::Users, 0) invalid, must be set to at least 1"
+                    );
+                }
+            }
             GooseDefault::HatchRate => {
                 if value > 0 {
                     self.defaults.hatch_rate = Some(value);
@@ -3188,6 +3156,16 @@ mod test {
     fn set_defaults_invalid_str() {
         // Setting GooseDefault::Users with a &str (instead of a usize) will panic.
         let value: &str = "invalid";
+        let _ = GooseAttack::initialize()
+            .unwrap()
+            .set_default(GooseDefault::Users, value);
+    }
+
+    #[test]
+    #[should_panic]
+    fn set_defaults_invalid_users() {
+        // Setting GooseDefault::Users to 0 is invalid and will panic.
+        let value: usize = 0;
         let _ = GooseAttack::initialize()
             .unwrap()
             .set_default(GooseDefault::Users, value);

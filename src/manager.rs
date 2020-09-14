@@ -40,9 +40,11 @@ lazy_static! {
 }
 
 fn distribute_users(goose_attack: &GooseAttack) -> (usize, usize) {
-    let users_per_worker =
-        goose_attack.users / (goose_attack.configuration.expect_workers as usize);
-    let users_remainder = goose_attack.users % (goose_attack.configuration.expect_workers as usize);
+    // Users is required to get here, so unwrap() is safe.
+    let users_per_worker = goose_attack.configuration.users.unwrap()
+        / (goose_attack.configuration.expect_workers as usize);
+    let users_remainder = goose_attack.configuration.users.unwrap()
+        % (goose_attack.configuration.expect_workers as usize);
     if users_remainder > 0 {
         info!(
             "each worker to start {} users, assigning 1 extra to {} workers",
@@ -270,10 +272,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     // Update metrics, which doesn't happen automatically on the Master as we don't
     // invoke launch_users. Hatch rate is required here so unwrap() is safe.
     let maximum_hatched = goose_attack.configuration.hatch_rate.unwrap() * goose_attack.run_time;
-    if maximum_hatched < goose_attack.users {
+    if maximum_hatched < goose_attack.configuration.users.unwrap() {
         goose_attack.metrics.users = maximum_hatched;
     } else {
-        goose_attack.metrics.users = goose_attack.users;
+        goose_attack.metrics.users = goose_attack.configuration.users.unwrap();
     }
 
     // Worker control loop.

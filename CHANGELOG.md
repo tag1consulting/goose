@@ -2,6 +2,7 @@
 
 ## 0.10.1-dev
  - rework `hatch_rate` to be stored in an `Option<usize>` as it can be `None` on a Worker
+ - remove redundant `GooseAttack.users` instead using the `Option<usize>` in `configuration`
 
 ## 0.10.0 Sep 13, 2020
  - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
