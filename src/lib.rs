@@ -1366,44 +1366,44 @@ impl GooseAttack {
 
     // Configure how quickly to hatch Goose Users.
     fn set_hatch_rate(&mut self) -> Result<(), GooseError> {
-        // Setting --hatch-rate with --worker is not allowed.
-        if self.configuration.hatch_rate > 0 && self.attack_mode == GooseMode::Worker {
-            return Err(GooseError::InvalidOption {
-                option: "--hatch-rate".to_string(),
-                value: self.configuration.hatch_rate.to_string(),
-                detail: "The --hatch-rate option can not be set together with the --worker flag."
-                    .to_string(),
-            });
-        }
-
-        // Use default for hatch_rate if set and not on Worker.
-        if self.configuration.hatch_rate == 0 {
-            self.configuration.hatch_rate = if let Some(hatch_rate) = self.defaults.hatch_rate {
-                // On Worker hash_rate comes from the Manager.
-                if self.attack_mode == GooseMode::Worker {
-                    0
-                // Otherwise use default.
-                } else {
-                    hatch_rate
-                }
-            } else {
-                // On Worker hash_rate comes from the Manager.
-                if self.attack_mode == GooseMode::Worker {
-                    0
-                }
-                // Otherwise hash_rate is required.
-                else {
-                    return Err(GooseError::InvalidOption {
-                        option: "--hatch-rate".to_string(),
-                        value: self.configuration.hatch_rate.to_string(),
-                        detail: "The --hatch-rate option must be set to at least 1.".to_string(),
-                    });
-                }
+        // Check if --hash-rate is set.
+        if let Some(hatch_rate) = self.configuration.hatch_rate {
+            // Setting --hatch-rate with --worker is not allowed.
+            if self.attack_mode == GooseMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: "--hatch-rate".to_string(),
+                    value: hatch_rate.to_string(),
+                    detail:
+                        "The --hatch-rate option can not be set together with the --worker flag."
+                            .to_string(),
+                });
             }
+
+            // Setting --hatch-rate of 0 is not allowed.
+            if hatch_rate == 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "--hatch-rate".to_string(),
+                    value: "0".to_string(),
+                    detail: "The --hatch-rate option must be set to at least 1.".to_string(),
+                });
+            }
+        // If not, check if a default hatch_rate is set.
+        } else if let Some(default_hatch_rate) = self.defaults.hatch_rate {
+            // On Worker hatch_rate comes from the Manager.
+            if self.attack_mode == GooseMode::Worker {
+                self.configuration.hatch_rate = None;
+            // Otherwise use default.
+            } else {
+                self.configuration.hatch_rate = Some(default_hatch_rate);
+            }
+        // If not and if not running on Worker, default to 1.
+        } else if self.attack_mode != GooseMode::Worker {
+            self.configuration.hatch_rate = Some(1);
         }
 
-        if self.configuration.hatch_rate > 0 {
-            info!("hatch_rate = {}", self.configuration.hatch_rate);
+        // Verbose output.
+        if let Some(hatch_rate) = self.configuration.hatch_rate {
+            info!("hatch_rate = {}", hatch_rate);
         }
 
         Ok(())
@@ -1942,7 +1942,8 @@ impl GooseAttack {
         // Hatch users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_duration;
         if self.attack_mode != GooseMode::Worker {
-            let sleep_float = 1.0 / self.configuration.hatch_rate as f32;
+            // Hatch rate required to get here, so unwrap() is safe.
+            let sleep_float = 1.0 / self.configuration.hatch_rate.unwrap() as f32;
             sleep_duration = time::Duration::from_secs_f32(sleep_float);
         } else {
             sleep_duration = time::Duration::from_secs_f32(0.0);
@@ -2675,7 +2676,15 @@ impl GooseDefaultType<usize> for GooseAttack {
         match key {
             // Set valid defaults.
             GooseDefault::Users => self.defaults.users = Some(value),
-            GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value),
+            GooseDefault::HatchRate => {
+                if value > 0 {
+                    self.defaults.hatch_rate = Some(value);
+                } else {
+                    panic!(
+                        "set_default(GooseDefault::HatchRate, 0) invalid, must be set to at least 1"
+                    );
+                }
+            }
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
@@ -2771,9 +2780,9 @@ pub struct GooseConfiguration {
     /// Sets concurrent users (default: number of CPUs)
     #[options(short = "u")]
     pub users: Option<usize>,
-    /// Sets per-second user hatch rate
-    #[options(short = "r", default = "1", meta = "RATE")]
-    pub hatch_rate: usize,
+    /// Sets per-second user hatch rate (default: 1)
+    #[options(short = "r", meta = "RATE")]
+    pub hatch_rate: Option<usize>,
     /// Stops after (30s, 20m, 3h, 1h30m, etc)
     #[options(short = "t", meta = "TIME")]
     pub run_time: String,

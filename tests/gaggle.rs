@@ -46,7 +46,7 @@ fn test_gaggle() {
     // Unset options set in common.rs as they can't be set on the Worker.
     worker_configuration.users = None;
     worker_configuration.run_time = "".to_string();
-    worker_configuration.hatch_rate = 0;
+    worker_configuration.hatch_rate = None;
 
     for _ in 0..2 {
         let configuration = worker_configuration.clone();
