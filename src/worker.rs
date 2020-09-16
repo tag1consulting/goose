@@ -209,8 +209,8 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 
     // Divide hatch_rate amongst all workers.
     let hatch_rate = 1.0
-        // Hatch rate is required here, so unwrap() is safe.
-        / (worker_goose_attack.configuration.hatch_rate.unwrap() as f32 / (config.expect_workers as f32));
+        // Hatch rate and expect workers are required here, so unwrap() is safe.
+        / (worker_goose_attack.configuration.hatch_rate.unwrap() as f32 / (config.expect_workers.unwrap() as f32));
     info!(
         "[{}] prepared to start 1 user every {:.2} seconds",
         worker_id, hatch_rate,

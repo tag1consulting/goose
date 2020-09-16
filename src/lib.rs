@@ -1108,51 +1108,56 @@ impl GooseAttack {
 
     // Determine how many workers to expect.
     fn set_expect_workers(&mut self) -> Result<(), GooseError> {
-        let expect_workers = if self.configuration.expect_workers > 0 {
-            self.configuration.expect_workers
-        } else if let Some(number) = self.defaults.expect_workers {
-            // Only set expect_workers from default if on Manager.
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.expect_workers";
+
+        // Check if --expect-workers was set.
+        if self.configuration.expect_workers.is_some() {
+            key = "--expect-workers";
+        // Otherwise check if a custom default is set.
+        } else if let Some(default_expect_workers) = self.defaults.expect_workers {
             if self.attack_mode == GooseMode::Manager {
-                number
+                key = "set_default(GooseDefault::ExpectWorkers)";
+
+                self.configuration.expect_workers = Some(default_expect_workers);
+            }
+        }
+
+        if let Some(expect_workers) = self.configuration.expect_workers {
+            // Disallow --expect-workers without --manager.
+            if self.attack_mode != GooseMode::Manager {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: expect_workers.to_string(),
+                    detail: format!(
+                        "{} can not be set without also setting the --manager flag.",
+                        key
+                    ),
+                });
             } else {
-                0
-            }
-        } else {
-            0
-        };
+                // Must expect at least 1 Worker when running as Manager.
+                if expect_workers < 1 {
+                    return Err(GooseError::InvalidOption {
+                        option: key.to_string(),
+                        value: expect_workers.to_string(),
+                        detail: format!("{} must be set to at least 1.", key),
+                    });
+                }
 
-        // Generally disallow --expect-workers without --master.
-        if self.attack_mode != GooseMode::Manager && expect_workers > 0 {
-            return Err(GooseError::InvalidOption {
-                option: "--expect-workers".to_string(),
-                value: self.configuration.expect_workers.to_string(),
-                detail: "The --expect-workers flag can not be set without also setting the --manager flag.".to_string(),
-            });
-        }
-
-        if self.attack_mode == GooseMode::Manager {
-            // Must expect at least 1 Worker when running as Manager.
-            if expect_workers < 1 {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: expect_workers.to_string(),
-                    detail: "The --expect-workers option must be set to at least 1.".to_string(),
-                });
-            }
-
-            // Must not expect more Workers than Users. Users are required at this point so
-            // using unwrap() is safe.
-            if expect_workers as usize > self.configuration.users.unwrap() {
-                return Err(GooseError::InvalidOption {
-                    option: "--expect-workers".to_string(),
-                    value: expect_workers.to_string(),
-                    detail: "The --expect-workers option can not be set to a value larger than --users option.".to_string(),
-                });
+                // Must not expect more Workers than Users. Users are required at this point so
+                // using unwrap() is safe.
+                if expect_workers as usize > self.configuration.users.unwrap() {
+                    return Err(GooseError::InvalidOption {
+                        option: key.to_string(),
+                        value: expect_workers.to_string(),
+                        detail: format!(
+                            "{} can not be set to a value larger than --users option.",
+                            key
+                        ),
+                    });
+                }
             }
         }
-
-        // Overload configuration.expect_workers to make available in Worker process.
-        self.configuration.expect_workers = expect_workers;
 
         Ok(())
     }
@@ -1244,26 +1249,14 @@ impl GooseAttack {
 
     // Configure how many Goose Users to hatch.
     fn set_users(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.users";
+        let mut value = 0;
+
         // Check if --users is set.
         if let Some(users) = self.configuration.users {
-            // Setting --users with --worker is not allowed.
-            if self.attack_mode == GooseMode::Worker {
-                return Err(GooseError::InvalidOption {
-                    option: "--users".to_string(),
-                    value: users.to_string(),
-                    detail: "The --users option can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-
-            // Setting --users to 0 is not allowed.
-            if users == 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "--users".to_string(),
-                    value: "0".to_string(),
-                    detail: "The --users option must be set to at least 1.".to_string(),
-                });
-            }
+            key = "--users";
+            value = users;
         // If not, check if a default for users is set.
         } else if let Some(default_users) = self.defaults.users {
             // On Worker hatch_rate comes from the Manager.
@@ -1271,18 +1264,44 @@ impl GooseAttack {
                 self.configuration.users = None;
             // Otherwise use default.
             } else {
+                key = "set_default(GooseDefault::Users)";
+                value = default_users;
+
                 self.configuration.users = Some(default_users);
             }
         // If not and if not running on Worker, default to 1.
         } else if self.attack_mode != GooseMode::Worker {
+            value = self.number_of_cpus;
+
             info!(
                 "concurrent users defaulted to {} (number of CPUs)",
                 self.number_of_cpus
             );
+
             self.configuration.users = Some(self.number_of_cpus);
         }
 
+        // Perform bounds checking.
         if let Some(users) = self.configuration.users {
+            // Setting --users with --worker is not allowed.
+            if self.attack_mode == GooseMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} can not be set together with the --worker flag.", key),
+                });
+            }
+
+            // Setting users to 0 is not allowed.
+            if users == 0 {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: "0".to_string(),
+                    detail: "The --users option must be set to at least 1.".to_string(),
+                });
+            }
+
+            // Debug output.
             info!("users = {}", users);
         }
 
@@ -1291,23 +1310,23 @@ impl GooseAttack {
 
     // Configure maximum run time if specified, otherwise run until canceled.
     fn set_run_time(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.run_time";
+        let mut value = 0;
+
         // Use --run-time if set, don't allow on Worker.
         self.run_time = if !self.configuration.run_time.is_empty() {
-            if self.attack_mode == GooseMode::Worker {
-                return Err(GooseError::InvalidOption {
-                    option: "--run-time".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --run-time option can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-            util::parse_timespan(&self.configuration.run_time)
+            key = "--run-time";
+            value = util::parse_timespan(&self.configuration.run_time);
+            value
         // Otherwise, use default if set, but not on Worker.
         } else if let Some(r) = self.defaults.run_time {
             if self.attack_mode == GooseMode::Worker {
                 0
             } else {
-                r
+                key = "set_default(GooseDefault::RunTime)";
+                value = r;
+                value
             }
         }
         // Otherwise the test runs until canceled.
@@ -1316,6 +1335,15 @@ impl GooseAttack {
         };
 
         if self.run_time > 0 {
+            if self.attack_mode == GooseMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} can not be set together with the --worker flag.", key),
+                });
+            }
+
+            // Debug output.
             info!("run_time = {}", self.run_time);
         }
 
@@ -1324,27 +1352,14 @@ impl GooseAttack {
 
     // Configure how quickly to hatch Goose Users.
     fn set_hatch_rate(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.hatch_rate";
+        let mut value = 0;
+
         // Check if --hash-rate is set.
         if let Some(hatch_rate) = self.configuration.hatch_rate {
-            // Setting --hatch-rate with --worker is not allowed.
-            if self.attack_mode == GooseMode::Worker {
-                return Err(GooseError::InvalidOption {
-                    option: "--hatch-rate".to_string(),
-                    value: hatch_rate.to_string(),
-                    detail:
-                        "The --hatch-rate option can not be set together with the --worker flag."
-                            .to_string(),
-                });
-            }
-
-            // Setting --hatch-rate of 0 is not allowed.
-            if hatch_rate == 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "--hatch-rate".to_string(),
-                    value: "0".to_string(),
-                    detail: "The --hatch-rate option must be set to at least 1.".to_string(),
-                });
-            }
+            key = "--hatch_rate";
+            value = hatch_rate;
         // If not, check if a default hatch_rate is set.
         } else if let Some(default_hatch_rate) = self.defaults.hatch_rate {
             // On Worker hatch_rate comes from the Manager.
@@ -1352,15 +1367,37 @@ impl GooseAttack {
                 self.configuration.hatch_rate = None;
             // Otherwise use default.
             } else {
+                key = "set_default(GooseDefault::HatchRate)";
+                value = default_hatch_rate;
                 self.configuration.hatch_rate = Some(default_hatch_rate);
             }
         // If not and if not running on Worker, default to 1.
         } else if self.attack_mode != GooseMode::Worker {
+            value = 1;
             self.configuration.hatch_rate = Some(1);
         }
 
         // Verbose output.
         if let Some(hatch_rate) = self.configuration.hatch_rate {
+            // Setting --hatch-rate with --worker is not allowed.
+            if self.attack_mode == GooseMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} can not be set together with the --worker flag.", key),
+                });
+            }
+
+            // Setting --hatch-rate of 0 is not allowed.
+            if hatch_rate == 0 {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} must be set to at least 1.", key),
+                });
+            }
+
+            // Debug output.
             info!("hatch_rate = {}", hatch_rate);
         }
 
@@ -1369,41 +1406,56 @@ impl GooseAttack {
 
     // Configure maximum requests per second if throttle enabled.
     fn set_throttle_requests(&mut self) -> Result<(), GooseError> {
-        // Setting --throttle-requests with --worker is not allowed.
-        if self.configuration.throttle_requests > 0 && self.attack_mode == GooseMode::Manager {
-            return Err(GooseError::InvalidOption {
-                option: "--throttle-requests".to_string(),
-                value: self.configuration.throttle_requests.to_string(),
-                detail: "The --throttle-requests option can not be set together with the --manager flag.".to_string(),
-            });
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.hatch_rate";
+        let mut value = 0;
+
+        if self.configuration.throttle_requests > 0 {
+            key = "--throttle-requests";
+            value = self.configuration.throttle_requests;
         }
 
         // Use default for throttle_requests if set and not on Worker.
         if self.configuration.throttle_requests == 0 {
-            if let Some(throttle_requests) = self.defaults.throttle_requests {
-                // Be sure throttle_requests is in allowed range.
-                if throttle_requests == 0 {
-                    return Err(GooseError::InvalidOption {
-                        option: "--throttle-requests".to_string(),
-                        value: throttle_requests.to_string(),
-                        detail: "The --throttle-requests option must be set to at least 1 request per second.".to_string(),
-                    });
-                } else if throttle_requests > 1_000_000 {
-                    return Err(GooseError::InvalidOption {
-                        option: "--throttle-requests".to_string(),
-                        value: throttle_requests.to_string(),
-                        detail: "The --throttle-requests option can not be set to more than 1,000,000 requests per second.".to_string(),
-                    });
-                }
-
+            if let Some(default_throttle_requests) = self.defaults.throttle_requests {
                 // In Gaggles, throttle_requests is only set on Worker.
                 if self.attack_mode != GooseMode::Manager {
-                    self.configuration.throttle_requests = throttle_requests;
+                    key = "set_default(GooseDefault::ThrottleRequests)";
+                    value = default_throttle_requests;
+
+                    self.configuration.throttle_requests = default_throttle_requests;
                 }
             }
         }
 
         if self.configuration.throttle_requests > 0 {
+            // Setting --throttle-requests with --worker is not allowed.
+            if self.attack_mode == GooseMode::Manager {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} can not be set together with the --manager flag.", key),
+                });
+            }
+
+            // Be sure throttle_requests is in allowed range.
+            if self.configuration.throttle_requests == 0 {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} must be set to at least 1 request per second.", key),
+                });
+            } else if self.configuration.throttle_requests > 1_000_000 {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!(
+                        "{} can not be set to more than 1,000,000 requests per second.",
+                        key
+                    ),
+                });
+            }
+
             info!(
                 "throttle_requests = {}",
                 self.configuration.throttle_requests
@@ -1415,23 +1467,31 @@ impl GooseAttack {
 
     // Determine if no_reset_statics is enabled.
     fn set_no_reset_metrics(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_reset_metrics";
+        let mut value = false;
+
+        if self.configuration.no_reset_metrics {
+            key = "--no-reset-metrics";
+            value = true;
+        // If not otherwise set and not Worker, check if there's a default.
+        } else if self.attack_mode != GooseMode::Worker {
+            if let Some(default) = self.defaults.no_reset_metrics {
+                key = "set_default(GooseDefault::NoResetMetrics)";
+                value = default;
+
+                // Optionally set default.
+                self.configuration.no_reset_metrics = default;
+            }
+        }
+
         // Setting --no-reset-metrics with --worker is not allowed.
         if self.configuration.no_reset_metrics && self.attack_mode == GooseMode::Worker {
             return Err(GooseError::InvalidOption {
-                option: "--no-reset-metrics".to_string(),
-                value: self.configuration.no_reset_metrics.to_string(),
-                detail:
-                    "The --no-reset-metrics flag can not be set together with the --worker flag."
-                        .to_string(),
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
             });
-        }
-
-        // If not otherwise set and not Worker, check if there's a default.
-        if !self.configuration.no_reset_metrics && self.attack_mode != GooseMode::Worker {
-            // Optionally set default.
-            if let Some(default) = self.defaults.no_reset_metrics {
-                self.configuration.no_reset_metrics = default;
-            }
         }
 
         Ok(())
@@ -1439,22 +1499,31 @@ impl GooseAttack {
 
     // Determine if the status_codes flag is enabled.
     fn set_status_codes(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.status_codes";
+        let mut value = false;
+
+        if self.configuration.status_codes {
+            key = "--status-codes";
+            value = true;
+        // If not otherwise set and not Worker, check if there's a default.
+        } else if self.attack_mode != GooseMode::Worker {
+            if let Some(default) = self.defaults.status_codes {
+                key = "set_default(GooseDefault::StatusCodes)";
+                value = default;
+
+                // Optionally set default.
+                self.configuration.status_codes = default;
+            }
+        }
+
         // Setting --status-codes with --worker is not allowed.
         if self.configuration.status_codes && self.attack_mode == GooseMode::Worker {
             return Err(GooseError::InvalidOption {
-                option: "--status-codes".to_string(),
-                value: self.configuration.status_codes.to_string(),
-                detail: "The --status-codes flag can not be set together with the --worker flag."
-                    .to_string(),
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
             });
-        }
-
-        // If not otherwise set and not Worker, check if there's a default.
-        if !self.configuration.status_codes && self.attack_mode != GooseMode::Worker {
-            // Optionally set default.
-            if let Some(default) = self.defaults.status_codes {
-                self.configuration.status_codes = default;
-            }
         }
 
         Ok(())
@@ -1462,22 +1531,31 @@ impl GooseAttack {
 
     // Determine if the only_summary flag is enabled.
     fn set_only_summary(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.only_summary";
+        let mut value = false;
+
+        if self.configuration.only_summary {
+            key = "--only-summary";
+            value = true;
+        // If not otherwise set and not Worker, check if there's a default.
+        } else if self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.only_summary {
+                key = "set_default(GooseDefault::OnlySummary)";
+                value = default;
+
+                self.configuration.only_summary = default;
+            }
+        }
+
         // Setting --only-summary with --worker is not allowed.
         if self.configuration.only_summary && self.attack_mode == GooseMode::Worker {
             return Err(GooseError::InvalidOption {
-                option: "--only-summary".to_string(),
-                value: self.configuration.only_summary.to_string(),
-                detail: "The --only-summary flag can not be set together with the --worker flag."
-                    .to_string(),
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
             });
-        }
-
-        // If not otherwise set and not Worker, check if there's a default.
-        if !self.configuration.only_summary && self.attack_mode != GooseMode::Worker {
-            // Optionally set default.
-            if let Some(default) = self.defaults.only_summary {
-                self.configuration.only_summary = default;
-            }
         }
 
         Ok(())
@@ -1485,23 +1563,31 @@ impl GooseAttack {
 
     // Determine if the no_task_metrics flag is enabled.
     fn set_no_task_metrics(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_task_metrics";
+        let mut value = false;
+
+        if self.configuration.no_task_metrics {
+            key = "--no-task-metrics";
+            value = true;
+        // If not otherwise set and not Worker, check if there's a default.
+        } else if self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.no_task_metrics {
+                key = "set_default(GooseDefault::NoTaskMetrics)";
+                value = default;
+
+                self.configuration.no_task_metrics = default;
+            }
+        }
+
         // Setting --no-task-metrics with --worker is not allowed.
         if self.configuration.no_task_metrics && self.attack_mode == GooseMode::Worker {
             return Err(GooseError::InvalidOption {
-                option: "--no-task-metrics".to_string(),
-                value: self.configuration.no_task_metrics.to_string(),
-                detail:
-                    "The --no-task-metrics flag can not be set together with the --worker flag."
-                        .to_string(),
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
             });
-        }
-
-        // If not otherwise set and not Worker, check if there's a default.
-        if !self.configuration.no_task_metrics && self.attack_mode != GooseMode::Worker {
-            // Optionally set default.
-            if let Some(default) = self.defaults.no_task_metrics {
-                self.configuration.no_task_metrics = default;
-            }
         }
 
         Ok(())
@@ -1509,49 +1595,67 @@ impl GooseAttack {
 
     // Determine if the no_metrics flag is enabled.
     fn set_no_metrics(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_metrics";
+        let mut value = false;
+
+        if self.configuration.no_metrics {
+            key = "--no-metrics";
+            value = true;
+        // If not otherwise set and not Worker, check if there's a default.
+        } else if self.attack_mode != GooseMode::Worker {
+            // Optionally set default.
+            if let Some(default) = self.defaults.no_metrics {
+                key = "set_default(GooseDefault::NoMetrics)";
+                value = default;
+
+                self.configuration.no_metrics = default;
+            }
+        }
+
         // Setting --no-metrics with --worker is not allowed.
         if self.configuration.no_metrics && self.attack_mode == GooseMode::Worker {
             return Err(GooseError::InvalidOption {
-                option: "--no-metrics".to_string(),
-                value: self.configuration.no_metrics.to_string(),
-                detail: "The --no-metrics flag can not be set together with the --worker flag."
-                    .to_string(),
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
             });
-        }
-
-        // If not otherwise set and not Worker, check if there's a default.
-        if !self.configuration.no_metrics && self.attack_mode != GooseMode::Worker {
-            // Optionally set default.
-            if let Some(default) = self.defaults.no_metrics {
-                self.configuration.no_metrics = default;
-            }
         }
 
         // Don't allow overhead of collecting metrics unless we're printing them.
         if self.configuration.no_metrics {
             if self.configuration.status_codes {
                 return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --status-codes flag.".to_string(),
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!(
+                        "{} can not be set together with the --status-codes flag.",
+                        key
+                    ),
                 });
             }
 
             // Don't allow overhead of collecting metrics unless we're printing them.
             if self.configuration.only_summary {
                 return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --only-summary flag.".to_string(),
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!(
+                        "{} can not be set together with the --only-summary flag.",
+                        key
+                    ),
                 });
             }
 
             // There is nothing to log if metrics are disabled.
             if !self.configuration.metrics_file.is_empty() {
                 return Err(GooseError::InvalidOption {
-                    option: "--no-metrics".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --metrics-file option.".to_string(),
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!(
+                        "{} can not be set together with the --metrics-file option.",
+                        key
+                    ),
                 });
             }
         }
@@ -1561,22 +1665,30 @@ impl GooseAttack {
 
     // Determine if the sticky_follow flag is enabled.
     fn set_sticky_follow(&mut self) -> Result<(), GooseError> {
-        // Setting --sticky-follow with --worker is not allowed.
-        if self.configuration.sticky_follow && self.attack_mode == GooseMode::Worker {
-            return Err(GooseError::InvalidOption {
-                option: "--sticky-follow".to_string(),
-                value: self.configuration.sticky_follow.to_string(),
-                detail: "The --sticky-follow flag can not be set together with the --worker flag."
-                    .to_string(),
-            });
-        }
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.sticky_follow";
+        let mut value = false;
 
+        if self.configuration.sticky_follow {
+            key = "--sticky-follow";
+            value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        if !self.configuration.sticky_follow && self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
             if let Some(default) = self.defaults.sticky_follow {
+                key = "set_default(GooseDefault::StickyFollow)";
+                value = default;
+
                 self.configuration.sticky_follow = default;
             }
+        }
+
+        if self.configuration.sticky_follow && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
+            });
         }
 
         Ok(())
@@ -1585,22 +1697,30 @@ impl GooseAttack {
     #[cfg(feature = "gaggle")]
     // Determine if no_hash_check flag is enabled.
     fn set_no_hash_check(&mut self) -> Result<(), GooseError> {
-        // Setting --no-hash-check with --worker is not allowed.
-        if self.configuration.no_hash_check && self.attack_mode == GooseMode::Worker {
-            return Err(GooseError::InvalidOption {
-                option: "--no-hash-check".to_string(),
-                value: self.configuration.no_hash_check.to_string(),
-                detail: "The --no-hash-check flag can not be set together with the --worker flag."
-                    .to_string(),
-            });
-        }
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_hash_check";
+        let mut value = false;
 
+        if self.configuration.no_hash_check {
+            key = "--no-hash-check";
+            value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        if !self.configuration.no_hash_check && self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
             if let Some(default) = self.defaults.no_hash_check {
+                key = "set_default(GooseDefault::NoHashCheck)";
+                value = default;
+
                 self.configuration.no_hash_check = default;
             }
+        }
+
+        if self.configuration.no_hash_check && self.attack_mode == GooseMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
+            });
         }
 
         Ok(())
@@ -2614,7 +2734,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ManagerPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
-                    value: format!("{}", value),
+                    value: value.to_string(),
                     detail: format!(
                         "set_default(GooseDefault::{:?}, {}) expected usize value, received &str",
                         key, value
@@ -2823,7 +2943,7 @@ pub struct GooseConfiguration {
     pub manager: bool,
     /// Sets number of Workers to expect
     #[options(no_short, meta = "VALUE")]
-    pub expect_workers: u16,
+    pub expect_workers: Option<u16>,
     /// Tells Manager to ignore load test checksum
     #[options(no_short)]
     pub no_hash_check: bool,
