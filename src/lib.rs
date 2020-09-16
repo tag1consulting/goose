@@ -104,7 +104,7 @@
 //!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2)?)
 //!         )
 //!         // You could also set a default host here, for example:
-//!         //.set_default(GooseDefault::Host, "http://dev.local/")
+//!         //.set_default(GooseDefault::Host, "http://dev.local/")?
 //!         .execute()?;
 //!
 //!     Ok(())
@@ -2531,7 +2531,7 @@ impl GooseAttack {
 ///
 /// fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
-///         .set_default(GooseDefault::Host, "local.dev");
+///         .set_default(GooseDefault::Host, "local.dev")?;
 ///
 ///     Ok(())
 /// }
@@ -2570,7 +2570,7 @@ impl GooseAttack {
 ///  - GooseDefault::StickyFollow
 ///  - GooseDefault::Manager
 ///  - GooseDefault::NoHashCheck
-///  - GooseDefault::Worker => panic!(format!(
+///  - GooseDefault::Worker
 ///
 /// # Another Example
 /// ```rust,no_run
@@ -2578,18 +2578,18 @@ impl GooseAttack {
 ///
 /// fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
-///         .set_default(GooseDefault::OnlySummary, true)
-///         .set_default(GooseDefault::Verbose, 1)
-///         .set_default(GooseDefault::MetricsFile, "goose-metrics.log");
+///         .set_default(GooseDefault::OnlySummary, true)?
+///         .set_default(GooseDefault::Verbose, 1)?
+///         .set_default(GooseDefault::MetricsFile, "goose-metrics.log")?;
 ///
 ///     Ok(())
 /// }
 /// ```
 pub trait GooseDefaultType<T> {
-    fn set_default(self, key: GooseDefault, value: T) -> Self;
+    fn set_default(self, key: GooseDefault, value: T) -> Result<Box<Self>, GooseError>;
 }
 impl GooseDefaultType<&str> for GooseAttack {
-    fn set_default(mut self, key: GooseDefault, value: &str) -> Self {
+    fn set_default(mut self, key: GooseDefault, value: &str) -> Result<Box<Self>, GooseError> {
         match key {
             // Set valid defaults.
             GooseDefault::Host => self.defaults.host = Some(value.to_string()),
@@ -2611,10 +2611,17 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
             | GooseDefault::ManagerBindPort
-            | GooseDefault::ManagerPort => panic!(format!(
-                "set_default(GooseDefault::{:?}, {}) expected usize value, received &str",
-                key, value
-            )),
+            | GooseDefault::ManagerPort => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key).to_string(),
+                    value: format!("{}", value).to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected usize value, received &str",
+                        key, value
+                    )
+                    .to_string(),
+                });
+            }
             GooseDefault::OnlySummary
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
@@ -2628,32 +2635,60 @@ impl GooseDefaultType<&str> for GooseAttack {
                 key, value
             )),
         }
-        self
+        Ok(Box::new(self))
     }
 }
 impl GooseDefaultType<usize> for GooseAttack {
-    fn set_default(mut self, key: GooseDefault, value: usize) -> Self {
+    fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
-            // Set valid defaults.
             GooseDefault::Users => {
-                if value > 0 {
-                    self.defaults.users = Some(value);
-                } else {
-                    panic!(
-                        "set_default(GooseDefault::Users, 0) invalid, must be set to at least 1"
-                    );
+                // At least 1 user is required for a valid load test.
+                if value == 0 {
+                    return Err(GooseError::InvalidOption {
+                        option: format!("GooseDefault::{:?}", key).to_string(),
+                        value: format!("{}", value).to_string(),
+                        detail: format!(
+                            "set_default(GooseDefault::{:?}, {}) invalid, must be set to at least 1",
+                            key, value
+                        )
+                        .to_string(),
+                    });
                 }
+
+                self.defaults.users = Some(value);
             }
             GooseDefault::HatchRate => {
-                if value > 0 {
-                    self.defaults.hatch_rate = Some(value);
-                } else {
-                    panic!(
-                        "set_default(GooseDefault::HatchRate, 0) invalid, must be set to at least 1"
-                    );
+                // Must hatch at least 1 user per second for a valid load test.
+                if value == 0 {
+                    return Err(GooseError::InvalidOption {
+                        option: format!("GooseDefault::{:?}", key).to_string(),
+                        value: format!("{}", value).to_string(),
+                        detail: format!(
+                            "set_default(GooseDefault::{:?}, {}) invalid, must be set to at least 1",
+                            key, value
+                        )
+                        .to_string(),
+                    });
                 }
+
+                self.defaults.hatch_rate = Some(value);
             }
-            GooseDefault::RunTime => self.defaults.run_time = Some(value),
+            GooseDefault::RunTime => {
+                // Load test must run for at least 1 second.
+                if value == 0 {
+                    return Err(GooseError::InvalidOption {
+                        option: format!("GooseDefault::{:?}", key).to_string(),
+                        value: format!("{}", value).to_string(),
+                        detail: format!(
+                            "set_default(GooseDefault::{:?}, {}) invalid, must be set to at least 1",
+                            key, value
+                        )
+                        .to_string(),
+                    });
+                }
+
+                self.defaults.run_time = Some(value);
+            }
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
@@ -2668,10 +2703,17 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
             | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost => panic!(format!(
-                "set_default(GooseDefault::{:?}, {}) expected &str value, received usize",
-                key, value
-            )),
+            | GooseDefault::ManagerHost => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key).to_string(),
+                    value: format!("{}", value).to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected &str value, received usize",
+                        key, value
+                    )
+                    .to_string(),
+                })
+            }
             GooseDefault::OnlySummary
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
@@ -2680,16 +2722,23 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
-            | GooseDefault::Worker => panic!(format!(
-                "set_default(GooseDefault::{:?}, {}) expected bool value, received usize",
-                key, value
-            )),
+            | GooseDefault::Worker => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key).to_string(),
+                    value: format!("{}", value).to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected bool value, received usize",
+                        key, value
+                    )
+                    .to_string(),
+                })
+            }
         }
-        self
+        Ok(Box::new(self))
     }
 }
 impl GooseDefaultType<bool> for GooseAttack {
-    fn set_default(mut self, key: GooseDefault, value: bool) -> Self {
+    fn set_default(mut self, key: GooseDefault, value: bool) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::OnlySummary => self.defaults.only_summary = Some(value),
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
@@ -2708,10 +2757,17 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
             | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost => panic!(format!(
-                "set_default(GooseDefault::{:?}, {}) expected &str value, received bool",
-                key, value
-            )),
+            | GooseDefault::ManagerHost => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key).to_string(),
+                    value: format!("{}", value).to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected &str value, received bool",
+                        key, value
+                    )
+                    .to_string(),
+                })
+            }
             GooseDefault::Users
             | GooseDefault::HatchRate
             | GooseDefault::RunTime
@@ -2720,12 +2776,19 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
             | GooseDefault::ManagerBindPort
-            | GooseDefault::ManagerPort => panic!(format!(
-                "set_default(GooseDefault::{:?}, {}) expected usize value, received bool",
-                key, value
-            )),
+            | GooseDefault::ManagerPort => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key).to_string(),
+                    value: format!("{}", value).to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected usize value, received bool",
+                        key, value
+                    )
+                    .to_string(),
+                })
+            }
         }
-        self
+        Ok(Box::new(self))
     }
 }
 
@@ -3097,31 +3160,57 @@ mod test {
         let goose_attack = GooseAttack::initialize()
             .unwrap()
             .set_default(GooseDefault::Host, host.as_str())
+            .unwrap()
             .set_default(GooseDefault::Users, users)
+            .unwrap()
             .set_default(GooseDefault::RunTime, run_time)
+            .unwrap()
             .set_default(GooseDefault::HatchRate, hatch_rate)
+            .unwrap()
             .set_default(GooseDefault::LogLevel, log_level)
+            .unwrap()
             .set_default(GooseDefault::LogFile, log_file.as_str())
+            .unwrap()
             .set_default(GooseDefault::Verbose, verbose)
+            .unwrap()
             .set_default(GooseDefault::OnlySummary, true)
+            .unwrap()
             .set_default(GooseDefault::NoResetMetrics, true)
+            .unwrap()
             .set_default(GooseDefault::NoMetrics, true)
+            .unwrap()
             .set_default(GooseDefault::NoTaskMetrics, true)
+            .unwrap()
             .set_default(GooseDefault::MetricsFile, metrics_file.as_str())
+            .unwrap()
             .set_default(GooseDefault::MetricsFormat, metrics_format.as_str())
+            .unwrap()
             .set_default(GooseDefault::DebugFile, debug_file.as_str())
+            .unwrap()
             .set_default(GooseDefault::DebugFormat, debug_format.as_str())
+            .unwrap()
             .set_default(GooseDefault::StatusCodes, true)
+            .unwrap()
             .set_default(GooseDefault::ThrottleRequests, throttle_requests)
+            .unwrap()
             .set_default(GooseDefault::StickyFollow, true)
+            .unwrap()
             .set_default(GooseDefault::Manager, true)
+            .unwrap()
             .set_default(GooseDefault::ExpectWorkers, expect_workers)
+            .unwrap()
             .set_default(GooseDefault::NoHashCheck, true)
+            .unwrap()
             .set_default(GooseDefault::ManagerBindHost, manager_bind_host.as_str())
+            .unwrap()
             .set_default(GooseDefault::ManagerBindPort, manager_bind_port)
+            .unwrap()
             .set_default(GooseDefault::Worker, true)
+            .unwrap()
             .set_default(GooseDefault::ManagerHost, manager_host.as_str())
-            .set_default(GooseDefault::ManagerPort, manager_port);
+            .unwrap()
+            .set_default(GooseDefault::ManagerPort, manager_port)
+            .unwrap();
 
         assert!(goose_attack.defaults.host == Some(host));
         assert!(goose_attack.defaults.users == Some(users));
@@ -3149,45 +3238,5 @@ mod test {
         assert!(goose_attack.defaults.worker == Some(true));
         assert!(goose_attack.defaults.manager_host == Some(manager_host));
         assert!(goose_attack.defaults.manager_port == Some(manager_port as u16));
-    }
-
-    #[test]
-    #[should_panic]
-    fn set_defaults_invalid_str() {
-        // Setting GooseDefault::Users with a &str (instead of a usize) will panic.
-        let value: &str = "invalid";
-        let _ = GooseAttack::initialize()
-            .unwrap()
-            .set_default(GooseDefault::Users, value);
-    }
-
-    #[test]
-    #[should_panic]
-    fn set_defaults_invalid_users() {
-        // Setting GooseDefault::Users to 0 is invalid and will panic.
-        let value: usize = 0;
-        let _ = GooseAttack::initialize()
-            .unwrap()
-            .set_default(GooseDefault::Users, value);
-    }
-
-    #[test]
-    #[should_panic]
-    fn set_defaults_invalid_usize() {
-        // Setting GooseDefault::Host with a usize (instead of a &str) will panic.
-        let value: usize = 42;
-        let _ = GooseAttack::initialize()
-            .unwrap()
-            .set_default(GooseDefault::Host, value);
-    }
-
-    #[test]
-    #[should_panic]
-    fn set_defaults_invalid_bool() {
-        // Setting GooseDefault::ExpectWorkers with a bool (instead of a usize) will panic.
-        let value: bool = true;
-        let _ = GooseAttack::initialize()
-            .unwrap()
-            .set_default(GooseDefault::ExpectWorkers, value);
     }
 }
