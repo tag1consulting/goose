@@ -2456,7 +2456,7 @@ impl GooseAttack {
                         // Manually create CSV, library doesn't support single-row string conversion.
                         "csv" => GooseAttack::prepare_csv(&raw_request, header),
                         // Raw format is Debug output for GooseRawRequest structure.
-                        "raw" => format!("{:?}", raw_request).to_string(),
+                        "raw" => format!("{:?}", raw_request),
                         _ => unreachable!(),
                     };
                     if let Some(file) = metrics_file.as_mut() {
@@ -2613,13 +2613,12 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ManagerBindPort
             | GooseDefault::ManagerPort => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key).to_string(),
-                    value: format!("{}", value).to_string(),
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{}", value),
                     detail: format!(
                         "set_default(GooseDefault::{:?}, {}) expected usize value, received &str",
                         key, value
-                    )
-                    .to_string(),
+                    ),
                 });
             }
             GooseDefault::OnlySummary
@@ -2641,54 +2640,9 @@ impl GooseDefaultType<&str> for GooseAttack {
 impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
-            GooseDefault::Users => {
-                // At least 1 user is required for a valid load test.
-                if value == 0 {
-                    return Err(GooseError::InvalidOption {
-                        option: format!("GooseDefault::{:?}", key).to_string(),
-                        value: format!("{}", value).to_string(),
-                        detail: format!(
-                            "set_default(GooseDefault::{:?}, {}) invalid, must be set to at least 1",
-                            key, value
-                        )
-                        .to_string(),
-                    });
-                }
-
-                self.defaults.users = Some(value);
-            }
-            GooseDefault::HatchRate => {
-                // Must hatch at least 1 user per second for a valid load test.
-                if value == 0 {
-                    return Err(GooseError::InvalidOption {
-                        option: format!("GooseDefault::{:?}", key).to_string(),
-                        value: format!("{}", value).to_string(),
-                        detail: format!(
-                            "set_default(GooseDefault::{:?}, {}) invalid, must be set to at least 1",
-                            key, value
-                        )
-                        .to_string(),
-                    });
-                }
-
-                self.defaults.hatch_rate = Some(value);
-            }
-            GooseDefault::RunTime => {
-                // Load test must run for at least 1 second.
-                if value == 0 {
-                    return Err(GooseError::InvalidOption {
-                        option: format!("GooseDefault::{:?}", key).to_string(),
-                        value: format!("{}", value).to_string(),
-                        detail: format!(
-                            "set_default(GooseDefault::{:?}, {}) invalid, must be set to at least 1",
-                            key, value
-                        )
-                        .to_string(),
-                    });
-                }
-
-                self.defaults.run_time = Some(value);
-            }
+            GooseDefault::Users => self.defaults.users = Some(value),
+            GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value),
+            GooseDefault::RunTime => self.defaults.run_time = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
@@ -2705,13 +2659,12 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::ManagerBindHost
             | GooseDefault::ManagerHost => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key).to_string(),
-                    value: format!("{}", value).to_string(),
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{}", value),
                     detail: format!(
                         "set_default(GooseDefault::{:?}, {}) expected &str value, received usize",
                         key, value
-                    )
-                    .to_string(),
+                    ),
                 })
             }
             GooseDefault::OnlySummary
@@ -2724,13 +2677,12 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoHashCheck
             | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key).to_string(),
-                    value: format!("{}", value).to_string(),
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{}", value),
                     detail: format!(
                         "set_default(GooseDefault::{:?}, {}) expected bool value, received usize",
                         key, value
-                    )
-                    .to_string(),
+                    ),
                 })
             }
         }
@@ -2759,13 +2711,12 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ManagerBindHost
             | GooseDefault::ManagerHost => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key).to_string(),
-                    value: format!("{}", value).to_string(),
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{}", value),
                     detail: format!(
                         "set_default(GooseDefault::{:?}, {}) expected &str value, received bool",
                         key, value
-                    )
-                    .to_string(),
+                    ),
                 })
             }
             GooseDefault::Users
@@ -2778,13 +2729,12 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ManagerBindPort
             | GooseDefault::ManagerPort => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key).to_string(),
-                    value: format!("{}", value).to_string(),
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{}", value),
                     detail: format!(
                         "set_default(GooseDefault::{:?}, {}) expected usize value, received bool",
                         key, value
-                    )
-                    .to_string(),
+                    ),
                 })
             }
         }
