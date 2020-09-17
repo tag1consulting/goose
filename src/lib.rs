@@ -790,8 +790,8 @@ impl GooseAttack {
         // Set log level based on run-time option or default if set.
         let log_level_value = if self.configuration.log_level > 0 {
             self.configuration.log_level
-        } else if let Some(value) = self.defaults.log_level {
-            value
+        } else if let Some(default_log_level) = self.defaults.log_level {
+            default_log_level
         } else {
             0
         };
@@ -1320,13 +1320,13 @@ impl GooseAttack {
             value = util::parse_timespan(&self.configuration.run_time);
             value
         // Otherwise, use default if set, but not on Worker.
-        } else if let Some(r) = self.defaults.run_time {
+        } else if let Some(default_run_time) = self.defaults.run_time {
             if self.attack_mode == GooseMode::Worker {
                 0
             } else {
                 key = "set_default(GooseDefault::RunTime)";
-                value = r;
-                value
+                value = default_run_time;
+                default_run_time
             }
         }
         // Otherwise the test runs until canceled.
@@ -1476,12 +1476,12 @@ impl GooseAttack {
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
-            if let Some(default) = self.defaults.no_reset_metrics {
+            if let Some(default_no_reset_metrics) = self.defaults.no_reset_metrics {
                 key = "set_default(GooseDefault::NoResetMetrics)";
-                value = default;
+                value = default_no_reset_metrics;
 
                 // Optionally set default.
-                self.configuration.no_reset_metrics = default;
+                self.configuration.no_reset_metrics = default_no_reset_metrics;
             }
         }
 
@@ -1508,12 +1508,12 @@ impl GooseAttack {
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
-            if let Some(default) = self.defaults.status_codes {
+            if let Some(default_status_codes) = self.defaults.status_codes {
                 key = "set_default(GooseDefault::StatusCodes)";
-                value = default;
+                value = default_status_codes;
 
                 // Optionally set default.
-                self.configuration.status_codes = default;
+                self.configuration.status_codes = default_status_codes;
             }
         }
 
@@ -1541,11 +1541,11 @@ impl GooseAttack {
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
-            if let Some(default) = self.defaults.only_summary {
+            if let Some(default_only_summary) = self.defaults.only_summary {
                 key = "set_default(GooseDefault::OnlySummary)";
-                value = default;
+                value = default_only_summary;
 
-                self.configuration.only_summary = default;
+                self.configuration.only_summary = default_only_summary;
             }
         }
 
@@ -1573,11 +1573,11 @@ impl GooseAttack {
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
-            if let Some(default) = self.defaults.no_task_metrics {
+            if let Some(default_no_task_metrics) = self.defaults.no_task_metrics {
                 key = "set_default(GooseDefault::NoTaskMetrics)";
-                value = default;
+                value = default_no_task_metrics;
 
-                self.configuration.no_task_metrics = default;
+                self.configuration.no_task_metrics = default_no_task_metrics;
             }
         }
 
@@ -1605,11 +1605,11 @@ impl GooseAttack {
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
-            if let Some(default) = self.defaults.no_metrics {
+            if let Some(default_no_metrics) = self.defaults.no_metrics {
                 key = "set_default(GooseDefault::NoMetrics)";
-                value = default;
+                value = default_no_metrics;
 
-                self.configuration.no_metrics = default;
+                self.configuration.no_metrics = default_no_metrics;
             }
         }
 
@@ -1675,11 +1675,11 @@ impl GooseAttack {
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
-            if let Some(default) = self.defaults.sticky_follow {
+            if let Some(default_sticky_follow) = self.defaults.sticky_follow {
                 key = "set_default(GooseDefault::StickyFollow)";
-                value = default;
+                value = default_sticky_follow;
 
-                self.configuration.sticky_follow = default;
+                self.configuration.sticky_follow = default_sticky_follow;
             }
         }
 
@@ -1707,11 +1707,11 @@ impl GooseAttack {
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
-            if let Some(default) = self.defaults.no_hash_check {
+            if let Some(default_no_hash_check) = self.defaults.no_hash_check {
                 key = "set_default(GooseDefault::NoHashCheck)";
-                value = default;
+                value = default_no_hash_check;
 
-                self.configuration.no_hash_check = default;
+                self.configuration.no_hash_check = default_no_hash_check;
             }
         }
 
@@ -1751,8 +1751,8 @@ impl GooseAttack {
     // Configure metrics log format.
     fn set_metrics_format(&mut self) -> Result<(), GooseError> {
         if self.configuration.metrics_format.is_empty() {
-            if let Some(metrics_format) = &self.defaults.metrics_format {
-                self.configuration.metrics_format = metrics_format.to_string();
+            if let Some(default_metrics_format) = &self.defaults.metrics_format {
+                self.configuration.metrics_format = default_metrics_format.to_string();
             } else {
                 self.configuration.metrics_format = "json".to_string();
             }
@@ -1814,8 +1814,8 @@ impl GooseAttack {
     // Configure debug log format.
     fn set_debug_format(&mut self) -> Result<(), GooseError> {
         if self.configuration.debug_format.is_empty() {
-            if let Some(debug_format) = &self.defaults.debug_format {
-                self.configuration.debug_format = debug_format.to_string();
+            if let Some(default_debug_format) = &self.defaults.debug_format {
+                self.configuration.debug_format = default_debug_format.to_string();
             } else {
                 self.configuration.debug_format = "json".to_string();
             }
