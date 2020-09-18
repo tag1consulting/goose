@@ -23,7 +23,7 @@ pub enum GaggleMetrics {
     Tasks(GooseTaskMetrics),
 }
 
-// If pipe closes unexpectedly, exit.
+// If pipe closes unexpectedly, panic.
 fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     if event == PipeEvent::RemovePost {
         panic!("[{}] manager went away, exiting", get_worker_id());
@@ -35,6 +35,15 @@ fn pipe_closed_during_shutdown(_pipe: Pipe, event: PipeEvent) {
     if event == PipeEvent::RemovePost {
         info!("[{}] manager went away", get_worker_id());
     }
+}
+
+// Helper that registers the shutdown pipe handler, avoiding a panic when we
+// expect the manager to exit.
+pub fn register_shutdown_pipe_handler(manager: &Socket) {
+    manager
+        .pipe_notify(pipe_closed_during_shutdown)
+        .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
+        .expect("failed to set up new pipe handler");
 }
 
 pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
@@ -256,10 +265,7 @@ pub fn push_metrics_to_manager(
         if command == GooseUserCommand::EXIT {
             info!("[{}] received EXIT command from manager", get_worker_id());
             // Shutting down, register shutdown pipe handler.
-            manager
-                .pipe_notify(pipe_closed_during_shutdown)
-                .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
-                .expect("failed to set up new pipe handler");
+            register_shutdown_pipe_handler(manager);
             return false;
         }
     }
