@@ -40,11 +40,11 @@ lazy_static! {
 }
 
 fn distribute_users(goose_attack: &GooseAttack) -> (usize, usize) {
-    // Users is required to get here, so unwrap() is safe.
+    // Users and expect_workers is required to get here, so unwrap() is safe.
     let users_per_worker = goose_attack.configuration.users.unwrap()
-        / (goose_attack.configuration.expect_workers as usize);
+        / (goose_attack.configuration.expect_workers.unwrap() as usize);
     let users_remainder = goose_attack.configuration.users.unwrap()
-        % (goose_attack.configuration.expect_workers as usize);
+        % (goose_attack.configuration.expect_workers.unwrap() as usize);
     if users_remainder > 0 {
         info!(
             "each worker to start {} users, assigning 1 extra to {} workers",
@@ -239,9 +239,11 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         .map_err(|error| eprintln!("{:?} (address = {})", error, address))
         .expect("failed to bind to socket");
 
+    // Expect workers is reqiured so unwrap() is safe.
     info!(
         "manager listening on {}, waiting for {} workers",
-        &address, goose_attack.configuration.expect_workers,
+        &address,
+        goose_attack.configuration.expect_workers.unwrap(),
     );
 
     // Calculate how many users each worker will be responsible for.
@@ -347,8 +349,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
                 // Check if we're seeing this worker for the first time.
                 if !workers.contains(&pipe) {
-                    // Check if we are expecting another worker.
-                    if workers.len() >= goose_attack.configuration.expect_workers as usize {
+                    // Check if we are expecting another worker. Expect workers is required
+                    // so unwrap() is safe.
+                    if workers.len() >= goose_attack.configuration.expect_workers.unwrap() as usize
+                    {
                         // We already have enough workers, tell this extra one to EXIT.
                         if !tell_worker_to_exit(&server) {
                             // All workers have exited, shut down the
@@ -389,10 +393,11 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         }
 
                         workers.insert(pipe);
+                        // Expect workers is required so unwrap() is safe.
                         info!(
                             "worker {} of {} connected",
                             workers.len(),
-                            goose_attack.configuration.expect_workers,
+                            goose_attack.configuration.expect_workers.unwrap(),
                         );
 
                         // Send new worker a batch of users.
@@ -437,7 +442,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             break;
                         }
 
-                        if workers.len() == goose_attack.configuration.expect_workers as usize {
+                        // Expect workers is required so unwrap() is safe.
+                        if workers.len()
+                            == goose_attack.configuration.expect_workers.unwrap() as usize
+                        {
                             info!("gaggle distributed load test started");
                             // Reset start time, the distributed load test is truly starting now.
                             started = time::Instant::now();
