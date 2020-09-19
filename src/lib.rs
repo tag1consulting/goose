@@ -1271,6 +1271,9 @@ impl GooseAttack {
             }
         // If not and if not running on Worker, default to 1.
         } else if self.attack_mode != GooseMode::Worker {
+            // This should not be able to fail, but setting up debug in case the number
+            // of cpus library returns an invalid number.
+            key = "Goose default";
             value = self.number_of_cpus;
 
             info!(
@@ -1278,7 +1281,7 @@ impl GooseAttack {
                 self.number_of_cpus
             );
 
-            self.configuration.users = Some(self.number_of_cpus);
+            self.configuration.users = Some(value);
         }
 
         // Perform bounds checking.
@@ -1373,8 +1376,11 @@ impl GooseAttack {
             }
         // If not and if not running on Worker, default to 1.
         } else if self.attack_mode != GooseMode::Worker {
+            // This should not be able to fail, but setting up debug in case a later
+            // change introduces the potential for failure.
+            key = "Goose default";
             value = 1;
-            self.configuration.hatch_rate = Some(1);
+            self.configuration.hatch_rate = Some(value);
         }
 
         // Verbose output.
