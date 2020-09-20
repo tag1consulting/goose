@@ -1865,8 +1865,10 @@ impl GooseUser {
     /// against foo.example.com.
     ///
     /// This functionality is used internally by Goose to follow redirects of the
-    /// base_url, but it is also available to be manually invoked from a load test
-    /// such as in the following example.
+    /// base_url when `--sticky-follow` is specified at run time, or
+    /// `set_default(GooseDefault::StickyFollow, true)` is enabled. It is also
+    /// available to be manually invoked from a load test such as in the following
+    /// example.
     ///
     /// # Example
     /// ```rust,no_run
