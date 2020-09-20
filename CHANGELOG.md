@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.1-dev
+## 0.10.1 Sep 20, 2020
  - rework `hatch_rate` to be stored in an `Option<usize>` as it can be `None` on a Worker
  - remove redundant `GooseAttack.users` instead using the `Option<usize>` in `configuration`
  - improve bounds handling of defaults, generate errors for invalid values
