@@ -257,6 +257,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     // Track start time, we'll reset this when the test actually starts.
     let mut started = time::Instant::now();
+    goose_attack.started = Some(started);
     let mut running_metrics_timer = time::Instant::now();
     let mut exit_timer = time::Instant::now();
     let mut load_test_running = false;
@@ -449,6 +450,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             info!("gaggle distributed load test started");
                             // Reset start time, the distributed load test is truly starting now.
                             started = time::Instant::now();
+                            goose_attack.started = Some(started);
                             running_metrics_timer = time::Instant::now();
                             load_test_running = true;
                         }
