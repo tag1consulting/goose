@@ -441,7 +441,7 @@ use crate::goose::{
 };
 use crate::metrics::{GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
-use crate::worker::GaggleMetrics;
+use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
 /// Constant defining how often metrics should be displayed while load test is running.
 const RUNNING_METRICS_EVERY: usize = 15;
@@ -466,7 +466,7 @@ pub fn get_worker_id() -> usize {
 }
 
 #[cfg(not(feature = "gaggle"))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Socket used for coordinating a Gaggle, a distributed load test.
 pub struct Socket {}
 
@@ -2449,6 +2449,14 @@ impl GooseAttack {
                         get_worker_id(),
                         self.started.unwrap().elapsed().as_secs()
                     );
+
+                    // Load test is shutting down, update pipe handler so there is no panic
+                    // when the Manager goes away.
+                    #[cfg(feature = "gaggle")]
+                    {
+                        let manager = socket.clone().unwrap();
+                        register_shutdown_pipe_handler(&manager);
+                    }
                 } else {
                     info!(
                         "stopping after {} seconds...",

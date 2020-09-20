@@ -4,6 +4,7 @@
  - rework `hatch_rate` to be stored in an `Option<usize>` as it can be `None` on a Worker
  - remove redundant `GooseAttack.users` instead using the `Option<usize>` in `configuration`
  - improve bounds handling of defaults, generate errors for invalid values
+ - properly handle early shutdown of Gaggle distributed load test from Worker process
 
 ## 0.10.0 Sep 13, 2020
  - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
