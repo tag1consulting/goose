@@ -1,6 +1,6 @@
 [package]
 name = "goose"
-version = "0.10.1"
+version = "0.10.2-dev"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A load testing tool inspired by Locust."
