@@ -35,9 +35,9 @@ At this point it's possible to compile all dependencies, though the resulting bi
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.10.0
+  Downloaded goose v0.10.1
       ...
-   Compiling goose v0.10.0
+   Compiling goose v0.10.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
