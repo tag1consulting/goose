@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.10.2-dev
+ - remove unnecessary `GooseAttack.number_of_cpus` instead calling `num_cpus::get()` directly
 
 ## 0.10.1 Sep 20, 2020
  - rework `hatch_rate` to be stored in an `Option<usize>` as it can be `None` on a Worker

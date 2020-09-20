@@ -711,8 +711,6 @@ pub struct GooseAttack {
     defaults: GooseDefaults,
     /// Configuration object managed by StructOpt.
     configuration: GooseConfiguration,
-    /// By default launch 1 user per number of CPUs.
-    number_of_cpus: usize,
     /// Track how long the load test should run.
     run_time: usize,
     /// Which mode this GooseAttack is operating in.
@@ -740,7 +738,6 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             defaults: GooseDefaults::default(),
             configuration: GooseConfiguration::parse_args_default_or_exit(),
-            number_of_cpus: num_cpus::get(),
             run_time: 0,
             attack_mode: GooseMode::Undefined,
             started: None,
@@ -769,7 +766,6 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             defaults: GooseDefaults::default(),
             configuration,
-            number_of_cpus: num_cpus::get(),
             run_time: 0,
             attack_mode: GooseMode::Undefined,
             started: None,
@@ -1273,13 +1269,10 @@ impl GooseAttack {
         } else if self.attack_mode != GooseMode::Worker {
             // This should not be able to fail, but setting up debug in case the number
             // of cpus library returns an invalid number.
-            key = "Goose default";
-            value = self.number_of_cpus;
+            key = "num_cpus::get()";
+            value = num_cpus::get();
 
-            info!(
-                "concurrent users defaulted to {} (number of CPUs)",
-                self.number_of_cpus
-            );
+            info!("concurrent users defaulted to {} (number of CPUs)", value);
 
             self.configuration.users = Some(value);
         }
