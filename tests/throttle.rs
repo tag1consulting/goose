@@ -166,7 +166,7 @@ fn test_throttle_gaggle() {
     // Launch workers in their own threads, storing the thread handle.
     let mut worker_handles = Vec::new();
     // Each worker has the same identical configuration.
-    let mut worker_configuration = common::build_configuration(
+    let worker_configuration = common::build_configuration(
         &server,
         vec![
             "--worker",
@@ -175,11 +175,6 @@ fn test_throttle_gaggle() {
             &THROTTLE_REQUESTS.to_string(),
         ],
     );
-
-    // Unset options set in common.rs as they can't be set on the Worker.
-    worker_configuration.users = None;
-    worker_configuration.run_time = "".to_string();
-    worker_configuration.hatch_rate = None;
 
     for _ in 0..EXPECT_WORKERS {
         let configuration = worker_configuration.clone();
@@ -206,7 +201,7 @@ fn test_throttle_gaggle() {
             &EXPECT_WORKERS.to_string(),
             // Record all requests so we can confirm throttle is working.
             "--metrics-file",
-            &metrics_file.to_string(),
+            &metrics_file,
             "--users",
             &USERS.to_string(),
             "--hatch-rate",
@@ -291,7 +286,7 @@ fn test_throttle_gaggle() {
             &EXPECT_WORKERS.to_string(),
             // Record all requests so we can confirm throttle is working.
             "--metrics-file",
-            &metrics_file.to_string(),
+            &metrics_file,
             "--users",
             &USERS.to_string(),
             "--hatch-rate",

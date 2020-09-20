@@ -120,12 +120,7 @@ fn test_single_taskset_gaggle() {
     // Launch workers in their own threads, storing the thread handle.
     let mut worker_handles = Vec::new();
     // Each worker has the same identical configuration.
-    let mut worker_configuration = common::build_configuration(&server, vec!["--worker"]);
-
-    // Unset options set in common.rs as they can't be set on the Worker.
-    worker_configuration.users = None;
-    worker_configuration.run_time = "".to_string();
-    worker_configuration.hatch_rate = None;
+    let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
 
     for _ in 0..2 {
         let configuration = worker_configuration.clone();
