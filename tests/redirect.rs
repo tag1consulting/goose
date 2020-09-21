@@ -1,5 +1,6 @@
 use httpmock::Method::GET;
 use httpmock::{Mock, MockRef, MockServer};
+use serial_test::serial;
 
 mod common;
 
@@ -23,6 +24,8 @@ const SERVER1_ABOUT_KEY: usize = 1;
 const SERVER1_REDIRECT_KEY: usize = 2;
 const SERVER2_INDEX_KEY: usize = 3;
 const SERVER2_ABOUT_KEY: usize = 4;
+
+const EXPECT_WORKERS: usize = 2;
 
 // Task function, load INDEX_PATH.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
@@ -73,6 +76,7 @@ pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
 }
 
 // Defines the different types of redirects being tested.
+#[derive(Clone)]
 enum TestType {
     // Chains many different redirects together.
     Chain,
@@ -193,10 +197,43 @@ fn common_build_configuration(
     worker: Option<bool>,
     manager: Option<usize>,
 ) -> GooseConfiguration {
-    if sticky {
-        common::build_configuration(&server, vec!["--no-metrics", "--sticky-follow"])
+    if let Some(expect_workers) = manager {
+        if sticky {
+            common::build_configuration(
+                &server,
+                vec![
+                    "--sticky-follow",
+                    "--manager",
+                    "--expect-workers",
+                    &expect_workers.to_string(),
+                    "--users",
+                    &expect_workers.to_string(),
+                    "--hatch-rate",
+                    &expect_workers.to_string(),
+                ],
+            )
+        } else {
+            common::build_configuration(
+                &server,
+                vec![
+                    "--manager",
+                    "--expect-workers",
+                    &expect_workers.to_string(),
+                    "--users",
+                    &expect_workers.to_string(),
+                    "--hatch-rate",
+                    &expect_workers.to_string(),
+                ],
+            )
+        }
+    } else if worker.is_some() {
+        common::build_configuration(&server, vec!["--worker"])
     } else {
-        common::build_configuration(&server, vec!["--no-metrics"])
+        if sticky {
+            common::build_configuration(&server, vec!["--sticky-follow"])
+        } else {
+            common::build_configuration(&server, vec![])
+        }
     }
 }
 
@@ -325,9 +362,54 @@ fn test_redirect() {
 }
 
 #[test]
+// Only run gaggle tests if the feature is compiled into the codebase.
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Gaggle tests have to be running serially instead of in parallel.
+#[serial]
+/// Simulate a distributed load test which includes a page with a redirect chain,
+/// confirms all redirects are correctly followed.
+fn test_redirect_gaggle() {
+    // Start the mock server.
+    let server = MockServer::start();
+
+    // Define the type of redirect being tested.
+    let test_type = TestType::Chain;
+
+    // Setup the endpoints needed for this test on the mock server.
+    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server, None);
+
+    // Build Worker configuration.
+    let configuration = common_build_configuration(&server, false, Some(true), None);
+
+    // Workers launched in own threads, store thread handles.
+    let mut worker_handles = Vec::new();
+
+    // Launch Workers in threads.
+    for _ in 0..EXPECT_WORKERS {
+        let worker_test_type = test_type.clone();
+        let worker_configuration = configuration.clone();
+        // Start worker instance of the load test.
+        worker_handles.push(std::thread::spawn(move || {
+            // Run the load test as configured.
+            run_load_test(&worker_test_type, &worker_configuration);
+        }));
+    }
+
+    // Build Manager configuration.
+    let manager_configuration =
+        common_build_configuration(&server, false, None, Some(EXPECT_WORKERS));
+
+    // Run the load test as configured.
+    run_load_test(&test_type, &manager_configuration);
+
+    // Confirm that the load test was actually throttled.
+    validate_redirect(&test_type, &mock_endpoints);
+}
+
+#[test]
 /// Simulate a load test which includes a page with a redirect to another domain
 /// (which in this case is a second mock server running on a different path).
-/// all redirects are correctly followed.
+/// Confirm all redirects are correctly followed.
 fn test_domain_redirect() {
     // Start the mock servers.
     let server1 = MockServer::start();
@@ -344,6 +426,53 @@ fn test_domain_redirect() {
 
     // Run the load test as configured.
     run_load_test(&test_type, &configuration);
+
+    // Confirm that the load test was actually throttled.
+    validate_redirect(&test_type, &mock_endpoints);
+}
+
+#[test]
+// Only run gaggle tests if the feature is compiled into the codebase.
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Gaggle tests have to be running serially instead of in parallel.
+#[serial]
+/// Simulate a distributed load test which includes a page with a redirect to
+/// another domain (which in this case is a second mock server running on a
+/// different path). Confirm all redirects are correctly followed.
+fn test_domain_redirect_gaggle() {
+    // Start the mock servers.
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+
+    // Define the type of redirect being tested.
+    let test_type = TestType::Domain;
+
+    // Setup the endpoints needed for this test on the mock server.
+    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
+
+    // Build Worker configuration.
+    let configuration = common_build_configuration(&server1, false, Some(true), None);
+
+    // Workers launched in own threads, store thread handles.
+    let mut worker_handles = Vec::new();
+
+    // Launch Workers in threads.
+    for _ in 0..EXPECT_WORKERS {
+        let worker_test_type = test_type.clone();
+        let worker_configuration = configuration.clone();
+        // Start worker instance of the load test.
+        worker_handles.push(std::thread::spawn(move || {
+            // Run the load test as configured.
+            run_load_test(&worker_test_type, &worker_configuration);
+        }));
+    }
+
+    // Build Manager configuration.
+    let manager_configuration =
+        common_build_configuration(&server1, false, None, Some(EXPECT_WORKERS));
+
+    // Run the load test as configured.
+    run_load_test(&test_type, &manager_configuration);
 
     // Confirm that the load test was actually throttled.
     validate_redirect(&test_type, &mock_endpoints);
