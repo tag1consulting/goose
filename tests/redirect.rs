@@ -228,17 +228,15 @@ fn common_build_configuration(
         }
     } else if worker.is_some() {
         common::build_configuration(&server, vec!["--worker"])
+    } else if sticky {
+        common::build_configuration(&server, vec!["--sticky-follow"])
     } else {
-        if sticky {
-            common::build_configuration(&server, vec!["--sticky-follow"])
-        } else {
-            common::build_configuration(&server, vec![])
-        }
+        common::build_configuration(&server, vec![])
     }
 }
 
 // Common validation for the load tests in this file.
-fn validate_redirect(test_type: &TestType, mock_endpoints: &Vec<MockRef>) {
+fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
     match test_type {
         TestType::Chain => {
             // Confirm that we loaded the mock endpoints; while we never load the about page
@@ -280,7 +278,12 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &Vec<MockRef>) {
         TestType::Sticky => {
             // Confirm we redirect on startup, and never load index or about.
             assert!(mock_endpoints[SERVER1_INDEX_KEY].times_called() == 0);
-            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == 1);
+            // @FIXME: when https://github.com/tag1consulting/goose/issues/182 lands
+            // this should always be `== 1`.
+            assert!(
+                mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == 1
+                    || mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == EXPECT_WORKERS
+            );
             assert!(mock_endpoints[SERVER1_ABOUT_KEY].times_called() == 0);
 
             // Confirm that we load the alternative index and about pages (mocked using
@@ -357,7 +360,7 @@ fn test_redirect() {
     // Run the load test as configured.
     run_load_test(&test_type, &configuration);
 
-    // Confirm that the load test was actually throttled.
+    // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
 
@@ -402,7 +405,7 @@ fn test_redirect_gaggle() {
     // Run the load test as configured.
     run_load_test(&test_type, &manager_configuration);
 
-    // Confirm that the load test was actually throttled.
+    // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
 
@@ -427,7 +430,7 @@ fn test_domain_redirect() {
     // Run the load test as configured.
     run_load_test(&test_type, &configuration);
 
-    // Confirm that the load test was actually throttled.
+    // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
 
@@ -474,11 +477,13 @@ fn test_domain_redirect_gaggle() {
     // Run the load test as configured.
     run_load_test(&test_type, &manager_configuration);
 
-    // Confirm that the load test was actually throttled.
+    // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
 
 #[test]
+/// Simulate a load test which permanently follows a redirect due to the
+/// --sticky-follow run-time option.
 fn test_sticky_domain_redirect() {
     // Start the mock servers.
     let server1 = MockServer::start();
@@ -496,6 +501,52 @@ fn test_sticky_domain_redirect() {
     // Run the load test as configured.
     run_load_test(&test_type, &configuration);
 
-    // Confirm that the load test was actually throttled.
+    // Confirm that the load test was actually redirected.
+    validate_redirect(&test_type, &mock_endpoints);
+}
+
+#[test]
+// Only run gaggle tests if the feature is compiled into the codebase.
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Gaggle tests have to be running serially instead of in parallel.
+#[serial]
+/// Simulate a distributed load test which permanently follows a redirect
+/// due to the --sticky-follow run-time option.
+fn test_sticky_domain_redirect_gaggle() {
+    // Start the mock servers.
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+
+    // Define the type of redirect being tested.
+    let test_type = TestType::Sticky;
+
+    // Setup the endpoints needed for this test on the mock server.
+    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
+
+    // Build Worker configuration.
+    let configuration = common_build_configuration(&server1, false, Some(true), None);
+
+    // Workers launched in own threads, store thread handles.
+    let mut worker_handles = Vec::new();
+
+    // Launch Workers in threads.
+    for _ in 0..EXPECT_WORKERS {
+        let worker_test_type = test_type.clone();
+        let worker_configuration = configuration.clone();
+        // Start worker instance of the load test.
+        worker_handles.push(std::thread::spawn(move || {
+            // Run the load test as configured.
+            run_load_test(&worker_test_type, &worker_configuration);
+        }));
+    }
+
+    // Build Manager configuration, enabling --sticky-follow.
+    let manager_configuration =
+        common_build_configuration(&server1, true, None, Some(EXPECT_WORKERS));
+
+    // Run the load test as configured.
+    run_load_test(&test_type, &manager_configuration);
+
+    // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
