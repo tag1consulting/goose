@@ -1,13 +1,22 @@
 use httpmock::Method::GET;
-use httpmock::{Mock, MockServer};
+use httpmock::{Mock, MockRef, MockServer};
+use std::io::{self, BufRead};
 
 mod common;
 
 use goose::prelude::*;
+use goose::GooseConfiguration;
 
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
+const INDEX_KEY: usize = 0;
+const ABOUT_KEY: usize = 1;
+
 const METRICS_FILE: &str = "throttle-metrics.log";
+const THROTTLE_REQUESTS: usize = 25;
+const USERS: usize = 5;
+const RUN_TIME: usize = 3;
+const EXPECT_WORKERS: usize = 2;
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -19,120 +28,279 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-#[test]
-fn test_throttle() {
-    use std::io::{self, BufRead};
+// All tests in this file run against common endpoints.
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
+    let mut endpoints: Vec<MockRef> = Vec::new();
 
-    let server = MockServer::start();
-
-    let index = Mock::new()
-        .expect_method(GET)
-        .expect_path(INDEX_PATH)
-        .return_status(200)
-        .create_on(&server);
-    let about = Mock::new()
-        .expect_method(GET)
-        .expect_path(ABOUT_PATH)
-        .return_status(200)
-        .create_on(&server);
-
-    let mut throttle_requests = 25;
-    let users = 5;
-    let run_time = 3;
-
-    let config = common::build_configuration(
-        &server,
-        vec![
-            // Record all requests so we can confirm throttle is working.
-            "--metrics-file",
-            METRICS_FILE,
-            // Enable the throttle.
-            "--throttle-requests",
-            &throttle_requests.to_string(),
-            "--users",
-            &users.to_string(),
-            "--hatch-rate",
-            &users.to_string(),
-            // Run for a few seconds to be sure throttle really works.
-            "--run-time",
-            &run_time.to_string(),
-        ],
+    // First set up INDEX_PATH, store in vector at INDEX_KEY.
+    endpoints.push(
+        Mock::new()
+            .expect_method(GET)
+            .expect_path(INDEX_PATH)
+            .return_status(200)
+            .create_on(&server),
     );
-    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
+    // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
+    endpoints.push(
+        Mock::new()
+            .expect_method(GET)
+            .expect_path(ABOUT_PATH)
+            .return_status(200)
+            .create_on(&server),
+    );
+
+    endpoints
+}
+
+// Build configuration for a standalone load test.
+fn common_build_configuration(
+    server: &MockServer,
+    metrics_file: &str,
+    throttle_requests: usize,
+    users: usize,
+    run_time: usize,
+    worker: Option<bool>,
+    manager: Option<usize>,
+) -> GooseConfiguration {
+    if let Some(expect_workers) = manager {
+        common::build_configuration(
+            &server,
+            vec![
+                "--manager",
+                "--expect-workers",
+                &expect_workers.to_string(),
+                "--users",
+                &users.to_string(),
+                "--hatch-rate",
+                &users.to_string(),
+                // Run the load test long enough to confirm the throttle is working correctly.
+                "--run-time",
+                &run_time.to_string(),
+                // Write requests to file to confirm throttle is working.
+                "--metrics-file",
+                metrics_file,
+            ],
+        )
+    } else if worker.is_some() {
+        common::build_configuration(
+            &server,
+            vec![
+                "--verbose",
+                "--worker",
+                // Limit the maximum requests per second.
+                "--throttle-requests",
+                &throttle_requests.to_string(),
+            ],
+        )
+    } else {
+        common::build_configuration(
+            &server,
+            vec![
+                "--users",
+                &users.to_string(),
+                "--hatch-rate",
+                &users.to_string(),
+                // Run the load test long enough to confirm the throttle is working correctly.
+                "--run-time",
+                &run_time.to_string(),
+                // Limit the maximum requests per second.
+                "--throttle-requests",
+                &throttle_requests.to_string(),
+                // Write requests to file to confirm throttle is working.
+                "--metrics-file",
+                metrics_file,
+            ],
+        )
+    }
+}
+
+// Common validation for the load tests in this file.
+fn validate_throttle(
+    mock_endpoints: &[MockRef],
+    metrics_file: &str,
+    throttle_value: usize,
+    previous_metrics_file_lines: Option<usize>,
+) -> usize {
+    // Determine how long the current metrics file is.
+    let current_metrics_file_lines =
+        if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(metrics_file)) {
+            io::BufReader::new(metrics_log).lines().count()
+        } else {
+            0
+        };
+
+    // Confirm that we loaded the mock endpoints.
+    assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
+
+    // Requests are made while GooseUsers are hatched, and then for RUN_TIME seconds.
+    assert!(current_metrics_file_lines <= (RUN_TIME + 1) * throttle_value);
+
+    if let Some(previous_lines) = previous_metrics_file_lines {
+        // Verify the second load test generated more than 4x the load of the first test.
+        assert!(current_metrics_file_lines > previous_lines * 4);
+        // Verify the second load test generated less than 6x the load of the first test.
+        assert!(current_metrics_file_lines < previous_lines * 6);
+    }
+
+    // Cleanup log file.
+    std::fs::remove_file(metrics_file).expect("failed to delete metrics log file");
+
+    // Return the number of lines in the current metrics file, allowing comparisons between
+    // multiple tests with different throttle values.
+    current_metrics_file_lines
+}
+
+// Run the actual load test. The metrics file is used for validation, so no need to
+// return the GooseMetrics.
+fn run_load_test(configuration: &GooseConfiguration) {
+    let _ = crate::GooseAttack::initialize_with_config(configuration.clone())
         .unwrap()
         .register_taskset(
             taskset!("LoadTest")
-                .register_task(task!(get_about))
-                .register_task(task!(get_index)),
+                .register_task(task!(get_index))
+                .register_task(task!(get_about)),
         )
         .execute()
         .unwrap();
+}
 
-    // Confirm that we loaded the mock endpoints.
-    assert!(index.times_called() > 0);
-    assert!(about.times_called() > 0);
+#[test]
+// Verify that the throttle limits the number of requests per second, and that increasing
+// the throttle increases the number of requests per second.
+fn test_throttle() {
+    // Start the mock server.
+    let server = MockServer::start();
 
-    let test1_lines: usize;
-    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_FILE)) {
-        test1_lines = io::BufReader::new(metrics_log).lines().count();
-    } else {
-        test1_lines = 0;
-    }
+    // Setup the endpoints needed for this test on the mock server.
+    let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    // Requests are made while GooseUsers are hatched, and then for run_time seconds.
-    assert!(test1_lines <= (run_time + 1) * throttle_requests);
+    // Build configuration.
+    let configuration = common_build_configuration(
+        &server,
+        METRICS_FILE,
+        THROTTLE_REQUESTS,
+        USERS,
+        RUN_TIME,
+        None,
+        None,
+    );
 
-    // Cleanup log file.
-    std::fs::remove_file(METRICS_FILE).expect("failed to delete metrics log file");
+    // Run the load test as configured.
+    run_load_test(&configuration);
+
+    // Confirm that the load test was actually throttled.
+    let test1_lines = validate_throttle(&mock_endpoints, METRICS_FILE, THROTTLE_REQUESTS, None);
 
     // Increase the throttle and run a second load test, so we can compare the difference
     // and confirm the throttle is actually working.
-    throttle_requests *= 5;
+    let increased_throttle = THROTTLE_REQUESTS * 5;
 
-    let config = common::build_configuration(
+    // Build a new configuration.
+    let configuration = common_build_configuration(
         &server,
-        vec![
-            // Record all requests so we can confirm throttle is working.
-            "--metrics-file",
-            METRICS_FILE,
-            "--throttle-requests",
-            &throttle_requests.to_string(),
-            "--users",
-            &users.to_string(),
-            "--hatch-rate",
-            &users.to_string(),
-            "--run-time",
-            &run_time.to_string(),
-        ],
+        METRICS_FILE,
+        increased_throttle,
+        USERS,
+        RUN_TIME,
+        None,
+        None,
     );
-    let _goose_metrics = crate::GooseAttack::initialize_with_config(config)
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_about))
-                .register_task(task!(get_index)),
-        )
-        .execute()
-        .unwrap();
 
-    // Confirm that we loaded the mock endpoints.
-    assert!(index.times_called() > 0);
-    assert!(about.times_called() > 0);
+    // Run the load test as configured.
+    run_load_test(&configuration);
 
-    let lines: usize;
-    if let Ok(metrics_log) = std::fs::File::open(std::path::Path::new(METRICS_FILE)) {
-        lines = io::BufReader::new(metrics_log).lines().count();
-    } else {
-        lines = 0;
+    // Confirm that the load test was actually throttled, at an increased rate.
+    let _ = validate_throttle(
+        &mock_endpoints,
+        METRICS_FILE,
+        increased_throttle,
+        Some(test1_lines),
+    );
+}
+
+#[test]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Verify that the throttle limits the number of requests per second even when running
+// in Gaggle distributed load test, and that increasing the throttle increases the
+// number of requests per second across the Gaggle.
+fn test_throttle_gaggle() {
+    // Multiple tests run together, so set a unique name.
+    let metrics_file = "gaggle-".to_string() + METRICS_FILE;
+
+    // Start the mock server.
+    let server = MockServer::start();
+
+    // Setup the endpoints needed for this test on the mock server.
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    // Launch workers in their own threads, storing the thread handle.
+    let mut worker_handles = Vec::new();
+
+    // Each worker has the same identical configuration.
+    let worker_configuration =
+        common_build_configuration(&server, "", THROTTLE_REQUESTS, 0, 0, Some(true), None);
+
+    // Launch Workers in threads.
+    for _ in 0..EXPECT_WORKERS {
+        let configuration = worker_configuration.clone();
+        // Start worker instance of the load test.
+        worker_handles.push(std::thread::spawn(move || {
+            // Run the load test as configured.
+            run_load_test(&configuration);
+        }));
     }
 
-    // Requests are made while GooseUsers are hatched, and then for run_time seconds.
-    assert!(lines <= (run_time + 1) * throttle_requests);
-    // Verify the second load test generated more than 4x the load of the first test.
-    assert!(lines > test1_lines * 4);
-    // Verify the second load test generated less than 6x the load of the first test.
-    assert!(lines < test1_lines * 6);
+    // Start manager instance in current thread and run a distributed load test.
+    let manager_configuration = common_build_configuration(
+        &server,
+        &metrics_file,
+        0,
+        USERS,
+        RUN_TIME,
+        None,
+        Some(EXPECT_WORKERS),
+    );
 
-    // Cleanup log file.
-    std::fs::remove_file(METRICS_FILE).expect("failed to delete metrics log file");
+    // Run the load test as configured.
+    run_load_test(&manager_configuration);
+
+    // Confirm that the load test was actually throttled.
+    let test1_lines = validate_throttle(&mock_endpoints, &metrics_file, THROTTLE_REQUESTS, None);
+
+    // Increase the throttle and run a second load test, so we can compare the difference
+    // and confirm the throttle is actually working.
+    let increased_throttle = THROTTLE_REQUESTS * 5;
+
+    // Clear vector to launch workers again in their own threads, storing the thread handle.
+    worker_handles.clear();
+    // Each worker has the same identical configuration.
+    let mut worker_configuration =
+        common_build_configuration(&server, "", increased_throttle, 0, 0, Some(true), None);
+
+    // Unset options set in common.rs as they can't be set on the Worker.
+    worker_configuration.users = None;
+    worker_configuration.run_time = "".to_string();
+    worker_configuration.hatch_rate = None;
+
+    // Launch Workers in threads.
+    for _ in 0..EXPECT_WORKERS {
+        let configuration = worker_configuration.clone();
+        // Start worker instance of the load test.
+        worker_handles.push(std::thread::spawn(move || {
+            // Run the load test as configured.
+            run_load_test(&configuration);
+        }));
+    }
+
+    // Manager configuration doesn't change, run the load test as configured.
+    run_load_test(&manager_configuration);
+
+    // Confirm that the load test was actually throttled, at an increased rate.
+    let _ = validate_throttle(
+        &mock_endpoints,
+        &metrics_file,
+        increased_throttle,
+        Some(test1_lines),
+    );
 }
