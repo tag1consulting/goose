@@ -346,7 +346,7 @@ All run-time options can be configured with custom defaults. For example, you ma
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))
         )
-        .set_default(GooseDefault::Host, "http://local.dev/")
+        .set_default(GooseDefault::Host, "http://local.dev/")?
         .execute()?
         .print();
     
@@ -392,14 +392,14 @@ For example, without any run-time options the following load test would automati
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))
         )
-        .set_default(GooseDefault::Host, "local.dev")
-        .set_default(GooseDefault::MetricsFile, "goose-metrics.log")
-        .set_default(GooseDefault::DebugFile, "goose-debug.log")
-        .set_default(GooseDefault::Users, 20)
-        .set_default(GooseDefault::HatchRate, 4)
-        .set_default(GooseDefault::RunTime, 900)
-        .set_default(GooseDefault::OnlySummary, true)
-        .set_default(GooseDefault::StatusCodes, true)
+        .set_default(GooseDefault::Host, "local.dev")?
+        .set_default(GooseDefault::MetricsFile, "goose-metrics.log")?
+        .set_default(GooseDefault::DebugFile, "goose-debug.log")?
+        .set_default(GooseDefault::Users, 20)?
+        .set_default(GooseDefault::HatchRate, 4)?
+        .set_default(GooseDefault::RunTime, 900)?
+        .set_default(GooseDefault::OnlySummary, true)?
+        .set_default(GooseDefault::StatusCodes, true)?
         .execute()?
         .print();
     
