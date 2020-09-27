@@ -2200,18 +2200,8 @@ impl GooseAttack {
         }
     }
 
-    /// Called internally in local-mode and gaggle-mode.
-    async fn launch_users(
-        mut self,
-        sleep_duration: time::Duration,
-        socket: Option<Socket>,
-    ) -> Result<GooseAttack, GooseError> {
-        trace!(
-            "launch users: sleep_duration({:?}) socket({:?})",
-            sleep_duration,
-            socket
-        );
-
+    // Invoke test_start tasks if existing.
+    async fn run_test_start(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
         if self.attack_mode != GooseMode::Worker {
             // First run global test_start_task, if defined.
@@ -2232,6 +2222,50 @@ impl GooseAttack {
                 None => (),
             }
         }
+
+        Ok(())
+    }
+
+    // Invoke test_stop tasks if existing.
+    async fn run_test_stop(&self) -> Result<(), GooseError> {
+        // Initialize per-user states.
+        if self.attack_mode != GooseMode::Worker {
+            // First run global test_start_task, if defined.
+            match &self.test_stop_task {
+                Some(t) => {
+                    info!("running test_stop_task");
+                    // Create a one-time-use User to run the test_stop_task.
+                    let base_url = goose::get_base_url(
+                        self.get_configuration_host(),
+                        None,
+                        self.defaults.host.clone(),
+                    )?;
+                    let user = GooseUser::single(base_url, &self.configuration)?;
+                    let function = &t.function;
+                    let _ = function(&user).await;
+                }
+                // No test_stop_task defined, nothing to do.
+                None => (),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Called internally in local-mode and gaggle-mode.
+    async fn launch_users(
+        mut self,
+        sleep_duration: time::Duration,
+        socket: Option<Socket>,
+    ) -> Result<GooseAttack, GooseError> {
+        trace!(
+            "launch users: sleep_duration({:?}) socket({:?})",
+            sleep_duration,
+            socket
+        );
+
+        // Run any configured test_start() functions.
+        self.run_test_start().await?;
 
         // If enabled, spawn a logger thread.
         let (logger_thread, all_threads_logger) = self.setup_debug_logger()?;
@@ -2528,25 +2562,8 @@ impl GooseAttack {
         }
         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
 
-        if self.attack_mode != GooseMode::Worker {
-            // Run global test_stop_task, if defined.
-            match &self.test_stop_task {
-                Some(t) => {
-                    info!("running test_stop_task");
-                    let base_url = goose::get_base_url(
-                        self.get_configuration_host(),
-                        None,
-                        self.defaults.host.clone(),
-                    )?;
-                    // Create a one-time-use user to run the test_stop_task.
-                    let user = GooseUser::single(base_url, &self.configuration)?;
-                    let function = &t.function;
-                    let _ = function(&user).await;
-                }
-                // No test_stop_task defined, nothing to do.
-                None => (),
-            }
-        }
+        // Run any configured test_start() functions.
+        self.run_test_stop().await?;
 
         // If metrics logging is enabled, flush all metrics before we exit.
         if let Some(file) = metrics_file.as_mut() {

@@ -105,53 +105,29 @@ fn common_build_configuration(
 }
 
 // Common validation for the load tests in this file.
-// @FIXME: remove the `is_gaggle` flag once issue #182 lands.
-fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef], is_gaggle: bool) {
+fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     // Confirm the load test ran.
     assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
 
     // Now confirm TestType-specific counters.
-    if is_gaggle {
-        // @FIXME: when https://github.com/tag1consulting/goose/issues/182 lands
-        // remove the `is_gaggle` flag and everything in it: the gaggle and standalone
-        // tests should have the same validation.
-        match test_type {
-            TestType::Start => {
-                // @FIXME: setup should have run.
-                assert!(mock_endpoints[SETUP_KEY].times_called() == 0);
-                assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 0);
-            }
-            TestType::Stop => {
-                // @FIXME: teardown should have run.
-                assert!(mock_endpoints[SETUP_KEY].times_called() == 0);
-                assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 0);
-            }
-            TestType::StartAndStop => {
-                // @FIXME: setup and teardown should have run.
-                assert!(mock_endpoints[SETUP_KEY].times_called() == 0);
-                assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 0);
-            }
+    match test_type {
+        TestType::Start => {
+            // Confirm setup ran one time.
+            assert!(mock_endpoints[SETUP_KEY].times_called() == 1);
+            // Confirm teardown did not run.
+            assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 0);
         }
-    } else {
-        match test_type {
-            TestType::Start => {
-                // Confirm setup ran one time.
-                assert!(mock_endpoints[SETUP_KEY].times_called() == 1);
-                // Confirm teardown did not run.
-                assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 0);
-            }
-            TestType::Stop => {
-                // Confirm setup did not run.
-                assert!(mock_endpoints[SETUP_KEY].times_called() == 0);
-                // Confirm teardown ran one time.
-                assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 1);
-            }
-            TestType::StartAndStop => {
-                // Confirm setup ran one time.
-                assert!(mock_endpoints[SETUP_KEY].times_called() == 1);
-                // Confirm teardown ran one time.
-                assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 1);
-            }
+        TestType::Stop => {
+            // Confirm setup did not run.
+            assert!(mock_endpoints[SETUP_KEY].times_called() == 0);
+            // Confirm teardown ran one time.
+            assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 1);
+        }
+        TestType::StartAndStop => {
+            // Confirm setup ran one time.
+            assert!(mock_endpoints[SETUP_KEY].times_called() == 1);
+            // Confirm teardown ran one time.
+            assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 1);
         }
     }
 }
@@ -235,7 +211,7 @@ fn test_setup() {
     run_load_test(&test_type, &configuration, None);
 
     // Confirm the load test ran correctly.
-    validate_test(&TestType::Start, &mock_endpoints, false);
+    validate_test(&TestType::Start, &mock_endpoints);
 }
 
 /// Test test_start alone.
@@ -267,7 +243,7 @@ fn test_setup_gaggle() {
     run_load_test(&test_type, &manager_configuration, Some(worker_handles));
 
     // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints, true);
+    validate_test(&test_type, &mock_endpoints);
 }
 
 /// Test test_stop alone.
@@ -289,7 +265,7 @@ fn test_teardown() {
     run_load_test(&test_type, &configuration, None);
 
     // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints, false);
+    validate_test(&test_type, &mock_endpoints);
 }
 
 /// Test test_start alone in Gaggle mode.
@@ -321,7 +297,7 @@ fn test_teardown_gaggle() {
     run_load_test(&test_type, &manager_configuration, Some(worker_handles));
 
     // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints, true);
+    validate_test(&test_type, &mock_endpoints);
 }
 
 /// Test test_start and test_stop together.
@@ -343,7 +319,7 @@ fn test_setup_teardown() {
     run_load_test(&test_type, &configuration, None);
 
     // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints, false);
+    validate_test(&test_type, &mock_endpoints);
 }
 
 /// Test test_start and test_Stop together in Gaggle mode.
@@ -375,5 +351,5 @@ fn test_setup_teardown_gaggle() {
     run_load_test(&test_type, &manager_configuration, Some(worker_handles));
 
     // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints, true);
+    validate_test(&test_type, &mock_endpoints);
 }

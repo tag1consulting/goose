@@ -453,6 +453,9 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             goose_attack.started = Some(started);
                             running_metrics_timer = time::Instant::now();
                             load_test_running = true;
+
+                            // Run any configured test_start() functions.
+                            goose_attack.run_test_start().await.unwrap();
                         }
                     }
                 }
@@ -525,6 +528,9 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
             }
         }
     }
+    // Run any configured test_stop() functions.
+    goose_attack.run_test_stop().await.unwrap();
+
     goose_attack
 }
 
