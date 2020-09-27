@@ -278,7 +278,12 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
         TestType::Sticky => {
             // Confirm we redirect on startup, and never load index or about.
             assert!(mock_endpoints[SERVER1_INDEX_KEY].times_called() == 0);
-            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == 1);
+            // @FIXME: when https://github.com/tag1consulting/goose/issues/182 lands
+            // this should always be `== 1`.
+            assert!(
+                mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == 1
+                    || mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == EXPECT_WORKERS
+            );
             assert!(mock_endpoints[SERVER1_ABOUT_KEY].times_called() == 0);
 
             // Confirm that we load the alternative index and about pages (mocked using
@@ -545,4 +550,3 @@ fn test_sticky_domain_redirect_gaggle() {
     // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
-
