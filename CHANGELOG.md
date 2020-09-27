@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.2-dev
+## 0.10.2 Sep 27, 2020
  - remove unnecessary `GooseAttack.number_of_cpus` instead calling `num_cpus::get()` directly
  - remove `tests/gaggle.rs`, instead mixing gaggle tests with per-feature integration tests
  - ensure `test_start` and `test_stop` run one and only one time even in Gaggle mode
