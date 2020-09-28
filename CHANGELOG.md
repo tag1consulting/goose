@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.10.3-dev
+ - fixup sticky redirect tests to properly test functionality
 
 ## 0.10.2 Sep 27, 2020
  - remove unnecessary `GooseAttack.number_of_cpus` instead calling `num_cpus::get()` directly

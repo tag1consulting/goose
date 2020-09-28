@@ -897,6 +897,11 @@ impl GooseAttack {
     /// start running. This is would generally be used to set up anything required
     /// for the load test.
     ///
+    /// The GooseUser used to run the `test_start` tasks is not preserved and does not
+    /// otherwise affect the subsequent GooseUsers that run the rest of the load test.
+    /// For example, if the GooseUser logs in during `test_start`, subsequent GooseUsers
+    /// do not retain this session and are therefor not already logged in.
+    ///
     /// When running in a distributed Gaggle, this task is only run one time by the
     /// Manager.
     ///
@@ -2230,7 +2235,7 @@ impl GooseAttack {
     async fn run_test_stop(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
         if self.attack_mode != GooseMode::Worker {
-            // First run global test_start_task, if defined.
+            // First run global test_stop_task, if defined.
             match &self.test_stop_task {
                 Some(t) => {
                     info!("running test_stop_task");
@@ -2562,7 +2567,7 @@ impl GooseAttack {
         }
         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
 
-        // Run any configured test_start() functions.
+        // Run any configured test_stop() functions.
         self.run_test_stop().await?;
 
         // If metrics logging is enabled, flush all metrics before we exit.
