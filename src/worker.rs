@@ -97,6 +97,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     let mut config: GooseConfiguration = GooseConfiguration::parse_args_default(&EMPTY_ARGS)
         .expect("failed to generate default configuration");
     let mut weighted_users: Vec<GooseUser> = Vec::new();
+    let mut run_time: usize = 0;
 
     // Wait for the manager to send user parameters.
     info!("waiting for instructions from manager");
@@ -143,9 +144,11 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("failed to create socket");
 
-        // The initializer.config is the same for all users, grab only one copy.
+        // The initializer.config and run_time are the same for all users, only copy it
+        // one time.
         if weighted_users.is_empty() {
             config = initializer.config;
+            run_time = initializer.run_time;
         }
         weighted_users.push(user);
     }
@@ -207,7 +210,8 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 
     worker_goose_attack.started = Some(time::Instant::now());
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
-    worker_goose_attack.run_time = goose_attack.run_time;
+    // Use the run_time from the Manager so Worker can shut down in a timely manner.
+    worker_goose_attack.run_time = run_time;
     worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
     // The throttle_requests configuration option is set on the Worker.

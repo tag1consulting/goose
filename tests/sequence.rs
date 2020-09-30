@@ -41,9 +41,9 @@ pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(TWO_PATH).await?;
 
     // "Run out the clock" on the load test when this function runs. Sleep for
-    // the total duration the test is to run plus 50 milliseconds to be sure
-    // no additional tasks will run after this one.
-    delay_for(Duration::from_millis(RUN_TIME as u64 * 1000 + 50)).await;
+    // the total duration the test is to run plus 1 second to be sure no
+    // additional tasks will run after this one.
+    delay_for(Duration::from_secs(RUN_TIME as u64 + 1)).await;
 
     Ok(())
 }
