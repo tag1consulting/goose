@@ -26,6 +26,7 @@ const SERVER2_INDEX_KEY: usize = 3;
 const SERVER2_ABOUT_KEY: usize = 4;
 
 const EXPECT_WORKERS: usize = 2;
+const USERS: usize = 4;
 
 // Task function, load INDEX_PATH.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
@@ -207,9 +208,9 @@ fn common_build_configuration(
                     "--expect-workers",
                     &expect_workers.to_string(),
                     "--users",
-                    &expect_workers.to_string(),
+                    &USERS.to_string(),
                     "--hatch-rate",
-                    &expect_workers.to_string(),
+                    &USERS.to_string(),
                 ],
             )
         } else {
@@ -220,18 +221,35 @@ fn common_build_configuration(
                     "--expect-workers",
                     &expect_workers.to_string(),
                     "--users",
-                    &expect_workers.to_string(),
+                    &USERS.to_string(),
                     "--hatch-rate",
-                    &expect_workers.to_string(),
+                    &USERS.to_string(),
                 ],
             )
         }
     } else if worker.is_some() {
         common::build_configuration(&server, vec!["--worker"])
     } else if sticky {
-        common::build_configuration(&server, vec!["--sticky-follow"])
+        common::build_configuration(
+            &server,
+            vec![
+                "--sticky-follow",
+                "--users",
+                &USERS.to_string(),
+                "--hatch-rate",
+                &USERS.to_string(),
+            ],
+        )
     } else {
-        common::build_configuration(&server, vec![])
+        common::build_configuration(
+            &server,
+            vec![
+                "--users",
+                &USERS.to_string(),
+                "--hatch-rate",
+                &USERS.to_string(),
+            ],
+        )
     }
 }
 
@@ -239,16 +257,15 @@ fn common_build_configuration(
 fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
     match test_type {
         TestType::Chain => {
-            // Confirm that we loaded the mock endpoints; while we never load the about page
-            // directly, we should follow the redirects and load it.
+            // Confirm that all pages are loaded, even those not requested directly but
+            // that are only loaded due to redirects.
             assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
             assert!(mock_endpoints[REDIRECT_KEY].times_called() > 0);
             assert!(mock_endpoints[REDIRECT_KEY2].times_called() > 0);
             assert!(mock_endpoints[REDIRECT_KEY3].times_called() > 0);
             assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
 
-            // We should have called all redirects the same number of times as we called the
-            // final about page.
+            // Confirm the entire redirect chain is loaded the same number of times.
             assert!(
                 mock_endpoints[REDIRECT_KEY].times_called()
                     == mock_endpoints[REDIRECT_KEY2].times_called()
@@ -263,31 +280,26 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
             );
         }
         TestType::Domain => {
-            // Confirm that we load the index, about and redirect pages on the original domain.
+            // All pages on Server1 are loaded.
             assert!(mock_endpoints[SERVER1_INDEX_KEY].times_called() > 0);
             assert!(mock_endpoints[SERVER1_REDIRECT_KEY].times_called() > 0);
             assert!(mock_endpoints[SERVER1_ABOUT_KEY].times_called() > 0);
 
-            // Confirm that the redirect sends us to the second domain (mocked using a
-            // server on a different port).
+            // GooseUsers are redirected to Server2 correctly.
             assert!(mock_endpoints[SERVER2_INDEX_KEY].times_called() > 0);
 
-            // Confirm the we never loaded the about page on the second domain.
+            // GooseUsers do not stick to Server2 and load the other page.
             assert!(mock_endpoints[SERVER2_ABOUT_KEY].times_called() == 0);
         }
         TestType::Sticky => {
-            // Confirm we redirect on startup, and never load index or about.
+            // Each GooseUser loads the redirect on Server1 one time.
+            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == USERS);
+
+            // Redirected to Server2, no user load anything else on Server1.
             assert!(mock_endpoints[SERVER1_INDEX_KEY].times_called() == 0);
-            // @FIXME: when https://github.com/tag1consulting/goose/issues/182 lands
-            // this should always be `== 1`.
-            assert!(
-                mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == 1
-                    || mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == EXPECT_WORKERS
-            );
             assert!(mock_endpoints[SERVER1_ABOUT_KEY].times_called() == 0);
 
-            // Confirm that we load the alternative index and about pages (mocked using
-            // a server on a different port).
+            // All GooseUsers go on to load pages on Server2.
             assert!(mock_endpoints[SERVER2_INDEX_KEY].times_called() > 0);
             assert!(mock_endpoints[SERVER2_ABOUT_KEY].times_called() > 0);
         }
@@ -312,26 +324,14 @@ fn run_load_test(test_type: &TestType, configuration: &GooseConfiguration) {
                     .register_task(task!(get_redirect)),
             )
         }
-        TestType::Domain => {
+        TestType::Domain | TestType::Sticky => {
             goose.register_taskset(
                 taskset!("LoadTest")
                     // First load redirect, takes this request only to another domain.
-                    .register_task(task!(get_domain_redirect).set_on_start())
-                    // Load index directly.
+                    .register_task(task!(get_domain_redirect))
+                    // Load index.
                     .register_task(task!(get_index))
-                    // Load about directly, always on original domain.
-                    .register_task(task!(get_about)),
-            )
-        }
-        TestType::Sticky => {
-            goose.register_taskset(
-                taskset!("LoadTest")
-                    // First load redirect, due to stick_follow the load test stays on the
-                    // new domain for all subsequent requests.
-                    .register_task(task!(get_domain_redirect).set_on_start())
-                    // Due to sticky follow, we should always load the alternative index.
-                    .register_task(task!(get_index))
-                    // Due to sticky follow, we should always load the alternative about.
+                    // Load about.
                     .register_task(task!(get_about)),
             )
         }
