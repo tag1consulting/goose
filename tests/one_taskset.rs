@@ -1,5 +1,6 @@
 use httpmock::Method::GET;
 use httpmock::{Mock, MockRef, MockServer};
+use serial_test::serial;
 
 mod common;
 
@@ -13,6 +14,13 @@ const INDEX_KEY: usize = 0;
 const ABOUT_KEY: usize = 1;
 
 const EXPECT_WORKERS: usize = 2;
+
+// Define the different types of tests run in this file.
+#[derive(Clone)]
+enum TestType {
+    NoResetMetrics,
+    ResetMetrics,
+}
 
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
@@ -51,7 +59,15 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
 // Create a custom configuration for this test.
 fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> GooseConfiguration {
     // Common elements in all our tests.
-    let mut configuration = vec!["--users", "2", "--hatch-rate", "4", "--status-codes"];
+    let mut configuration = vec![
+        "--users",
+        "2",
+        "--hatch-rate",
+        "4",
+        "--run-time",
+        "2",
+        "--status-codes",
+    ];
 
     // Custom elements in some tests.
     configuration.append(custom);
@@ -65,7 +81,7 @@ fn validate_one_taskset(
     goose_metrics: &GooseMetrics,
     mock_endpoints: &[MockRef],
     configuration: &GooseConfiguration,
-    statistics_were_reset: bool,
+    test_type: TestType,
 ) {
     // Confirm that we loaded the mock endpoints.
     assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
@@ -93,36 +109,49 @@ fn validate_one_taskset(
     assert!(about_metrics.method == GooseMethod::GET);
 
     let status_code: u16 = 200;
-    if statistics_were_reset {
-        // Statistics were reset after all users were started, so Goose should report
-        // fewer page loads than the server actually saw.
-        assert!(index_metrics.response_time_counter < mock_endpoints[INDEX_KEY].times_called());
-        assert!(
-            index_metrics.status_code_counts[&status_code]
-                < mock_endpoints[INDEX_KEY].times_called()
-        );
-        assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].times_called());
-        assert!(about_metrics.response_time_counter < mock_endpoints[ABOUT_KEY].times_called());
-        assert!(
-            about_metrics.status_code_counts[&status_code]
-                < mock_endpoints[ABOUT_KEY].times_called()
-        );
-        assert!(about_metrics.success_count < mock_endpoints[ABOUT_KEY].times_called());
-    } else {
-        // Statistics were not reset, so Goose should report the same number of page
-        // loads as the server actually saw.
-        assert!(index_metrics.response_time_counter == mock_endpoints[INDEX_KEY].times_called());
-        assert!(
-            index_metrics.status_code_counts[&status_code]
-                == mock_endpoints[INDEX_KEY].times_called()
-        );
-        assert!(index_metrics.success_count == mock_endpoints[INDEX_KEY].times_called());
-        assert!(about_metrics.response_time_counter == mock_endpoints[ABOUT_KEY].times_called());
-        assert!(
-            about_metrics.status_code_counts[&status_code]
-                == mock_endpoints[ABOUT_KEY].times_called()
-        );
-        assert!(about_metrics.success_count == mock_endpoints[ABOUT_KEY].times_called());
+    match test_type {
+        TestType::ResetMetrics => {
+            // Statistics were reset after all users were started, so Goose should report
+            // fewer page loads than the server actually saw.
+            println!(
+                "response_time_counter: {}, mock_endpoint_called: {}",
+                index_metrics.response_time_counter,
+                mock_endpoints[INDEX_KEY].times_called()
+            );
+
+            assert!(index_metrics.response_time_counter < mock_endpoints[INDEX_KEY].times_called());
+            assert!(
+                index_metrics.status_code_counts[&status_code]
+                    < mock_endpoints[INDEX_KEY].times_called()
+            );
+            assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].times_called());
+            assert!(about_metrics.response_time_counter < mock_endpoints[ABOUT_KEY].times_called());
+            assert!(
+                about_metrics.status_code_counts[&status_code]
+                    < mock_endpoints[ABOUT_KEY].times_called()
+            );
+            assert!(about_metrics.success_count < mock_endpoints[ABOUT_KEY].times_called());
+        }
+        TestType::NoResetMetrics => {
+            // Statistics were not reset, so Goose should report the same number of page
+            // loads as the server actually saw.
+            assert!(
+                index_metrics.response_time_counter == mock_endpoints[INDEX_KEY].times_called()
+            );
+            assert!(
+                index_metrics.status_code_counts[&status_code]
+                    == mock_endpoints[INDEX_KEY].times_called()
+            );
+            assert!(index_metrics.success_count == mock_endpoints[INDEX_KEY].times_called());
+            assert!(
+                about_metrics.response_time_counter == mock_endpoints[ABOUT_KEY].times_called()
+            );
+            assert!(
+                about_metrics.status_code_counts[&status_code]
+                    == mock_endpoints[ABOUT_KEY].times_called()
+            );
+            assert!(about_metrics.success_count == mock_endpoints[ABOUT_KEY].times_called());
+        }
     }
 
     // There should not have been any failures during this test.
@@ -133,46 +162,41 @@ fn validate_one_taskset(
     assert!(goose_metrics.users == configuration.users.unwrap());
 }
 
-fn build_load_test(configuration: &GooseConfiguration) -> GooseAttack {
-    // First set up the common base configuration.
-    crate::GooseAttack::initialize_with_config(configuration.clone())
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index).set_weight(9).unwrap())
-                .register_task(task!(get_about).set_weight(3).unwrap()),
-        )
+// Returns the appropriate taskset needed to build this load test.
+fn get_tasks() -> GooseTaskSet {
+    taskset!("LoadTest")
+        .register_task(task!(get_index).set_weight(9).unwrap())
+        .register_task(task!(get_about).set_weight(3).unwrap())
 }
 
-#[test]
-// Load test with a single task set containing two weighted tasks. Validate
-// weighting and statistics.
-fn test_single_taskset() {
+// Helper to run all standalone tests.
+fn run_standalone_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
     // Setup the endpoints needed for this test on the mock server.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    // Build common configuration elements, adding --no-reset-metrics.
-    let configuration = common_build_configuration(&server, &mut vec!["--no-reset-metrics"]);
+    let mut configuration_flags = match test_type {
+        TestType::NoResetMetrics => vec!["--no-reset-metrics"],
+        TestType::ResetMetrics => vec![],
+    };
 
-    // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&configuration);
+    // Build common configuration elements.
+    let configuration = common_build_configuration(&server, &mut configuration_flags);
 
-    // Run the load test.
-    let goose_metrics = common::run_load_test(goose_attack, None);
+    // Run the Goose Attack.
+    let goose_metrics = common::run_load_test(
+        common::build_load_test(configuration.clone(), &get_tasks(), None, None),
+        None,
+    );
 
     // Confirm that the load test ran correctly.
-    validate_one_taskset(&goose_metrics, &mock_endpoints, &configuration, false);
+    validate_one_taskset(&goose_metrics, &mock_endpoints, &configuration, test_type);
 }
 
-#[test]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
-// Spawn a gaggle of 1 manager and 2 workers each simulating one user. Run a load test,
-// synchronize metrics from the workers to the manager, and validate that Goose tracked
-// the same metrics as the mock server.
-fn test_single_taskset_gaggle() {
+// Helper to run all standalone tests.
+fn run_gaggle_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -182,18 +206,32 @@ fn test_single_taskset_gaggle() {
     // Each worker has the same identical configuration.
     let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
 
-    // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&worker_configuration);
+    // Build the load test for the Workers.
+    let goose_attack = common::build_load_test(worker_configuration, &get_tasks(), None, None);
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
 
     // Build common configuration elements, adding Manager Gaggle flags.
-    let manager_configuration =
-        common_build_configuration(&server, &mut vec!["--manager", "--expect-workers", "2"]);
+    let manager_configuration = match test_type {
+        TestType::NoResetMetrics => common_build_configuration(
+            &server,
+            &mut vec![
+                "--manager",
+                "--expect-workers",
+                &EXPECT_WORKERS.to_string(),
+                "--no-reset-metrics",
+            ],
+        ),
+        TestType::ResetMetrics => common_build_configuration(
+            &server,
+            &mut vec!["--manager", "--expect-workers", &EXPECT_WORKERS.to_string()],
+        ),
+    };
 
-    // Build Manager load test.
-    let manager_goose_attack = build_load_test(&manager_configuration);
+    // Build the load test for the Manager.
+    let manager_goose_attack =
+        common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles));
@@ -203,29 +241,42 @@ fn test_single_taskset_gaggle() {
         &goose_metrics,
         &mock_endpoints,
         &manager_configuration,
-        false,
+        test_type,
     );
 }
 
 #[test]
 // Load test with a single task set containing two weighted tasks. Validate
-// weighting and statistics after resetting metrics.
-fn test_single_taskset_reset_metrics() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration elements.
-    let configuration = common_build_configuration(&server, &mut vec![]);
-
-    // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&configuration);
-
-    // Run the load test.
-    let goose_metrics = common::run_load_test(goose_attack, None);
-
-    // Confirm that the load test ran correctly.
-    validate_one_taskset(&goose_metrics, &mock_endpoints, &configuration, true);
+// weighting and statistics.
+fn test_one_taskset() {
+    run_standalone_test(TestType::NoResetMetrics);
 }
+
+#[test]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Load test with a single task set containing two weighted tasks. Validate
+// weighting and statistics when run in a distributed Gaggle.
+#[serial]
+fn test_one_taskset_gaggle() {
+    run_gaggle_test(TestType::NoResetMetrics);
+}
+
+#[test]
+// Load test with a single task set containing two weighted tasks. Validate
+// weighting and statistics after resetting metrics.
+fn test_one_taskset_reset_metrics() {
+    run_standalone_test(TestType::ResetMetrics);
+}
+
+/* @TODO: @FIXME: Goose is not resetting metrics when running in Gaggle mode.
+ * Issue: https://github.com/tag1consulting/goose/issues/193
+#[test]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Load test with a single task set containing two weighted tasks. Validate
+// weighting and statistics after resetting metrics when run in a distributed
+// Gaggle.
+#[serial]
+fn test_one_taskset_reset_metrics_gaggle() {
+    run_gaggle_test(TestType::ResetMetrics);
+}
+*/

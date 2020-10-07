@@ -1,6 +1,7 @@
 use gumdrop::Options;
 use httpmock::MockServer;
 
+use goose::goose::{GooseTask, GooseTaskSet};
 use goose::metrics::GooseMetrics;
 use goose::{GooseAttack, GooseConfiguration};
 
@@ -68,6 +69,30 @@ pub fn launch_gaggle_workers(
     }
 
     worker_handles
+}
+
+// Create a GooseAttack object from the configuration, taskset, and optional start and
+// stop tasks.
+pub fn build_load_test(
+    configuration: GooseConfiguration,
+    taskset: &GooseTaskSet,
+    start_task: Option<&GooseTask>,
+    stop_task: Option<&GooseTask>,
+) -> GooseAttack {
+    // First set up the common base configuration.
+    let mut goose = crate::GooseAttack::initialize_with_config(configuration.clone())
+        .unwrap()
+        .register_taskset(taskset.clone());
+
+    if let Some(task) = start_task {
+        goose = goose.test_start(task.clone());
+    }
+
+    if let Some(task) = stop_task {
+        goose = goose.test_stop(task.clone());
+    }
+
+    goose
 }
 
 // Run the actual load test. Rely on the mock server to confirm it ran correctly, so

@@ -182,44 +182,36 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     assert!(mock_endpoints[STOP_ONE_KEY].times_called() == 1);
 }
 
-fn build_load_test(test_type: &TestType, configuration: &GooseConfiguration) -> GooseAttack {
-    // First set up the common base configuration.
-    let goose = crate::GooseAttack::initialize_with_config(configuration.clone()).unwrap();
-
-    // Next add the appropriate TaskSet.
-    let goose = match test_type {
+// Returns the appropriate taskset, start_task and stop_task needed to build this load test.
+fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
+    match test_type {
         // No sequence declared, so tasks run in the order they are defined: 1, 1, 3, 2...
-        TestType::NotSequenced => goose
-            .register_taskset(
-                taskset!("LoadTest")
-                    .register_task(task!(one).set_weight(2).unwrap())
-                    .register_task(task!(three))
-                    .register_task(task!(two_with_delay)),
-            )
-            // Stop runs after all other tasks, regardless of where defined.
-            .test_stop(task!(stop_one))
+        TestType::NotSequenced => (
+            taskset!("LoadTest")
+                .register_task(task!(one).set_weight(2).unwrap())
+                .register_task(task!(three))
+                .register_task(task!(two_with_delay)),
             // Start runs before all other tasks, regardless of where defined.
-            .test_start(task!(start_one)),
+            task!(start_one),
+            // Stop runs after all other tasks, regardless of where defined.
+            task!(stop_one),
+        ),
         // Sequence added, so tasks run in the declared sequence order: 1, 1, 2, 3...
-        TestType::Sequenced => goose
-            .register_taskset(
-                taskset!("LoadTest")
-                    .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
-                    .register_task(task!(three).set_sequence(3))
-                    .register_task(task!(two_with_delay).set_sequence(2)),
-            )
-            // Stop runs after all other tasks, regardless of where defined.
-            .test_stop(task!(stop_one))
+        TestType::Sequenced => (
+            taskset!("LoadTest")
+                .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
+                .register_task(task!(three).set_sequence(3))
+                .register_task(task!(two_with_delay).set_sequence(2)),
             // Start runs before all other tasks, regardless of where defined.
-            .test_start(task!(start_one)),
-    };
-
-    goose
+            task!(start_one),
+            // Stop runs after all other tasks, regardless of where defined.
+            task!(stop_one),
+        ),
+    }
 }
 
-// Baseline, run a test with no sequences defined.
-#[test]
-fn test_not_sequenced() {
+// Helper to run all standalone tests.
+fn run_standalone_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -229,26 +221,21 @@ fn test_not_sequenced() {
     // Build common configuration.
     let configuration = common_build_configuration(&server, None, None);
 
-    // Define the type of test.
-    let test_type = TestType::NotSequenced;
-
-    // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&test_type, &configuration);
+    // Get the taskset, start and stop tasks to build a load test.
+    let (taskset, start_task, stop_task) = get_tasks(&test_type);
 
     // Run the Goose Attack.
-    common::run_load_test(goose_attack, None);
+    common::run_load_test(
+        common::build_load_test(configuration, &taskset, Some(&start_task), Some(&stop_task)),
+        None,
+    );
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
 }
 
-/// Test test_start alone.
-#[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
-#[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
-#[serial]
-fn test_not_sequenced_gaggle() {
+// Helper to run all gaggle tests.
+fn run_gaggle_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -258,11 +245,16 @@ fn test_not_sequenced_gaggle() {
     // Build common configuration.
     let worker_configuration = common_build_configuration(&server, Some(true), None);
 
-    // Define the type of test.
-    let test_type = TestType::NotSequenced;
+    // Get the taskset, start and stop tasks to build a load test.
+    let (taskset, start_task, stop_task) = get_tasks(&test_type);
 
-    // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&test_type, &worker_configuration);
+    // Build the load test for the Workers.
+    let goose_attack = common::build_load_test(
+        worker_configuration,
+        &taskset,
+        Some(&start_task),
+        Some(&stop_task),
+    );
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
@@ -270,8 +262,13 @@ fn test_not_sequenced_gaggle() {
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
-    // Build Manager load test.
-    let manager_goose_attack = build_load_test(&test_type, &manager_configuration);
+    // Build the load test for the Manager.
+    let manager_goose_attack = common::build_load_test(
+        manager_configuration,
+        &taskset,
+        Some(&start_task),
+        Some(&stop_task),
+    );
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles));
@@ -280,65 +277,34 @@ fn test_not_sequenced_gaggle() {
     validate_test(&test_type, &mock_endpoints);
 }
 
-// Now run a test with sequences defined.
+// Baseline, run a standalone test with no sequences defined.
 #[test]
-fn test_sequenced() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, None, None);
-
-    // Define the type of test.
-    let test_type = TestType::Sequenced;
-
-    // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&test_type, &configuration);
-
-    // Run the Goose Attack.
-    common::run_load_test(goose_attack, None);
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+fn test_not_sequenced() {
+    run_standalone_test(TestType::NotSequenced);
 }
 
-/// Test test_start alone.
+// Baseline, run a gaggle test with no sequences defined.
+#[test]
+// Only run gaggle tests if the feature is compiled into the codebase.
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Gaggle tests have to be run serially instead of in parallel.
+#[serial]
+fn test_not_sequenced_gaggle() {
+    run_gaggle_test(TestType::NotSequenced);
+}
+
+// Confirm that the test runs differently and correctly respects sequencing.
+#[test]
+fn test_sequenced() {
+    run_standalone_test(TestType::Sequenced);
+}
+
+// Confirm that the test runs differently and correctly respects sequencing.
 #[test]
 // Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Gaggle tests have to be run serially instead of in parallel.
 #[serial]
 fn test_sequenced_gaggle() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, Some(true), None);
-
-    // Define the type of test.
-    let test_type = TestType::Sequenced;
-
-    // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&test_type, &configuration);
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
-
-    // Build Manager configuration.
-    let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-    // Build Manager load test.
-    let manager_goose_attack = build_load_test(&test_type, &manager_configuration);
-
-    // Run the load test.
-    common::run_load_test(manager_goose_attack, Some(worker_handles));
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    run_gaggle_test(TestType::Sequenced);
 }
