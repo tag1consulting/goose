@@ -256,13 +256,13 @@ fn test_not_sequenced_gaggle() {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     // Build common configuration.
-    let configuration = common_build_configuration(&server, Some(true), None);
+    let worker_configuration = common_build_configuration(&server, Some(true), None);
 
     // Define the type of test.
     let test_type = TestType::NotSequenced;
 
     // Build the Goose Attack as configured.
-    let goose_attack = build_load_test(&test_type, &configuration);
+    let goose_attack = build_load_test(&test_type, &worker_configuration);
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);

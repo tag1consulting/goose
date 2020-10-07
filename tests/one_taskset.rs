@@ -12,6 +12,8 @@ const ABOUT_PATH: &str = "/about.html";
 const INDEX_KEY: usize = 0;
 const ABOUT_KEY: usize = 1;
 
+const EXPECT_WORKERS: usize = 2;
+
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
@@ -131,8 +133,8 @@ fn validate_one_taskset(
     assert!(goose_metrics.users == configuration.users.unwrap());
 }
 
-// Run the actual load test, returning the resulting metrics.
-fn run_load_test(configuration: &GooseConfiguration) -> GooseMetrics {
+fn build_load_test(configuration: &GooseConfiguration) -> GooseAttack {
+    // First set up the common base configuration.
     crate::GooseAttack::initialize_with_config(configuration.clone())
         .unwrap()
         .register_taskset(
@@ -140,8 +142,6 @@ fn run_load_test(configuration: &GooseConfiguration) -> GooseMetrics {
                 .register_task(task!(get_index).set_weight(9).unwrap())
                 .register_task(task!(get_about).set_weight(3).unwrap()),
         )
-        .execute()
-        .unwrap()
 }
 
 #[test]
@@ -157,8 +157,11 @@ fn test_single_taskset() {
     // Build common configuration elements, adding --no-reset-metrics.
     let configuration = common_build_configuration(&server, &mut vec!["--no-reset-metrics"]);
 
+    // Build the Goose Attack as configured.
+    let goose_attack = build_load_test(&configuration);
+
     // Run the load test.
-    let goose_metrics = run_load_test(&configuration);
+    let goose_metrics = common::run_load_test(goose_attack, None);
 
     // Confirm that the load test ran correctly.
     validate_one_taskset(&goose_metrics, &mock_endpoints, &configuration, false);
@@ -176,26 +179,24 @@ fn test_single_taskset_gaggle() {
     // Setup the endpoints needed for this test on the mock server.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    // Launch workers in their own threads, storing the thread handle.
-    let mut worker_handles = Vec::new();
     // Each worker has the same identical configuration.
     let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
 
-    for _ in 0..2 {
-        let configuration = worker_configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test.
-            let _goose_metrics = run_load_test(&configuration);
-        }));
-    }
+    // Build the Goose Attack as configured.
+    let goose_attack = build_load_test(&worker_configuration);
+
+    // Workers launched in own threads, store thread handles.
+    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
 
     // Build common configuration elements, adding Manager Gaggle flags.
     let manager_configuration =
         common_build_configuration(&server, &mut vec!["--manager", "--expect-workers", "2"]);
 
-    // Run the load test.
-    let goose_metrics = run_load_test(&manager_configuration);
+    // Build Manager load test.
+    let manager_goose_attack = build_load_test(&manager_configuration);
+
+    // Run the Goose Attack.
+    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test ran correctly.
     validate_one_taskset(
@@ -219,8 +220,11 @@ fn test_single_taskset_reset_metrics() {
     // Build common configuration elements.
     let configuration = common_build_configuration(&server, &mut vec![]);
 
+    // Build the Goose Attack as configured.
+    let goose_attack = build_load_test(&configuration);
+
     // Run the load test.
-    let goose_metrics = run_load_test(&configuration);
+    let goose_metrics = common::run_load_test(goose_attack, None);
 
     // Confirm that the load test ran correctly.
     validate_one_taskset(&goose_metrics, &mock_endpoints, &configuration, true);
