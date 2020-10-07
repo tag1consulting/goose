@@ -5,6 +5,8 @@ use goose::goose::{GooseTask, GooseTaskSet};
 use goose::metrics::GooseMetrics;
 use goose::{GooseAttack, GooseConfiguration};
 
+type WorkerHandles = Vec<std::thread::JoinHandle<()>>;
+
 /// The following options are configured by default, if not set to a custom value
 /// and if not building a Worker configuration:
 ///  --host <mock-server>
@@ -56,7 +58,7 @@ pub fn launch_gaggle_workers(
     goose_attack: GooseAttack,
     // The number of Workers to launch.
     expect_workers: usize,
-) -> Vec<std::thread::JoinHandle<()>> {
+) -> WorkerHandles {
     // Launch each worker in its own thread, storing the join handles.
     let mut worker_handles = Vec::new();
     for _ in 0..expect_workers {
@@ -99,7 +101,7 @@ pub fn build_load_test(
 // do not return metrics.
 pub fn run_load_test(
     goose_attack: GooseAttack,
-    worker_handles: Option<Vec<std::thread::JoinHandle<()>>>,
+    worker_handles: Option<WorkerHandles>,
 ) -> GooseMetrics {
     // Execute the load test.
     let goose_metrics = goose_attack.execute().unwrap();

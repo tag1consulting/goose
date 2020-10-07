@@ -151,18 +151,11 @@ fn validate_throttle(
     current_metrics_file_lines
 }
 
-// Run the actual load test. The metrics file is used for validation, so no need to
-// return the GooseMetrics.
-fn run_load_test(configuration: &GooseConfiguration) {
-    let _ = crate::GooseAttack::initialize_with_config(configuration.clone())
-        .unwrap()
-        .register_taskset(
-            taskset!("LoadTest")
-                .register_task(task!(get_index))
-                .register_task(task!(get_about)),
-        )
-        .execute()
-        .unwrap();
+// Returns the appropriate taskset needed to build this load test.
+fn get_tasks() -> GooseTaskSet {
+    taskset!("LoadTest")
+        .register_task(task!(get_index))
+        .register_task(task!(get_about))
 }
 
 #[test]
@@ -186,8 +179,11 @@ fn test_throttle() {
         None,
     );
 
-    // Run the load test as configured.
-    run_load_test(&configuration);
+    // Run the Goose Attack.
+    common::run_load_test(
+        common::build_load_test(configuration, &get_tasks(), None, None),
+        None,
+    );
 
     // Confirm that the load test was actually throttled.
     let test1_lines = validate_throttle(&mock_endpoints, METRICS_FILE, THROTTLE_REQUESTS, None);
@@ -207,8 +203,11 @@ fn test_throttle() {
         None,
     );
 
-    // Run the load test as configured.
-    run_load_test(&configuration);
+    // Run the Goose Attack.
+    common::run_load_test(
+        common::build_load_test(configuration, &get_tasks(), None, None),
+        None,
+    );
 
     // Confirm that the load test was actually throttled, at an increased rate.
     let _ = validate_throttle(
@@ -234,22 +233,15 @@ fn test_throttle_gaggle() {
     // Setup the endpoints needed for this test on the mock server.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    // Launch workers in their own threads, storing the thread handle.
-    let mut worker_handles = Vec::new();
-
     // Each worker has the same identical configuration.
     let worker_configuration =
         common_build_configuration(&server, "", THROTTLE_REQUESTS, 0, 0, Some(true), None);
 
-    // Launch Workers in threads.
-    for _ in 0..EXPECT_WORKERS {
-        let configuration = worker_configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(&configuration);
-        }));
-    }
+    // Build the load test for the Workers.
+    let goose_attack = common::build_load_test(worker_configuration, &get_tasks(), None, None);
+
+    // Workers launched in own threads, store thread handles.
+    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
 
     // Start manager instance in current thread and run a distributed load test.
     let manager_configuration = common_build_configuration(
@@ -262,8 +254,12 @@ fn test_throttle_gaggle() {
         Some(EXPECT_WORKERS),
     );
 
-    // Run the load test as configured.
-    run_load_test(&manager_configuration);
+    // Build the load test for the Manager.
+    let manager_goose_attack =
+        common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
+
+    // Run the Goose Attack.
+    common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test was actually throttled.
     let test1_lines = validate_throttle(&mock_endpoints, &metrics_file, THROTTLE_REQUESTS, None);
@@ -272,8 +268,6 @@ fn test_throttle_gaggle() {
     // and confirm the throttle is actually working.
     let increased_throttle = THROTTLE_REQUESTS * 5;
 
-    // Clear vector to launch workers again in their own threads, storing the thread handle.
-    worker_handles.clear();
     // Each worker has the same identical configuration.
     let mut worker_configuration =
         common_build_configuration(&server, "", increased_throttle, 0, 0, Some(true), None);
@@ -283,18 +277,18 @@ fn test_throttle_gaggle() {
     worker_configuration.run_time = "".to_string();
     worker_configuration.hatch_rate = None;
 
-    // Launch Workers in threads.
-    for _ in 0..EXPECT_WORKERS {
-        let configuration = worker_configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(&configuration);
-        }));
-    }
+    // Build the load test for the Workers.
+    let goose_attack = common::build_load_test(worker_configuration, &get_tasks(), None, None);
 
-    // Manager configuration doesn't change, run the load test as configured.
-    run_load_test(&manager_configuration);
+    // Workers launched in own threads, store thread handles.
+    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
+
+    // Build the load test for the Manager.
+    let manager_goose_attack =
+        common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
+
+    // Run the Goose Attack.
+    common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test was actually throttled, at an increased rate.
     let _ = validate_throttle(
