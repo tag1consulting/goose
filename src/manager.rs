@@ -354,6 +354,11 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // so unwrap() is safe.
                     if workers.len() >= goose_attack.configuration.expect_workers.unwrap() as usize
                     {
+                        warn!(
+                            "telling extra worker ({} of {}) to exit",
+                            workers.len() + 1,
+                            goose_attack.configuration.expect_workers.unwrap()
+                        );
                         // We already have enough workers, tell this extra one to EXIT.
                         if !tell_worker_to_exit(&server) {
                             // All workers have exited, shut down the
@@ -366,6 +371,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         // New worker has to send us a single
                         // GaggleMetrics::WorkerInit object or it's invalid.
                         if gaggle_metrics.len() != 1 {
+                            warn!("invalid message from Worker, exiting load test");
                             // Invalid message, tell worker to EXIT.
                             if !tell_worker_to_exit(&server) {
                                 // All workers have exited, shut down the
@@ -378,7 +384,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         if let GaggleMetrics::WorkerInit(load_test_hash) = goose_metric {
                             if load_test_hash != goose_attack.metrics.hash {
                                 if goose_attack.configuration.no_hash_check {
-                                    warn!("worker is running a different load test, ignoring")
+                                    warn!("worker is running a different load test, ignoring");
                                 } else {
                                     panic!("worker is running a different load test, set --no-hash-check to ignore");
                                 }
@@ -386,6 +392,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         } else {
                             // Unexpected object received, tell the worker
                             // to EXIT.
+                            warn!("invalid object from Worker, exiting load test");
                             if !tell_worker_to_exit(&server) {
                                 // All workers have exited, shut down the
                                 // load test.
