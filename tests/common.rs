@@ -1,7 +1,8 @@
 use gumdrop::Options;
 use httpmock::MockServer;
 
-use goose::GooseConfiguration;
+use goose::metrics::GooseMetrics;
+use goose::{GooseAttack, GooseConfiguration};
 
 /// The following options are configured by default, if not set to a custom value
 /// and if not building a Worker configuration:
@@ -44,4 +45,47 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
     // Parse these options to generate a GooseConfiguration.
     GooseConfiguration::parse_args_default(&configuration)
         .expect("failed to parse options and generate a configuration")
+}
+
+// This code is only used when the Gaggle feature is enabled.
+#[allow(dead_code)]
+// Execute each Worker in its own thread, returning a vector of handles.
+pub fn launch_gaggle_workers(
+    // A goose attack object which is cloned for each Worker.
+    goose_attack: GooseAttack,
+    // The number of Workers to launch.
+    expect_workers: usize,
+) -> Vec<std::thread::JoinHandle<()>> {
+    // Launch each worker in its own thread, storing the join handles.
+    let mut worker_handles = Vec::new();
+    for _ in 0..expect_workers {
+        let worker_goose_attack = goose_attack.clone();
+        // Start worker instance of the load test.
+        worker_handles.push(std::thread::spawn(move || {
+            // Run the load test as configured.
+            run_load_test(worker_goose_attack, None);
+        }));
+    }
+
+    worker_handles
+}
+
+// Run the actual load test. Rely on the mock server to confirm it ran correctly, so
+// do not return metrics.
+pub fn run_load_test(
+    goose_attack: GooseAttack,
+    worker_handles: Option<Vec<std::thread::JoinHandle<()>>>,
+) -> GooseMetrics {
+    // Execute the load test.
+    let goose_metrics = goose_attack.execute().unwrap();
+
+    // If this is a Manager test, first wait for the Workers to exit to return.
+    if let Some(handles) = worker_handles {
+        // Wait for both worker threads to finish and exit.
+        for handle in handles {
+            let _ = handle.join();
+        }
+    }
+
+    goose_metrics
 }

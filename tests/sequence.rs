@@ -182,34 +182,7 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     assert!(mock_endpoints[STOP_ONE_KEY].times_called() == 1);
 }
 
-// Execute each Worker in its own thread, returning a vector of handles.
-fn launch_workers(
-    expect_workers: usize,
-    test_type: &TestType,
-    configuration: &GooseConfiguration,
-) -> Vec<std::thread::JoinHandle<()>> {
-    // Launch each worker in its own thread, storing the join handles.
-    let mut worker_handles = Vec::new();
-    for _ in 0..expect_workers {
-        let worker_test_type = test_type.clone();
-        let worker_configuration = configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(&worker_test_type, &worker_configuration, None);
-        }));
-    }
-
-    worker_handles
-}
-
-// Run the actual load test. Rely on the mock server to confirm it ran correctly, so
-// do not return metrics.
-fn run_load_test(
-    test_type: &TestType,
-    configuration: &GooseConfiguration,
-    worker_handles: Option<Vec<std::thread::JoinHandle<()>>>,
-) {
+fn build_load_test(test_type: &TestType, configuration: &GooseConfiguration) -> GooseAttack {
     // First set up the common base configuration.
     let goose = crate::GooseAttack::initialize_with_config(configuration.clone()).unwrap();
 
@@ -241,17 +214,7 @@ fn run_load_test(
             .test_start(task!(start_one)),
     };
 
-    // Execute the load test. Validation is done by the mock server, so do not
-    // return the goose_statistics.
-    let _goose_statistics = goose.execute().unwrap();
-
-    // If this is a Manager test, first wait for the Workers to exit to return.
-    if let Some(handles) = worker_handles {
-        // Wait for both worker threads to finish and exit.
-        for handle in handles {
-            let _ = handle.join();
-        }
-    }
+    goose
 }
 
 // Baseline, run a test with no sequences defined.
@@ -269,8 +232,11 @@ fn test_not_sequenced() {
     // Define the type of test.
     let test_type = TestType::NotSequenced;
 
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration, None);
+    // Build the Goose Attack as configured.
+    let goose_attack = build_load_test(&test_type, &configuration);
+
+    // Run the Goose Attack.
+    common::run_load_test(goose_attack, None);
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
@@ -295,14 +261,20 @@ fn test_not_sequenced_gaggle() {
     // Define the type of test.
     let test_type = TestType::NotSequenced;
 
+    // Build the Goose Attack as configured.
+    let goose_attack = build_load_test(&test_type, &configuration);
+
     // Workers launched in own threads, store thread handles.
-    let worker_handles = launch_workers(EXPECT_WORKERS, &test_type, &configuration);
+    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
 
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration, Some(worker_handles));
+    // Build Manager load test.
+    let manager_goose_attack = build_load_test(&test_type, &manager_configuration);
+
+    // Run the Goose Attack.
+    common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
@@ -323,8 +295,11 @@ fn test_sequenced() {
     // Define the type of test.
     let test_type = TestType::Sequenced;
 
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration, None);
+    // Build the Goose Attack as configured.
+    let goose_attack = build_load_test(&test_type, &configuration);
+
+    // Run the Goose Attack.
+    common::run_load_test(goose_attack, None);
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
@@ -349,14 +324,20 @@ fn test_sequenced_gaggle() {
     // Define the type of test.
     let test_type = TestType::Sequenced;
 
+    // Build the Goose Attack as configured.
+    let goose_attack = build_load_test(&test_type, &configuration);
+
     // Workers launched in own threads, store thread handles.
-    let worker_handles = launch_workers(EXPECT_WORKERS, &test_type, &configuration);
+    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
 
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration, Some(worker_handles));
+    // Build Manager load test.
+    let manager_goose_attack = build_load_test(&test_type, &manager_configuration);
+
+    // Run the load test.
+    common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
