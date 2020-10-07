@@ -75,6 +75,7 @@ pub fn launch_gaggle_workers(
 
 // Create a GooseAttack object from the configuration, taskset, and optional start and
 // stop tasks.
+#[allow(dead_code)]
 pub fn build_load_test(
     configuration: GooseConfiguration,
     taskset: &GooseTaskSet,
