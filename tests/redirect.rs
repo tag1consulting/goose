@@ -4,6 +4,7 @@ use serial_test::serial;
 
 mod common;
 
+use goose::goose::GooseTaskSet;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
@@ -306,62 +307,97 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
     }
 }
 
-// Run the actual load test. Validation is done server-side, so no need to
-// return the GooseMetrics.
-fn run_load_test(test_type: &TestType, configuration: &GooseConfiguration) {
-    // First, initialize an empty load test with the provided configuration.
-    let goose = crate::GooseAttack::initialize_with_config(configuration.clone()).unwrap();
-
-    // Now, add task sets as required by the specifying test_type.
-    let goose = match test_type {
+fn get_tasks(test_type: &TestType) -> GooseTaskSet {
+    match test_type {
         TestType::Chain => {
-            goose.register_taskset(
-                taskset!("LoadTest")
-                    // Load index directly.
-                    .register_task(task!(get_index))
-                    // Load redirect path, redirect to redirect2 path, redirect to
-                    // redirect3 path, redirect to about.
-                    .register_task(task!(get_redirect)),
-            )
+            taskset!("LoadTest")
+                // Load index directly.
+                .register_task(task!(get_index))
+                // Load redirect path, redirect to redirect2 path, redirect to
+                // redirect3 path, redirect to about.
+                .register_task(task!(get_redirect))
         }
         TestType::Domain | TestType::Sticky => {
-            goose.register_taskset(
-                taskset!("LoadTest")
-                    // First load redirect, takes this request only to another domain.
-                    .register_task(task!(get_domain_redirect))
-                    // Load index.
-                    .register_task(task!(get_index))
-                    // Load about.
-                    .register_task(task!(get_about)),
-            )
+            taskset!("LoadTest")
+                // First load redirect, takes this request only to another domain.
+                .register_task(task!(get_domain_redirect))
+                // Load index.
+                .register_task(task!(get_index))
+                // Load about.
+                .register_task(task!(get_about))
         }
-    };
+    }
+}
 
-    // Finally, execute the load test.
-    let _goose_metrics = goose.execute().unwrap();
+// Helper to run all standalone tests.
+fn run_standalone_test(test_type: TestType) {
+    // Start the mock servers.
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+
+    // Setup the endpoints needed for this test on the mock server.
+    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
+
+    // Build appropriate configuration.
+    let sticky = match test_type {
+        TestType::Sticky => true,
+        TestType::Chain | TestType::Domain => false,
+    };
+    let configuration = common_build_configuration(&server1, sticky, None, None);
+
+    // Run the Goose Attack.
+    common::run_load_test(
+        common::build_load_test(configuration.clone(), &get_tasks(&test_type), None, None),
+        None,
+    );
+
+    // Confirm that the load test was actually redirected.
+    validate_redirect(&test_type, &mock_endpoints);
+}
+
+// Helper to run all standalone tests.
+fn run_gaggle_test(test_type: TestType) {
+    // Start the mock servers.
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+
+    // Setup the endpoints needed for this test on the mock server.
+    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
+
+    // Build appropriate Worker configuration.
+    let sticky = match test_type {
+        TestType::Sticky => true,
+        TestType::Chain | TestType::Domain => false,
+    };
+    let worker_configuration = common_build_configuration(&server1, sticky, Some(true), None);
+
+    // Build the load test for the Workers.
+    let worker_goose_attack =
+        common::build_load_test(worker_configuration, &get_tasks(&test_type), None, None);
+
+    // Workers launched in own threads, store thread handles.
+    let worker_handles = common::launch_gaggle_workers(worker_goose_attack, EXPECT_WORKERS);
+
+    // Build Manager configuration.
+    let manager_configuration =
+        common_build_configuration(&server1, sticky, None, Some(EXPECT_WORKERS));
+
+    // Build the load test for the Workers.
+    let manager_goose_attack =
+        common::build_load_test(manager_configuration, &get_tasks(&test_type), None, None);
+
+    // Run the Goose Attack.
+    common::run_load_test(manager_goose_attack, Some(worker_handles));
+
+    // Confirm that the load test was actually redirected.
+    validate_redirect(&test_type, &mock_endpoints);
 }
 
 #[test]
 /// Simulate a load test which includes a page with a redirect chain, confirms
 /// all redirects are correctly followed.
 fn test_redirect() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Define the type of redirect being tested.
-    let test_type = TestType::Chain;
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server, None);
-
-    // Build configuration.
-    let configuration = common_build_configuration(&server, false, None, None);
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration);
-
-    // Confirm that the load test was actually redirected.
-    validate_redirect(&test_type, &mock_endpoints);
+    run_standalone_test(TestType::Chain);
 }
 
 #[test]
@@ -372,41 +408,7 @@ fn test_redirect() {
 /// Simulate a distributed load test which includes a page with a redirect chain,
 /// confirms all redirects are correctly followed.
 fn test_redirect_gaggle() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Define the type of redirect being tested.
-    let test_type = TestType::Chain;
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server, None);
-
-    // Build Worker configuration.
-    let configuration = common_build_configuration(&server, false, Some(true), None);
-
-    // Workers launched in own threads, store thread handles.
-    let mut worker_handles = Vec::new();
-
-    // Launch Workers in threads.
-    for _ in 0..EXPECT_WORKERS {
-        let worker_test_type = test_type.clone();
-        let worker_configuration = configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(&worker_test_type, &worker_configuration);
-        }));
-    }
-
-    // Build Manager configuration.
-    let manager_configuration =
-        common_build_configuration(&server, false, None, Some(EXPECT_WORKERS));
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration);
-
-    // Confirm that the load test was actually redirected.
-    validate_redirect(&test_type, &mock_endpoints);
+    run_gaggle_test(TestType::Chain);
 }
 
 #[test]
@@ -414,24 +416,7 @@ fn test_redirect_gaggle() {
 /// (which in this case is a second mock server running on a different path).
 /// Confirm all redirects are correctly followed.
 fn test_domain_redirect() {
-    // Start the mock servers.
-    let server1 = MockServer::start();
-    let server2 = MockServer::start();
-
-    // Define the type of redirect being tested.
-    let test_type = TestType::Domain;
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
-
-    // Build configuration.
-    let configuration = common_build_configuration(&server1, false, None, None);
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration);
-
-    // Confirm that the load test was actually redirected.
-    validate_redirect(&test_type, &mock_endpoints);
+    run_standalone_test(TestType::Domain);
 }
 
 #[test]
@@ -443,66 +428,14 @@ fn test_domain_redirect() {
 /// another domain (which in this case is a second mock server running on a
 /// different path). Confirm all redirects are correctly followed.
 fn test_domain_redirect_gaggle() {
-    // Start the mock servers.
-    let server1 = MockServer::start();
-    let server2 = MockServer::start();
-
-    // Define the type of redirect being tested.
-    let test_type = TestType::Domain;
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
-
-    // Build Worker configuration.
-    let configuration = common_build_configuration(&server1, false, Some(true), None);
-
-    // Workers launched in own threads, store thread handles.
-    let mut worker_handles = Vec::new();
-
-    // Launch Workers in threads.
-    for _ in 0..EXPECT_WORKERS {
-        let worker_test_type = test_type.clone();
-        let worker_configuration = configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(&worker_test_type, &worker_configuration);
-        }));
-    }
-
-    // Build Manager configuration.
-    let manager_configuration =
-        common_build_configuration(&server1, false, None, Some(EXPECT_WORKERS));
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration);
-
-    // Confirm that the load test was actually redirected.
-    validate_redirect(&test_type, &mock_endpoints);
+    run_gaggle_test(TestType::Domain);
 }
 
 #[test]
 /// Simulate a load test which permanently follows a redirect due to the
 /// --sticky-follow run-time option.
 fn test_sticky_domain_redirect() {
-    // Start the mock servers.
-    let server1 = MockServer::start();
-    let server2 = MockServer::start();
-
-    // Define the type of redirect being tested.
-    let test_type = TestType::Sticky;
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
-
-    // Build configuration, enabling --sticky-follow.
-    let configuration = common_build_configuration(&server1, true, None, None);
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration);
-
-    // Confirm that the load test was actually redirected.
-    validate_redirect(&test_type, &mock_endpoints);
+    run_standalone_test(TestType::Sticky);
 }
 
 #[test]
@@ -513,40 +446,5 @@ fn test_sticky_domain_redirect() {
 /// Simulate a distributed load test which permanently follows a redirect
 /// due to the --sticky-follow run-time option.
 fn test_sticky_domain_redirect_gaggle() {
-    // Start the mock servers.
-    let server1 = MockServer::start();
-    let server2 = MockServer::start();
-
-    // Define the type of redirect being tested.
-    let test_type = TestType::Sticky;
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&test_type, &server1, Some(&server2));
-
-    // Build Worker configuration.
-    let configuration = common_build_configuration(&server1, false, Some(true), None);
-
-    // Workers launched in own threads, store thread handles.
-    let mut worker_handles = Vec::new();
-
-    // Launch Workers in threads.
-    for _ in 0..EXPECT_WORKERS {
-        let worker_test_type = test_type.clone();
-        let worker_configuration = configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(&worker_test_type, &worker_configuration);
-        }));
-    }
-
-    // Build Manager configuration, enabling --sticky-follow.
-    let manager_configuration =
-        common_build_configuration(&server1, true, None, Some(EXPECT_WORKERS));
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration);
-
-    // Confirm that the load test was actually redirected.
-    validate_redirect(&test_type, &mock_endpoints);
+    run_gaggle_test(TestType::Sticky);
 }
