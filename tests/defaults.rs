@@ -1,7 +1,6 @@
 use httpmock::Method::GET;
 use httpmock::{Mock, MockRef, MockServer};
 use serial_test::serial;
-use std::io::{self, BufRead};
 
 mod common;
 
@@ -50,15 +49,6 @@ fn cleanup_files(files: Vec<&str>) {
         if std::path::Path::new(file).exists() {
             std::fs::remove_file(file).expect("failed to remove file");
         }
-    }
-}
-
-// Helper to count the number of lines in a test artifact.
-fn file_length(file_name: &str) -> usize {
-    if let Ok(file) = std::fs::File::open(std::path::Path::new(file_name)) {
-        io::BufReader::new(file).lines().count()
-    } else {
-        0
     }
 }
 
@@ -129,9 +119,8 @@ fn validate_test(
     // Verify that the metrics file was created and has the correct number of lines.
     let mut metrics_lines = 0;
     for metrics_file in metrics_files {
-        println!("metrics_file: {}", metrics_file);
         assert!(std::path::Path::new(metrics_file).exists());
-        metrics_lines += file_length(metrics_file);
+        metrics_lines += common::file_length(metrics_file);
     }
     assert!(
         metrics_lines
@@ -141,7 +130,7 @@ fn validate_test(
     // Verify that the debug file was created and is empty.
     for debug_file in debug_files {
         assert!(std::path::Path::new(debug_file).exists());
-        assert!(file_length(debug_file) == 0);
+        assert!(common::file_length(debug_file) == 0);
     }
 
     // Requests are made while GooseUsers are hatched, and then for run_time seconds.

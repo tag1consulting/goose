@@ -1,5 +1,6 @@
 use gumdrop::Options;
 use httpmock::MockServer;
+use std::io::{self, BufRead};
 
 use goose::goose::{GooseTask, GooseTaskSet};
 use goose::metrics::GooseMetrics;
@@ -116,4 +117,14 @@ pub fn run_load_test(
     }
 
     goose_metrics
+}
+
+// Helper to count the number of lines in a test artifact.
+#[allow(dead_code)]
+pub fn file_length(file_name: &str) -> usize {
+    if let Ok(file) = std::fs::File::open(std::path::Path::new(file_name)) {
+        io::BufReader::new(file).lines().count()
+    } else {
+        0
+    }
 }
