@@ -347,7 +347,7 @@ fn run_standalone_test(test_type: TestType) {
 
     // Run the Goose Attack.
     common::run_load_test(
-        common::build_load_test(configuration.clone(), &get_tasks(&test_type), None, None),
+        common::build_load_test(configuration, &get_tasks(&test_type), None, None),
         None,
     );
 

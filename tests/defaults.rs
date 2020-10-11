@@ -43,15 +43,6 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-// Helper to delete test artifact, if existing.
-fn cleanup_files(files: Vec<&str>) {
-    for file in files {
-        if std::path::Path::new(file).exists() {
-            std::fs::remove_file(file).expect("failed to remove file");
-        }
-    }
-}
-
 // All tests in this file run against common endpoints.
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
@@ -145,10 +136,10 @@ fn validate_test(
 
     // Cleanup from test.
     for file in metrics_files {
-        cleanup_files(vec![file]);
+        common::cleanup_files(vec![file]);
     }
     for file in debug_files {
-        cleanup_files(vec![file]);
+        common::cleanup_files(vec![file]);
     }
 }
 
@@ -160,7 +151,7 @@ fn test_defaults() {
     let debug_file = "defaults-".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
-    cleanup_files(vec![&metrics_file, &debug_file]);
+    common::cleanup_files(vec![&metrics_file, &debug_file]);
 
     let server = MockServer::start();
 
@@ -233,9 +224,9 @@ fn test_defaults_gaggle() {
     // Be sure there's no files left over from an earlier test.
     for i in 0..EXPECT_WORKERS {
         let file = metrics_file.to_string() + &i.to_string();
-        cleanup_files(vec![&file]);
+        common::cleanup_files(vec![&file]);
         let file = debug_file.to_string() + &i.to_string();
-        cleanup_files(vec![&file]);
+        common::cleanup_files(vec![&file]);
     }
 
     let server = MockServer::start();
@@ -349,7 +340,7 @@ fn test_no_defaults() {
     let debug_file = "nodefaults-".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
-    cleanup_files(vec![&metrics_file, &debug_file]);
+    common::cleanup_files(vec![&metrics_file, &debug_file]);
 
     let server = MockServer::start();
 
@@ -409,9 +400,9 @@ fn test_no_defaults_gaggle() {
     // Be sure there's no files left over from an earlier test.
     for i in 0..EXPECT_WORKERS {
         let file = metrics_file.to_string() + &i.to_string();
-        cleanup_files(vec![&file]);
+        common::cleanup_files(vec![&file]);
         let file = debug_file.to_string() + &i.to_string();
-        cleanup_files(vec![&file]);
+        common::cleanup_files(vec![&file]);
     }
 
     let server = MockServer::start();

@@ -306,7 +306,7 @@ fn test_throttle_gaggle() {
 
     // Build the load test for the Manager.
     let manager_goose_attack =
-        common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
+        common::build_load_test(manager_configuration, &get_tasks(), None, None);
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles));

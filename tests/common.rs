@@ -84,7 +84,7 @@ pub fn build_load_test(
     stop_task: Option<&GooseTask>,
 ) -> GooseAttack {
     // First set up the common base configuration.
-    let mut goose = crate::GooseAttack::initialize_with_config(configuration.clone())
+    let mut goose = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()
         .register_taskset(taskset.clone());
 
@@ -126,5 +126,15 @@ pub fn file_length(file_name: &str) -> usize {
         io::BufReader::new(file).lines().count()
     } else {
         0
+    }
+}
+
+// Helper to delete test artifact, if existing.
+#[allow(dead_code)]
+pub fn cleanup_files(files: Vec<&str>) {
+    for file in files {
+        if std::path::Path::new(file).exists() {
+            std::fs::remove_file(file).expect("failed to remove file");
+        }
     }
 }
