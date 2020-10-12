@@ -7,33 +7,38 @@ mod common;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const SETUP_PATH: &str = "/setup";
 const TEARDOWN_PATH: &str = "/teardown";
 
+// Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const SETUP_KEY: usize = 1;
 const TEARDOWN_KEY: usize = 2;
 
+// Load test configuration.
 const EXPECT_WORKERS: usize = 2;
 const USERS: &str = "4";
 
-// Defines the different types of tests.
+// There are multiple test variations in this file.
 #[derive(Clone)]
 enum TestType {
-    // Testing on_start alone.
+    // Test on_start alone.
     Start,
-    // Testing on_stop alone.
+    // Test on_stop alone.
     Stop,
-    // Testing on_start and on_stop together.
+    // Test on_start and on_stop both together.
     StartAndStop,
 }
 
+// Test task.
 pub async fn setup(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.post(SETUP_PATH, "setting up load test").await?;
     Ok(())
 }
 
+// Test task.
 pub async fn teardown(user: &GooseUser) -> GooseTaskResult {
     let _goose = user
         .post(TEARDOWN_PATH, "cleaning up after load test")
@@ -41,6 +46,7 @@ pub async fn teardown(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
@@ -78,7 +84,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     endpoints
 }
 
-// Create a custom configuration for this test.
+// Build appropriate configuration for these tests.
 fn common_build_configuration(
     server: &MockServer,
     worker: Option<bool>,
@@ -104,7 +110,7 @@ fn common_build_configuration(
     }
 }
 
-// Common validation for the load tests in this file.
+// Helper to confirm all variations generate appropriate results.
 fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     // Confirm the load test ran.
     assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
@@ -132,224 +138,111 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     }
 }
 
-// Execute each Worker in its own thread, returning a vector of handles.
-fn launch_workers(
-    expect_workers: usize,
-    test_type: &TestType,
-    configuration: &GooseConfiguration,
-) -> Vec<std::thread::JoinHandle<()>> {
-    // Launch each worker in its own thread, storing the join handles.
-    let mut worker_handles = Vec::new();
-    for _ in 0..expect_workers {
-        let worker_test_type = test_type.clone();
-        let worker_configuration = configuration.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(&worker_test_type, &worker_configuration, None);
-        }));
-    }
-
-    worker_handles
-}
-
-// Run the actual load test. Rely on the mock server to confirm it ran correctly, so
-// do not return metrics.
-fn run_load_test(
-    test_type: &TestType,
-    configuration: &GooseConfiguration,
-    worker_handles: Option<Vec<std::thread::JoinHandle<()>>>,
-) {
-    // First set up the common base configuration.
-    let goose = crate::GooseAttack::initialize_with_config(configuration.clone()).unwrap();
-
-    // Next add the appropriate TaskSet.
-    let goose = match test_type {
-        TestType::Start => goose.test_start(task!(setup)).register_taskset(
-            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
-        ),
-        TestType::Stop => goose.test_stop(task!(teardown)).register_taskset(
-            taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
-        ),
-        TestType::StartAndStop => goose
-            .test_start(task!(setup))
-            .test_stop(task!(teardown))
-            .register_taskset(
-                taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap()),
-            ),
-    };
-
-    // Execute the load test. Validation is done by the mock server, so do not
-    // return the goose_statistics.
-    let _goose_statistics = goose.execute().unwrap();
-
-    // If this is a Manager test, first wait for the Workers to exit to return.
-    if let Some(handles) = worker_handles {
-        // Wait for both worker threads to finish and exit.
-        for handle in handles {
-            let _ = handle.join();
+// Build an appropriate GooseAttack object for test type, using supplied configuration.
+fn build_goose_attack(test_type: &TestType, configuration: GooseConfiguration) -> GooseAttack {
+    let taskset = taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap());
+    let start_task = task!(setup);
+    let stop_task = task!(teardown);
+    match test_type {
+        TestType::Start => {
+            common::build_load_test(configuration, &taskset, Some(&start_task), None)
+        }
+        TestType::Stop => common::build_load_test(configuration, &taskset, None, Some(&stop_task)),
+        TestType::StartAndStop => {
+            common::build_load_test(configuration, &taskset, Some(&start_task), Some(&stop_task))
         }
     }
 }
 
-/// Test test_start alone.
+// Helper to run all standalone tests.
+fn run_standalone_test(test_type: TestType) {
+    // Start the mock server.
+    let server = MockServer::start();
+
+    // Setup the mock endpoints needed for this test.
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    // Build common configuration.
+    let configuration = common_build_configuration(&server, None, None);
+
+    // Use configuration to generate the load test.
+    let goose_attack = build_goose_attack(&test_type, configuration);
+
+    // Run the load test.
+    common::run_load_test(goose_attack, None);
+
+    // Confirm the load test ran correctly.
+    validate_test(&test_type, &mock_endpoints);
+}
+
+// Helper to run all gaggle tests.
+fn run_gaggle_test(test_type: TestType) {
+    // Start the mock server.
+    let server = MockServer::start();
+
+    // Setup the mock endpoints needed for this test.
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    // Build common configuration.
+    let worker_configuration = common_build_configuration(&server, Some(true), None);
+
+    // Use Worker configuration to generate the load test.
+    let goose_attack = build_goose_attack(&test_type, worker_configuration);
+
+    // Workers launched in own threads, store thread handles.
+    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
+
+    // Build Manager configuration.
+    let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
+
+    // Use Manager configuration to generate the load test.
+    let goose_attack = build_goose_attack(&test_type, manager_configuration);
+
+    // Run the load test.
+    common::run_load_test(goose_attack, Some(worker_handles));
+
+    // Confirm the load test ran correctly.
+    validate_test(&test_type, &mock_endpoints);
+}
+
 #[test]
+// Test test_start().
 fn test_setup() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, None, None);
-
-    // Define the type of test.
-    let test_type = TestType::Start;
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration, None);
-
-    // Confirm the load test ran correctly.
-    validate_test(&TestType::Start, &mock_endpoints);
+    run_standalone_test(TestType::Start);
 }
 
-/// Test test_start alone.
 #[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+// Test test_start(), in Gaggle mode.
 fn test_setup_gaggle() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, Some(true), None);
-
-    // Define the type of test.
-    let test_type = TestType::Start;
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = launch_workers(EXPECT_WORKERS, &test_type, &configuration);
-
-    // Build Manager configuration.
-    let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration, Some(worker_handles));
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    run_gaggle_test(TestType::Start);
 }
 
-/// Test test_stop alone.
 #[test]
+// Test test_stop().
 fn test_teardown() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, None, None);
-
-    // Define the type of test.
-    let test_type = TestType::Stop;
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration, None);
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    run_standalone_test(TestType::Stop);
 }
 
-/// Test test_start alone in Gaggle mode.
 #[test]
-// Only run Gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+// Test test_stop(), in Gaggle mode.
 fn test_teardown_gaggle() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, Some(true), None);
-
-    // Define the type of test.
-    let test_type = TestType::Stop;
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = launch_workers(EXPECT_WORKERS, &test_type, &configuration);
-
-    // Build Manager configuration.
-    let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration, Some(worker_handles));
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    run_gaggle_test(TestType::Stop);
 }
 
+#[test]
 /// Test test_start and test_stop together.
-#[test]
 fn test_setup_teardown() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, None, None);
-
-    // Define the type of test.
-    let test_type = TestType::StartAndStop;
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &configuration, None);
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    run_standalone_test(TestType::StartAndStop);
 }
 
-/// Test test_start and test_Stop together in Gaggle mode.
 #[test]
-// Only run Gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+/// Test test_start and test_stop together, in Gaggle mode.
 fn test_setup_teardown_gaggle() {
-    // Start the mock server.
-    let server = MockServer::start();
-
-    // Setup the mock endpoints needed for this test.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Build common configuration.
-    let configuration = common_build_configuration(&server, Some(true), None);
-
-    // Define the type of test.
-    let test_type = TestType::StartAndStop;
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = launch_workers(EXPECT_WORKERS, &test_type, &configuration);
-
-    // Build Manager configuration.
-    let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
-
-    // Run the load test as configured.
-    run_load_test(&test_type, &manager_configuration, Some(worker_handles));
-
-    // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    run_gaggle_test(TestType::StartAndStop);
 }

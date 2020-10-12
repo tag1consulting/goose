@@ -1,7 +1,6 @@
 use httpmock::Method::GET;
 use httpmock::{Mock, MockRef, MockServer};
 use std::sync::Arc;
-use std::thread;
 
 mod common;
 
@@ -9,21 +8,26 @@ use goose::goose::GooseMethod;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
+// Load test configuration.
 const EXPECT_WORKERS: usize = 2;
 
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
+// Test task.
 pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
 
+// Structure defining a load test endpoint.
 #[derive(Debug)]
 struct LoadtestEndpoint<'a> {
     pub path: &'a str,
@@ -111,7 +115,7 @@ fn common_build_configuration(
     }
 }
 
-// Build dynamic taskset.
+// Dynamically build taskset.
 fn build_taskset() -> GooseTaskSet {
     // Get common configuration for building endpoints and the load test itself.
     let test_endpoints = configure_mock_endpoints();
@@ -211,19 +215,9 @@ fn validate_closer_test(
     assert!(goose_metrics.users == configuration.users.unwrap());
 }
 
-// Run the actual load test.
-fn run_load_test(configuration: &GooseConfiguration, taskset: GooseTaskSet) -> GooseMetrics {
-    crate::GooseAttack::initialize_with_config(configuration.clone())
-        .unwrap()
-        .register_taskset(taskset)
-        .execute()
-        .unwrap()
-}
-
-#[test]
-// Load test with a single task set containing two weighted tasks setup via closure.
-// Validate weighting and statistics.
-fn test_single_taskset_closure() {
+// Helper to run the test, takes a flag for indicating if running in standalone
+// mode or Gaggle mode.
+fn run_load_test(is_gaggle: bool) {
     // Start mock server.
     let server = MockServer::start();
 
@@ -233,17 +227,64 @@ fn test_single_taskset_closure() {
     // Get configuration for building the load test itself.
     let test_endpoints = configure_mock_endpoints();
 
-    // Build configuration.
-    let configuration = common_build_configuration(&server, test_endpoints.len(), None, None);
+    let (configuration, goose_metrics) = match is_gaggle {
+        false => {
+            // Build configuration.
+            let configuration =
+                common_build_configuration(&server, test_endpoints.len(), None, None);
 
-    // Dynamically build taskset.
-    let taskset = build_taskset();
+            // Run the Goose Attack.
+            let goose_metrics = common::run_load_test(
+                common::build_load_test(configuration.clone(), &build_taskset(), None, None),
+                None,
+            );
 
-    // Run the dynamically built taskset as configured.
-    let goose_metrics = run_load_test(&configuration, taskset);
+            (configuration, goose_metrics)
+        }
+        true => {
+            // Each worker has the same identical configuration.
+            let worker_configuration =
+                common_build_configuration(&server, test_endpoints.len(), Some(true), None);
+
+            // Workers launched in own threads, store thread handles.
+            let worker_handles = common::launch_gaggle_workers(
+                common::build_load_test(worker_configuration, &build_taskset(), None, None),
+                EXPECT_WORKERS,
+            );
+
+            // Build Manager configuration.
+            let manager_configuration = common_build_configuration(
+                &server,
+                test_endpoints.len(),
+                None,
+                Some(EXPECT_WORKERS),
+            );
+
+            // Run the Goose Attack.
+            let goose_metrics = common::run_load_test(
+                common::build_load_test(
+                    manager_configuration.clone(),
+                    &build_taskset(),
+                    None,
+                    None,
+                ),
+                Some(worker_handles),
+            );
+
+            (manager_configuration, goose_metrics)
+        }
+    };
 
     // Confirm the load test ran correctly.
     validate_closer_test(&mock_endpoints, &goose_metrics, &configuration);
+}
+
+#[test]
+// Load test with a single task set containing two weighted tasks setup via closure.
+// Validate weighting and statistics.
+fn test_single_taskset_closure() {
+    // Run load test with is_gaggle set to false.
+    run_load_test(false);
 }
 
 #[test]
@@ -252,53 +293,6 @@ fn test_single_taskset_closure() {
 // with a single task set containing two weighted tasks setup via closure. Validate
 // that weighting and metrics are correctly merged to the Manager.
 fn test_single_taskset_closure_gaggle() {
-    // Start mock server.
-    let server = MockServer::start();
-
-    // Setup the endpoints needed for this test on the mock server.
-    let mock_endpoints = setup_mock_server_endpoints(&server);
-
-    // Get configuration for building the load test itself.
-    let test_endpoints = configure_mock_endpoints();
-
-    // Launch workers in their own threads, storing the thread handle.
-    let mut worker_handles = Vec::new();
-
-    // Each worker has the same identical configuration.
-    let mut worker_configuration =
-        common_build_configuration(&server, test_endpoints.len(), Some(true), None);
-
-    // Unset options set in common.rs as they can't be set on the Worker.
-    worker_configuration.users = None;
-    worker_configuration.run_time = "".to_string();
-    worker_configuration.hatch_rate = None;
-
-    // Dynamically build taskset.
-    let taskset = build_taskset();
-
-    for _ in 0..EXPECT_WORKERS {
-        // Clone configuration and taskset for each Worker.
-        let worker_config = worker_configuration.clone();
-        let worker_taskset = taskset.clone();
-        // Start worker instance of the load test.
-        worker_handles.push(thread::spawn(move || {
-            // Run the loadtest.
-            let _ = run_load_test(&worker_config, worker_taskset);
-        }));
-    }
-
-    // Build Manager configuration.
-    let manager_configuration =
-        common_build_configuration(&server, test_endpoints.len(), None, Some(EXPECT_WORKERS));
-
-    // Run the dynamically built taskset as configured.
-    let goose_metrics = run_load_test(&manager_configuration, taskset);
-
-    // Wait for both worker threads to finish and exit.
-    for worker_handle in worker_handles {
-        let _ = worker_handle.join();
-    }
-
-    // Confirm the load test ran correctly.
-    validate_closer_test(&mock_endpoints, &goose_metrics, &manager_configuration);
+    // Run load test with is_gaggle set to true.
+    run_load_test(true);
 }

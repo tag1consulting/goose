@@ -3,6 +3,7 @@
 ## 0.10.3-dev
  - fixup sticky redirect tests to properly test functionality
  - add `test/sequence.rs` to confirm sequencing tests works correctly, even in Gaggle mode
+ - deduplicate test logic by moving shared functionality into `tests/common.rs`; consistently test functionality both in standalone and Gaggle mode
 
 ## 0.10.2 Sep 27, 2020
  - remove unnecessary `GooseAttack.number_of_cpus` instead calling `num_cpus::get()` directly
