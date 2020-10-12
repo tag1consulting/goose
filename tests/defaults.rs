@@ -6,12 +6,15 @@ mod common;
 
 use goose::prelude::*;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
+// Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const ABOUT_KEY: usize = 1;
 
+// Load test configuration.
 const USERS: usize = 3;
 const RUN_TIME: usize = 3;
 const HATCH_RATE: usize = 10;
@@ -33,11 +36,13 @@ const EXPECT_WORKERS: usize = 2;
 // - GooseDefault::StickyFollow
 //     Needs more complex tests
 
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
+// Test task.
 pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
@@ -67,8 +72,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     endpoints
 }
 
-/// Helper that validates test results are the same regardless of if setting
-/// run-time options, or defaults.
+// Helper to confirm all variations generate appropriate results.
 fn validate_test(
     goose_metrics: GooseMetrics,
     mock_endpoints: &[MockRef],
@@ -144,7 +148,7 @@ fn validate_test(
 }
 
 #[test]
-/// Load test confirming that Goose respects configured defaults.
+// Configure load test with set_default.
 fn test_defaults() {
     // Multiple tests run together, so set a unique name.
     let metrics_file = "defaults-".to_string() + METRICS_FILE;
@@ -214,8 +218,8 @@ fn test_defaults() {
 
 #[test]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-/// Load test confirming that Goose respects configured gaggle-related defaults.
 #[serial]
+// Configure load test with set_default, run as Gaggle.
 fn test_defaults_gaggle() {
     // Multiple tests run together, so set a unique name.
     let metrics_file = "gaggle-defaults".to_string() + METRICS_FILE;
@@ -333,7 +337,7 @@ fn test_defaults_gaggle() {
 }
 
 #[test]
-/// Load test confirming that Goose respects CLI options.
+// Configure load test with run time options (not with defaults).
 fn test_no_defaults() {
     // Multiple tests run together, so set a unique name.
     let metrics_file = "nodefaults-".to_string() + METRICS_FILE;
@@ -391,8 +395,8 @@ fn test_no_defaults() {
 
 #[test]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-/// Load test confirming that Goose respects configured gaggle-related defaults.
 #[serial]
+// Configure load test with run time options (not with defaults), run as Gaggle.
 fn test_no_defaults_gaggle() {
     let metrics_file = "gaggle-nodefaults".to_string() + METRICS_FILE;
     let debug_file = "gaggle-nodefaults".to_string() + DEBUG_FILE;
@@ -499,14 +503,14 @@ fn test_no_defaults_gaggle() {
 }
 
 #[test]
-/// Load test confirming that Goose respects configured defaults.
+// Configure load test with defaults, disable metrics.
 fn test_defaults_no_metrics() {
     let server = MockServer::start();
 
     // Setup the mock endpoints needed for this test.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    let mut config = common::build_configuration(&server, vec!["--no-reset-metrics"]);
+    let mut config = common::build_configuration(&server, vec![]);
 
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;

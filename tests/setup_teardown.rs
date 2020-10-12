@@ -7,33 +7,38 @@ mod common;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const SETUP_PATH: &str = "/setup";
 const TEARDOWN_PATH: &str = "/teardown";
 
+// Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const SETUP_KEY: usize = 1;
 const TEARDOWN_KEY: usize = 2;
 
+// Load test configuration.
 const EXPECT_WORKERS: usize = 2;
 const USERS: &str = "4";
 
-// Defines the different types of tests.
+// There are multiple test variations in this file.
 #[derive(Clone)]
 enum TestType {
-    // Testing on_start alone.
+    // Test on_start alone.
     Start,
-    // Testing on_stop alone.
+    // Test on_stop alone.
     Stop,
-    // Testing on_start and on_stop together.
+    // Test on_start and on_stop both together.
     StartAndStop,
 }
 
+// Test task.
 pub async fn setup(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.post(SETUP_PATH, "setting up load test").await?;
     Ok(())
 }
 
+// Test task.
 pub async fn teardown(user: &GooseUser) -> GooseTaskResult {
     let _goose = user
         .post(TEARDOWN_PATH, "cleaning up after load test")
@@ -41,6 +46,7 @@ pub async fn teardown(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
@@ -78,7 +84,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     endpoints
 }
 
-// Create a custom configuration for this test.
+// Build appropriate configuration for these tests.
 fn common_build_configuration(
     server: &MockServer,
     worker: Option<bool>,
@@ -104,7 +110,7 @@ fn common_build_configuration(
     }
 }
 
-// Common validation for the load tests in this file.
+// Helper to confirm all variations generate appropriate results.
 fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     // Confirm the load test ran.
     assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
@@ -199,50 +205,44 @@ fn run_gaggle_test(test_type: TestType) {
     validate_test(&test_type, &mock_endpoints);
 }
 
-/// Test test_start alone.
 #[test]
+// Test test_start().
 fn test_setup() {
     run_standalone_test(TestType::Start);
 }
 
-/// Test test_start alone.
 #[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+// Test test_start(), in Gaggle mode.
 fn test_setup_gaggle() {
     run_gaggle_test(TestType::Start);
 }
 
-/// Test test_stop alone.
 #[test]
+// Test test_stop().
 fn test_teardown() {
     run_standalone_test(TestType::Stop);
 }
 
-/// Test test_start alone in Gaggle mode.
 #[test]
-// Only run Gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+// Test test_stop(), in Gaggle mode.
 fn test_teardown_gaggle() {
     run_gaggle_test(TestType::Stop);
 }
 
-/// Test test_start and test_stop together.
 #[test]
+/// Test test_start and test_stop together.
 fn test_setup_teardown() {
     run_standalone_test(TestType::StartAndStop);
 }
 
-/// Test test_start and test_Stop together in Gaggle mode.
 #[test]
-// Only run Gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+/// Test test_start and test_stop together, in Gaggle mode.
 fn test_setup_teardown_gaggle() {
     run_gaggle_test(TestType::StartAndStop);
 }

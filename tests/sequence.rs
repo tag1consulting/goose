@@ -8,35 +8,42 @@ mod common;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
+// Paths used in load tests performed during these tests.
 const ONE_PATH: &str = "/one";
 const TWO_PATH: &str = "/two";
 const THREE_PATH: &str = "/three";
 const START_ONE_PATH: &str = "/start/one";
 const STOP_ONE_PATH: &str = "/stop/one";
 
+// Indexes to the above paths.
 const ONE_KEY: usize = 0;
 const TWO_KEY: usize = 1;
 const THREE_KEY: usize = 2;
 const START_ONE_KEY: usize = 3;
 const STOP_ONE_KEY: usize = 4;
 
+// Load test configuration.
 const EXPECT_WORKERS: usize = 2;
 const USERS: usize = 4;
 const RUN_TIME: usize = 2;
 
-// Define the different types of tests run in this file.
+// There are multiple test variations in this file.
 #[derive(Clone)]
 enum TestType {
+    // No sequences defined in load test.
     NotSequenced,
+    // Sequences defined in load test.
     Sequenced,
 }
 
+// Test task.
 pub async fn one(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ONE_PATH).await?;
 
     Ok(())
 }
 
+// Test task.
 pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(TWO_PATH).await?;
 
@@ -48,6 +55,7 @@ pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
+// Test task.
 pub async fn three(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(THREE_PATH).await?;
 
@@ -116,7 +124,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     endpoints
 }
 
-// Create a custom configuration for this test.
+// Build appropriate configuration for these tests.
 fn common_build_configuration(
     server: &MockServer,
     worker: Option<bool>,
@@ -156,7 +164,7 @@ fn common_build_configuration(
     }
 }
 
-// Common validation for the load tests in this file.
+// Helper to confirm all variations generate appropriate results.
 fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
     assert!(mock_endpoints[START_ONE_KEY].times_called() == 1);
@@ -182,7 +190,7 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     assert!(mock_endpoints[STOP_ONE_KEY].times_called() == 1);
 }
 
-// Returns the appropriate taskset, start_task and stop_task needed to build this load test.
+// Returns the appropriate taskset, start_task and stop_task needed to build these tests.
 fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
     match test_type {
         // No sequence declared, so tasks run in the order they are defined: 1, 1, 3, 2...
@@ -277,34 +285,30 @@ fn run_gaggle_test(test_type: TestType) {
     validate_test(&test_type, &mock_endpoints);
 }
 
-// Baseline, run a standalone test with no sequences defined.
 #[test]
+// Load test with multiple tasks and no sequences defined.
 fn test_not_sequenced() {
     run_standalone_test(TestType::NotSequenced);
 }
 
-// Baseline, run a gaggle test with no sequences defined.
 #[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+// Load test with multiple tasks and no sequences defined, in Gaggle mode.
 fn test_not_sequenced_gaggle() {
     run_gaggle_test(TestType::NotSequenced);
 }
 
-// Confirm that the test runs differently and correctly respects sequencing.
 #[test]
+// Load test with multiple tasks and sequences defined.
 fn test_sequenced() {
     run_standalone_test(TestType::Sequenced);
 }
 
-// Confirm that the test runs differently and correctly respects sequencing.
 #[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be run serially instead of in parallel.
 #[serial]
+// Load test with multiple tasks and sequences defined, in Gaggle mode.
 fn test_sequenced_gaggle() {
     run_gaggle_test(TestType::Sequenced);
 }

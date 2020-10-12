@@ -8,41 +8,55 @@ use goose::goose::GooseTaskSet;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const REDIRECT_PATH: &str = "/redirect";
 const REDIRECT2_PATH: &str = "/redirect2";
 const REDIRECT3_PATH: &str = "/redirect3";
 const ABOUT_PATH: &str = "/about.php";
 
+// Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const REDIRECT_KEY: usize = 1;
 const REDIRECT_KEY2: usize = 2;
 const REDIRECT_KEY3: usize = 3;
 const ABOUT_KEY: usize = 4;
-
 const SERVER1_INDEX_KEY: usize = 0;
 const SERVER1_ABOUT_KEY: usize = 1;
 const SERVER1_REDIRECT_KEY: usize = 2;
 const SERVER2_INDEX_KEY: usize = 3;
 const SERVER2_ABOUT_KEY: usize = 4;
 
+// Load test configuration.
 const EXPECT_WORKERS: usize = 2;
 const USERS: usize = 4;
 
-// Task function, load INDEX_PATH.
+// There are multiple test variations in this file.
+#[derive(Clone)]
+enum TestType {
+    // Chain many different redirects together.
+    Chain,
+    // Redirect between domains.
+    Domain,
+    // Permanently redirect between domains.
+    Sticky,
+}
+
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
-// Task function, load ABOUT PATH
+// Test task.
 pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
 
-// Task function, load REDIRECT_PATH and follow redirects to ABOUT_PATH.
+// Test task.
 pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
+    // Load REDIRECT_PATH and follow redirects to ABOUT_PATH.
     let mut goose = user.get(REDIRECT_PATH).await?;
 
     if let Ok(r) = goose.response {
@@ -71,21 +85,10 @@ pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-// Task function, load REDIRECT_PATH and follow redirect to new domain.
+// Test task.
 pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(REDIRECT_PATH).await?;
     Ok(())
-}
-
-// Defines the different types of redirects being tested.
-#[derive(Clone)]
-enum TestType {
-    // Chains many different redirects together.
-    Chain,
-    // Redirects between domains.
-    Domain,
-    // Permanently redirects between domains.
-    Sticky,
 }
 
 // Sets up the endpoints used to test redirects.
@@ -192,7 +195,7 @@ fn setup_mock_server_endpoints<'a>(
     endpoints
 }
 
-// Build configuration for a load test.
+// Build appropriate configuration for these tests.
 fn common_build_configuration(
     server: &MockServer,
     sticky: bool,
@@ -254,7 +257,7 @@ fn common_build_configuration(
     }
 }
 
-// Common validation for the load tests in this file.
+// Helper to confirm all variations generate appropriate results.
 fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
     match test_type {
         TestType::Chain => {
@@ -307,6 +310,7 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
     }
 }
 
+// Returns the appropriate taskset needed to build these tests.
 fn get_tasks(test_type: &TestType) -> GooseTaskSet {
     match test_type {
         TestType::Chain => {
@@ -394,57 +398,53 @@ fn run_gaggle_test(test_type: TestType) {
 }
 
 #[test]
-/// Simulate a load test which includes a page with a redirect chain, confirms
-/// all redirects are correctly followed.
+// Request a page that redirects multiple times with different redirect headers.
 fn test_redirect() {
     run_standalone_test(TestType::Chain);
 }
 
 #[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be running serially instead of in parallel.
 #[serial]
-/// Simulate a distributed load test which includes a page with a redirect chain,
-/// confirms all redirects are correctly followed.
+// Request a page that redirects multiple times with different redirect headers,
+// in Gaggle mode.
 fn test_redirect_gaggle() {
     run_gaggle_test(TestType::Chain);
 }
 
 #[test]
-/// Simulate a load test which includes a page with a redirect to another domain
-/// (which in this case is a second mock server running on a different path).
-/// Confirm all redirects are correctly followed.
+// Request a page that redirects to another domain.
+// Different domains are simulated with multiple mock servers running on different
+// ports.
 fn test_domain_redirect() {
     run_standalone_test(TestType::Domain);
 }
 
 #[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be running serially instead of in parallel.
 #[serial]
-/// Simulate a distributed load test which includes a page with a redirect to
-/// another domain (which in this case is a second mock server running on a
-/// different path). Confirm all redirects are correctly followed.
+// Request a page that redirects to another domain, in Gaggle mode.
+// Different domains are simulated with multiple mock servers running on different
+// ports.
 fn test_domain_redirect_gaggle() {
     run_gaggle_test(TestType::Domain);
 }
 
 #[test]
-/// Simulate a load test which permanently follows a redirect due to the
-/// --sticky-follow run-time option.
+// Request a page that redirects to another domain with --sticky-follow enabled.
+// Different domains are simulated with multiple mock servers running on different
+// ports.
 fn test_sticky_domain_redirect() {
     run_standalone_test(TestType::Sticky);
 }
 
 #[test]
-// Only run gaggle tests if the feature is compiled into the codebase.
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Gaggle tests have to be running serially instead of in parallel.
 #[serial]
-/// Simulate a distributed load test which permanently follows a redirect
-/// due to the --sticky-follow run-time option.
+// Request a page that redirects to another domain with --sticky-follow enabled, in
+// Gaggle mode.
+// Different domains are simulated with multiple mock servers running on different
+// ports.
 fn test_sticky_domain_redirect_gaggle() {
     run_gaggle_test(TestType::Sticky);
 }

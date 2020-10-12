@@ -6,22 +6,28 @@ mod common;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
+
+// Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const ABOUT_KEY: usize = 1;
 
+// Load test configuration.
 const METRICS_FILE: &str = "throttle-metrics.log";
 const THROTTLE_REQUESTS: usize = 25;
 const USERS: usize = 5;
 const RUN_TIME: usize = 3;
 const EXPECT_WORKERS: usize = 2;
 
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
+// Test task.
 pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
@@ -51,7 +57,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     endpoints
 }
 
-// Build configuration for a standalone load test.
+// Build appropriate configuration for these tests.
 fn common_build_configuration(
     server: &MockServer,
     metrics_file: &str,
@@ -112,8 +118,8 @@ fn common_build_configuration(
     }
 }
 
-// Common validation for the load tests in this file.
-fn validate_throttle(
+// Helper to confirm all variations generate appropriate results.
+fn validate_test(
     mock_endpoints: &[MockRef],
     metrics_files: &[String],
     throttle_value: usize,
@@ -150,7 +156,7 @@ fn validate_throttle(
     current_metrics_file_lines
 }
 
-// Returns the appropriate taskset needed to build this load test.
+// Returns the appropriate taskset needed to build these tests.
 fn get_tasks() -> GooseTaskSet {
     taskset!("LoadTest")
         .register_task(task!(get_index))
@@ -158,8 +164,9 @@ fn get_tasks() -> GooseTaskSet {
 }
 
 #[test]
-// Verify that the throttle limits the number of requests per second, and that increasing
-// the throttle increases the number of requests per second.
+// Enable throttle to confirm it limits the number of request per second.
+// Increase the throttle and confirm it increases the number of requests
+// per second.
 fn test_throttle() {
     // Start the mock server.
     let server = MockServer::start();
@@ -185,7 +192,7 @@ fn test_throttle() {
     );
 
     // Confirm that the load test was actually throttled.
-    let test1_lines = validate_throttle(
+    let test1_lines = validate_test(
         &mock_endpoints,
         &[METRICS_FILE.to_string()],
         THROTTLE_REQUESTS,
@@ -214,7 +221,7 @@ fn test_throttle() {
     );
 
     // Confirm that the load test was actually throttled, at an increased rate.
-    let _ = validate_throttle(
+    let _ = validate_test(
         &mock_endpoints,
         &[METRICS_FILE.to_string()],
         increased_throttle,
@@ -224,9 +231,9 @@ fn test_throttle() {
 
 #[test]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Verify that the throttle limits the number of requests per second even when running
-// in Gaggle distributed load test, and that increasing the throttle increases the
-// number of requests per second across the Gaggle.
+// Enable throttle to confirm it limits the number of request per second, in
+// Gaggle mode. Increase the throttle and confirm it increases the number of
+// requests per second, in Gaggle mode.
 fn test_throttle_gaggle() {
     // Multiple tests run together, so set a unique name.
     let metrics_file = "gaggle-".to_string() + METRICS_FILE;
@@ -277,7 +284,7 @@ fn test_throttle_gaggle() {
     common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test was actually throttled.
-    let test1_lines = validate_throttle(&mock_endpoints, &metrics_files, THROTTLE_REQUESTS, None);
+    let test1_lines = validate_test(&mock_endpoints, &metrics_files, THROTTLE_REQUESTS, None);
 
     // Increase the throttle and run a second load test, so we can compare the difference
     // and confirm the throttle is actually working.
@@ -312,7 +319,7 @@ fn test_throttle_gaggle() {
     common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test was actually throttled, at an increased rate.
-    let _ = validate_throttle(
+    let _ = validate_test(
         &mock_endpoints,
         &metrics_files,
         increased_throttle,

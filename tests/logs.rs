@@ -7,22 +7,29 @@ mod common;
 
 use goose::prelude::*;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const ERROR_PATH: &str = "/error";
 
+// Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const ERROR_KEY: usize = 1;
 
+// Load test configuration.
 const EXPECT_WORKERS: usize = 2;
 
+// There are multiple test variations in this file.
 enum TestType {
+    // Test with metrics log enabled.
     Metrics,
+    // Test with debug log enabled.
     Debug,
+    // Test with metrics log and debug log both enabled.
     MetricsAndDebug,
 }
 
-// As tests run in parallel, implement fmt::Display so we can uniquely name
-// the logs for each type of test.
+// Implement fmt::Display for TestType to uniquely name the log files generated
+// by each test. This is necessary as tests run in parallel.
 impl fmt::Display for TestType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let printable = match *self {
@@ -34,11 +41,13 @@ impl fmt::Display for TestType {
     }
 }
 
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
+// Test task.
 pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
     let mut goose = user.get(ERROR_PATH).await?;
 
@@ -81,14 +90,14 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     endpoints
 }
 
-// Returns the appropriate taskset, start_task and stop_task needed to build this load test.
+// Returns the appropriate taskset, start_task and stop_task needed to build these tests.
 fn get_tasks() -> GooseTaskSet {
     taskset!("LoadTest")
         .register_task(task!(get_index))
         .register_task(task!(get_error))
 }
 
-// Helper to validate the test results.
+// Helper to confirm all variations generate appropriate results.
 fn validate_test(
     goose_metrics: GooseMetrics,
     mock_endpoints: &[MockRef],
@@ -314,91 +323,91 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
     }
 }
 
-// Create a json formatted metrics log.
 #[test]
+// Enable json-formatted metrics log.
 fn test_metrics_logs_json() {
     run_standalone_test(TestType::Metrics, "json");
 }
 
-// Create a json formatted metrics log in Gaggle mode.
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable json-formatted metrics log, in Gaggle mode.
 fn test_metrics_logs_json_gaggle() {
     run_gaggle_test(TestType::Metrics, "json");
 }
 
-// Create a csv formatted metrics log.
 #[test]
+// Enable csv-formatted metrics log.
 fn test_metrics_logs_csv() {
     run_standalone_test(TestType::Metrics, "csv");
 }
 
-// Create a csv formatted metrics log in Gaggle mode.
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable csv-formatted metrics log, in Gaggle mode.
 fn test_metrics_logs_csv_gaggle() {
     run_gaggle_test(TestType::Metrics, "csv");
 }
 
-// Create a raw formatted metrics log.
 #[test]
+// Enable raw-formatted metrics log.
 fn test_metrics_logs_raw() {
     run_standalone_test(TestType::Metrics, "raw");
 }
 
-// Create a raw formatted metrics log in Gaggle mode.
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable raw-formatted metrics log, in Gaggle mode.
 fn test_metrics_logs_raw_gaggle() {
     run_gaggle_test(TestType::Metrics, "raw");
 }
 
-// Create a raw formatted debug log.
 #[test]
+// Enable raw-formatted debug log.
 fn test_debug_logs_raw() {
     run_standalone_test(TestType::Debug, "raw");
 }
 
 /* @TODO: FIXME: https://github.com/tag1consulting/goose/issues/194
-// Create a raw formatted debug log in Gaggle mode.
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable raw-formatted debug log, in Gaggle mode.
 fn test_debug_logs_raw_gaggle() {
     run_gaggle_test(TestType::Debug, "raw");
 }
 */
 
-// Create a json formatted debug log.
 #[test]
+// Enable json-formatted debug log.
 fn test_debug_logs_json() {
     run_standalone_test(TestType::Debug, "json");
 }
 
 /* @TODO: FIXME: https://github.com/tag1consulting/goose/issues/194
-// Create a json formatted debug log in Gaggle mode.
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable json-formatted debug log, in Gaggle mode.
 fn test_debug_logs_json_gaggle() {
     run_gaggle_test(TestType::Debug, "json");
 }
 */
 
-// Create raw formatted debug and metrics logs.
 #[test]
+// Enable raw-formatted debug log and metrics log.
 fn test_metrics_and_debug_logs() {
     run_standalone_test(TestType::MetricsAndDebug, "raw");
 }
 
 /* @TODO: FIXME: https://github.com/tag1consulting/goose/issues/194
-// Create raw formatted debug and metrics logs in Gaggle mode.
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable raw-formatted debug log and metrics log, in Gaggle mode.
 fn test_metrics_and_debug_logs_gaggle() {
     run_gaggle_test(TestType::MetricsAndDebug, "raw");
 }

@@ -8,25 +8,33 @@ use goose::goose::GooseMethod;
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
+// Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
+
+// Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const ABOUT_KEY: usize = 1;
 
+// Load test configuration.
 const EXPECT_WORKERS: usize = 2;
 
-// Define the different types of tests run in this file.
+// There are multiple test variations in this file.
 #[derive(Clone)]
 enum TestType {
+    // Enable --no-reset-metrics.
     NoResetMetrics,
+    // Do not enable --no-reset-metrics.
     ResetMetrics,
 }
 
+// Test task.
 pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
+// Test task.
 pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
@@ -56,7 +64,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     endpoints
 }
 
-// Create a custom configuration for this test.
+// Build appropriate configuration for these tests.
 fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> GooseConfiguration {
     // Common elements in all our tests.
     let mut configuration = vec![
@@ -76,7 +84,7 @@ fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> Go
     common::build_configuration(&server, configuration)
 }
 
-// Common validation of load tests for the tests run in this file.
+// Helper to confirm all variations generate appropriate results.
 fn validate_one_taskset(
     goose_metrics: &GooseMetrics,
     mock_endpoints: &[MockRef],
@@ -162,7 +170,7 @@ fn validate_one_taskset(
     assert!(goose_metrics.users == configuration.users.unwrap());
 }
 
-// Returns the appropriate taskset needed to build this load test.
+// Returns the appropriate taskset needed to build these tests.
 fn get_tasks() -> GooseTaskSet {
     taskset!("LoadTest")
         .register_task(task!(get_index).set_weight(9).unwrap())
@@ -246,24 +254,21 @@ fn run_gaggle_test(test_type: TestType) {
 }
 
 #[test]
-// Load test with a single task set containing two weighted tasks. Validate
-// weighting and statistics.
+// Test a single task set with multiple weighted tasks.
 fn test_one_taskset() {
     run_standalone_test(TestType::NoResetMetrics);
 }
 
 #[test]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Load test with a single task set containing two weighted tasks. Validate
-// weighting and statistics when run in a distributed Gaggle.
 #[serial]
+// Test a single task set with multiple weighted tasks, in Gaggle mode.
 fn test_one_taskset_gaggle() {
     run_gaggle_test(TestType::NoResetMetrics);
 }
 
 #[test]
-// Load test with a single task set containing two weighted tasks. Validate
-// weighting and statistics after resetting metrics.
+// Test a single task set with multiple weighted tasks, enable --no-reset-metrics.
 fn test_one_taskset_reset_metrics() {
     run_standalone_test(TestType::ResetMetrics);
 }
@@ -272,10 +277,9 @@ fn test_one_taskset_reset_metrics() {
  * Issue: https://github.com/tag1consulting/goose/issues/193
 #[test]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Load test with a single task set containing two weighted tasks. Validate
-// weighting and statistics after resetting metrics when run in a distributed
-// Gaggle.
 #[serial]
+// Test a single task set with multiple weighted tasks, enable --no-reset-metrics
+// in Gaggle mode.
 fn test_one_taskset_reset_metrics_gaggle() {
     run_gaggle_test(TestType::ResetMetrics);
 }

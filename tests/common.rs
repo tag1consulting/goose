@@ -8,6 +8,9 @@ use goose::{GooseAttack, GooseConfiguration};
 
 type WorkerHandles = Vec<std::thread::JoinHandle<()>>;
 
+/// Not all functions are used by all tests, so we enable allow(dead_code) to avoid
+/// compiler warnings during testing.
+
 /// The following options are configured by default, if not set to a custom value
 /// and if not building a Worker configuration:
 ///  --host <mock-server>
@@ -51,9 +54,8 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
         .expect("failed to parse options and generate a configuration")
 }
 
-// This code is only used when the Gaggle feature is enabled.
+/// Launch each Worker in its own thread, and return a vector of Worker handles.
 #[allow(dead_code)]
-// Execute each Worker in its own thread, returning a vector of handles.
 pub fn launch_gaggle_workers(
     // A goose attack object which is cloned for each Worker.
     goose_attack: GooseAttack,
@@ -99,8 +101,7 @@ pub fn build_load_test(
     goose
 }
 
-// Run the actual load test. Rely on the mock server to confirm it ran correctly, so
-// do not return metrics.
+/// Run the actual load test, returning the GooseMetrics.
 pub fn run_load_test(
     goose_attack: GooseAttack,
     worker_handles: Option<WorkerHandles>,
@@ -119,7 +120,7 @@ pub fn run_load_test(
     goose_metrics
 }
 
-// Helper to count the number of lines in a test artifact.
+/// Helper to count the number of lines in a test artifact.
 #[allow(dead_code)]
 pub fn file_length(file_name: &str) -> usize {
     if let Ok(file) = std::fs::File::open(std::path::Path::new(file_name)) {
@@ -129,7 +130,7 @@ pub fn file_length(file_name: &str) -> usize {
     }
 }
 
-// Helper to delete test artifact, if existing.
+/// Helper to delete test artifacts, if existing.
 #[allow(dead_code)]
 pub fn cleanup_files(files: Vec<&str>) {
     for file in files {
