@@ -2347,6 +2347,11 @@ impl GooseAttack {
 
             let is_worker = self.attack_mode == GooseMode::Worker;
 
+            // If running on Worker, use Worker configuration in GooseUser.
+            if is_worker {
+                thread_user.config = self.configuration.clone();
+            }
+
             // Launch a new user.
             let user = tokio::spawn(user::user_main(
                 thread_number,
