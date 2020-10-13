@@ -100,7 +100,7 @@ fn validate_one_taskset(
     // Confirm that we loaded the index roughly three times as much as the about page.
     let one_third_index = mock_endpoints[INDEX_KEY].times_called() / 3;
     let difference = mock_endpoints[ABOUT_KEY].times_called() as i32 - one_third_index as i32;
-    assert!(difference >= -2 && difference <= 2);
+    assert!(difference >= -(USERS as i32) && difference <= USERS as i32);
 
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics
