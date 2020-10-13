@@ -95,10 +95,12 @@ fn common_build_configuration(
                 &users.to_string(),
                 "--hatch-rate",
                 &(users * 2).to_string(),
+                "--manager-bind-port",
+                "9754",
             ],
         )
     } else if worker.is_some() {
-        common::build_configuration(&server, vec!["--worker"])
+        common::build_configuration(&server, vec!["--worker", "--manager-port", "9754"])
     } else {
         common::build_configuration(
             &server,
