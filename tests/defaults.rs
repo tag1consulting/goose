@@ -304,6 +304,8 @@ fn test_defaults_gaggle() {
         .unwrap()
         .set_default(GooseDefault::NoTaskMetrics, true)
         .unwrap()
+        .set_default(GooseDefault::NoResetMetrics, true)
+        .unwrap()
         .set_default(GooseDefault::StickyFollow, true)
         .unwrap()
         // Manager configuration using defaults instead of run-time options.
