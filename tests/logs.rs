@@ -124,10 +124,6 @@ fn validate_test(
             for debug_file in debug_files {
                 assert!(std::path::Path::new(debug_file).exists());
                 debug_file_lines += common::file_length(debug_file);
-                println!(
-                    "debug_file_lines: {}, debug_file: {}",
-                    debug_file_lines, debug_file
-                );
             }
             // Debug file must not be empty.
             assert!(debug_file_lines > 0);
@@ -141,10 +137,6 @@ fn validate_test(
             for metrics_file in metrics_files {
                 assert!(std::path::Path::new(metrics_file).exists());
                 metrics_file_lines += common::file_length(metrics_file);
-                println!(
-                    "metrics_file_lines: {}, metrics_file: {}",
-                    metrics_file_lines, metrics_file
-                );
             }
             // Metrics file must not be empty.
             assert!(metrics_file_lines > 0);
@@ -160,10 +152,6 @@ fn validate_test(
             for debug_file in debug_files {
                 assert!(std::path::Path::new(debug_file).exists());
                 debug_file_lines += common::file_length(debug_file);
-                println!(
-                    "debug_file_lines: {}, debug_file: {}",
-                    debug_file_lines, debug_file
-                );
             }
             // Debug file must not be empty.
             assert!(debug_file_lines > 0);
@@ -251,7 +239,6 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
                 &worker_debug_file,
                 "--debug-format",
                 format,
-                "--verbose",
             ],
             TestType::Metrics => vec![
                 "--worker",
@@ -259,7 +246,6 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
                 &worker_metrics_file,
                 "--metrics-format",
                 format,
-                "--verbose",
             ],
             TestType::MetricsAndDebug => vec![
                 "--worker",
@@ -271,7 +257,6 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
                 &worker_debug_file,
                 "--debug-format",
                 format,
-                "--verbose",
             ],
         };
         let worker_configuration = common::build_configuration(&server, worker_configuration_flags);
@@ -296,7 +281,6 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
             "4",
             "--run-time",
             "2",
-            "--verbose",
         ],
     );
 
@@ -371,7 +355,6 @@ fn test_debug_logs_raw() {
     run_standalone_test(TestType::Debug, "raw");
 }
 
-/* @TODO: FIXME: https://github.com/tag1consulting/goose/issues/194
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
@@ -379,7 +362,6 @@ fn test_debug_logs_raw() {
 fn test_debug_logs_raw_gaggle() {
     run_gaggle_test(TestType::Debug, "raw");
 }
-*/
 
 #[test]
 // Enable json-formatted debug log.
@@ -387,7 +369,6 @@ fn test_debug_logs_json() {
     run_standalone_test(TestType::Debug, "json");
 }
 
-/* @TODO: FIXME: https://github.com/tag1consulting/goose/issues/194
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
@@ -395,7 +376,6 @@ fn test_debug_logs_json() {
 fn test_debug_logs_json_gaggle() {
     run_gaggle_test(TestType::Debug, "json");
 }
-*/
 
 #[test]
 // Enable raw-formatted debug log and metrics log.
@@ -403,7 +383,6 @@ fn test_metrics_and_debug_logs() {
     run_standalone_test(TestType::MetricsAndDebug, "raw");
 }
 
-/* @TODO: FIXME: https://github.com/tag1consulting/goose/issues/194
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
@@ -411,4 +390,3 @@ fn test_metrics_and_debug_logs() {
 fn test_metrics_and_debug_logs_gaggle() {
     run_gaggle_test(TestType::MetricsAndDebug, "raw");
 }
-*/
