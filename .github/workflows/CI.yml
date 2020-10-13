@@ -32,4 +32,4 @@ jobs:
     - name: Docs
       run: cargo rustdoc --lib --examples
     - name: Run tests
-      run: cargo test --verbose --all-features
+      run: cargo test --all-features --test one_taskset -- --nocapture
