@@ -2241,6 +2241,36 @@ impl GooseAttack {
         Ok(())
     }
 
+    pub fn reset_metrics(mut self) -> GooseAttack {
+        let users = self.configuration.users.clone().unwrap();
+        self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
+        self.metrics.print_running();
+
+        if self.metrics.display_metrics {
+            // Users is required here so unwrap() is safe.
+            if self.metrics.users < users {
+                println!(
+                    "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
+                );
+            } else {
+                println!(
+                    "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n",
+                    users
+                );
+            }
+        }
+
+        // All users started, reset metrics.
+        self.metrics.requests = HashMap::new();
+        self.metrics
+            .initialize_task_metrics(&self.task_sets, &self.configuration);
+
+        // Restart the timer now that all threads are launched.
+        self.started = Some(time::Instant::now());
+
+        self
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(
         mut self,
@@ -2429,27 +2459,7 @@ impl GooseAttack {
                     users_launched = true;
                     let users = self.configuration.users.clone().unwrap();
                     if !self.configuration.no_reset_metrics {
-                        self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
-                        self.metrics.print_running();
-
-                        if self.metrics.display_metrics {
-                            // Users is required here so unwrap() is safe.
-                            if self.metrics.users < users {
-                                println!(
-                                    "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
-                                );
-                            } else {
-                                println!(
-                                    "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
-                                );
-                            }
-                        }
-
-                        self.metrics.requests = HashMap::new();
-                        self.metrics
-                            .initialize_task_metrics(&self.task_sets, &self.configuration);
-                        // Restart the timer now that all threads are launched.
-                        self.started = Some(time::Instant::now());
+                        self = self.reset_metrics();
                     } else if self.metrics.users < users {
                         println!(
                             "{} of {} users hatched, timer expired.\n",
@@ -2457,6 +2467,23 @@ impl GooseAttack {
                         );
                     } else {
                         println!("All {} users hatched.\n", self.metrics.users);
+                    }
+
+                    // In Gaggle mode, notify Manager the Worker has started all users.
+                    #[cfg(feature = "gaggle")]
+                    {
+                        if self.attack_mode == GooseMode::Worker {
+                            info!(
+                                "[{}] all {} users started...",
+                                get_worker_id(),
+                                self.configuration.users.unwrap(),
+                            );
+                            worker::push_metrics_to_manager(
+                                &socket.clone().unwrap(),
+                                vec![GaggleMetrics::WorkerRunning(true)],
+                                false,
+                            );
+                        }
                     }
                 }
             }
