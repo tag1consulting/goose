@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.3-dev
+## 0.10.3 Oct 14, 2020
  - fixup sticky redirect tests to properly test functionality
  - add `test/sequence.rs` to confirm sequencing tests works correctly, even in Gaggle mode
  - deduplicate test logic by moving shared functionality into `tests/common.rs`; consistently test functionality both in standalone and Gaggle mode
