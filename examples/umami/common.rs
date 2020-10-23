@@ -1,7 +1,6 @@
 use goose::goose::GooseResponse;
 use goose::prelude::*;
 
-use log::info;
 use rand::prelude::IteratorRandom;
 use rand::seq::SliceRandom;
 use regex::Regex;
@@ -380,6 +379,43 @@ pub fn get_terms() -> Vec<Term<'static>> {
     terms
 }
 
+/// Return a vector of random words taken from node titles in the specified
+/// language.
+pub fn random_words(count: usize, english: bool) -> Vec<String> {
+    let mut random_words: Vec<String> = Vec::new();
+
+    for _ in 0..count {
+        // Randomly select a content type, favoring articles and recipes.
+        let content_types = vec![
+            ContentType::Article,
+            ContentType::Article,
+            ContentType::Article,
+            ContentType::BasicPage,
+            ContentType::Recipe,
+            ContentType::Recipe,
+            ContentType::Recipe,
+        ];
+        let content_type = content_types.choose(&mut rand::thread_rng());
+        // Then randomly select a node of this content type.
+        let nodes = get_nodes(&content_type.unwrap());
+        let page = nodes.choose(&mut rand::thread_rng());
+        // Randomly select a word from the title to use in our search.
+        let title = if english {
+            page.unwrap().title_en
+        } else {
+            page.unwrap().title_es
+        };
+        let words = title.split_whitespace();
+        let word = words.choose(&mut rand::thread_rng()).unwrap();
+        // Remove ' to avoid encoding/decoding issues when validating later.
+        let cleaned_word = word.replace("&#039;", "");
+        random_words.push(cleaned_word.to_string());
+    }
+
+    // Return a vector of words in the specified language.
+    random_words
+}
+
 /// A valid title on this website starts with "<title>foo", where "foo" is the expected
 /// title text. Returns true if the expected title is set, otherwise returns false.
 pub fn valid_title(html: &str, title: &str) -> bool {
@@ -521,12 +557,15 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                     }
 
                     // Build contact form parameters.
-                    // @TODO: dynamically generate the content.
+                    let name = random_words(2, english).join(" ");
+                    let email = format!("{}@example.com", random_words(1, english).pop().unwrap());
+                    let subject = random_words(8, english).join(" ");
+                    let message = random_words(12, english).join(" ");
                     let params = [
-                        ("name", "@TODO: name"),
-                        ("mail", "nobody@example.com"),
-                        ("subject[0][value]", "@TODO: subject"),
-                        ("message[0][value]", "@TODO: message"),
+                        ("name", name.as_str()),
+                        ("mail", email.as_str()),
+                        ("subject[0][value]", subject.as_str()),
+                        ("message[0][value]", message.as_str()),
                         ("form_build_id", &form_build_id.unwrap()),
                         ("form_id", "contact_message_feedback_form"),
                         ("op", "Send+message"),
@@ -555,25 +594,23 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
     }
 
     // Drupal 9 throttles how many times an IP address can submit the contact form, so we
-    // need special handling. We check the response, and issue an info! level message if
-    // the form is throttled. This is a valid event to load test.
+    // need special handling.
     match contact_form.response {
         Ok(response) => {
             // Copy the headers so we have them for logging if there are errors.
             let headers = &response.headers().clone();
             match response.text().await {
                 Ok(html) => {
-                    // If the contact form succeeded, we were redirected to the home page.
+                    // Drupal 9 will throttle how many times our IP address can actually
+                    // submit the contact form. We can detect this, but it happens a lot
+                    // so there's nothing useful to do.
                     let error_text = if english {
                         "You cannot send more than"
                     } else {
                         "No le está permitido enviar más"
                     };
                     if html.contains(error_text) {
-                        info!(
-                            "post to contact form was throttled: {}",
-                            contact_form.request.url
-                        );
+                        // The contact form was throttled, safely ignore this.
                     }
 
                     // Either way, a "real" user would still load all static elements on
@@ -617,7 +654,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
     // to validate the page and load static elements, we then need to extra form elements
     // from the HTML of the page. So we duplicate some of the logic, enhancing it for form
     // processing.
-    let search_word;
+    let search_phrase;
     let mut search_form;
     match goose.response {
         Ok(response) => {
@@ -651,34 +688,13 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                         );
                     }
 
-                    // Randomly select a content type, favoring articles and recipes.
-                    let content_types = vec![
-                        ContentType::Article,
-                        ContentType::Article,
-                        ContentType::Article,
-                        ContentType::BasicPage,
-                        ContentType::Recipe,
-                        ContentType::Recipe,
-                        ContentType::Recipe,
-                    ];
-                    let content_type = content_types.choose(&mut rand::thread_rng());
-                    // Then randomly select a node of this content type.
-                    let nodes = get_nodes(&content_type.unwrap());
-                    let page = nodes.choose(&mut rand::thread_rng());
-                    // Finally randomly select a word from the title to use in our search.
-                    let title = if english {
-                        page.unwrap().title_en
-                    } else {
-                        page.unwrap().title_es
-                    };
-                    let words = title.split_whitespace();
-                    let word = words.choose(&mut rand::thread_rng());
-                    // Save a copy of the word so we can validate the results later.
-                    search_word = word.unwrap().to_string();
+                    // Build a random three-word phrase, save to validate the results later.
+                    let search_words = random_words(3, english);
+                    search_phrase = search_words.join(" ");
 
                     // Build search form with random word from title.
                     let params = [
-                        ("keys", search_word.as_str()),
+                        ("keys", search_phrase.as_str()),
                         ("form_build_id", &form_build_id.unwrap()),
                         ("form_id", "search_form"),
                         ("op", "Search"),
@@ -722,11 +738,11 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
             let headers = &response.headers().clone();
             match response.text().await {
                 Ok(html) => {
-                    if !html.contains(&search_word) {
+                    if !html.contains(&search_phrase) {
                         return user.set_failure(
                             &format!(
-                                "{}: search term ({}) not on page",
-                                goose.request.url, &search_word
+                                "{}: search terms ({}) not on page",
+                                goose.request.url, &search_phrase
                             ),
                             &mut goose.request,
                             Some(&headers),
