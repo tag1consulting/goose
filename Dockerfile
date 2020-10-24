@@ -34,5 +34,5 @@ CMD cargo run --features gaggle --release --example ${GOOSE_EXAMPLE} -- -H ${HOS
 ##
 #Worker
 ##
-FROM manager AS worker
+FROM base AS worker
 CMD cargo run --features gaggle --release --example ${GOOSE_EXAMPLE} -- --worker --manager-host ${MANAGER_HOST} --manager-port ${MANAGER_PORT} ${OPTIONS}
