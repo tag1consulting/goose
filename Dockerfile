@@ -1,4 +1,4 @@
-FROM rust:1-slim-buster AS manager
+FROM rust:1-slim-buster AS base
 
 LABEL maintainer="Narayan Newton <nnewton@tag1consulting.com>"
 LABEL org.label-schema.vendor="Tag1 Consulting" \
@@ -22,12 +22,17 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 COPY . /build
 WORKDIR ./build
-RUN apt-get update && apt-get install -y libssl-dev gcc pkg-config cmake && apt-get clean
 
-#Run the help text so that the cargo compile is cached in a layer
-RUN cargo run --features gaggle --example simple -- -h
+RUN apt-get update && apt-get install -y libssl-dev gcc pkg-config cmake && apt-get clean && cargo build --features gaggle --release --example ${GOOSE_EXAMPLE}
 
-CMD cargo run --features gaggle --example ${GOOSE_EXAMPLE} -- -H ${HOST} -u ${USERS} -r ${HATCH_RATE} -t ${RUN_TIME} --manager --manager-bind-port ${MANAGER_PORT} --expect-workers ${WORKERS} ${OPTIONS}
+##
+#Manager
+##
+FROM base AS manager
+CMD cargo run --features gaggle --release --example ${GOOSE_EXAMPLE} -- -H ${HOST} -u ${USERS} -r ${HATCH_RATE} -t ${RUN_TIME} --manager --manager-bind-port ${MANAGER_PORT} --expect-workers ${WORKERS} ${OPTIONS}
 
+##
+#Worker
+##
 FROM manager AS worker
-CMD cargo run --features gaggle --example ${GOOSE_EXAMPLE} -- --worker --manager-host ${MANAGER_HOST} --manager-port ${MANAGER_PORT} ${OPTIONS}
+CMD cargo run --features gaggle --release --example ${GOOSE_EXAMPLE} -- --worker --manager-host ${MANAGER_HOST} --manager-port ${MANAGER_PORT} ${OPTIONS}
