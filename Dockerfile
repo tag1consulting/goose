@@ -4,7 +4,7 @@ LABEL maintainer="Narayan Newton <nnewton@tag1consulting.com>"
 LABEL org.label-schema.vendor="Tag1 Consulting" \
   org.label-schema.url="https://github.com/tag1consulting/goose" \
   org.label-schema.name="Goose" \
-  org.label-schema.version="0.10.13" \
+  org.label-schema.version="mainline" \
   org.label-schema.vcs-url="github.com:tag1consulting/goose.git" \
   org.label-schema.docker.schema-version="1.0"
 
@@ -23,7 +23,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 COPY . /build
 WORKDIR ./build
 RUN apt-get update && apt-get install -y libssl-dev gcc pkg-config cmake && apt-get clean
+
+#Run the help text so that the cargo compile is cached in a layer
 RUN cargo run --features gaggle --example simple -- -h
+
 CMD cargo run --features gaggle --example ${GOOSE_EXAMPLE} -- -H ${HOST} -u ${USERS} -r ${HATCH_RATE} -t ${RUN_TIME} --manager --manager-bind-port ${MANAGER_PORT} --expect-workers ${WORKERS} ${OPTIONS}
 
 FROM manager AS worker
