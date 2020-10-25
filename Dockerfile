@@ -23,16 +23,24 @@ ARG DEBIAN_FRONTEND=noninteractive
 COPY . /build
 WORKDIR ./build
 
-RUN apt-get update && apt-get install -y libssl-dev gcc pkg-config cmake && apt-get clean && cargo build --features gaggle --release --example ${GOOSE_EXAMPLE}
+RUN apt-get update && apt-get install -y libssl-dev gcc pkg-config cmake && apt-get clean
+
+##
+#Builder
+##
+FROM base AS builder
+RUN cargo build --features gaggle --release --example ${GOOSE_EXAMPLE}
 
 ##
 #Manager
 ##
 FROM base AS manager
-CMD cargo run --features gaggle --release --example ${GOOSE_EXAMPLE} -- -H ${HOST} -u ${USERS} -r ${HATCH_RATE} -t ${RUN_TIME} --manager --manager-bind-port ${MANAGER_PORT} --expect-workers ${WORKERS} ${OPTIONS}
+COPY --from=builder /build/target/release/examples/${GOOSE_EXAMPLE} /app/goose
+CMD /app/goose -H ${HOST} -u ${USERS} -r ${HATCH_RATE} -t ${RUN_TIME} --manager --manager-bind-port ${MANAGER_PORT} --expect-workers ${WORKERS} ${OPTIONS}
 
 ##
 #Worker
 ##
 FROM base AS worker
-CMD cargo run --features gaggle --release --example ${GOOSE_EXAMPLE} -- --worker --manager-host ${MANAGER_HOST} --manager-port ${MANAGER_PORT} ${OPTIONS}
+COPY --from=builder /build/target/release/examples/${GOOSE_EXAMPLE} /app/goose
+CMD /app/goose --worker --manager-host ${MANAGER_HOST} --manager-port ${MANAGER_PORT} ${OPTIONS}
