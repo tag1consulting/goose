@@ -132,7 +132,7 @@ pub async fn user_main(
                     "user {} from {} sleeping {:?} second...",
                     thread_number, thread_task_set.name, sleep_duration
                 );
-                tokio::time::delay_for(sleep_duration).await;
+                tokio::time::sleep(sleep_duration).await;
                 slept += 1;
                 if slept > wait_time {
                     in_sleep_loop = false;
