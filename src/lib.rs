@@ -814,13 +814,7 @@ impl GooseAttack {
 
         if let Some(log_to_file) = log_file {
             match CombinedLogger::init(vec![
-                match TermLogger::new(debug_level, Config::default(), TerminalMode::Mixed) {
-                    Some(t) => t,
-                    None => {
-                        eprintln!("failed to initialize TermLogger");
-                        return;
-                    }
-                },
+                SimpleLogger::new(debug_level, Config::default()),
                 WriteLogger::new(
                     log_level,
                     Config::default(),
@@ -834,17 +828,7 @@ impl GooseAttack {
             }
             info!("Writing to log file: {}", log_to_file.display());
         } else {
-            match CombinedLogger::init(vec![match TermLogger::new(
-                debug_level,
-                Config::default(),
-                TerminalMode::Mixed,
-            ) {
-                Some(t) => t,
-                None => {
-                    eprintln!("failed to initialize TermLogger");
-                    return;
-                }
-            }]) {
+            match CombinedLogger::init(vec![SimpleLogger::new(debug_level, Config::default())]) {
                 Ok(_) => (),
                 Err(e) => {
                     info!("failed to initialize CombinedLogger: {}", e);
