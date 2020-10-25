@@ -438,6 +438,7 @@ use std::{fmt, io, time};
 use tokio::fs::File;
 use tokio::io::BufWriter;
 use tokio::prelude::*;
+use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -2298,7 +2299,7 @@ impl GooseAttack {
         if self.attack_mode == AttackMode::Manager {
             #[cfg(feature = "gaggle")]
             {
-                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                let rt = Runtime::new().unwrap();
                 self = rt.block_on(manager::manager_main(self));
             }
 
@@ -2313,7 +2314,7 @@ impl GooseAttack {
         else if self.attack_mode == AttackMode::Worker {
             #[cfg(feature = "gaggle")]
             {
-                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                let rt = Runtime::new().unwrap();
                 self = rt.block_on(worker::worker_main(&self));
             }
 
@@ -2327,7 +2328,7 @@ impl GooseAttack {
         }
         // Start goose in single-process mode.
         else {
-            let mut rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = Runtime::new().unwrap();
             self = rt.block_on(self.start_attack(None))?;
         }
 
@@ -2446,7 +2447,7 @@ impl GooseAttack {
             throttle_rx,
         )));
 
-        let mut sender = all_threads_throttle.clone();
+        let sender = all_threads_throttle.clone();
         // We start from 1 instead of 0 to intentionally fill all but one slot in the
         // channel to avoid a burst of traffic during startup. The channel then provides
         // an implementation of the leaky bucket algorithm as a queue. Requests have to
