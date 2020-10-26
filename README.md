@@ -6,6 +6,7 @@ Have you ever been attacked by a goose?
 [![Documentation](https://docs.rs/goose/badge.svg)](https://docs.rs/goose)
 [![Apache-2.0 licensed](https://img.shields.io/crates/l/goose.svg)](./LICENSE)
 [![CI](https://github.com/tag1consulting/goose/workflows/CI/badge.svg)](https://github.com/tag1consulting/goose/actions?query=workflow%3ACI)
+[![Docker Repository on Quay](https://quay.io/repository/tag1consulting/goose/status "Docker Repository on Quay")](https://quay.io/repository/tag1consulting/goose)
 
 ## Overview
 

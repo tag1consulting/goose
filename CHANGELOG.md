@@ -3,6 +3,7 @@
 ## 0.10.4-dev
  - add new `examples/umami` for load testing Drupal 9 demo install profile
  - replace TermLogger with SimpleLogger for increased logging flexibility
+ - Add initial OCI Dockerfile for container-based workflows
 
 ## 0.10.3 Oct 14, 2020
  - fixup sticky redirect tests to properly test functionality
