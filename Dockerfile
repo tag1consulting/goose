@@ -8,39 +8,21 @@ LABEL org.label-schema.vendor="Tag1 Consulting" \
   org.label-schema.vcs-url="github.com:tag1consulting/goose.git" \
   org.label-schema.docker.schema-version="1.0"
 
-ENV GOOSE_EXAMPLE=simple \
-    HOST=localhost \
-    USERS=1 \
-    HATCH_RATE=2 \
-    RUN_TIME=60 \
-    MANAGER_HOST="127.0.0.1" \
-    MANAGER_PORT=5115 \
-    WORKERS=1 \
-    OPTIONS=""
+ENV GOOSE_EXAMPLE=umami \
+    GOOSE_FEATURES="gaggle"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
 COPY . /build
 WORKDIR ./build
 
-RUN apt-get update && apt-get install -y libssl-dev gcc pkg-config cmake && apt-get clean
+RUN apt-get update && \
+  apt-get install -y libssl-dev gcc pkg-config cmake && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
 
-##
-#Builder
-##
-FROM base AS builder
-RUN cargo build --features gaggle --release --example ${GOOSE_EXAMPLE}
+RUN cargo build --features "${GOOSE_FEATURES}" --release --example "${GOOSE_EXAMPLE}"
+RUN chmod +x ./docker-entrypoint.sh
 
-##
-#Manager
-##
-FROM base AS manager
-COPY --from=builder /build/target/release/examples/${GOOSE_EXAMPLE} /app/goose
-CMD /app/goose -H ${HOST} -u ${USERS} -r ${HATCH_RATE} -t ${RUN_TIME} --manager --manager-bind-port ${MANAGER_PORT} --expect-workers ${WORKERS} ${OPTIONS}
-
-##
-#Worker
-##
-FROM base AS worker
-COPY --from=builder /build/target/release/examples/${GOOSE_EXAMPLE} /app/goose
-CMD /app/goose --worker --manager-host ${MANAGER_HOST} --manager-port ${MANAGER_PORT} ${OPTIONS}
+EXPOSE 5115
+ENTRYPOINT ["./docker-entrypoint.sh"]
