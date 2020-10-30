@@ -51,12 +51,10 @@ pub async fn sleep_minus_drift(
     duration: tokio::time::Duration,
     drift: tokio::time::Instant,
 ) -> tokio::time::Instant {
-    let elapsed = drift.elapsed();
-    if (duration - elapsed).as_nanos() > 0 {
-        tokio::time::delay_for(duration - elapsed).await;
-    } else {
-        warn!("sleep_minus_drift: drift was greater than or equal to duration, not sleeping");
-    }
+    match duration.checked_sub(drift.elapsed()) {
+        Some(delay) if delay.as_nanos() > 0 => tokio::time::delay_for(delay).await,
+        _ => warn!("sleep_minus_drift: drift was greater than or equal to duration, not sleeping"),
+    };
     tokio::time::Instant::now()
 }
 
