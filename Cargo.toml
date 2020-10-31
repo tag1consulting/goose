@@ -32,7 +32,7 @@ tokio = { version = "0.2.20", features = ["fs", "io-util", "macros", "rt-core", 
 url = "2.1"
 
 # optional dependencies
-nng = { version = "0.5", optional = true }
+nng = { version = "1.0.0-rc", optional = true }
 
 [features]
 default = ["reqwest/default-tls"]
