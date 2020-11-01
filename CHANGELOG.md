@@ -5,6 +5,7 @@
  - replace TermLogger with SimpleLogger for increased logging flexibility
  - add initial OCI Dockerfile for container-based workflows
  - use checked subtraction when calculating drift duration to prevent panic
+ - update `nng-rs` dependency to fix bug when testing that the manager is ready
  
 ## 0.10.3 Oct 14, 2020
  - fixup sticky redirect tests to properly test functionality

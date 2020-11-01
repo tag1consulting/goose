@@ -256,7 +256,7 @@ pub fn push_metrics_to_manager(
     get_response: bool,
 ) -> bool {
     debug!("[{}] pushing metrics to manager", get_worker_id(),);
-    let mut message = Message::new().unwrap();
+    let mut message = Message::new();
 
     serde_cbor::to_writer(&mut message, &metrics)
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))

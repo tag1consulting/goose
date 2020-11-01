@@ -149,7 +149,7 @@ fn merge_requests_from_worker(
 
 /// Helper to send EXIT command to worker.
 fn tell_worker_to_exit(server: &Socket) -> bool {
-    let mut message = Message::new().unwrap();
+    let mut message = Message::new();
     serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
         .map_err(|error| eprintln!("{:?}", error))
         .expect("failed to serialize user command");
@@ -438,7 +438,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         }
 
                         // Send vector of user initializers to worker.
-                        let mut message = Message::new().unwrap();
+                        let mut message = Message::new();
                         serde_cbor::to_writer(&mut message, &users)
                             .map_err(|error| eprintln!("{:?}", error))
                             .expect("failed to serialize user initializers");
@@ -468,7 +468,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 }
                 // Received message from known Worker.
                 else {
-                    let mut message = Message::new().unwrap();
+                    let mut message = Message::new();
 
                     // When starting a Gaggle, some Workers may start before others and
                     // will send regular heartbeats to the Manager to confirm the load
