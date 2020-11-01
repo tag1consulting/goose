@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.10.5-dev
+ - properly reset metrics after all users launch in Gaggle mode (unless --no-reset-metrics is enabled)
 
 ## 0.10.4 Nov 1, 2020
  - add new `examples/umami` for load testing Drupal 9 demo install profile
@@ -14,7 +15,6 @@
  - add `test/sequence.rs` to confirm sequencing tests works correctly, even in Gaggle mode
  - deduplicate test logic by moving shared functionality into `tests/common.rs`; consistently test functionality both in standalone and Gaggle mode
  - properly create debug log when enabled in Gaggle mode
- - properly reset metrics after all users launch in Gaggle mode (unless --no-reset-metrics is enabled)
 
 ## 0.10.2 Sep 27, 2020
  - remove unnecessary `GooseAttack.number_of_cpus` instead calling `num_cpus::get()` directly

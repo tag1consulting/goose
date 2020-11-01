@@ -2242,12 +2242,12 @@ impl GooseAttack {
     }
 
     pub fn reset_metrics(mut self) -> GooseAttack {
+        // Users is required here so unwrap() is safe.
         let users = self.configuration.users.clone().unwrap();
         self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
         self.metrics.print_running();
 
         if self.metrics.display_metrics {
-            // Users is required here so unwrap() is safe.
             if self.metrics.users < users {
                 println!(
                     "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users

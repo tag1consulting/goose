@@ -77,7 +77,6 @@ fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> Go
         "--run-time",
         "2",
         "--status-codes",
-        "--verbose",
     ];
 
     // Custom elements in some tests.
@@ -209,8 +208,7 @@ fn run_gaggle_test(test_type: TestType) {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     // Each worker has the same identical configuration.
-    let worker_configuration =
-        common::build_configuration(&server, vec!["--worker", "--manager-port", "9753"]);
+    let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
 
     // Build the load test for the Workers.
     let goose_attack = common::build_load_test(worker_configuration, &get_tasks(), None, None);
@@ -229,8 +227,6 @@ fn run_gaggle_test(test_type: TestType) {
                 "--users",
                 &USERS.to_string(),
                 "--no-reset-metrics",
-                "--manager-bind-port",
-                "9753",
             ],
         ),
         TestType::ResetMetrics => common_build_configuration(
@@ -243,8 +239,6 @@ fn run_gaggle_test(test_type: TestType) {
                 &USERS.to_string(),
                 "--run-time",
                 &RUN_TIME.to_string(),
-                "--manager-bind-port",
-                "9753",
             ],
         ),
     };

@@ -281,7 +281,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         goose_attack.metrics.users = goose_attack.configuration.users.unwrap();
     }
 
-    // Track how many Workers have all GooseUsers started.
+    // Track how many Workers have started.
     let mut workers_running = 0;
 
     // Worker control loop.
