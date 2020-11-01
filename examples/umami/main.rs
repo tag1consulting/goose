@@ -1,9 +1,11 @@
+mod admin;
 mod common;
 mod english;
 mod spanish;
 
 use goose::prelude::*;
 
+use crate::admin::*;
 use crate::english::*;
 use crate::spanish::*;
 
@@ -14,7 +16,8 @@ fn main() -> Result<(), GooseError> {
     let _goose_metrics = GooseAttack::initialize()?
         .register_taskset(
             taskset!("Anonymous English user")
-                .set_weight(6)?
+                .set_weight(40)?
+                .set_wait_time(0, 3)?
                 .register_task(task!(front_page_en).set_name("anon /").set_weight(2)?)
                 .register_task(task!(basic_page_en).set_name("anon /en/basicpage"))
                 .register_task(task!(article_listing_en).set_name("anon /en/articles/"))
@@ -40,7 +43,8 @@ fn main() -> Result<(), GooseError> {
         )
         .register_taskset(
             taskset!("Anonymous Spanish user")
-                .set_weight(2)?
+                .set_weight(9)?
+                .set_wait_time(0, 3)?
                 .register_task(task!(front_page_es).set_name("anon /es/").set_weight(2)?)
                 .register_task(task!(basic_page_es).set_name("anon /es/basicpage"))
                 .register_task(task!(article_listing_es).set_name("anon /es/articles/"))
@@ -62,6 +66,19 @@ fn main() -> Result<(), GooseError> {
                 )
                 .register_task(task!(search_es).set_name("anon /es/search"))
                 .register_task(task!(anonymous_contact_form_es).set_name("anon /es/contact")),
+        )
+        .register_taskset(
+            taskset!("Admin user")
+                .set_weight(1)?
+                .set_wait_time(3, 10)?
+                .register_task(task!(log_in).set_on_start().set_name("auth /en/user/login"))
+                .register_task(task!(front_page_en).set_name("auth /").set_weight(2)?)
+                .register_task(task!(article_listing_en).set_name("auth /en/articles/"))
+                .register_task(
+                    task!(edit_article)
+                        .set_name("auth /en/node/%/edit")
+                        .set_weight(2)?,
+                ),
         )
         .set_default(GooseDefault::Host, "https://drupal-9.0.7.ddev.site/")?
         .execute()?
