@@ -429,7 +429,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use std::{f32, fmt, io, time};
+use std::{fmt, io, time};
 use tokio::fs::File;
 use tokio::io::BufWriter;
 use tokio::prelude::*;
@@ -591,7 +591,7 @@ pub struct GooseDefaults {
     /// An optional default number of users to simulate.
     users: Option<usize>,
     /// An optional default number of clients to start per second.
-    hatch_rate: Option<usize>,
+    hatch_rate: Option<String>,
     /// An optional default number of seconds for the test to run.
     run_time: Option<usize>,
     /// An optional default log level.
@@ -1339,48 +1339,48 @@ impl GooseAttack {
     fn set_hatch_rate(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.hatch_rate";
-        let mut value = 0;
+        let mut value = "".to_string();
 
         // Check if --hash-rate is set.
-        if let Some(hatch_rate) = self.configuration.hatch_rate {
+        if let Some(hatch_rate) = &self.configuration.hatch_rate {
             key = "--hatch_rate";
-            value = hatch_rate;
+            value = hatch_rate.to_string();
         // If not, check if a default hatch_rate is set.
-        } else if let Some(default_hatch_rate) = self.defaults.hatch_rate {
+        } else if let Some(default_hatch_rate) = &self.defaults.hatch_rate {
             // On Worker hatch_rate comes from the Manager.
             if self.attack_mode == GooseMode::Worker {
                 self.configuration.hatch_rate = None;
             // Otherwise use default.
             } else {
                 key = "set_default(GooseDefault::HatchRate)";
-                value = default_hatch_rate;
-                self.configuration.hatch_rate = Some(default_hatch_rate);
+                value = default_hatch_rate.to_string();
+                self.configuration.hatch_rate = Some(default_hatch_rate.to_string());
             }
         // If not and if not running on Worker, default to 1.
         } else if self.attack_mode != GooseMode::Worker {
             // This should not be able to fail, but setting up debug in case a later
             // change introduces the potential for failure.
             key = "Goose default";
-            value = 1;
-            self.configuration.hatch_rate = Some(value);
+            value = "1".to_string();
+            self.configuration.hatch_rate = Some(value.to_string());
         }
 
         // Verbose output.
-        if let Some(hatch_rate) = self.configuration.hatch_rate {
+        if let Some(hatch_rate) = &self.configuration.hatch_rate {
             // Setting --hatch-rate with --worker is not allowed.
             if self.attack_mode == GooseMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
-                    value: value.to_string(),
+                    value,
                     detail: format!("{} can not be set together with the --worker flag.", key),
                 });
             }
 
             // Setting --hatch-rate of 0 is not allowed.
-            if hatch_rate == 0 {
+            if hatch_rate.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
-                    value: value.to_string(),
+                    value,
                     detail: format!("{} must be set to at least 1.", key),
                 });
             }
@@ -1395,7 +1395,7 @@ impl GooseAttack {
     // Configure maximum requests per second if throttle enabled.
     fn set_throttle_requests(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
-        let mut key = "configuration.hatch_rate";
+        let mut key = "configuration.throttle_requests";
         let mut value = 0;
 
         if self.configuration.throttle_requests > 0 {
@@ -2009,8 +2009,8 @@ impl GooseAttack {
         let sleep_duration;
         if self.attack_mode != GooseMode::Worker {
             // Hatch rate required to get here, so unwrap() is safe.
-            let sleep_float = 1.0 / self.configuration.hatch_rate.unwrap() as f32;
-            sleep_duration = time::Duration::from_secs_f32(sleep_float);
+            let hatch_rate = util::get_hatch_rate(self.configuration.hatch_rate.clone());
+            sleep_duration = time::Duration::from_secs_f32(1.0 / hatch_rate);
         } else {
             sleep_duration = time::Duration::from_secs_f32(0.0);
         }
@@ -2730,6 +2730,7 @@ impl GooseDefaultType<&str> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: &str) -> Result<Box<Self>, GooseError> {
         match key {
             // Set valid defaults.
+            GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
             GooseDefault::Host => self.defaults.host = Some(value.to_string()),
             GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
             GooseDefault::MetricsFile => self.defaults.metrics_file = Some(value.to_string()),
@@ -2742,7 +2743,6 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
-            | GooseDefault::HatchRate
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
             | GooseDefault::Verbose
@@ -2779,7 +2779,6 @@ impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::Users => self.defaults.users = Some(value),
-            GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
@@ -2789,6 +2788,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
+            | GooseDefault::HatchRate
             | GooseDefault::LogFile
             | GooseDefault::MetricsFile
             | GooseDefault::MetricsFormat
@@ -2901,7 +2901,7 @@ pub struct GooseConfiguration {
     pub users: Option<usize>,
     /// Sets per-second user hatch rate (default: 1)
     #[options(short = "r", meta = "RATE")]
-    pub hatch_rate: Option<usize>,
+    pub hatch_rate: Option<String>,
     /// Stops after (30s, 20m, 3h, 1h30m, etc)
     #[options(short = "t", meta = "TIME")]
     pub run_time: String,
@@ -3230,7 +3230,7 @@ mod test {
         let host = "http://example.com/".to_string();
         let users: usize = 10;
         let run_time: usize = 10;
-        let hatch_rate: usize = 2;
+        let hatch_rate = "2".to_string();
         let log_level: usize = 1;
         let log_file = "custom-goose.log".to_string();
         let verbose: usize = 0;
@@ -3253,7 +3253,7 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::RunTime, run_time)
             .unwrap()
-            .set_default(GooseDefault::HatchRate, hatch_rate)
+            .set_default(GooseDefault::HatchRate, hatch_rate.as_str())
             .unwrap()
             .set_default(GooseDefault::LogLevel, log_level)
             .unwrap()

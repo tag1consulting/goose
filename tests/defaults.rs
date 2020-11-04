@@ -17,7 +17,7 @@ const ABOUT_KEY: usize = 1;
 // Load test configuration.
 const USERS: usize = 3;
 const RUN_TIME: usize = 3;
-const HATCH_RATE: usize = 10;
+const HATCH_RATE: &str = "10";
 const LOG_LEVEL: usize = 0;
 const METRICS_FILE: &str = "metrics-test.log";
 const DEBUG_FILE: &str = "debug-test.log";

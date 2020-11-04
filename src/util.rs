@@ -135,6 +135,23 @@ pub fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
     }
 }
 
+// Convert optional string hatch rate to f32.
+pub fn get_hatch_rate(hatch_rate: Option<String>) -> f32 {
+    match hatch_rate {
+        Some(h) => match h.parse::<f32>() {
+            Ok(rate) => rate,
+            Err(e) => {
+                warn!(
+                    "failed to convert hatch rate {} to float: {}, defaulting to 1.0",
+                    h, e
+                );
+                1.0
+            }
+        },
+        None => 1.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

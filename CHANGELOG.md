@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.10.5-dev
+ - support floating point hatch rate (ie, hatch 1 user every 2 seconds with `-r .5`)
 
 ## 0.10.4 Nov 1, 2020
  - add new `examples/umami` for load testing Drupal 9 demo install profile
