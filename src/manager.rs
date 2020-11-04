@@ -281,6 +281,9 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         goose_attack.metrics.users = goose_attack.configuration.users.unwrap();
     }
 
+    // Track how many Workers have started.
+    let mut workers_running = 0;
+
     // Worker control loop.
     loop {
         // While running load test, check if any workers go away.
@@ -494,6 +497,16 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             // Merge in task metrics from Worker.
                             GaggleMetrics::Tasks(tasks) => {
                                 merge_task_metrics(&mut goose_attack, tasks)
+                            }
+                            // Reset statistics when all users start.
+                            GaggleMetrics::WorkerRunning(_) => {
+                                workers_running += 1;
+                                if workers_running
+                                    == goose_attack.configuration.expect_workers.unwrap()
+                                    && !goose_attack.configuration.no_reset_metrics
+                                {
+                                    goose_attack = goose_attack.reset_metrics();
+                                }
                             }
                             // Ignore Worker heartbeats.
                             GaggleMetrics::WorkerInit(_) => (),
