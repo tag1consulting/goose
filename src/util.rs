@@ -290,4 +290,21 @@ mod tests {
         let expired = timer_expired(started, 1);
         assert_eq!(expired, true);
     }
+
+    #[test]
+    fn hatch_rate() {
+        //  https://rust-lang.github.io/rust-clippy/master/index.html#float_cmp
+        assert!((get_hatch_rate(Some("1".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_hatch_rate(Some("1.0".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_hatch_rate(Some(".5".to_string())) - 0.5).abs() < f32::EPSILON);
+        assert!((get_hatch_rate(Some("0.5".to_string())) - 0.5).abs() < f32::EPSILON);
+        assert!((get_hatch_rate(Some(".12345".to_string())) - 0.12345).abs() < f32::EPSILON);
+        assert!((get_hatch_rate(Some("12.345".to_string())) - 12.345).abs() < f32::EPSILON);
+        // Defaults to 1.0.
+        assert!((get_hatch_rate(None) - 1.0).abs() < f32::EPSILON);
+        // Also on invalid input, defaults to 1.0.
+        assert!((get_hatch_rate(Some("g".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_hatch_rate(Some("2.1f".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_hatch_rate(Some("1.1.1".to_string())) - 1.0).abs() < f32::EPSILON);
+    }
 }
