@@ -274,9 +274,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     // Update metrics, which doesn't happen automatically on the Master as we don't
     // invoke launch_users. Hatch rate is required here so unwrap() is safe.
-    let maximum_hatched = goose_attack.configuration.hatch_rate.unwrap() * goose_attack.run_time;
-    if maximum_hatched < goose_attack.configuration.users.unwrap() {
-        goose_attack.metrics.users = maximum_hatched;
+    let hatch_rate = util::get_hatch_rate(goose_attack.configuration.hatch_rate.clone());
+    let maximum_hatched = hatch_rate * goose_attack.run_time as f32;
+    if maximum_hatched < goose_attack.configuration.users.unwrap() as f32 {
+        goose_attack.metrics.users = maximum_hatched as usize;
     } else {
         goose_attack.metrics.users = goose_attack.configuration.users.unwrap();
     }

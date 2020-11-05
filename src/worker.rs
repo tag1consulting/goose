@@ -10,6 +10,7 @@ const EMPTY_ARGS: Vec<&str> = vec![];
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
 use crate::metrics::{GooseRequestMetrics, GooseTaskMetrics};
+use crate::util;
 use crate::{get_worker_id, GooseAttack, GooseConfiguration, GooseMode, WORKER_ID};
 
 /// Workers send GaggleMetrics to the Manager process to be aggregated together.
@@ -233,14 +234,15 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     worker_goose_attack.defaults = goose_attack.defaults.clone();
 
     // Divide hatch_rate amongst all workers.
-    let hatch_rate = 1.0
-        // Hatch rate and expect workers are required here, so unwrap() is safe.
-        / (worker_goose_attack.configuration.hatch_rate.unwrap() as f32 / (config.expect_workers.unwrap() as f32));
+    let hatch_rate = util::get_hatch_rate(worker_goose_attack.configuration.hatch_rate.clone());
+    let delay = 1.0
+        // Expect workers are required here, so unwrap() is safe.
+        / (hatch_rate / (config.expect_workers.unwrap() as f32));
     info!(
         "[{}] prepared to start 1 user every {:.2} seconds",
         worker_id, hatch_rate,
     );
-    let sleep_duration = time::Duration::from_secs_f32(hatch_rate);
+    let sleep_duration = time::Duration::from_secs_f32(delay);
 
     worker_goose_attack
         .launch_users(sleep_duration, Some(manager))
