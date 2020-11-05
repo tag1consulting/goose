@@ -197,7 +197,7 @@ fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::StatusCodes, true)
         .unwrap()
-        .set_default(GooseDefault::OnlySummary, true)
+        .set_default(GooseDefault::RunningMetrics, 0)
         .unwrap()
         .set_default(GooseDefault::NoTaskMetrics, true)
         .unwrap()
@@ -300,7 +300,7 @@ fn test_defaults_gaggle() {
         .unwrap()
         .set_default(GooseDefault::StatusCodes, true)
         .unwrap()
-        .set_default(GooseDefault::OnlySummary, true)
+        .set_default(GooseDefault::RunningMetrics, 0)
         .unwrap()
         .set_default(GooseDefault::NoTaskMetrics, true)
         .unwrap()
@@ -373,7 +373,8 @@ fn test_no_defaults() {
             "--no-reset-metrics",
             "--no-task-metrics",
             "--status-codes",
-            "--only-summary",
+            "--running-metrics",
+            "30",
             "--sticky-follow",
         ],
     );
@@ -473,7 +474,8 @@ fn test_no_defaults_gaggle() {
             "--no-reset-metrics",
             "--no-task-metrics",
             "--status-codes",
-            "--only-summary",
+            "--running-metrics",
+            "30",
             "--sticky-follow",
             "--verbose",
         ],

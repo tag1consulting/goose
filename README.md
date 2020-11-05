@@ -204,7 +204,7 @@ Optional arguments:
   -v, --verbose              Sets debug level (-v, -vv, etc)
 
 Metrics:
-  --only-summary             Only prints final summary metrics
+  --running-metrics TIME     How often to optionally print running metrics
   --no-reset-metrics         Doesn't reset metrics after all users have started
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
@@ -367,6 +367,7 @@ The following defaults can be configured with a `&str`:
 The following defaults can be configured with a `usize` integer:
  - total users to start: `GooseDefault::Users`
  - users to start per second: `GooseDefault::HatchRate`
+ - how often to print running statistics: `GooseDefault::RunningStatistics`
  - number of seconds for test to run: `GooseDefault::RunTime`
  - log level: `GooseDefault::LogLevel`
  - verbosity: `GooseDefault::Verbose`
@@ -376,7 +377,6 @@ The following defaults can be configured with a `usize` integer:
  - port for Worker to connect to: `GooseDefault::ManagerPort`
 
 The following defaults can be configured with a `bool`:
- - only print final summary metrics: `GooseDefault::OnlySummary`
  - do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
  - do not track metrics: `GooseDefault::NoMetrics`
  - do not track task metrics: `GooseDefault::NoTaskMetrics`
@@ -386,7 +386,7 @@ The following defaults can be configured with a `bool`:
  - ignore load test checksum: `GooseDefault::NoHashCheck`
  - enable Worker mode: `GooseDefault::Worker`
 
-For example, without any run-time options the following load test would automatically run against `local.dev`, logging metrics to `goose-metrics.log` and debug to `goose-debug.log`. It will automatically launch 20 users in 4 seconds, and run the load test for 15 minutes. Metrics will only be displayed when the load test completes, and will include additional status code metrics. The order the defaults are set is not important.
+For example, without any run-time options the following load test would automatically run against `local.dev`, logging metrics to `goose-metrics.log` and debug to `goose-debug.log`. It will automatically launch 20 users in 4 seconds, and run the load test for 15 minutes. Metrics will be displayed every minute during the test and will include additional status code metrics. The order the defaults are set is not important.
 
 ```
     GooseAttack::initialize()?
@@ -399,7 +399,7 @@ For example, without any run-time options the following load test would automati
         .set_default(GooseDefault::Users, 20)?
         .set_default(GooseDefault::HatchRate, 4)?
         .set_default(GooseDefault::RunTime, 900)?
-        .set_default(GooseDefault::OnlySummary, true)?
+        .set_default(GooseDefault::RunningStatistics, 60)?
         .set_default(GooseDefault::StatusCodes, true)?
         .execute()?
         .print();

@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.6-dev
+ - Replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
+
 ## 0.10.5 Nov 5, 2020
  - support floating point hatch rate (ie, hatch 1 user every 2 seconds with `-r .5`)
 

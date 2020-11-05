@@ -443,9 +443,6 @@ use crate::metrics::{GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
-/// Constant defining how often metrics should be displayed while load test is running.
-const RUNNING_METRICS_EVERY: usize = 15;
-
 /// Constant defining Goose's default port when running a Gaggle.
 const DEFAULT_PORT: &str = "5115";
 
@@ -600,8 +597,8 @@ pub struct GooseDefaults {
     log_file: Option<String>,
     /// An optional default value for verbosity level.
     verbose: Option<u8>,
-    /// An optional default for only printing final summary metrics.
-    only_summary: Option<bool>,
+    /// An optional default for printing running metrics.
+    running_metrics: Option<usize>,
     /// An optional default for not resetting metrics after all users started.
     no_reset_metrics: Option<bool>,
     /// An optional default for not tracking metrics.
@@ -656,8 +653,8 @@ pub enum GooseDefault {
     LogFile,
     /// An optional default value for verbosity level.
     Verbose,
-    /// An optional default for only printing final summary metrics.
-    OnlySummary,
+    /// An optional default for printing running metrics.
+    RunningMetrics,
     /// An optional default for not resetting metrics after all users started.
     NoResetMetrics,
     /// An optional default for not tracking metrics.
@@ -1517,33 +1514,39 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if the only_summary flag is enabled.
-    fn set_only_summary(&mut self) -> Result<(), GooseError> {
+    // Determine if the running_metrics flag is enabled.
+    fn set_running_metrics(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
-        let mut key = "configuration.only_summary";
-        let mut value = false;
+        let mut key = "configuration.running_metrics";
+        let mut value = 0;
 
-        if self.configuration.only_summary {
-            key = "--only-summary";
-            value = true;
+        if let Some(running_metrics) = self.configuration.running_metrics {
+            key = "--running-metrics";
+            value = running_metrics;
         // If not otherwise set and not Worker, check if there's a default.
         } else if self.attack_mode != GooseMode::Worker {
             // Optionally set default.
-            if let Some(default_only_summary) = self.defaults.only_summary {
-                key = "set_default(GooseDefault::OnlySummary)";
-                value = default_only_summary;
+            if let Some(default_running_metrics) = self.defaults.running_metrics {
+                key = "set_default(GooseDefault::RunningMetrics)";
+                value = default_running_metrics;
 
-                self.configuration.only_summary = default_only_summary;
+                self.configuration.running_metrics = Some(default_running_metrics);
             }
         }
 
-        // Setting --only-summary with --worker is not allowed.
-        if self.configuration.only_summary && self.attack_mode == GooseMode::Worker {
-            return Err(GooseError::InvalidOption {
-                option: key.to_string(),
-                value: value.to_string(),
-                detail: format!("{} can not be set together with the --worker flag.", key),
-            });
+        // Setting --running-metrics with --worker is not allowed.
+        if let Some(running_metrics) = self.configuration.running_metrics {
+            if self.attack_mode == GooseMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} can not be set together with the --worker flag.", key),
+                });
+            }
+
+            if running_metrics > 0 {
+                info!("running_metrics = {}", running_metrics);
+            }
         }
 
         Ok(())
@@ -1624,12 +1627,12 @@ impl GooseAttack {
             }
 
             // Don't allow overhead of collecting metrics unless we're printing them.
-            if self.configuration.only_summary {
+            if self.configuration.running_metrics.is_some() {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: value.to_string(),
                     detail: format!(
-                        "{} can not be set together with the --only-summary flag.",
+                        "{} can not be set together with the --running_metrics option.",
                         key
                     ),
                 });
@@ -1921,8 +1924,8 @@ impl GooseAttack {
         // Configure status_codes flag.
         self.set_status_codes()?;
 
-        // Configure only_summary flag.
-        self.set_only_summary()?;
+        // Configure running_metrics flag.
+        self.set_running_metrics()?;
 
         // Configure no_reset_metrics flag.
         self.set_no_reset_metrics()?;
@@ -2388,12 +2391,13 @@ impl GooseAttack {
             // Regularly sync data from user threads first.
             if !self.configuration.no_metrics {
                 // Check if we're displaying running metrics.
-                if !self.configuration.only_summary
-                    && self.attack_mode != GooseMode::Worker
-                    && util::timer_expired(metrics_timer, RUNNING_METRICS_EVERY)
-                {
-                    metrics_timer = time::Instant::now();
-                    display_running_metrics = true;
+                if let Some(running_metrics) = self.configuration.running_metrics {
+                    if self.attack_mode != GooseMode::Worker
+                        && util::timer_expired(metrics_timer, running_metrics)
+                    {
+                        metrics_timer = time::Instant::now();
+                        display_running_metrics = true;
+                    }
                 }
 
                 // Load messages from user threads until the receiver queue is empty.
@@ -2691,6 +2695,7 @@ impl GooseAttack {
 ///  - GooseDefault::Users
 ///  - GooseDefault::HatchRate
 ///  - GooseDefault::RunTime
+///  - GooseDefault::RunningMetrics
 ///  - GooseDefault::LogLevel
 ///  - GooseDefault::Verbose
 ///  - GooseDefault::ThrottleRequests
@@ -2700,7 +2705,6 @@ impl GooseAttack {
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// `bool` (and otherwise default to `false`).
-///  - GooseDefault::OnlySummary
 ///  - GooseDefault::NoResetMetrics
 ///  - GooseDefault::NoMetrics
 ///  - GooseDefault::NoTaskMetrics
@@ -2716,7 +2720,7 @@ impl GooseAttack {
 ///
 /// fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
-///         .set_default(GooseDefault::OnlySummary, true)?
+///         .set_default(GooseDefault::NoResetMetrics, true)?
 ///         .set_default(GooseDefault::Verbose, 1)?
 ///         .set_default(GooseDefault::MetricsFile, "goose-metrics.log")?;
 ///
@@ -2759,7 +2763,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
-            GooseDefault::OnlySummary
+            GooseDefault::RunningMetrics
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
@@ -2780,6 +2784,7 @@ impl GooseDefaultType<usize> for GooseAttack {
         match key {
             GooseDefault::Users => self.defaults.users = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
+            GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
@@ -2805,8 +2810,7 @@ impl GooseDefaultType<usize> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::OnlySummary
-            | GooseDefault::NoResetMetrics
+            GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
             | GooseDefault::StatusCodes
@@ -2830,7 +2834,6 @@ impl GooseDefaultType<usize> for GooseAttack {
 impl GooseDefaultType<bool> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: bool) -> Result<Box<Self>, GooseError> {
         match key {
-            GooseDefault::OnlySummary => self.defaults.only_summary = Some(value),
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
@@ -2844,6 +2847,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::LogFile
             | GooseDefault::MetricsFile
             | GooseDefault::MetricsFormat
+            | GooseDefault::RunningMetrics
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
             | GooseDefault::ManagerBindHost
@@ -2919,9 +2923,9 @@ pub struct GooseConfiguration {
     )]
     pub verbose: u8,
 
-    /// Only prints final summary metrics
-    #[options(no_short)]
-    pub only_summary: bool,
+    /// How often to optionally print running metrics
+    #[options(no_short, meta = "TIME")]
+    pub running_metrics: Option<usize>,
     /// Doesn't reset metrics after all users have started
     #[options(no_short)]
     pub no_reset_metrics: bool,
@@ -3261,7 +3265,7 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::Verbose, verbose)
             .unwrap()
-            .set_default(GooseDefault::OnlySummary, true)
+            .set_default(GooseDefault::RunningMetrics, 15)
             .unwrap()
             .set_default(GooseDefault::NoResetMetrics, true)
             .unwrap()
@@ -3307,7 +3311,7 @@ mod test {
         assert!(goose_attack.defaults.log_level == Some(log_level as u8));
         assert!(goose_attack.defaults.log_file == Some(log_file));
         assert!(goose_attack.defaults.verbose == Some(verbose as u8));
-        assert!(goose_attack.defaults.only_summary == Some(true));
+        assert!(goose_attack.defaults.running_metrics == Some(15));
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
