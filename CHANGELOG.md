@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.5-dev
+## 0.10.5 Nov 5, 2020
  - support floating point hatch rate (ie, hatch 1 user every 2 seconds with `-r .5`)
 
 ## 0.10.4 Nov 1, 2020
