@@ -15,11 +15,8 @@ use crate::{get_worker_id, GooseAttack, GooseConfiguration, GooseMode, WORKER_ID
 /// Workers send GaggleMetrics to the Manager process to be aggregated together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GaggleMetrics {
-    /// Notification that a Worker has started, includes load test hash to ensure
-    /// that all Workers are running the same load test.
+    /// Load test hash, used to ensure all Workers are running the same load test.
     WorkerInit(u64),
-    /// Notification that all GooseUsers on a Worker are running.
-    WorkerRunning(bool),
     /// Goose request metrics.
     Requests(GooseRequestMetrics),
     /// Goose task metrics.
@@ -215,8 +212,6 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
     // Use the run_time from the Manager so Worker can shut down in a timely manner.
     worker_goose_attack.run_time = run_time;
-    // Each Worker runs a subset of all total users.
-    worker_goose_attack.configuration.users = Some(weighted_users.len());
     worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
     // The metrics_file option is configured on the Worker.
