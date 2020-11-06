@@ -222,8 +222,8 @@ fn run_standalone_test(test_type: TestType) {
 
     // Then configure which scheduler the GooseAttack should launch users with.
     goose_attack = match test_type {
-        TestType::RoundRobin => goose_attack.set_scheduler(GooseScheduler::RoundRobin),
-        TestType::Serial => goose_attack.set_scheduler(GooseScheduler::Serial),
+        TestType::RoundRobin => goose_attack.set_scheduler(GooseTaskSetScheduler::RoundRobin),
+        TestType::Serial => goose_attack.set_scheduler(GooseTaskSetScheduler::Serial),
     };
 
     // Run the Goose Attack.
@@ -257,8 +257,8 @@ fn run_gaggle_test(test_type: TestType) {
 
     // Then configure which scheduler the GooseAttack should launch users with.
     goose_attack = match test_type {
-        TestType::RoundRobin => goose_attack.set_scheduler(GooseScheduler::RoundRobin),
-        TestType::Serial => goose_attack.set_scheduler(GooseScheduler::Serial),
+        TestType::RoundRobin => goose_attack.set_scheduler(GooseTaskSetScheduler::RoundRobin),
+        TestType::Serial => goose_attack.set_scheduler(GooseTaskSetScheduler::Serial),
     };
 
     // Workers launched in own threads, store thread handles.
@@ -278,8 +278,10 @@ fn run_gaggle_test(test_type: TestType) {
 
     // Then configure which scheduler the GooseAttack should launch users with.
     manager_goose_attack = match test_type {
-        TestType::RoundRobin => manager_goose_attack.set_scheduler(GooseScheduler::RoundRobin),
-        TestType::Serial => manager_goose_attack.set_scheduler(GooseScheduler::Serial),
+        TestType::RoundRobin => {
+            manager_goose_attack.set_scheduler(GooseTaskSetScheduler::RoundRobin)
+        }
+        TestType::Serial => manager_goose_attack.set_scheduler(GooseTaskSetScheduler::Serial),
     };
 
     // Run the Goose Attack.

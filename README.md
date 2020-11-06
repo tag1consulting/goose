@@ -348,21 +348,21 @@ Prior to Goose `0.10.6` `GooseTaskSet`s were allocated in a serial order. To res
 
 ```
     GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::Serial)
+        .set_scheduler(GooseTaskSetScheduler::Serial)
 ```
 
 Or, to randomize the order `GooseTaskSet`s are allocated to newly launched users, you can instead configure your `GooseAttack` as follows:
 
 ```
     GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::Random)
+        .set_scheduler(GooseTaskSetScheduler::Random)
 ```
 
 The following configuration is possible but superfluous because it is the scheduling default:
 
 ```
     GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::RoundRobin)
+        .set_scheduler(GooseTaskSetScheduler::RoundRobin)
 ```
 
 ## Defaults

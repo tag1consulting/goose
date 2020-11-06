@@ -583,7 +583,7 @@ pub enum GooseMode {
 
 #[derive(Clone, Debug, PartialEq)]
 /// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
-pub enum GooseScheduler {
+pub enum GooseTaskSetScheduler {
     /// Allocate one of each available type of GooseTaskSet at a time (default).
     RoundRobin,
     /// Allocate GooseTaskSets in the order and weighting they are defined.
@@ -725,7 +725,7 @@ pub struct GooseAttack {
     /// Which mode this GooseAttack is operating in.
     attack_mode: GooseMode,
     /// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
-    scheduler: GooseScheduler,
+    scheduler: GooseTaskSetScheduler,
     /// When the load test started.
     started: Option<time::Instant>,
     /// All metrics merged together.
@@ -751,7 +751,7 @@ impl GooseAttack {
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             run_time: 0,
             attack_mode: GooseMode::Undefined,
-            scheduler: GooseScheduler::RoundRobin,
+            scheduler: GooseTaskSetScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -780,7 +780,7 @@ impl GooseAttack {
             configuration,
             run_time: 0,
             attack_mode: GooseMode::Undefined,
-            scheduler: GooseScheduler::RoundRobin,
+            scheduler: GooseTaskSetScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -882,7 +882,7 @@ impl GooseAttack {
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
-    ///         .set_scheduler(GooseScheduler::Random)
+    ///         .set_scheduler(GooseTaskSetScheduler::Random)
     ///         .register_taskset(taskset!("A Tasks")
     ///             .set_weight(5)?
     ///             .register_task(task!(example_task))
@@ -908,7 +908,7 @@ impl GooseAttack {
     /// }
     /// ```
     /// ```
-    pub fn set_scheduler(mut self, scheduler: GooseScheduler) -> Self {
+    pub fn set_scheduler(mut self, scheduler: GooseTaskSetScheduler) -> Self {
         self.scheduler = scheduler;
         self
     }
@@ -1058,7 +1058,7 @@ impl GooseAttack {
         // Now build the weighted list with the appropriate scheduler.
         let mut weighted_task_sets = Vec::new();
         match self.scheduler {
-            GooseScheduler::RoundRobin => {
+            GooseTaskSetScheduler::RoundRobin => {
                 // Allocate task sets round robin.
                 let task_sets_len = available_task_sets.len();
                 loop {
@@ -1077,7 +1077,7 @@ impl GooseAttack {
                     }
                 }
             }
-            GooseScheduler::Serial => {
+            GooseTaskSetScheduler::Serial => {
                 // Allocate task sets serially in the weighted order defined.
                 for (task_set, task_sets) in available_task_sets.iter().enumerate() {
                     debug!(
@@ -1088,7 +1088,7 @@ impl GooseAttack {
                     weighted_task_sets.append(&mut task_sets.clone());
                 }
             }
-            GooseScheduler::Random => {
+            GooseTaskSetScheduler::Random => {
                 // Allocate task sets randomly.
                 loop {
                     let task_set = available_task_sets.choose_mut(&mut rand::thread_rng());
