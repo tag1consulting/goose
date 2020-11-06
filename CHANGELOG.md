@@ -1,7 +1,11 @@
 # Changelog
 
 ## 0.10.6-dev
- - Replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
+ - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
+ - make the algorithm for allocation of GooseTask's to starting GooseUsers configurable
+    o `GooseSchedule::RoundRobin` allocates 1 of each available GooseTaskSet at a time (new default)
+    o `GooseSchedule::Serial` allocates all of each available GooseTaskSet in the order they are defined
+    o `GooseSchedule::Random` allocates 1 GooseTaskSet from all available
 
 ## 0.10.5 Nov 5, 2020
  - support floating point hatch rate (ie, hatch 1 user every 2 seconds with `-r .5`)
