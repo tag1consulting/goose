@@ -3,5 +3,5 @@ pub use crate::goose::{
 };
 pub use crate::metrics::GooseMetrics;
 pub use crate::{
-    task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError, GooseSchedule,
+    task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError, GooseScheduler,
 };
