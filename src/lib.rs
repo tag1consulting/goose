@@ -857,17 +857,24 @@ impl GooseAttack {
     /// are launched.
     ///
     /// By default, GooseTaskSets are allocated to new GooseUser's in a round robin
-    /// style. For example, if TaskA has a weight of 5, TaskB has a weight of
-    /// 4, and you launch 20 users, they will be launched in the following order:
-    ///  A, B, A, B, A, B, A, B, A, A, B, A, B, A, B, A, B, A, A, B
+    /// style. For example, if TaskSet A has a weight of 5, Task Set B has a weight
+    ///  of 3, and you launch 20 users, they will be launched in the following order:
+    ///  A, B, A, B, A, B, A, A, A, B, A, B, A, B, A, A, A, B, A, B
     ///
-    /// If reconfigured to allocate serially, then in the above configuration they
+    /// Note that the following pattern is repeated:
+    ///  A, B, A, B, A, B, A, A
+    ///
+    /// If reconfigured to schedule serially, then in the above configuration they
     /// will be allocated as follows:
-    /// A, A, A, A, A, B, B, B, B, A, A, A, A, A, B, B, B, B, A, B
+    /// A, A, A, A, A, B, B, B, A, A, A, A, A, B, B, B, A, A, A, A
     ///
-    /// In the following example, GooseTaskSets are allocated to new GooseUser's in
-    /// a random order. This means running the test multiple times can generate
-    /// different amounts of load.
+    /// In this case, the following pattern is repeated:
+    /// A, A, A, A, A, B, B, B
+    ///
+    /// In the following example, GooseTaskSets are allocated to launching GooseUsers
+    /// in a random order. This means running the test multiple times can generate
+    /// different amounts of load, as depending on your weighting rules you may
+    /// have a different number of GooseUsers running each GooseTaskSet each time.
     ///
     /// # Example
     /// ```rust,no_run
