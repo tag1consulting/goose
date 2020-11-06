@@ -1055,13 +1055,14 @@ impl GooseAttack {
                 // Allocate task sets round robin.
                 let task_sets_len = available_task_sets.len();
                 loop {
-                    for i in 0..task_sets_len {
-                        match available_task_sets[i].pop() {
-                            Some(task_set) => {
-                                debug!("allocating 1 user from TaskSet {}", i);
-                                weighted_task_sets.push(task_set.clone());
-                            }
-                            None => (),
+                    for (i, task_sets) in available_task_sets
+                        .iter_mut()
+                        .enumerate()
+                        .take(task_sets_len)
+                    {
+                        if let Some(task_set) = task_sets.pop() {
+                            debug!("allocating 1 user from TaskSet {}", i);
+                            weighted_task_sets.push(task_set);
                         }
                     }
                     if weighted_task_sets.len() >= total_task_sets {
@@ -1073,7 +1074,7 @@ impl GooseAttack {
                 // Allocate task sets serially in the weighted order defined.
                 for (task_set, task_sets) in available_task_sets.iter().enumerate() {
                     debug!(
-                        "Allocating all {} users from TaskSet {}",
+                        "allocating all {} users from TaskSet {}",
                         task_sets.len(),
                         task_set
                     );
@@ -1085,13 +1086,12 @@ impl GooseAttack {
                 loop {
                     let task_set = available_task_sets.choose_mut(&mut rand::thread_rng());
                     match task_set {
-                        Some(set) => match set.pop() {
-                            Some(s) => {
-                                weighted_task_sets.push(s.clone());
+                        Some(set) => {
+                            if let Some(s) = set.pop() {
+                                weighted_task_sets.push(s);
                             }
-                            None => (),
-                        },
-                        None => warn!("random failed"),
+                        }
+                        None => warn!("randomly allocating a GooseTaskSet failed, trying again"),
                     }
                     if weighted_task_sets.len() >= total_task_sets {
                         break;
