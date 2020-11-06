@@ -325,14 +325,14 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
             }
 
             // When displaying running metrics, sync data from user threads first.
-            if !goose_attack.configuration.only_summary
-                && util::timer_expired(running_metrics_timer, crate::RUNNING_METRICS_EVERY)
-            {
-                // Reset timer each time we display metrics.
-                running_metrics_timer = time::Instant::now();
-                goose_attack.metrics.duration =
-                    goose_attack.started.unwrap().elapsed().as_secs() as usize;
-                goose_attack.metrics.print_running();
+            if let Some(running_metrics) = goose_attack.configuration.running_metrics {
+                if util::timer_expired(running_metrics_timer, running_metrics) {
+                    // Reset timer each time we display metrics.
+                    running_metrics_timer = time::Instant::now();
+                    goose_attack.metrics.duration =
+                        goose_attack.started.unwrap().elapsed().as_secs() as usize;
+                    goose_attack.metrics.print_running();
+                }
             }
         } else if canceled.load(Ordering::SeqCst) {
             info!("load test canceled, exiting");
