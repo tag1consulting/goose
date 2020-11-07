@@ -570,7 +570,7 @@ impl From<io::Error> for GooseError {
 
 #[derive(Clone, Debug, PartialEq)]
 /// A GooseAttack load test can operate in only one mode.
-pub enum GooseMode {
+pub enum AttackMode {
     /// A mode has not yet been assigned.
     Undefined,
     /// A single standalone process performing a load test.
@@ -723,7 +723,7 @@ pub struct GooseAttack {
     /// Track how long the load test should run.
     run_time: usize,
     /// Which mode this GooseAttack is operating in.
-    attack_mode: GooseMode,
+    attack_mode: AttackMode,
     /// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
     scheduler: GooseTaskSetScheduler,
     /// When the load test started.
@@ -750,7 +750,7 @@ impl GooseAttack {
             defaults: GooseDefaults::default(),
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             run_time: 0,
-            attack_mode: GooseMode::Undefined,
+            attack_mode: AttackMode::Undefined,
             scheduler: GooseTaskSetScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
@@ -779,7 +779,7 @@ impl GooseAttack {
             defaults: GooseDefaults::default(),
             configuration,
             run_time: 0,
-            attack_mode: GooseMode::Undefined,
+            attack_mode: AttackMode::Undefined,
             scheduler: GooseTaskSetScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
@@ -1163,7 +1163,7 @@ impl GooseAttack {
 
         // Manager mode if --manager is set, or --worker is not set and Manager is default.
         if self.configuration.manager || (!self.configuration.worker && manager_is_default) {
-            self.attack_mode = GooseMode::Manager;
+            self.attack_mode = AttackMode::Manager;
             if self.configuration.worker {
                 return Err(GooseError::InvalidOption {
                     option: "--worker".to_string(),
@@ -1186,7 +1186,7 @@ impl GooseAttack {
 
         // Worker mode if --worker is set, or --manager is not set and Worker is default.
         if self.configuration.worker || (!self.configuration.manager && worker_is_default) {
-            self.attack_mode = GooseMode::Worker;
+            self.attack_mode = AttackMode::Worker;
             if self.configuration.manager {
                 return Err(GooseError::InvalidOption {
                     option: "--manager".to_string(),
@@ -1207,8 +1207,8 @@ impl GooseAttack {
         }
 
         // Otherwise run in standalone attack mode.
-        if self.attack_mode == GooseMode::Undefined {
-            self.attack_mode = GooseMode::StandAlone;
+        if self.attack_mode == AttackMode::Undefined {
+            self.attack_mode = AttackMode::StandAlone;
 
             if self.configuration.no_hash_check {
                 return Err(GooseError::InvalidOption {
@@ -1232,7 +1232,7 @@ impl GooseAttack {
             key = "--expect-workers";
         // Otherwise check if a custom default is set.
         } else if let Some(default_expect_workers) = self.defaults.expect_workers {
-            if self.attack_mode == GooseMode::Manager {
+            if self.attack_mode == AttackMode::Manager {
                 key = "set_default(GooseDefault::ExpectWorkers)";
 
                 self.configuration.expect_workers = Some(default_expect_workers);
@@ -1241,7 +1241,7 @@ impl GooseAttack {
 
         if let Some(expect_workers) = self.configuration.expect_workers {
             // Disallow --expect-workers without --manager.
-            if self.attack_mode != GooseMode::Manager {
+            if self.attack_mode != AttackMode::Manager {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: expect_workers.to_string(),
@@ -1280,7 +1280,7 @@ impl GooseAttack {
 
     fn set_gaggle_host_and_port(&mut self) -> Result<(), GooseError> {
         // Configure manager_bind_host and manager_bind_port.
-        if self.attack_mode == GooseMode::Manager {
+        if self.attack_mode == AttackMode::Manager {
             // Use default if run-time option not set.
             if self.configuration.manager_bind_host.is_empty() {
                 self.configuration.manager_bind_host =
@@ -1319,7 +1319,7 @@ impl GooseAttack {
         }
 
         // Configure manager_host and manager_port.
-        if self.attack_mode == GooseMode::Worker {
+        if self.attack_mode == AttackMode::Worker {
             // Use default if run-time option not set.
             if self.configuration.manager_host.is_empty() {
                 self.configuration.manager_host =
@@ -1376,7 +1376,7 @@ impl GooseAttack {
         // If not, check if a default for users is set.
         } else if let Some(default_users) = self.defaults.users {
             // On Worker hatch_rate comes from the Manager.
-            if self.attack_mode == GooseMode::Worker {
+            if self.attack_mode == AttackMode::Worker {
                 self.configuration.users = None;
             // Otherwise use default.
             } else {
@@ -1386,7 +1386,7 @@ impl GooseAttack {
                 self.configuration.users = Some(default_users);
             }
         // If not and if not running on Worker, default to 1.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             // This should not be able to fail, but setting up debug in case the number
             // of cpus library returns an invalid number.
             key = "num_cpus::get()";
@@ -1400,7 +1400,7 @@ impl GooseAttack {
         // Perform bounds checking.
         if let Some(users) = self.configuration.users {
             // Setting --users with --worker is not allowed.
-            if self.attack_mode == GooseMode::Worker {
+            if self.attack_mode == AttackMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: value.to_string(),
@@ -1437,7 +1437,7 @@ impl GooseAttack {
             value
         // Otherwise, use default if set, but not on Worker.
         } else if let Some(default_run_time) = self.defaults.run_time {
-            if self.attack_mode == GooseMode::Worker {
+            if self.attack_mode == AttackMode::Worker {
                 0
             } else {
                 key = "set_default(GooseDefault::RunTime)";
@@ -1451,7 +1451,7 @@ impl GooseAttack {
         };
 
         if self.run_time > 0 {
-            if self.attack_mode == GooseMode::Worker {
+            if self.attack_mode == AttackMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: value.to_string(),
@@ -1479,7 +1479,7 @@ impl GooseAttack {
         // If not, check if a default hatch_rate is set.
         } else if let Some(default_hatch_rate) = &self.defaults.hatch_rate {
             // On Worker hatch_rate comes from the Manager.
-            if self.attack_mode == GooseMode::Worker {
+            if self.attack_mode == AttackMode::Worker {
                 self.configuration.hatch_rate = None;
             // Otherwise use default.
             } else {
@@ -1488,7 +1488,7 @@ impl GooseAttack {
                 self.configuration.hatch_rate = Some(default_hatch_rate.to_string());
             }
         // If not and if not running on Worker, default to 1.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             // This should not be able to fail, but setting up debug in case a later
             // change introduces the potential for failure.
             key = "Goose default";
@@ -1499,7 +1499,7 @@ impl GooseAttack {
         // Verbose output.
         if let Some(hatch_rate) = &self.configuration.hatch_rate {
             // Setting --hatch-rate with --worker is not allowed.
-            if self.attack_mode == GooseMode::Worker {
+            if self.attack_mode == AttackMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value,
@@ -1538,7 +1538,7 @@ impl GooseAttack {
         if self.configuration.throttle_requests == 0 {
             if let Some(default_throttle_requests) = self.defaults.throttle_requests {
                 // In Gaggles, throttle_requests is only set on Worker.
-                if self.attack_mode != GooseMode::Manager {
+                if self.attack_mode != AttackMode::Manager {
                     key = "set_default(GooseDefault::ThrottleRequests)";
                     value = default_throttle_requests;
 
@@ -1549,7 +1549,7 @@ impl GooseAttack {
 
         if self.configuration.throttle_requests > 0 {
             // Setting --throttle-requests with --worker is not allowed.
-            if self.attack_mode == GooseMode::Manager {
+            if self.attack_mode == AttackMode::Manager {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: value.to_string(),
@@ -1594,7 +1594,7 @@ impl GooseAttack {
             key = "--no-reset-metrics";
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             if let Some(default_no_reset_metrics) = self.defaults.no_reset_metrics {
                 key = "set_default(GooseDefault::NoResetMetrics)";
                 value = default_no_reset_metrics;
@@ -1605,7 +1605,7 @@ impl GooseAttack {
         }
 
         // Setting --no-reset-metrics with --worker is not allowed.
-        if self.configuration.no_reset_metrics && self.attack_mode == GooseMode::Worker {
+        if self.configuration.no_reset_metrics && self.attack_mode == AttackMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: key.to_string(),
                 value: value.to_string(),
@@ -1626,7 +1626,7 @@ impl GooseAttack {
             key = "--status-codes";
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             if let Some(default_status_codes) = self.defaults.status_codes {
                 key = "set_default(GooseDefault::StatusCodes)";
                 value = default_status_codes;
@@ -1637,7 +1637,7 @@ impl GooseAttack {
         }
 
         // Setting --status-codes with --worker is not allowed.
-        if self.configuration.status_codes && self.attack_mode == GooseMode::Worker {
+        if self.configuration.status_codes && self.attack_mode == AttackMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: key.to_string(),
                 value: value.to_string(),
@@ -1658,7 +1658,7 @@ impl GooseAttack {
             key = "--running-metrics";
             value = running_metrics;
         // If not otherwise set and not Worker, check if there's a default.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             // Optionally set default.
             if let Some(default_running_metrics) = self.defaults.running_metrics {
                 key = "set_default(GooseDefault::RunningMetrics)";
@@ -1670,7 +1670,7 @@ impl GooseAttack {
 
         // Setting --running-metrics with --worker is not allowed.
         if let Some(running_metrics) = self.configuration.running_metrics {
-            if self.attack_mode == GooseMode::Worker {
+            if self.attack_mode == AttackMode::Worker {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: value.to_string(),
@@ -1696,7 +1696,7 @@ impl GooseAttack {
             key = "--no-task-metrics";
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             // Optionally set default.
             if let Some(default_no_task_metrics) = self.defaults.no_task_metrics {
                 key = "set_default(GooseDefault::NoTaskMetrics)";
@@ -1707,7 +1707,7 @@ impl GooseAttack {
         }
 
         // Setting --no-task-metrics with --worker is not allowed.
-        if self.configuration.no_task_metrics && self.attack_mode == GooseMode::Worker {
+        if self.configuration.no_task_metrics && self.attack_mode == AttackMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: key.to_string(),
                 value: value.to_string(),
@@ -1728,7 +1728,7 @@ impl GooseAttack {
             key = "--no-metrics";
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             // Optionally set default.
             if let Some(default_no_metrics) = self.defaults.no_metrics {
                 key = "set_default(GooseDefault::NoMetrics)";
@@ -1739,7 +1739,7 @@ impl GooseAttack {
         }
 
         // Setting --no-metrics with --worker is not allowed.
-        if self.configuration.no_metrics && self.attack_mode == GooseMode::Worker {
+        if self.configuration.no_metrics && self.attack_mode == AttackMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: key.to_string(),
                 value: value.to_string(),
@@ -1798,7 +1798,7 @@ impl GooseAttack {
             key = "--sticky-follow";
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             // Optionally set default.
             if let Some(default_sticky_follow) = self.defaults.sticky_follow {
                 key = "set_default(GooseDefault::StickyFollow)";
@@ -1808,7 +1808,7 @@ impl GooseAttack {
             }
         }
 
-        if self.configuration.sticky_follow && self.attack_mode == GooseMode::Worker {
+        if self.configuration.sticky_follow && self.attack_mode == AttackMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: key.to_string(),
                 value: value.to_string(),
@@ -1830,7 +1830,7 @@ impl GooseAttack {
             key = "--no-hash-check";
             value = true;
         // If not otherwise set and not Worker, check if there's a default.
-        } else if self.attack_mode != GooseMode::Worker {
+        } else if self.attack_mode != AttackMode::Worker {
             // Optionally set default.
             if let Some(default_no_hash_check) = self.defaults.no_hash_check {
                 key = "set_default(GooseDefault::NoHashCheck)";
@@ -1840,7 +1840,7 @@ impl GooseAttack {
             }
         }
 
-        if self.configuration.no_hash_check && self.attack_mode == GooseMode::Worker {
+        if self.configuration.no_hash_check && self.attack_mode == AttackMode::Worker {
             return Err(GooseError::InvalidOption {
                 option: key.to_string(),
                 value: value.to_string(),
@@ -1855,7 +1855,7 @@ impl GooseAttack {
     fn get_metrics_file_path(&mut self) -> Result<Option<&str>, GooseError> {
         // If metrics are disabled, or running in Manager mode, there is no
         // metrics file, exit immediately.
-        if self.configuration.no_metrics || self.attack_mode == GooseMode::Manager {
+        if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
             return Ok(None);
         }
 
@@ -1918,7 +1918,7 @@ impl GooseAttack {
     // If enabled, returns the path of the metrics_file, otherwise returns None.
     fn get_debug_file_path(&self) -> Result<Option<&str>, GooseError> {
         // If running in Manager mode there is no debug file, exit immediately.
-        if self.attack_mode == GooseMode::Manager {
+        if self.attack_mode == AttackMode::Manager {
             return Ok(None);
         }
 
@@ -2093,7 +2093,7 @@ impl GooseAttack {
                             }
                         }
                         None => {
-                            if self.attack_mode != GooseMode::Worker {
+                            if self.attack_mode != AttackMode::Worker {
                                 return Err(GooseError::InvalidOption {
                                     option: "--host".to_string(),
                                     value: "".to_string(),
@@ -2124,7 +2124,7 @@ impl GooseAttack {
             );
         }
 
-        if self.attack_mode != GooseMode::Worker {
+        if self.attack_mode != AttackMode::Worker {
             // Allocate a state for each of the users we are about to start.
             self.weighted_users = self.weight_task_set_users()?;
 
@@ -2144,7 +2144,7 @@ impl GooseAttack {
         self.started = Some(time::Instant::now());
         // Hatch users at hatch_rate per second, or one every 1 / hatch_rate fraction of a second.
         let sleep_duration;
-        if self.attack_mode != GooseMode::Worker {
+        if self.attack_mode != AttackMode::Worker {
             // Hatch rate required to get here, so unwrap() is safe.
             let hatch_rate = util::get_hatch_rate(self.configuration.hatch_rate.clone());
             sleep_duration = time::Duration::from_secs_f32(1.0 / hatch_rate);
@@ -2153,7 +2153,7 @@ impl GooseAttack {
         }
 
         // Start goose in manager mode.
-        if self.attack_mode == GooseMode::Manager {
+        if self.attack_mode == AttackMode::Manager {
             #[cfg(feature = "gaggle")]
             {
                 let mut rt = tokio::runtime::Runtime::new().unwrap();
@@ -2168,7 +2168,7 @@ impl GooseAttack {
             }
         }
         // Start goose in worker mode.
-        else if self.attack_mode == GooseMode::Worker {
+        else if self.attack_mode == AttackMode::Worker {
             #[cfg(feature = "gaggle")]
             {
                 let mut rt = tokio::runtime::Runtime::new().unwrap();
@@ -2329,7 +2329,7 @@ impl GooseAttack {
     // Invoke test_start tasks if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
-        if self.attack_mode != GooseMode::Worker {
+        if self.attack_mode != AttackMode::Worker {
             // First run global test_start_task, if defined.
             match &self.test_start_task {
                 Some(t) => {
@@ -2355,7 +2355,7 @@ impl GooseAttack {
     // Invoke test_stop tasks if existing.
     async fn run_test_stop(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
-        if self.attack_mode != GooseMode::Worker {
+        if self.attack_mode != AttackMode::Worker {
             // First run global test_stop_task, if defined.
             match &self.test_stop_task {
                 Some(t) => {
@@ -2466,7 +2466,7 @@ impl GooseAttack {
             // metrics.users starts at 0.
             let thread_number = self.metrics.users + 1;
 
-            let is_worker = self.attack_mode == GooseMode::Worker;
+            let is_worker = self.attack_mode == AttackMode::Worker;
 
             // If running on Worker, use Worker configuration in GooseUser.
             if is_worker {
@@ -2489,7 +2489,7 @@ impl GooseAttack {
             spawning_user_drift =
                 util::sleep_minus_drift(sleep_duration, spawning_user_drift).await;
         }
-        if self.attack_mode == GooseMode::Worker {
+        if self.attack_mode == AttackMode::Worker {
             info!(
                 "[{}] launched {} users...",
                 get_worker_id(),
@@ -2526,7 +2526,7 @@ impl GooseAttack {
             if !self.configuration.no_metrics {
                 // Check if we're displaying running metrics.
                 if let Some(running_metrics) = self.configuration.running_metrics {
-                    if self.attack_mode != GooseMode::Worker
+                    if self.attack_mode != AttackMode::Worker
                         && util::timer_expired(metrics_timer, running_metrics)
                     {
                         metrics_timer = time::Instant::now();
@@ -2540,7 +2540,7 @@ impl GooseAttack {
                     .await?;
 
                 // As worker, push metrics up to manager.
-                if self.attack_mode == GooseMode::Worker && received_message {
+                if self.attack_mode == AttackMode::Worker && received_message {
                     #[cfg(feature = "gaggle")]
                     {
                         // Push metrics to manager process.
@@ -2602,7 +2602,7 @@ impl GooseAttack {
             if util::timer_expired(self.started.unwrap(), self.run_time)
                 || canceled.load(Ordering::SeqCst)
             {
-                if self.attack_mode == GooseMode::Worker {
+                if self.attack_mode == AttackMode::Worker {
                     info!(
                         "[{}] stopping after {} seconds...",
                         get_worker_id(),
@@ -2632,7 +2632,7 @@ impl GooseAttack {
                         }
                     }
                 }
-                if self.attack_mode == GooseMode::Worker {
+                if self.attack_mode == AttackMode::Worker {
                     info!("[{}] waiting for users to exit", get_worker_id());
                 } else {
                     info!("waiting for users to exit");
@@ -2665,7 +2665,7 @@ impl GooseAttack {
                 #[cfg(feature = "gaggle")]
                 {
                     // As worker, push metrics up to manager.
-                    if self.attack_mode == GooseMode::Worker {
+                    if self.attack_mode == AttackMode::Worker {
                         worker::push_metrics_to_manager(
                             &socket.clone().unwrap(),
                             vec![

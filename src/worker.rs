@@ -11,7 +11,7 @@ use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
 use crate::metrics::{GooseRequestMetrics, GooseTaskMetrics};
 use crate::util;
-use crate::{get_worker_id, GooseAttack, GooseConfiguration, GooseMode, WORKER_ID};
+use crate::{get_worker_id, GooseAttack, GooseConfiguration, AttackMode, WORKER_ID};
 
 /// Workers send GaggleMetrics to the Manager process to be aggregated together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,7 +230,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // The throttle_requests option is set on the Worker.
     worker_goose_attack.configuration.throttle_requests =
         goose_attack.configuration.throttle_requests;
-    worker_goose_attack.attack_mode = GooseMode::Worker;
+    worker_goose_attack.attack_mode = AttackMode::Worker;
     worker_goose_attack.defaults = goose_attack.defaults.clone();
 
     // Divide hatch_rate amongst all workers.
