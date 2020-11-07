@@ -21,19 +21,10 @@ const START_ONE_KEY: usize = 2;
 const STOP_ONE_KEY: usize = 3;
 
 // Load test configuration.
-const EXPECT_WORKERS: usize = 3;
+const EXPECT_WORKERS: usize = 4;
 // Users needs to be an even number.
-const USERS: usize = 10;
+const USERS: usize = 18;
 const RUN_TIME: usize = 2;
-
-// There are multiple test variations in this file.
-#[derive(Clone)]
-enum TestType {
-    // Launch task sets serially as defined.
-    Serial,
-    // Launch task sets in a round robin fashion.
-    RoundRobin,
-}
 
 // Test task.
 pub async fn one_with_delay(user: &GooseUser) -> GooseTaskResult {
@@ -154,13 +145,13 @@ fn common_build_configuration(
 }
 
 // Helper to confirm all variations generate appropriate results.
-fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
+fn validate_test(scheduler: &GooseTaskSetScheduler, mock_endpoints: &[MockRef]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
     assert!(mock_endpoints[START_ONE_KEY].times_called() == 1);
 
-    // Now confirm TestType-specific counters.
-    match test_type {
-        TestType::RoundRobin => {
+    // Now validate scheduler-specific counters.
+    match scheduler {
+        GooseTaskSetScheduler::RoundRobin => {
             // We launch an equal number of each task set, so we call both endpoints
             // an equal number of times.
             assert!(
@@ -168,11 +159,20 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
             );
             assert!(mock_endpoints[ONE_KEY].times_called() == USERS / 2);
         }
-        TestType::Serial => {
+        GooseTaskSetScheduler::Serial => {
             // As we only launch as many users as the weight of the first task set, we only
             // call the first endpoint, never the second endpoint.
             assert!(mock_endpoints[ONE_KEY].times_called() == USERS);
             assert!(mock_endpoints[TWO_KEY].times_called() == 0);
+        }
+        GooseTaskSetScheduler::Random => {
+            // When scheduling task sets randomly, we don't know how many of each will get
+            // launched, but we do now that added together they will equal the total number
+            // of users.
+            assert!(
+                mock_endpoints[ONE_KEY].times_called() + mock_endpoints[TWO_KEY].times_called()
+                    == USERS
+            );
         }
     }
 
@@ -189,6 +189,7 @@ fn get_tasks() -> (GooseTaskSet, GooseTaskSet, GooseTask, GooseTask) {
             .unwrap(),
         taskset!("TaskSetTwo")
             .register_task(task!(two_with_delay))
+            // Add one to the weight to avoid this getting reduced by gcd.
             .set_weight(USERS + 1)
             .unwrap(),
         // Start runs before all other tasks, regardless of where defined.
@@ -199,7 +200,7 @@ fn get_tasks() -> (GooseTaskSet, GooseTaskSet, GooseTask, GooseTask) {
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(test_type: TestType) {
+fn run_standalone_test(scheduler: &GooseTaskSetScheduler) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -213,28 +214,23 @@ fn run_standalone_test(test_type: TestType) {
     let (taskset1, taskset2, start_task, stop_task) = get_tasks();
 
     // First set up the common base configuration.
-    let mut goose_attack = crate::GooseAttack::initialize_with_config(configuration)
+    let goose_attack = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()
         .register_taskset(taskset1)
         .register_taskset(taskset2)
         .test_start(start_task)
-        .test_stop(stop_task);
-
-    // Then configure which scheduler the GooseAttack should launch users with.
-    goose_attack = match test_type {
-        TestType::RoundRobin => goose_attack.set_scheduler(GooseTaskSetScheduler::RoundRobin),
-        TestType::Serial => goose_attack.set_scheduler(GooseTaskSetScheduler::Serial),
-    };
+        .test_stop(stop_task)
+        .set_scheduler(scheduler.clone());
 
     // Run the Goose Attack.
     common::run_load_test(goose_attack, None);
 
     // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    validate_test(&scheduler, &mock_endpoints);
 }
 
 // Helper to run all gaggle tests.
-fn run_gaggle_test(test_type: TestType) {
+fn run_gaggle_test(scheduler: &GooseTaskSetScheduler) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -248,18 +244,13 @@ fn run_gaggle_test(test_type: TestType) {
     let (taskset1, taskset2, start_task, stop_task) = get_tasks();
 
     // First set up the common base configuration.
-    let mut goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
+    let goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
         .unwrap()
         .register_taskset(taskset1.clone())
         .register_taskset(taskset2.clone())
         .test_start(start_task.clone())
-        .test_stop(stop_task.clone());
-
-    // Then configure which scheduler the GooseAttack should launch users with.
-    goose_attack = match test_type {
-        TestType::RoundRobin => goose_attack.set_scheduler(GooseTaskSetScheduler::RoundRobin),
-        TestType::Serial => goose_attack.set_scheduler(GooseTaskSetScheduler::Serial),
-    };
+        .test_stop(stop_task.clone())
+        .set_scheduler(scheduler.clone());
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
@@ -268,33 +259,25 @@ fn run_gaggle_test(test_type: TestType) {
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
     // Build the load test for the Manager.
-    let mut manager_goose_attack =
-        crate::GooseAttack::initialize_with_config(manager_configuration)
-            .unwrap()
-            .register_taskset(taskset1)
-            .register_taskset(taskset2)
-            .test_start(start_task)
-            .test_stop(stop_task);
-
-    // Then configure which scheduler the GooseAttack should launch users with.
-    manager_goose_attack = match test_type {
-        TestType::RoundRobin => {
-            manager_goose_attack.set_scheduler(GooseTaskSetScheduler::RoundRobin)
-        }
-        TestType::Serial => manager_goose_attack.set_scheduler(GooseTaskSetScheduler::Serial),
-    };
+    let manager_goose_attack = crate::GooseAttack::initialize_with_config(manager_configuration)
+        .unwrap()
+        .register_taskset(taskset1)
+        .register_taskset(taskset2)
+        .test_start(start_task)
+        .test_stop(stop_task)
+        .set_scheduler(scheduler.clone());
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm the load test ran correctly.
-    validate_test(&test_type, &mock_endpoints);
+    validate_test(&scheduler, &mock_endpoints);
 }
 
 #[test]
 // Load test with multiple tasks allocating GooseTaskSets in round robin order.
 fn test_round_robin() {
-    run_standalone_test(TestType::RoundRobin);
+    run_standalone_test(&GooseTaskSetScheduler::RoundRobin);
 }
 
 #[test]
@@ -303,13 +286,13 @@ fn test_round_robin() {
 // Load test with multiple tasks allocating GooseTaskSets in round robin order, in
 // Gaggle mode.
 fn test_round_robin_gaggle() {
-    run_gaggle_test(TestType::RoundRobin);
+    run_gaggle_test(&GooseTaskSetScheduler::RoundRobin);
 }
 
 #[test]
 // Load test with multiple tasks allocating GooseTaskSets in serial order.
 fn test_serial() {
-    run_standalone_test(TestType::Serial);
+    run_standalone_test(&GooseTaskSetScheduler::Serial);
 }
 
 #[test]
@@ -318,5 +301,20 @@ fn test_serial() {
 // Load test with multiple tasks allocating GooseTaskSets in serial order, in
 // Gaggle mode.
 fn test_serial_gaggle() {
-    run_gaggle_test(TestType::Serial);
+    run_gaggle_test(&GooseTaskSetScheduler::Serial);
+}
+
+#[test]
+// Load test with multiple tasks allocating GooseTaskSets in random order.
+fn test_random() {
+    run_standalone_test(&GooseTaskSetScheduler::Random);
+}
+
+#[test]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+#[serial]
+// Load test with multiple tasks allocating GooseTaskSets in random order, in
+// Gaggle mode.
+fn test_random_gaggle() {
+    run_gaggle_test(&GooseTaskSetScheduler::Random);
 }
