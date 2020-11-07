@@ -864,11 +864,11 @@ impl GooseAttack {
     /// Note that the following pattern is repeated:
     ///  A, B, A, B, A, B, A, A
     ///
-    /// If reconfigured to schedule serially, then in the above configuration they
-    /// will be allocated as follows:
+    /// If reconfigured to schedule serially, then they will instead be allocated in
+    /// the following order:
     /// A, A, A, A, A, B, B, B, A, A, A, A, A, B, B, B, A, A, A, A
     ///
-    /// In this case, the following pattern is repeated:
+    /// In the serial case, the following pattern is repeated:
     /// A, A, A, A, A, B, B, B
     ///
     /// In the following example, GooseTaskSets are allocated to launching GooseUsers
@@ -885,28 +885,27 @@ impl GooseAttack {
     ///         .set_scheduler(GooseTaskSetScheduler::Random)
     ///         .register_taskset(taskset!("A Tasks")
     ///             .set_weight(5)?
-    ///             .register_task(task!(example_task))
+    ///             .register_task(task!(a_task_1))
     ///         )
     ///         .register_taskset(taskset!("B Tasks")
-    ///             .set_weight(4)?
-    ///             .register_task(task!(other_task))
+    ///             .set_weight(3)?
+    ///             .register_task(task!(b_task_1))
     ///         );
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn a_task_1(user: &GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/foo").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn other_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn b_task_1(user: &GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/bar").await?;
     ///
     ///     Ok(())
     /// }
-    /// ```
     /// ```
     pub fn set_scheduler(mut self, scheduler: GooseTaskSetScheduler) -> Self {
         self.scheduler = scheduler;
@@ -1033,7 +1032,7 @@ impl GooseAttack {
         debug!("gcd: {}", u);
 
         // Build a vector of vectors to be used to schedule users.
-        let mut available_task_sets = Vec::new();
+        let mut available_task_sets = Vec::with_capacity(self.task_sets.len());
         let mut total_task_sets = 0;
         for (index, task_set) in self.task_sets.iter().enumerate() {
             // divide by greatest common divisor so vector is as short as possible
