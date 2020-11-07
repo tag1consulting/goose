@@ -338,6 +338,33 @@ All 1024 users hatched.
  Aggregated              | 58,518 [200]
 ```
 
+## Scheduling GooseTaskSets
+
+When starting a load test, Goose assigns one `GooseTaskSet` to each `GooseUser` thread. By default, it assigns `GooseTaskSets` in a round robin order. As new `GooseUser` threads are launched, the first will be assigned the first defined `GooseTaskSet`, the next will be assigned the next defined `GooseTaskSet`, and so on, looping through all available `GooseTaskSet`s. Weighting is respected during this process, so if one `GooseTaskSet` is weighted heavier than others, that `GooseTaskSet` will get assigned more at the end of the launching process.
+
+It is also possible to allocate `GooseTaskSet`s in a serial or random order. When allocating `GooseTaskSet`s serially, they are launched in the exact order and weighting as they are defined in the load test. When allocating randomly, running the same load test multiple times can generate different amounts of load.
+
+Prior to Goose `0.10.6` `GooseTaskSet`s were allocated in a serial order. To restore this behavior, you can use the `.set_scheduler()` function as follows:
+
+```
+    GooseAttack::initialize()?
+        .set_scheduler(GooseTaskSetScheduler::Serial)
+```
+
+Or, to randomize the order `GooseTaskSet`s are allocated to newly launched users, you can instead configure your `GooseAttack` as follows:
+
+```
+    GooseAttack::initialize()?
+        .set_scheduler(GooseTaskSetScheduler::Random)
+```
+
+The following configuration is possible but superfluous because it is the scheduling default:
+
+```
+    GooseAttack::initialize()?
+        .set_scheduler(GooseTaskSetScheduler::RoundRobin)
+```
+
 ## Defaults
 
 All run-time options can be configured with custom defaults. For example, you may want to default to the the host name of your local development environment, only requiring that `--host` be set when running against a production environment. Assuming your local development environment is at "http://local.dev/" you can do this as follows:

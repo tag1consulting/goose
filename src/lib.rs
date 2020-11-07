@@ -418,6 +418,7 @@ use gumdrop::Options;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use simplelog::*;
@@ -580,6 +581,17 @@ pub enum GooseMode {
     Worker,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+/// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
+pub enum GooseTaskSetScheduler {
+    /// Allocate one of each available type of GooseTaskSet at a time (default).
+    RoundRobin,
+    /// Allocate GooseTaskSets in the order and weighting they are defined.
+    Serial,
+    /// Allocate GooseTaskSets in a random order.
+    Random,
+}
+
 /// Optional default values for Goose run-time options.
 #[derive(Clone, Debug, Default)]
 pub struct GooseDefaults {
@@ -712,6 +724,8 @@ pub struct GooseAttack {
     run_time: usize,
     /// Which mode this GooseAttack is operating in.
     attack_mode: GooseMode,
+    /// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
+    scheduler: GooseTaskSetScheduler,
     /// When the load test started.
     started: Option<time::Instant>,
     /// All metrics merged together.
@@ -737,6 +751,7 @@ impl GooseAttack {
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             run_time: 0,
             attack_mode: GooseMode::Undefined,
+            scheduler: GooseTaskSetScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -765,6 +780,7 @@ impl GooseAttack {
             configuration,
             run_time: 0,
             attack_mode: GooseMode::Undefined,
+            scheduler: GooseTaskSetScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -835,6 +851,65 @@ impl GooseAttack {
 
         info!("Output verbosity level: {}", debug_level);
         info!("Logfile verbosity level: {}", log_level);
+    }
+
+    /// Define the order `GooseTaskSet`s are allocated to new `GooseUser`s as they
+    /// are launched.
+    ///
+    /// By default, GooseTaskSets are allocated to new GooseUser's in a round robin
+    /// style. For example, if TaskSet A has a weight of 5, Task Set B has a weight
+    ///  of 3, and you launch 20 users, they will be launched in the following order:
+    ///  A, B, A, B, A, B, A, A, A, B, A, B, A, B, A, A, A, B, A, B
+    ///
+    /// Note that the following pattern is repeated:
+    ///  A, B, A, B, A, B, A, A
+    ///
+    /// If reconfigured to schedule serially, then they will instead be allocated in
+    /// the following order:
+    /// A, A, A, A, A, B, B, B, A, A, A, A, A, B, B, B, A, A, A, A
+    ///
+    /// In the serial case, the following pattern is repeated:
+    /// A, A, A, A, A, B, B, B
+    ///
+    /// In the following example, GooseTaskSets are allocated to launching GooseUsers
+    /// in a random order. This means running the test multiple times can generate
+    /// different amounts of load, as depending on your weighting rules you may
+    /// have a different number of GooseUsers running each GooseTaskSet each time.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    ///     use goose::prelude::*;
+    ///
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
+    ///         .set_scheduler(GooseTaskSetScheduler::Random)
+    ///         .register_taskset(taskset!("A Tasks")
+    ///             .set_weight(5)?
+    ///             .register_task(task!(a_task_1))
+    ///         )
+    ///         .register_taskset(taskset!("B Tasks")
+    ///             .set_weight(3)?
+    ///             .register_task(task!(b_task_1))
+    ///         );
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn a_task_1(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn b_task_1(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/bar").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_scheduler(mut self, scheduler: GooseTaskSetScheduler) -> Self {
+        self.scheduler = scheduler;
+        self
     }
 
     /// A load test must contain one or more `GooseTaskSet`s. Each task set must
@@ -956,8 +1031,9 @@ impl GooseAttack {
         // 'u' will always be the greatest common divisor
         debug!("gcd: {}", u);
 
-        // Build a weighted lists of task sets (identified by index)
-        let mut weighted_task_sets = Vec::new();
+        // Build a vector of vectors to be used to schedule users.
+        let mut available_task_sets = Vec::with_capacity(self.task_sets.len());
+        let mut total_task_sets = 0;
         for (index, task_set) in self.task_sets.iter().enumerate() {
             // divide by greatest common divisor so vector is as short as possible
             let weight = task_set.weight / u;
@@ -968,8 +1044,66 @@ impl GooseAttack {
                 task_set.weight,
                 weight
             );
-            let mut weighted_sets = vec![index; weight];
-            weighted_task_sets.append(&mut weighted_sets);
+            let weighted_sets = vec![index; weight];
+            total_task_sets += weight;
+            available_task_sets.push(weighted_sets);
+        }
+
+        info!(
+            "allocating GooseTasks to GooseUsers with {:?} scheduler",
+            self.scheduler
+        );
+
+        // Now build the weighted list with the appropriate scheduler.
+        let mut weighted_task_sets = Vec::new();
+        match self.scheduler {
+            GooseTaskSetScheduler::RoundRobin => {
+                // Allocate task sets round robin.
+                let task_sets_len = available_task_sets.len();
+                loop {
+                    for (task_set_index, task_sets) in available_task_sets
+                        .iter_mut()
+                        .enumerate()
+                        .take(task_sets_len)
+                    {
+                        if let Some(task_set) = task_sets.pop() {
+                            debug!("allocating 1 user from TaskSet {}", task_set_index);
+                            weighted_task_sets.push(task_set);
+                        }
+                    }
+                    if weighted_task_sets.len() >= total_task_sets {
+                        break;
+                    }
+                }
+            }
+            GooseTaskSetScheduler::Serial => {
+                // Allocate task sets serially in the weighted order defined.
+                for (task_set_index, task_sets) in available_task_sets.iter().enumerate() {
+                    debug!(
+                        "allocating all {} users from TaskSet {}",
+                        task_sets.len(),
+                        task_set_index
+                    );
+                    weighted_task_sets.append(&mut task_sets.clone());
+                }
+            }
+            GooseTaskSetScheduler::Random => {
+                // Allocate task sets randomly.
+                loop {
+                    let task_set = available_task_sets.choose_mut(&mut rand::thread_rng());
+                    match task_set {
+                        Some(set) => {
+                            if let Some(s) = set.pop() {
+                                weighted_task_sets.push(s);
+                            }
+                        }
+                        None => warn!("randomly allocating a GooseTaskSet failed, trying again"),
+                    }
+                    if weighted_task_sets.len() >= total_task_sets {
+                        break;
+                    }
+                }
+            }
         }
 
         // Allocate a state for each user that will be hatched.
