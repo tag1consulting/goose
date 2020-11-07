@@ -1062,13 +1062,13 @@ impl GooseAttack {
                 // Allocate task sets round robin.
                 let task_sets_len = available_task_sets.len();
                 loop {
-                    for (i, task_sets) in available_task_sets
+                    for (task_set_index, task_sets) in available_task_sets
                         .iter_mut()
                         .enumerate()
                         .take(task_sets_len)
                     {
                         if let Some(task_set) = task_sets.pop() {
-                            debug!("allocating 1 user from TaskSet {}", i);
+                            debug!("allocating 1 user from TaskSet {}", task_set_index);
                             weighted_task_sets.push(task_set);
                         }
                     }
@@ -1079,11 +1079,11 @@ impl GooseAttack {
             }
             GooseTaskSetScheduler::Serial => {
                 // Allocate task sets serially in the weighted order defined.
-                for (task_set, task_sets) in available_task_sets.iter().enumerate() {
+                for (task_set_index, task_sets) in available_task_sets.iter().enumerate() {
                     debug!(
                         "allocating all {} users from TaskSet {}",
                         task_sets.len(),
-                        task_set
+                        task_set_index
                     );
                     weighted_task_sets.append(&mut task_sets.clone());
                 }
