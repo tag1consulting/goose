@@ -757,6 +757,8 @@ pub struct GooseAttackRunState {
     all_users_spawned: bool,
     /// Thread-safe boolean flag indicating if the GooseAttack has been canceled.
     canceled: Arc<AtomicBool>,
+    /// Optional socket used to coordinate a distributed Gaggle.
+    socket: Option<Socket>,
 }
 
 /// Internal global state for load test.
@@ -2429,7 +2431,10 @@ impl GooseAttack {
 
     // Create a GooseAttackRunState object and do all initialization required
     // to run a GooseAttack.
-    async fn initialize_attack(&mut self) -> Result<GooseAttackRunState, GooseError> {
+    async fn initialize_attack(
+        &mut self,
+        socket: Option<Socket>,
+    ) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
         // Only display status codes if enabled.
@@ -2475,7 +2480,11 @@ impl GooseAttack {
             display_running_metrics: false,
             all_users_spawned: false,
             canceled: Arc::new(AtomicBool::new(false)),
+            socket,
         };
+
+        // Access socket to avoid errors.
+        trace!("socket: {:?}", &goose_attack_run_state.socket);
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
         util::setup_ctrlc_handler(&goose_attack_run_state.canceled);
@@ -2515,6 +2524,7 @@ impl GooseAttack {
         let sleep_duration =
             tokio::time::Duration::from_millis(goose_attack_run_state.spawn_user_in_ms as u64);
         debug!("sleeping {:?} milliseconds...", sleep_duration);
+        // @TODO: no, don't change the drift here !?
         goose_attack_run_state.spawning_user_drift =
             util::sleep_minus_drift(sleep_duration, goose_attack_run_state.spawning_user_drift)
                 .await;
@@ -2527,12 +2537,15 @@ impl GooseAttack {
             // Reset the spawn timer.
             goose_attack_run_state.spawn_user_timer = std::time::Instant::now();
 
-            // Determine when to launch the next user.
-            if self.attack_mode != AttackMode::Worker {
-                goose_attack_run_state.spawn_user_in_ms = (1.0 / hatch_rate * 1000.0) as usize;
-            } else {
-                // @TODO: wtf?
-                goose_attack_run_state.spawn_user_in_ms = 1000;
+            // To determine how long before we spawn the next GooseUser, start with 1,000.0
+            // milliseconds and divide by the hatch_rate.
+            goose_attack_run_state.spawn_user_in_ms = (1_000.0 / hatch_rate) as usize;
+
+            // If running on a Worker, multiple by the number of workers as each is spawning
+            // GooseUsers at this rate.
+            if self.attack_mode == AttackMode::Worker {
+                goose_attack_run_state.spawn_user_in_ms *=
+                    self.configuration.expect_workers.unwrap() as usize;
             }
 
             // Spawn next scheduled GooseUser.
@@ -2623,7 +2636,7 @@ impl GooseAttack {
         }
 
         // If enough users have been spawned, move onto the next attack phase.
-        if self.metrics.users >= self.configuration.users.unwrap() {
+        if self.metrics.users >= self.weighted_users.len() {
             // Pause a tenth of a second waiting for the final user to fully start up.
             tokio::time::delay_for(tokio::time::Duration::from_millis(100)).await;
 
@@ -2664,7 +2677,7 @@ impl GooseAttack {
                 // when the Manager goes away.
                 #[cfg(feature = "gaggle")]
                 {
-                    let manager = socket.clone().unwrap();
+                    let manager = goose_attack_run_state.socket.clone().unwrap();
                     register_shutdown_pipe_handler(&manager);
                 }
             } else {
@@ -2723,7 +2736,7 @@ impl GooseAttack {
                 // As worker, push metrics up to manager.
                 if self.attack_mode == AttackMode::Worker {
                     worker::push_metrics_to_manager(
-                        &socket.clone().unwrap(),
+                        &goose_attack_run_state.socket.clone().unwrap(),
                         vec![
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
                             GaggleMetrics::Tasks(self.metrics.tasks.clone()),
@@ -2771,8 +2784,6 @@ impl GooseAttack {
                 }
             }
 
-            println!("in sync_metrics");
-
             // Load messages from user threads until the receiver queue is empty.
             let received_message = self.receive_metrics(goose_attack_run_state).await?;
 
@@ -2782,7 +2793,7 @@ impl GooseAttack {
                 {
                     // Push metrics to manager process.
                     if !worker::push_metrics_to_manager(
-                        &socket.clone().unwrap(),
+                        &goose_attack_run_state.socket.clone().unwrap(),
                         vec![
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
                             GaggleMetrics::Tasks(self.metrics.tasks.clone()),
@@ -2790,7 +2801,9 @@ impl GooseAttack {
                         true,
                     ) {
                         // EXIT received, cancel.
-                        canceled.store(true, Ordering::SeqCst);
+                        goose_attack_run_state
+                            .canceled
+                            .store(true, Ordering::SeqCst);
                     }
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();
@@ -2877,12 +2890,12 @@ impl GooseAttack {
 
     /// Called internally in local-mode and gaggle-mode.
     async fn launch_users(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
-        trace!("launch users: socket({:?})", socket);
+        trace!("launch_users: socket({:?})", socket);
 
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
         let mut goose_attack_run_state = self
-            .initialize_attack()
+            .initialize_attack(socket)
             .await
             .expect("failed to initialize GooseAttackRunState");
         // Only initialize once, then change to the next attack phase.
@@ -2925,10 +2938,7 @@ impl GooseAttack {
         let mut received_message = false;
         let mut message = goose_attack_run_state.metrics_rx.try_recv();
 
-        let mut messages_received = 0;
-
         while message.is_ok() {
-            messages_received += 1;
             received_message = true;
             match message.unwrap() {
                 GooseMetric::Request(raw_request) => {
@@ -2994,7 +3004,6 @@ impl GooseAttack {
             }
             message = goose_attack_run_state.metrics_rx.try_recv();
         }
-        println!("receive_metrics received {} messages", messages_received);
 
         Ok(received_message)
     }
