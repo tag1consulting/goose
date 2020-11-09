@@ -111,9 +111,16 @@ pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
     string_to_truncate
 }
 
-/// If run_time was specified, detect when it's time to shut down
+/// Determine if timer was set as many or more seconds ago as the timer is
+/// intended to run.
 pub fn timer_expired(started: time::Instant, run_time: usize) -> bool {
     run_time > 0 && started.elapsed().as_secs() >= run_time as u64
+}
+
+/// Determine if timer was set as many or more milliseconds ago as the
+/// timer is intended to run.
+pub fn ms_timer_expired(started: time::Instant, elapsed: usize) -> bool {
+    elapsed > 0 && started.elapsed().as_millis() >= elapsed as u128
 }
 
 pub fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {

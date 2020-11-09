@@ -908,7 +908,7 @@ pub struct GooseUser {
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
     /// Channel to logger.
-    pub logger: Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
+    pub debug_logger: Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
     /// Channel to throttle.
     pub throttle: Option<mpsc::Sender<bool>>,
     /// Normal tasks are optionally throttled, test_start and test_stop tasks are not.
@@ -952,7 +952,7 @@ impl GooseUser {
             min_wait,
             max_wait,
             config: configuration.clone(),
-            logger: None,
+            debug_logger: None,
             throttle: None,
             is_throttled: true,
             channel_to_parent: None,
@@ -1764,8 +1764,8 @@ impl GooseUser {
         if !self.config.debug_file.is_empty() {
             // Logger is not defined when running test_start_task, test_stop_task,
             // and during testing.
-            if let Some(logger) = self.logger.clone() {
-                logger.send(Some(GooseDebug::new(tag, request, headers, body)))?;
+            if let Some(debug_logger) = self.debug_logger.clone() {
+                debug_logger.send(Some(GooseDebug::new(tag, request, headers, body)))?;
             }
         }
 

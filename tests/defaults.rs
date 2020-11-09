@@ -441,7 +441,6 @@ fn test_no_defaults_gaggle() {
                 LOG_FORMAT,
                 "--throttle-requests",
                 &THROTTLE_REQUESTS.to_string(),
-                "--verbose",
             ],
         );
         println!("{:#?}", worker_configuration);
@@ -477,7 +476,6 @@ fn test_no_defaults_gaggle() {
             "--running-metrics",
             "30",
             "--sticky-follow",
-            "--verbose",
         ],
     );
 
