@@ -259,7 +259,7 @@ impl GooseMetrics {
     /// ```
     pub fn print(&self) {
         if self.display_metrics {
-            info!("printing metrics after {} seconds...", self.duration);
+            info!("printing final metrics after {} seconds...", self.duration);
             print!("{}", self);
         }
     }

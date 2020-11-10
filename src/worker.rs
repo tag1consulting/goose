@@ -233,7 +233,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     worker_goose_attack.defaults = goose_attack.defaults.clone();
 
     worker_goose_attack
-        .launch_users(Some(manager))
+        .start_attack(Some(manager))
         .await
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("failed to launch GooseAttack")

@@ -2237,7 +2237,7 @@ impl GooseAttack {
         // Start goose in single-process mode.
         else {
             let mut rt = tokio::runtime::Runtime::new().unwrap();
-            self = rt.block_on(self.launch_users(None))?;
+            self = rt.block_on(self.start_attack(None))?;
         }
 
         Ok(self.metrics)
@@ -2678,7 +2678,9 @@ impl GooseAttack {
         Ok(())
     }
 
-    async fn run_attack(
+    // Let the GooseAttack run until the timer expires (or the test is canceled), and then
+    // trigger a shut down.
+    async fn monitor_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
@@ -2775,10 +2777,10 @@ impl GooseAttack {
             // All users are done, exit out of loop for final cleanup.
             self.attack_phase = AttackPhase::Stopping;
             info!("stopping GooseAttack...");
+        } else {
+            // It's not time to exit, so sleep half a second before looping around again.
+            tokio::time::delay_for(time::Duration::from_millis(500)).await;
         }
-
-        // @TODO: Can this be variable length?
-        tokio::time::delay_for(time::Duration::from_millis(100)).await;
 
         Ok(())
     }
@@ -2918,8 +2920,8 @@ impl GooseAttack {
     }
 
     /// Called internally in local-mode and gaggle-mode.
-    async fn launch_users(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
-        trace!("launch_users: socket({:?})", socket);
+    async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
+        trace!("start_attack: socket({:?})", socket);
 
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
@@ -2934,25 +2936,19 @@ impl GooseAttack {
         loop {
             match self.attack_phase {
                 // Start spawning GooseUser threads.
-                AttackPhase::Starting => {
-                    // Launch GooseAttack until spawn_attack() returns false.
-                    self.spawn_attack(&mut goose_attack_run_state)
-                        .await
-                        .expect("failed to start GooseAttack")
-                }
+                AttackPhase::Starting => self
+                    .spawn_attack(&mut goose_attack_run_state)
+                    .await
+                    .expect("failed to start GooseAttack"),
                 // Now that all GooseUser threads started, run the load test.
-                AttackPhase::Running => {
-                    self.run_attack(&mut goose_attack_run_state).await?;
-                }
+                AttackPhase::Running => self.monitor_attack(&mut goose_attack_run_state).await?,
                 // Stop all GooseUser threads and clean up.
                 AttackPhase::Stopping => {
                     self.stop_attack(&mut goose_attack_run_state).await?;
                     self.sync_metrics(&mut goose_attack_run_state).await?;
                     break;
                 }
-                _ => {
-                    panic!("GooseAttack entered an impossible phase");
-                }
+                _ => panic!("GooseAttack entered an impossible phase"),
             }
             self.sync_metrics(&mut goose_attack_run_state).await?;
         }

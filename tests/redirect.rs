@@ -28,8 +28,9 @@ const SERVER2_INDEX_KEY: usize = 3;
 const SERVER2_ABOUT_KEY: usize = 4;
 
 // Load test configuration.
-const EXPECT_WORKERS: usize = 2;
-const USERS: usize = 4;
+const EXPECT_WORKERS: usize = 4;
+const USERS: usize = 9;
+const RUN_TIME: usize = 3;
 
 // There are multiple test variations in this file.
 #[derive(Clone)]
@@ -215,6 +216,8 @@ fn common_build_configuration(
                     &USERS.to_string(),
                     "--hatch-rate",
                     &USERS.to_string(),
+                    "--run-time",
+                    &RUN_TIME.to_string(),
                 ],
             )
         } else {
@@ -228,6 +231,8 @@ fn common_build_configuration(
                     &USERS.to_string(),
                     "--hatch-rate",
                     &USERS.to_string(),
+                    "--run-time",
+                    &RUN_TIME.to_string(),
                 ],
             )
         }
@@ -242,6 +247,8 @@ fn common_build_configuration(
                 &USERS.to_string(),
                 "--hatch-rate",
                 &USERS.to_string(),
+                "--run-time",
+                &RUN_TIME.to_string(),
             ],
         )
     } else {
@@ -252,6 +259,8 @@ fn common_build_configuration(
                 &USERS.to_string(),
                 "--hatch-rate",
                 &USERS.to_string(),
+                "--run-time",
+                &RUN_TIME.to_string(),
             ],
         )
     }
@@ -297,6 +306,21 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
         }
         TestType::Sticky => {
             // Each GooseUser loads the redirect on Server1 one time.
+            println!(
+                "SERVER1_REDIRECT: {}, USERS: {}",
+                mock_endpoints[SERVER1_REDIRECT_KEY].times_called(),
+                USERS,
+            );
+            println!(
+                "SERVER1_INDEX: {}, SERVER1_ABOUT: {}",
+                mock_endpoints[SERVER1_INDEX_KEY].times_called(),
+                mock_endpoints[SERVER1_ABOUT_KEY].times_called(),
+            );
+            println!(
+                "SERVER2_INDEX: {}, SERVER2_ABOUT: {}",
+                mock_endpoints[SERVER2_INDEX_KEY].times_called(),
+                mock_endpoints[SERVER2_ABOUT_KEY].times_called(),
+            );
             assert!(mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == USERS);
 
             // Redirected to Server2, no user load anything else on Server1.
