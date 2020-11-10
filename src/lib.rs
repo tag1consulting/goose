@@ -726,7 +726,10 @@ pub struct GooseAttackRunState {
     spawn_user_in_ms: usize,
     /// A counter tracking which GooseUser is being spawned.
     spawn_user_counter: usize,
-    /// Account for a time drift while spawning users.
+    /// New users are spawned at the configured hatch_rate. This variable accounts
+    /// for time spent preparing threads and doing other work, avoiding an
+    /// unintentional drift in time and ensuring threads are hatched at precisely
+    /// the desired rate.
     spawning_user_drift: tokio::time::Instant,
     /// Unbounded sender used by all GooseUser threads to send metrics to parent.
     all_threads_metrics_tx: mpsc::UnboundedSender<GooseMetric>,
@@ -2430,18 +2433,18 @@ impl GooseAttack {
     }
 
     // Create a GooseAttackRunState object and do all initialization required
-    // to run a GooseAttack.
+    // to start a GooseAttack.
     async fn initialize_attack(
         &mut self,
         socket: Option<Socket>,
     ) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
-        // Only display status codes if enabled.
-        self.metrics.display_status_codes = self.configuration.status_codes;
-
         // Run any configured test_start() functions.
         self.run_test_start().await?;
+
+        // Only display status codes if enabled.
+        self.metrics.display_status_codes = self.configuration.status_codes;
 
         // Create a single channel used to send metrics from GooseUser threads
         // to parent thread.
@@ -2459,11 +2462,7 @@ impl GooseAttack {
         let std_now = std::time::Instant::now();
         let goose_attack_run_state = GooseAttackRunState {
             spawn_user_timer: std_now,
-            spawn_user_in_ms: 1,
-            // New users are spawned at the configured hatch_rate. This variable
-            // accounts for time spent preparing threads and doing other work,
-            // avoiding an unintentional drift in time and ensuring threads are
-            // hatched at precisely the desired rate.
+            spawn_user_in_ms: 0,
             spawn_user_counter: 0,
             spawning_user_drift: tokio::time::Instant::now(),
             all_threads_metrics_tx,
@@ -2519,21 +2518,13 @@ impl GooseAttack {
         // sleep too long.
         let hatch_rate = util::get_hatch_rate(self.configuration.hatch_rate.clone());
 
-        // Otherwise, sleep.
-        // @TODO: make sure sleep_duration isn't too big
-        let sleep_duration =
-            tokio::time::Duration::from_millis(goose_attack_run_state.spawn_user_in_ms as u64);
-        debug!("sleeping {:?} milliseconds...", sleep_duration);
-        // @TODO: no, don't change the drift here !?
-        goose_attack_run_state.spawning_user_drift =
-            util::sleep_minus_drift(sleep_duration, goose_attack_run_state.spawning_user_drift)
-                .await;
-
         // Determine if it's time to spawn a GooseUser.
-        if util::ms_timer_expired(
-            goose_attack_run_state.spawn_user_timer,
-            goose_attack_run_state.spawn_user_in_ms,
-        ) {
+        if goose_attack_run_state.spawn_user_in_ms == 0
+            || util::ms_timer_expired(
+                goose_attack_run_state.spawn_user_timer,
+                goose_attack_run_state.spawn_user_in_ms,
+            )
+        {
             // Reset the spawn timer.
             goose_attack_run_state.spawn_user_timer = std::time::Instant::now();
 
@@ -2632,6 +2623,34 @@ impl GooseAttack {
                     goose_attack_run_state.running_metrics_timer = time::Instant::now();
                     self.metrics.print_running();
                 }
+            }
+        } else {
+            // If displaying running metrics, be sure we wake up often enough to
+            // display them at the configured rate.
+            let running_metrics = match self.configuration.running_metrics {
+                Some(r) => r,
+                None => 0,
+            };
+
+            // Otherwise, sleep until the next time something needs to happen.
+            let mut update_timer = false;
+            let sleep_duration = if running_metrics > 0
+                && running_metrics * 1_000 < goose_attack_run_state.spawn_user_in_ms
+            {
+                update_timer = true;
+                let sleep_delay = self.configuration.running_metrics.unwrap() * 1_000;
+                goose_attack_run_state.spawn_user_in_ms -= sleep_delay;
+                tokio::time::Duration::from_millis(sleep_delay as u64)
+            } else {
+                tokio::time::Duration::from_millis(goose_attack_run_state.spawn_user_in_ms as u64)
+            };
+            debug!("sleeping {:?}...", sleep_duration);
+            goose_attack_run_state.spawning_user_drift =
+                util::sleep_minus_drift(sleep_duration, goose_attack_run_state.spawning_user_drift)
+                    .await;
+            // Shift spawn_user_timer as we did a partial sleep to handle displaying metrics.
+            if update_timer {
+                goose_attack_run_state.spawn_user_timer = time::Instant::now();
             }
         }
 
@@ -2758,13 +2777,6 @@ impl GooseAttack {
             info!("stopping GooseAttack...");
         }
 
-        // If enabled, display running metrics after sync
-        if goose_attack_run_state.display_running_metrics {
-            goose_attack_run_state.display_running_metrics = false;
-            self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
-            self.metrics.print_running();
-        }
-
         // @TODO: Can this be variable length?
         tokio::time::delay_for(time::Duration::from_millis(100)).await;
 
@@ -2819,6 +2831,13 @@ impl GooseAttack {
             }
         }
 
+        // If enabled, display running metrics after sync
+        if goose_attack_run_state.display_running_metrics {
+            goose_attack_run_state.display_running_metrics = false;
+            self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
+            self.metrics.print_running();
+        }
+
         Ok(())
     }
 
@@ -2835,8 +2854,11 @@ impl GooseAttack {
             goose_attack_run_state.all_users_spawned = true;
             let users = self.configuration.users.clone().unwrap();
             if !self.configuration.no_reset_metrics {
+                // Display the running metrics collected so far, before resetting them.
                 self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
                 self.metrics.print_running();
+                // Reset running_metrics_timer.
+                goose_attack_run_state.running_metrics_timer = time::Instant::now();
 
                 if self.metrics.display_metrics {
                     // Users is required here so unwrap() is safe.
@@ -2869,6 +2891,7 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Cleanly shut down the Goose Attack.
     async fn stop_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -2909,7 +2932,6 @@ impl GooseAttack {
         info!("starting GooseAttack...");
 
         loop {
-            self.sync_metrics(&mut goose_attack_run_state).await?;
             match self.attack_phase {
                 // Start spawning GooseUser threads.
                 AttackPhase::Starting => {
@@ -2932,6 +2954,7 @@ impl GooseAttack {
                     panic!("GooseAttack entered an impossible phase");
                 }
             }
+            self.sync_metrics(&mut goose_attack_run_state).await?;
         }
 
         Ok(self)
