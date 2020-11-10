@@ -24,7 +24,7 @@ const STOP_ONE_KEY: usize = 3;
 const EXPECT_WORKERS: usize = 4;
 // Users needs to be an even number.
 const USERS: usize = 18;
-const RUN_TIME: usize = 2;
+const RUN_TIME: usize = 3;
 
 // Test task.
 pub async fn one_with_delay(user: &GooseUser) -> GooseTaskResult {

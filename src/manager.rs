@@ -273,7 +273,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         .initialize_task_metrics(&goose_attack.task_sets, &goose_attack.configuration);
 
     // Update metrics, which doesn't happen automatically on the Master as we don't
-    // invoke launch_users. Hatch rate is required here so unwrap() is safe.
+    // invoke start_attack. Hatch rate is required here so unwrap() is safe.
     let hatch_rate = util::get_hatch_rate(goose_attack.configuration.hatch_rate.clone());
     let maximum_hatched = hatch_rate * goose_attack.run_time as f32;
     if maximum_hatched < goose_attack.configuration.users.unwrap() as f32 {

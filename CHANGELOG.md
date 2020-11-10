@@ -6,6 +6,7 @@
     o `GooseTaskSetScheduler::RoundRobin` allocates 1 of each available `GooseTaskSet` at a time (new default)
     o `GooseTaskSetScheduler::Serial` allocates all of each available `GooseTaskSet` in the order they are defined
     o `GooseTaskSetScheduler::Random` allocates 1 random `GooseTaskSet` from all available
+ - when enabled, display running metrics for the entire duration of test, including ramp-up and shutdown
 
 ## 0.10.5 Nov 5, 2020
  - support floating point hatch rate (ie, hatch 1 user every 2 seconds with `-r .5`)
