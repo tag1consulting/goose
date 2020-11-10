@@ -2707,8 +2707,10 @@ impl GooseAttack {
                 let _ = tx.send(false).await;
             }
 
-            // @TODO: how do we fix this?
-            //futures::future::join_all(goose_attack_run_state.users).await;
+            // Take the users vector out of the GooseAttackRunState object so it can be
+            // consumed by futures::future::join_all().
+            let users = std::mem::take(&mut goose_attack_run_state.users);
+            futures::future::join_all(users).await;
             debug!("all users exited");
 
             if self.get_debug_file_path()?.is_some() {
@@ -2721,9 +2723,13 @@ impl GooseAttack {
                 {
                     warn!("unexpected error telling logger thread to exit: {}", e);
                 };
-                // Wait for logger thread to flush and exit.
-                // @TODO: how do we fix this?
-                //let _ = tokio::join!(goose_attack_run_state.debug_logger.unwrap());
+                // If the debug logger is enabled, wait for thread to flush and exit.
+                if goose_attack_run_state.debug_logger.is_some() {
+                    // Take debug_logger out of the GooseAttackRunState object so it can be
+                    // consumed by tokio::join!().
+                    let debug_logger = std::mem::take(&mut goose_attack_run_state.debug_logger);
+                    let _ = tokio::join!(debug_logger.unwrap());
+                }
             }
 
             // If we're printing metrics, collect the final metrics received from users.
