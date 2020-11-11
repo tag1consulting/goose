@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.10.7-dev
+
 ## 0.10.6 Nov 10, 2020
  - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
  - allow configuration of the algorithm used when allocating `GooseTaskSet`s to starting `GooseUser`s:
