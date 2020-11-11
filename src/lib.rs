@@ -731,6 +731,8 @@ pub struct GooseAttackRunState {
     /// unintentional drift in time and ensuring threads are hatched at precisely
     /// the desired rate.
     spawning_user_drift: tokio::time::Instant,
+    /// Account for time spent doing things other than sleeping.
+    run_time_drift: tokio::time::Instant,
     /// Unbounded sender used by all GooseUser threads to send metrics to parent.
     all_threads_metrics_tx: mpsc::UnboundedSender<GooseMetric>,
     /// Unbounded receiver used by Goose parent to receive metrics from GooseUsers.
@@ -2460,11 +2462,13 @@ impl GooseAttack {
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
         let std_now = std::time::Instant::now();
+        let tokio_now = tokio::time::Instant::now();
         let goose_attack_run_state = GooseAttackRunState {
             spawn_user_timer: std_now,
             spawn_user_in_ms: 0,
             spawn_user_counter: 0,
-            spawning_user_drift: tokio::time::Instant::now(),
+            spawning_user_drift: tokio_now,
+            run_time_drift: tokio_now,
             all_threads_metrics_tx,
             metrics_rx,
             debug_logger,
@@ -2778,8 +2782,13 @@ impl GooseAttack {
             self.attack_phase = AttackPhase::Stopping;
             info!("stopping GooseAttack...");
         } else {
-            // It's not time to exit, so sleep half a second before looping around again.
-            tokio::time::delay_for(time::Duration::from_millis(500)).await;
+            // Subtract the time spent doing other things, with the goal of running the
+            // main parent loop once every second.
+            goose_attack_run_state.run_time_drift = util::sleep_minus_drift(
+                time::Duration::from_secs(1),
+                goose_attack_run_state.run_time_drift,
+            )
+            .await;
         }
 
         Ok(())

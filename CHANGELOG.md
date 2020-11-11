@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.10.7-dev
+ - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
 
 ## 0.10.6 Nov 10, 2020
  - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
