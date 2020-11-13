@@ -2,6 +2,7 @@
 
 ## 0.10.7-dev
  - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
+ - start each debug log file with a line feed in case the page is too big for the buffer; increase the debug logger buffer size from 8K to 8M.
 
 ## 0.10.6 Nov 10, 2020
  - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
