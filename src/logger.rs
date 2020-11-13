@@ -25,7 +25,8 @@ pub async fn logger_main(
         debug_file = match File::create(&file_path).await {
             Ok(f) => {
                 info!("writing errors to debug_file: {}", &file_path);
-                Some(BufWriter::new(f))
+                // Increase from default capacity of 8K to 8M so large pages can be captured.
+                Some(BufWriter::with_capacity(8 * 1024 * 1024, f))
             }
             Err(e) => {
                 panic!("failed to create debug_file ({}): {}", file_path, e);
@@ -46,10 +47,12 @@ pub async fn logger_main(
                     _ => unreachable!(),
                 };
 
-                match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                // Start with a line feed instead of ending with a line feed to more gracefully
+                // handle pages too large to fit in the BufWriter.
+                match file.write(format!("\n{}", formatted_log).as_ref()).await {
                     Ok(_) => (),
                     Err(e) => {
-                        warn!("failed to write  to {}: {}", &configuration.debug_file, e);
+                        warn!("failed to write to {}: {}", &configuration.debug_file, e);
                     }
                 }
             };
