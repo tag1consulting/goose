@@ -214,9 +214,9 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     worker_goose_attack.run_time = run_time;
     worker_goose_attack.weighted_users = weighted_users;
     worker_goose_attack.configuration.worker = true;
-    // The metrics_file option is configured on the Worker.
-    worker_goose_attack.configuration.metrics_file =
-        goose_attack.configuration.metrics_file.to_string();
+    // The requests_file option is configured on the Worker.
+    worker_goose_attack.configuration.requests_file =
+        goose_attack.configuration.requests_file.to_string();
     // The metrics_format option is configured on the Worker.
     worker_goose_attack.configuration.metrics_format =
         goose_attack.configuration.metrics_format.to_string();

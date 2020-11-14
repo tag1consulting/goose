@@ -102,7 +102,7 @@ fn validate_test(
     goose_metrics: GooseMetrics,
     mock_endpoints: &[MockRef],
     test_type: &TestType,
-    metrics_files: &[String],
+    requests_files: &[String],
     debug_files: &[String],
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
@@ -130,22 +130,22 @@ fn validate_test(
         }
         TestType::Metrics => {
             // Metrics file must exist.
-            assert!(!metrics_files.is_empty());
+            assert!(!requests_files.is_empty());
 
             // Confirm the metrics log files actually exist.
-            let mut metrics_file_lines = 0;
-            for metrics_file in metrics_files {
-                assert!(std::path::Path::new(metrics_file).exists());
-                metrics_file_lines += common::file_length(metrics_file);
+            let mut requests_file_lines = 0;
+            for requests_file in requests_files {
+                assert!(std::path::Path::new(requests_file).exists());
+                requests_file_lines += common::file_length(requests_file);
             }
             // Metrics file must not be empty.
-            assert!(metrics_file_lines > 0);
+            assert!(requests_file_lines > 0);
         }
         TestType::MetricsAndDebug => {
             // Debug file must exist.
             assert!(!debug_files.is_empty());
             // Metrics file must exist.
-            assert!(!metrics_files.is_empty());
+            assert!(!requests_files.is_empty());
 
             // Confirm the debug log files actually exist.
             let mut debug_file_lines = 0;
@@ -157,20 +157,20 @@ fn validate_test(
             assert!(debug_file_lines > 0);
 
             // Confirm the metrics log files actually exist.
-            let mut metrics_file_lines = 0;
-            for metrics_file in metrics_files {
-                assert!(std::path::Path::new(metrics_file).exists());
-                metrics_file_lines += common::file_length(metrics_file);
+            let mut requests_file_lines = 0;
+            for requests_file in requests_files {
+                assert!(std::path::Path::new(requests_file).exists());
+                requests_file_lines += common::file_length(requests_file);
             }
             // Metrics file must not be empty.
-            assert!(metrics_file_lines > 0);
+            assert!(requests_file_lines > 0);
         }
     }
 }
 
 // Helper to run all standalone tests.
 fn run_standalone_test(test_type: TestType, format: &str) {
-    let metrics_file = test_type.to_string() + "-metrics-log." + format;
+    let requests_file = test_type.to_string() + "-metrics-log." + format;
     let debug_file = test_type.to_string() + "-debug-log." + format;
 
     let server = MockServer::start();
@@ -179,10 +179,15 @@ fn run_standalone_test(test_type: TestType, format: &str) {
 
     let mut configuration_flags = match test_type {
         TestType::Debug => vec!["--debug-file", &debug_file, "--debug-format", format],
-        TestType::Metrics => vec!["--metrics-file", &metrics_file, "--metrics-format", format],
+        TestType::Metrics => vec![
+            "--requests-file",
+            &requests_file,
+            "--metrics-format",
+            format,
+        ],
         TestType::MetricsAndDebug => vec![
-            "--metrics-file",
-            &metrics_file,
+            "--requests-file",
+            &requests_file,
             "--metrics-format",
             format,
             "--debug-file",
@@ -204,16 +209,16 @@ fn run_standalone_test(test_type: TestType, format: &str) {
         goose_metrics,
         &mock_endpoints,
         &test_type,
-        &[metrics_file.to_string()],
+        &[requests_file.to_string()],
         &[debug_file.to_string()],
     );
 
-    common::cleanup_files(vec![&metrics_file, &debug_file]);
+    common::cleanup_files(vec![&requests_file, &debug_file]);
 }
 
 // Helper to run all gaggle tests.
 fn run_gaggle_test(test_type: TestType, format: &str) {
-    let metrics_file = test_type.to_string() + "-gaggle-metrics-log." + format;
+    let requests_file = test_type.to_string() + "-gaggle-metrics-log." + format;
     let debug_file = test_type.to_string() + "-gaggle-debug-log." + format;
 
     let server = MockServer::start();
@@ -222,14 +227,14 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
 
     // Launch each worker in its own thread, storing the join handles.
     let mut worker_handles = Vec::new();
-    let mut metrics_files = Vec::new();
+    let mut requests_files = Vec::new();
     let mut debug_files = Vec::new();
     for i in 0..EXPECT_WORKERS {
         // Name files different per-Worker thread.
-        let worker_metrics_file = metrics_file.clone() + &i.to_string();
+        let worker_requests_file = requests_file.clone() + &i.to_string();
         let worker_debug_file = debug_file.clone() + &i.to_string();
         // Store filenames to cleanup at end of test.
-        metrics_files.push(worker_metrics_file.clone());
+        requests_files.push(worker_requests_file.clone());
         debug_files.push(worker_debug_file.clone());
         // Build appropriate configuration.
         let worker_configuration_flags = match test_type {
@@ -242,15 +247,15 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
             ],
             TestType::Metrics => vec![
                 "--worker",
-                "--metrics-file",
-                &worker_metrics_file,
+                "--requests-file",
+                &worker_requests_file,
                 "--metrics-format",
                 format,
             ],
             TestType::MetricsAndDebug => vec![
                 "--worker",
-                "--metrics-file",
-                &worker_metrics_file,
+                "--requests-file",
+                &worker_requests_file,
                 "--metrics-format",
                 format,
                 "--debug-file",
@@ -295,11 +300,11 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
         goose_metrics,
         &mock_endpoints,
         &test_type,
-        &metrics_files,
+        &requests_files,
         &debug_files,
     );
 
-    for file in metrics_files {
+    for file in requests_files {
         common::cleanup_files(vec![&file]);
     }
     for file in debug_files {

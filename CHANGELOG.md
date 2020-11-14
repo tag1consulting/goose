@@ -4,6 +4,7 @@
  - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
  - start each debug log file with a line feed in case the page is too big for the buffer; increase the debug logger buffer size from 8K to 8M.
  - introduce `--no-debug-body` flag to optionally prevent debug log from including the response body
+ - rename `--metrics-file` to `--requests-file`, and `MetricsFile` to `RequestsFile` to better reflect what it is
 
 ## 0.10.6 Nov 10, 2020
  - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
