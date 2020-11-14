@@ -212,6 +212,7 @@ Metrics:
   --metrics-format FORMAT    Sets metrics log format (csv, json, raw)
   -d, --debug-file NAME      Sets debug log file name
   --debug-format FORMAT      Sets debug log format (json, raw)
+  --no-debug-body            Do not include the response body in the debug log
   --status-codes             Tracks additional status code metrics
 
 Advanced:

@@ -638,6 +638,8 @@ pub struct GooseDefaults {
     debug_file: Option<String>,
     /// An optional default for the debug log format.
     debug_format: Option<String>,
+    /// An optional default for not logging response body in debug log.
+    no_debug_body: Option<bool>,
     /// An optional default to track additional status code metrics.
     status_codes: Option<bool>,
     /// An optional default maximum requests per second.
@@ -694,6 +696,8 @@ pub enum GooseDefault {
     DebugFile,
     /// An optional default for the debug log format.
     DebugFormat,
+    /// An optional default for not logging the response body in the debug log.
+    NoDebugBody,
     /// An optional default to track additional status code metrics.
     StatusCodes,
     /// An optional default maximum requests per second.
@@ -2035,6 +2039,37 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Configure whether to log response body.
+    fn set_no_debug_body(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_debug_body";
+        let mut value = false;
+
+        if self.configuration.no_debug_body {
+            key = "--no-debug-body";
+            value = true;
+        // If not otherwise set and not Manager, check if there's a default.
+        } else if self.attack_mode != AttackMode::Manager {
+            // Optionally set default.
+            if let Some(default_no_debug_body) = self.defaults.no_debug_body {
+                key = "set_default(GooseDefault::NoDebugBody)";
+                value = default_no_debug_body;
+
+                self.configuration.no_debug_body = default_no_debug_body;
+            }
+        }
+
+        if self.configuration.no_debug_body && self.attack_mode == AttackMode::Manager {
+            return Err(GooseError::InvalidOption {
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --manager flag.", key),
+            });
+        }
+
+        Ok(())
+    }
+
     /// Execute the load test.
     ///
     /// # Example
@@ -2116,6 +2151,9 @@ impl GooseAttack {
 
         // Configure the debug log format.
         self.set_debug_format()?;
+
+        // Determine whether or not to log response body.
+        self.set_no_debug_body()?;
 
         // Configure throttle if enabled.
         self.set_throttle_requests()?;
@@ -3094,6 +3132,7 @@ impl GooseAttack {
 ///  - GooseDefault::NoResetMetrics
 ///  - GooseDefault::NoMetrics
 ///  - GooseDefault::NoTaskMetrics
+///  - GooseDefault::NoDebugBody
 ///  - GooseDefault::StatusCodes
 ///  - GooseDefault::StickyFollow
 ///  - GooseDefault::Manager
@@ -3153,6 +3192,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoDebugBody
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -3199,6 +3239,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoDebugBody
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -3223,6 +3264,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
+            GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
@@ -3333,6 +3375,9 @@ pub struct GooseConfiguration {
     /// Sets debug log format (json, raw)
     #[options(no_short, meta = "FORMAT")]
     pub debug_format: String,
+    /// Do not include the response body in the debug log
+    #[options(no_short)]
+    pub no_debug_body: bool,
     // Add a blank line and then an Advanced: header after this option
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
@@ -3667,6 +3712,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::DebugFormat, debug_format.as_str())
             .unwrap()
+            .set_default(GooseDefault::NoDebugBody, true)
+            .unwrap()
             .set_default(GooseDefault::StatusCodes, true)
             .unwrap()
             .set_default(GooseDefault::ThrottleRequests, throttle_requests)
@@ -3696,6 +3743,7 @@ mod test {
         assert!(goose_attack.defaults.hatch_rate == Some(hatch_rate));
         assert!(goose_attack.defaults.log_level == Some(log_level as u8));
         assert!(goose_attack.defaults.log_file == Some(log_file));
+        assert!(goose_attack.defaults.no_debug_body == Some(true));
         assert!(goose_attack.defaults.verbose == Some(verbose as u8));
         assert!(goose_attack.defaults.running_metrics == Some(15));
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));

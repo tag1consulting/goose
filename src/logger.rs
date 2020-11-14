@@ -22,11 +22,17 @@ pub async fn logger_main(
     // If debug file is configured, prepare an asynchronous buffered file writer.
     let mut debug_file = None;
     if let Some(file_path) = debug_file_path {
+        // Allocate a smaller buffer (64K) when not logging response bodies.
+        let buffer_capacity = if configuration.no_debug_body {
+            64 * 1024
+        // Allocate a bigger buffer (8M) when logging response bodies.
+        } else {
+            8 * 1024 * 1024
+        };
         debug_file = match File::create(&file_path).await {
             Ok(f) => {
                 info!("writing errors to debug_file: {}", &file_path);
-                // Increase from default capacity of 8K to 8M so large pages can be captured.
-                Some(BufWriter::with_capacity(8 * 1024 * 1024, f))
+                Some(BufWriter::with_capacity(buffer_capacity, f))
             }
             Err(e) => {
                 panic!("failed to create debug_file ({}): {}", file_path, e);

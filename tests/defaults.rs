@@ -193,6 +193,8 @@ fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
         .unwrap()
+        .set_default(GooseDefault::NoDebugBody, true)
+        .unwrap()
         .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
         .unwrap()
         .set_default(GooseDefault::StatusCodes, true)
@@ -266,6 +268,8 @@ fn test_defaults_gaggle() {
                 .set_default(GooseDefault::DebugFile, worker_debug_file.as_str())
                 .unwrap()
                 .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
+                .unwrap()
+                .set_default(GooseDefault::NoDebugBody, true)
                 .unwrap()
                 .set_default(GooseDefault::MetricsFile, worker_metrics_file.as_str())
                 .unwrap()
@@ -368,6 +372,7 @@ fn test_no_defaults() {
             &debug_file,
             "--debug-format",
             LOG_FORMAT,
+            "--no-debug-body",
             "--throttle-requests",
             &THROTTLE_REQUESTS.to_string(),
             "--no-reset-metrics",
@@ -439,6 +444,7 @@ fn test_no_defaults_gaggle() {
                 &worker_debug_file,
                 "--debug-format",
                 LOG_FORMAT,
+                "--no-debug-body",
                 "--throttle-requests",
                 &THROTTLE_REQUESTS.to_string(),
             ],
