@@ -209,7 +209,7 @@ Metrics:
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
   -m, --requests-file NAME   Sets requests log file name
-  --metrics-format FORMAT    Sets metrics log format (csv, json, raw)
+  --requests-format FORMAT   Sets requests log format (csv, json, raw)
   -d, --debug-file NAME      Sets debug log file name
   --debug-format FORMAT      Sets debug log format (json, raw)
   --no-debug-body            Do not include the response body in the debug log
@@ -386,7 +386,7 @@ The following defaults can be configured with a `&str`:
  - host: `GooseDefault::Host`
  - log file name: `GooseDefault::LogFile`
  - requests log file name: `GooseDefault::RequestsFile`
- - metrics log file format: `GooseDefault::MetricsFormat`
+ - requests log file format: `GooseDefault::RequestsFormat`
  - debug log file name: `GooseDefault::DebugFile`
  - debug log file format: `GooseDefault::DebugFormat`
  - host to bind Manager to: `GooseDefault::ManagerBindHost`
