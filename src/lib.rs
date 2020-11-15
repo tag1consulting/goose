@@ -2690,11 +2690,9 @@ impl GooseAttack {
             };
 
             // Otherwise, sleep until the next time something needs to happen.
-            let mut update_timer = false;
             let sleep_duration = if running_metrics > 0
                 && running_metrics * 1_000 < goose_attack_run_state.spawn_user_in_ms
             {
-                update_timer = true;
                 let sleep_delay = self.configuration.running_metrics.unwrap() * 1_000;
                 goose_attack_run_state.spawn_user_in_ms -= sleep_delay;
                 tokio::time::Duration::from_millis(sleep_delay as u64)
@@ -2704,10 +2702,6 @@ impl GooseAttack {
             debug!("sleeping {:?}...", sleep_duration);
             goose_attack_run_state.drift_timer =
                 util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer).await;
-            // Shift spawn_user_timer as we did a partial sleep to handle displaying metrics.
-            if update_timer {
-                goose_attack_run_state.spawn_user_timer = time::Instant::now();
-            }
         }
 
         // If enough users have been spawned, move onto the next attack phase.
