@@ -1288,6 +1288,27 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Change from one attack_phase to another.
+    fn set_attack_phase(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        phase: AttackPhase,
+    ) {
+        // There's nothing to do if already in the specified phase.
+        if self.attack_phase == phase {
+            return;
+        }
+
+        // The drift timer starts at 0 any time the phase is changed.
+        goose_attack_run_state.drift_timer = tokio::time::Instant::now();
+
+        // Optional debug output.
+        info!("entering GooseAttack phase: {:?}", &phase);
+
+        // Update the current phase.
+        self.attack_phase = phase;
+    }
+
     // Determine how many workers to expect.
     fn set_expect_workers(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2546,8 +2567,7 @@ impl GooseAttack {
         if util::timer_expired(self.started.unwrap(), self.run_time)
             || goose_attack_run_state.canceled.load(Ordering::SeqCst)
         {
-            self.attack_phase = AttackPhase::Stopping;
-            info!("stopping GooseAttack...");
+            self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
             return Ok(());
         }
 
@@ -2706,9 +2726,7 @@ impl GooseAttack {
             }
 
             self.reset_metrics(goose_attack_run_state).await?;
-            goose_attack_run_state.drift_timer = tokio::time::Instant::now();
-            self.attack_phase = AttackPhase::Running;
-            info!("running GooseAttack...");
+            self.set_attack_phase(goose_attack_run_state, AttackPhase::Running);
         }
 
         Ok(())
@@ -2811,8 +2829,7 @@ impl GooseAttack {
             }
 
             // All users are done, exit out of loop for final cleanup.
-            self.attack_phase = AttackPhase::Stopping;
-            info!("stopping GooseAttack...");
+            self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
         } else {
             // Subtract the time spent doing other things, with the goal of running the
             // main parent loop once every second.
@@ -2970,9 +2987,9 @@ impl GooseAttack {
             .initialize_attack(socket)
             .await
             .expect("failed to initialize GooseAttackRunState");
+
         // Only initialize once, then change to the next attack phase.
-        self.attack_phase = AttackPhase::Starting;
-        info!("starting GooseAttack...");
+        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
 
         loop {
             match self.attack_phase {
