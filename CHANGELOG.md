@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.7-dev
+## 0.10.7 Nov 16, 2020
  - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
  - start each debug log file with a line feed in case the page is too big for the buffer; increase the debug logger buffer size from 8K to 8M.
  - introduce `--no-debug-body` flag to optionally prevent debug log from including the response body

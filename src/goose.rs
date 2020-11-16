@@ -1785,7 +1785,7 @@ impl GooseUser {
     ///
     /// By default, Goose configures two options when building a Reqwest client. The first
     /// configures Goose to report itself as the user agent requesting web pages (ie
-    /// `goose/0.10.0`). The second option configures Reqwest to store cookies, which is
+    /// `goose/0.10.7`). The second option configures Reqwest to store cookies, which is
     /// generally necessary if you aim to simulate logged in users.
     ///
     /// # Default configuration:
