@@ -1,3 +1,83 @@
+//! Optional debug logger thread.
+//!
+//! The Goose debug logger is enabled with the `--debug-file` command-line option, or the
+//! `GooseDefault::DebugFile` default configuration option. When enabled, this thread is
+//! launched and a channel is provided from all `GooseUser` threads to send debug information
+//! for efficient logging to file. The debug logger thread uses Tokio's asynchronous BufWriter.
+//!
+//! ## Writing Debug Logs
+//! Logs can be sent to the logger thread by invoking
+//! [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug)
+//! from load test task functions.
+//!
+//! Calls to
+//! [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
+//! automatically invoke `log_debug`.
+//!
+//! Most of the included examples showing how to use the debug logger include a copy of the
+//! request made, the response headers returned by the server, and the response body. It can
+//! also be used to log arbitrary information, for example if you want to record everything you
+//! sent via a POST to a form.
+//!
+//! ```rust
+//! use goose::prelude::*;
+//!
+//! let mut task = task!(post_to_form);
+//!
+//! async fn post_to_form(user: &GooseUser) -> GooseTaskResult {
+//!     let path = "/path/to/form";
+//!     let params = [
+//!      ("field_1", "foo"),
+//!      ("field_2", "bar"),
+//!      ("op", "Save"),
+//!     ];
+//!
+//!     // Only log the form parameters we will post.
+//!     user.log_debug(
+//!         &format!("POSTing {:?} on {}", &params, path),
+//!         None,
+//!         None,
+//!         None,
+//!     )?;
+//!
+//!     let request_builder = user.goose_post(path).await?;
+//!     let goose = user.goose_send(request_builder.form(&params), None).await?;
+//!
+//!     // Log the form parameters that were posted together with details about the entire
+//!     // request that was sent to the server.
+//!     user.log_debug(
+//!         &format!("POSTing {:#?} on {}", &params, path),
+//!         Some(&goose.request),
+//!         None,
+//!         None,
+//!     )?;
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! The first call to `log_debug` results in a debug log message similar to:
+//! {"body":null,"header":null,"request":null,"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//!
+//! The second call to `log_debug` results in a debug log message similar to:
+//! {"body":null,"header":null,"request":{"elapsed":1,"final_url":"http://local.dev/path/to/form","method":"POST","name":"(Anon) post to form","redirected":false,"response_time":22,"status_code":404,"success":false,"update":false,"url":"http://local.dev/path/to/form","user":0},"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//!
+//! For a more complex debug logging example, refer to the
+//! [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug)
+//! documentation.
+//!
+//! ## Reducing File And Memory Usage
+//!
+//! The debug logger can result in a very large debug file, as by default it includes the
+//! entire body of any pages returned that result in an error. This also requires allocating
+//! a bigger BufWriter, and can generate a lot of disk io.
+//!
+//! If you don't need to log response bodies, you can disable this functionality (and reduce
+//! the amount of RAM required by the BufWriter) by setting the `--no-debug-body` command-line
+//! option, or the `GooseDefault::NoDebugBody` default configuration option. The debug logger
+//! will still record any custom messages, details about the request (when available), and all
+//! server response headers (when available).
+
 use serde_json::json;
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -8,7 +88,7 @@ use crate::goose::GooseDebug;
 use crate::GooseConfiguration;
 
 /// Logger thread, opens a log file (if configured) and waits for messages from
-/// GooseUser threads.
+/// GooseUser threads. This function is not intended to be invoked manually.
 pub async fn logger_main(
     configuration: GooseConfiguration,
     mut log_receiver: mpsc::UnboundedReceiver<Option<GooseDebug>>,

@@ -1,3 +1,8 @@
+//! Optionally collects and aggregates metrics during a load test.
+//!
+//! By default, Goose collects a large number of metrics while performing a load test.
+//! The metrics collected and the display of these metrics are defined in this file.
+
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
@@ -21,6 +26,7 @@ pub type GooseRequestMetrics = HashMap<String, GooseRequest>;
 /// Goose optionally tracks metrics about tasks run during a load test.
 pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetric>>;
 
+/// The per-task metrics collected each time a task is invoked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseRawTask {
     /// How many milliseconds the load test has been running.
@@ -63,6 +69,7 @@ impl GooseRawTask {
     }
 }
 
+/// Aggregated per-task metrics updated each time a task is invoked.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseTaskMetric {
     /// An index into GooseAttack.task_sets, indicating which task set this is.
@@ -1059,7 +1066,7 @@ pub fn merge_times(
     global_response_times
 }
 
-// Update global minimum time based on local time.
+/// A helper function to update the global minimum time based on local time.
 pub fn update_min_time(mut global_min: usize, min: usize) -> usize {
     if global_min == 0 || (min > 0 && min < global_min) {
         global_min = min;
@@ -1067,7 +1074,7 @@ pub fn update_min_time(mut global_min: usize, min: usize) -> usize {
     global_min
 }
 
-// Update global maximum time based on local time.
+/// A helper function to update the global maximum time based on local time.
 pub fn update_max_time(mut global_max: usize, max: usize) -> usize {
     if global_max < max {
         global_max = max;
