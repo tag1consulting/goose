@@ -630,9 +630,9 @@ pub struct GooseDefaults {
     no_metrics: Option<bool>,
     /// An optional default for not tracking task metrics.
     no_task_metrics: Option<bool>,
-    /// An optional default for the metrics log file name.
-    metrics_file: Option<String>,
-    /// An optional default for the metrics log file format.
+    /// An optional default for the requests log file name.
+    requests_file: Option<String>,
+    /// An optional default for the requests log file format.
     metrics_format: Option<String>,
     /// An optional default for the debug log file name.
     debug_file: Option<String>,
@@ -688,10 +688,10 @@ pub enum GooseDefault {
     NoMetrics,
     /// An optional default for not tracking task metrics.
     NoTaskMetrics,
-    /// An optional default for the metrics log file name.
-    MetricsFile,
-    /// An optional default for the metrics log file format.
-    MetricsFormat,
+    /// An optional default for the requests log file name.
+    RequestsFile,
+    /// An optional default for the requests log file format.
+    RequestsFormat,
     /// An optional default for the debug log file name.
     DebugFile,
     /// An optional default for the debug log format.
@@ -749,8 +749,8 @@ pub struct GooseAttackRunState {
     throttle_threads_tx: Option<mpsc::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<mpsc::Sender<bool>>,
-    /// Optional buffered writer for metrics log file, if enabled.
-    metrics_file: Option<BufWriter<File>>,
+    /// Optional buffered writer for requests log file, if enabled.
+    requests_file: Option<BufWriter<File>>,
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
@@ -1842,12 +1842,12 @@ impl GooseAttack {
             }
 
             // There is nothing to log if metrics are disabled.
-            if !self.configuration.metrics_file.is_empty() {
+            if !self.configuration.requests_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: value.to_string(),
                     detail: format!(
-                        "{} can not be set together with the --metrics-file option.",
+                        "{} can not be set together with the --requests-file option.",
                         key
                     ),
                 });
@@ -1920,30 +1920,30 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If enabled, returns the path of the metrics_file, otherwise returns None.
-    fn get_metrics_file_path(&mut self) -> Result<Option<&str>, GooseError> {
+    // If enabled, returns the path of the requests_file, otherwise returns None.
+    fn get_requests_file_path(&mut self) -> Result<Option<&str>, GooseError> {
         // If metrics are disabled, or running in Manager mode, there is no
-        // metrics file, exit immediately.
+        // requests file, exit immediately.
         if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
             return Ok(None);
         }
 
-        // If --metrics-file is set, return it.
-        if !self.configuration.metrics_file.is_empty() {
-            return Ok(Some(&self.configuration.metrics_file));
+        // If --requests-file is set, return it.
+        if !self.configuration.requests_file.is_empty() {
+            return Ok(Some(&self.configuration.requests_file));
         }
 
         // If GooseDefault::MetricFile is set, return it.
-        if let Some(default_metrics_file) = &self.defaults.metrics_file {
-            return Ok(Some(default_metrics_file));
+        if let Some(default_requests_file) = &self.defaults.requests_file {
+            return Ok(Some(default_requests_file));
         }
 
-        // Otherwise there is no metrics file.
+        // Otherwise there is no requests file.
         Ok(None)
     }
 
-    // Configure metrics log format.
-    fn set_metrics_format(&mut self) -> Result<(), GooseError> {
+    // Configure requests log format.
+    fn set_requests_format(&mut self) -> Result<(), GooseError> {
         if self.configuration.metrics_format.is_empty() {
             if let Some(default_metrics_format) = &self.defaults.metrics_format {
                 self.configuration.metrics_format = default_metrics_format.to_string();
@@ -1956,15 +1956,15 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--no-metrics".to_string(),
                     value: "true".to_string(),
-                    detail: "The --no-metrics flag can not be set together with the --metrics-format option.".to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --requests-format option.".to_string(),
                 });
             }
             // Log format isn't relevant if log not enabled.
-            else if self.get_metrics_file_path()?.is_none() {
+            else if self.get_requests_file_path()?.is_none() {
                 return Err(GooseError::InvalidOption {
-                    option: "--metrics-format".to_string(),
+                    option: "--requests-format".to_string(),
                     value: self.configuration.metrics_format.clone(),
-                    detail: "The --metrics-file option must be set together with the --metrics-format option.".to_string(),
+                    detail: "The --requests-file option must be set together with the --requests-format option.".to_string(),
                 });
             }
         }
@@ -1972,10 +1972,10 @@ impl GooseAttack {
         let options = vec!["json", "csv", "raw"];
         if !options.contains(&self.configuration.metrics_format.as_str()) {
             return Err(GooseError::InvalidOption {
-                option: "--metrics-format".to_string(),
+                option: "--requests-format".to_string(),
                 value: self.configuration.metrics_format.clone(),
                 detail: format!(
-                    "The --metrics-format option must be set to one of: {}.",
+                    "The --requests-format option must be set to one of: {}.",
                     options.join(", ")
                 ),
             });
@@ -1984,7 +1984,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If enabled, returns the path of the metrics_file, otherwise returns None.
+    // If enabled, returns the path of the requests_file, otherwise returns None.
     fn get_debug_file_path(&self) -> Result<Option<&str>, GooseError> {
         // If running in Manager mode there is no debug file, exit immediately.
         if self.attack_mode == AttackMode::Manager {
@@ -2146,8 +2146,8 @@ impl GooseAttack {
         // Configure how many users to hatch per second.
         self.set_hatch_rate()?;
 
-        // Configure the metrics log format.
-        self.set_metrics_format()?;
+        // Configure the requests log format.
+        self.set_requests_format()?;
 
         // Configure the debug log format.
         self.set_debug_format()?;
@@ -2409,11 +2409,11 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
-    // Prepare an asynchronous buffered file writer for metrics_file (if enabled).
-    async fn prepare_metrics_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
-        if let Some(metrics_file_path) = self.get_metrics_file_path()? {
+    // Prepare an asynchronous buffered file writer for requests_file (if enabled).
+    async fn prepare_requests_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
+        if let Some(requests_file_path) = self.get_requests_file_path()? {
             Ok(Some(BufWriter::new(
-                File::create(&metrics_file_path).await?,
+                File::create(&requests_file_path).await?,
             )))
         } else {
             Ok(None)
@@ -2513,7 +2513,7 @@ impl GooseAttack {
             all_threads_debug_logger_tx,
             throttle_threads_tx,
             parent_to_throttle_tx,
-            metrics_file: self.prepare_metrics_file().await.unwrap(),
+            requests_file: self.prepare_requests_file().await.unwrap(),
             metrics_header_displayed: false,
             users: Vec::new(),
             user_channels: Vec::new(),
@@ -2950,13 +2950,13 @@ impl GooseAttack {
         // Run any configured test_stop() functions.
         self.run_test_stop().await?;
 
-        // If metrics logging is enabled, flush all metrics before we exit.
-        if let Some(file) = goose_attack_run_state.metrics_file.as_mut() {
+        // If requests logging is enabled, flush all metrics before we exit.
+        if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
             info!(
-                "flushing metrics_file: {}",
-                // Unwrap is safe as we can't get here unless a metrics file path
+                "flushing requests_file: {}",
+                // Unwrap is safe as we can't get here unless a requests file path
                 // is defined.
-                self.get_metrics_file_path()?.unwrap()
+                self.get_requests_file_path()?.unwrap()
             );
             let _ = file.flush().await;
         };
@@ -3024,15 +3024,15 @@ impl GooseAttack {
                         "raw" => format!("{:?}", raw_request),
                         _ => unreachable!(),
                     };
-                    if let Some(file) = goose_attack_run_state.metrics_file.as_mut() {
+                    if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
                         match file.write(format!("{}\n", formatted_log).as_ref()).await {
                             Ok(_) => (),
                             Err(e) => {
                                 warn!(
                                     "failed to write metrics to {}: {}",
-                                    // Unwrap is safe as we can't get here unless a metrics file path
+                                    // Unwrap is safe as we can't get here unless a requests file path
                                     // is defined.
-                                    self.get_metrics_file_path()?.unwrap(),
+                                    self.get_requests_file_path()?.unwrap(),
                                     e
                                 );
                             }
@@ -3107,8 +3107,8 @@ impl GooseAttack {
 /// borrowed string slice (`&str`):
 ///  - GooseDefault::Host
 ///  - GooseDefault::LogFile
-///  - GooseDefault::MetricsFile
-///  - GooseDefault::MetricsFormat
+///  - GooseDefault::RequestsFile
+///  - GooseDefault::RequestsFormat
 ///  - GooseDefault::DebugFile
 ///  - GooseDefault::DebugFormat
 ///  - GooseDefault::ManagerBindHost
@@ -3147,7 +3147,7 @@ impl GooseAttack {
 ///     GooseAttack::initialize()?
 ///         .set_default(GooseDefault::NoResetMetrics, true)?
 ///         .set_default(GooseDefault::Verbose, 1)?
-///         .set_default(GooseDefault::MetricsFile, "goose-metrics.log")?;
+///         .set_default(GooseDefault::RequestsFile, "goose-metrics.log")?;
 ///
 ///     Ok(())
 /// }
@@ -3162,8 +3162,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
             GooseDefault::Host => self.defaults.host = Some(value.to_string()),
             GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
-            GooseDefault::MetricsFile => self.defaults.metrics_file = Some(value.to_string()),
-            GooseDefault::MetricsFormat => self.defaults.metrics_format = Some(value.to_string()),
+            GooseDefault::RequestsFile => self.defaults.requests_file = Some(value.to_string()),
+            GooseDefault::RequestsFormat => self.defaults.metrics_format = Some(value.to_string()),
             GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value.to_string()),
             GooseDefault::ManagerBindHost => {
@@ -3221,8 +3221,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::Host
             | GooseDefault::HatchRate
             | GooseDefault::LogFile
-            | GooseDefault::MetricsFile
-            | GooseDefault::MetricsFormat
+            | GooseDefault::RequestsFile
+            | GooseDefault::RequestsFormat
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
             | GooseDefault::ManagerBindHost
@@ -3273,8 +3273,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
             | GooseDefault::LogFile
-            | GooseDefault::MetricsFile
-            | GooseDefault::MetricsFormat
+            | GooseDefault::RequestsFile
+            | GooseDefault::RequestsFormat
             | GooseDefault::RunningMetrics
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
@@ -3363,10 +3363,10 @@ pub struct GooseConfiguration {
     /// Doesn't track task metrics
     #[options(no_short)]
     pub no_task_metrics: bool,
-    /// Sets metrics log file name
+    /// Sets requests log file name
     #[options(short = "m", meta = "NAME")]
-    pub metrics_file: String,
-    /// Sets metrics log format (csv, json, raw)
+    pub requests_file: String,
+    /// Sets requests log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
     pub metrics_format: String,
     /// Sets debug log file name
@@ -3669,7 +3669,7 @@ mod test {
         let log_level: usize = 1;
         let log_file = "custom-goose.log".to_string();
         let verbose: usize = 0;
-        let metrics_file = "custom-goose-metrics.log".to_string();
+        let requests_file = "custom-goose-metrics.log".to_string();
         let metrics_format = "raw".to_string();
         let debug_file = "custom-goose-debug.log".to_string();
         let debug_format = "raw".to_string();
@@ -3704,9 +3704,9 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoTaskMetrics, true)
             .unwrap()
-            .set_default(GooseDefault::MetricsFile, metrics_file.as_str())
+            .set_default(GooseDefault::RequestsFile, requests_file.as_str())
             .unwrap()
-            .set_default(GooseDefault::MetricsFormat, metrics_format.as_str())
+            .set_default(GooseDefault::RequestsFormat, metrics_format.as_str())
             .unwrap()
             .set_default(GooseDefault::DebugFile, debug_file.as_str())
             .unwrap()
@@ -3749,7 +3749,7 @@ mod test {
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
-        assert!(goose_attack.defaults.metrics_file == Some(metrics_file));
+        assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.metrics_format == Some(metrics_format));
         assert!(goose_attack.defaults.debug_file == Some(debug_file));
         assert!(goose_attack.defaults.debug_format == Some(debug_format));

@@ -60,7 +60,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
 // Build appropriate configuration for these tests.
 fn common_build_configuration(
     server: &MockServer,
-    metrics_file: &str,
+    requests_file: &str,
     throttle_requests: usize,
     users: usize,
     run_time: usize,
@@ -92,8 +92,8 @@ fn common_build_configuration(
                 "--throttle-requests",
                 &throttle_requests.to_string(),
                 // Write requests to file to confirm throttle is working.
-                "--metrics-file",
-                metrics_file,
+                "--requests-file",
+                requests_file,
             ],
         )
     } else {
@@ -111,8 +111,8 @@ fn common_build_configuration(
                 "--throttle-requests",
                 &throttle_requests.to_string(),
                 // Write requests to file to confirm throttle is working.
-                "--metrics-file",
-                metrics_file,
+                "--requests-file",
+                requests_file,
             ],
         )
     }
@@ -121,15 +121,15 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(
     mock_endpoints: &[MockRef],
-    metrics_files: &[String],
+    requests_files: &[String],
     throttle_value: usize,
-    previous_metrics_file_lines: Option<usize>,
+    previous_requests_file_lines: Option<usize>,
 ) -> usize {
     // Verify that the metrics file was created and has the correct number of lines.
-    let mut current_metrics_file_lines = 0;
-    for metrics_file in metrics_files {
-        assert!(std::path::Path::new(metrics_file).exists());
-        current_metrics_file_lines += common::file_length(metrics_file);
+    let mut current_requests_file_lines = 0;
+    for requests_file in requests_files {
+        assert!(std::path::Path::new(requests_file).exists());
+        current_requests_file_lines += common::file_length(requests_file);
     }
 
     // Confirm that we loaded the mock endpoints.
@@ -137,23 +137,23 @@ fn validate_test(
     assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
 
     // Requests are made while GooseUsers are hatched, and then for RUN_TIME seconds.
-    assert!(current_metrics_file_lines <= (RUN_TIME + 1) * throttle_value);
+    assert!(current_requests_file_lines <= (RUN_TIME + 1) * throttle_value);
 
-    if let Some(previous_lines) = previous_metrics_file_lines {
+    if let Some(previous_lines) = previous_requests_file_lines {
         // Verify the second load test generated more than 4x the load of the first test.
-        assert!(current_metrics_file_lines > previous_lines * 4);
+        assert!(current_requests_file_lines > previous_lines * 4);
         // Verify the second load test generated less than 6x the load of the first test.
-        assert!(current_metrics_file_lines < previous_lines * 6);
+        assert!(current_requests_file_lines < previous_lines * 6);
     }
 
     // Cleanup log file.
-    for metrics_file in metrics_files {
-        std::fs::remove_file(metrics_file).expect("failed to delete metrics log file");
+    for requests_file in requests_files {
+        std::fs::remove_file(requests_file).expect("failed to delete metrics log file");
     }
 
     // Return the number of lines in the current metrics file, allowing comparisons between
     // multiple tests with different throttle values.
-    current_metrics_file_lines
+    current_requests_file_lines
 }
 
 // Returns the appropriate taskset needed to build these tests.
@@ -236,7 +236,7 @@ fn test_throttle() {
 // requests per second, in Gaggle mode.
 fn test_throttle_gaggle() {
     // Multiple tests run together, so set a unique name.
-    let metrics_file = "gaggle-".to_string() + METRICS_FILE;
+    let requests_file = "gaggle-".to_string() + METRICS_FILE;
 
     // Start the mock server.
     let server = MockServer::start();
@@ -251,11 +251,11 @@ fn test_throttle_gaggle() {
     // Build the load test for the Workers.
     // Launch each worker in its own thread, storing the join handles.
     let mut worker_handles = Vec::new();
-    let mut metrics_files = Vec::new();
+    let mut requests_files = Vec::new();
     for i in 0..EXPECT_WORKERS {
         let mut worker_configuration = configuration.clone();
-        worker_configuration.metrics_file = metrics_file.clone() + &i.to_string();
-        metrics_files.push(worker_configuration.metrics_file.clone());
+        worker_configuration.requests_file = requests_file.clone() + &i.to_string();
+        requests_files.push(worker_configuration.requests_file.clone());
         let worker_goose_attack =
             common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
         // Start worker instance of the load test.
@@ -268,7 +268,7 @@ fn test_throttle_gaggle() {
     // Start manager instance in current thread and run a distributed load test.
     let manager_configuration = common_build_configuration(
         &server,
-        &metrics_file,
+        &requests_file,
         0,
         USERS,
         RUN_TIME,
@@ -284,7 +284,7 @@ fn test_throttle_gaggle() {
     common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test was actually throttled.
-    let test1_lines = validate_test(&mock_endpoints, &metrics_files, THROTTLE_REQUESTS, None);
+    let test1_lines = validate_test(&mock_endpoints, &requests_files, THROTTLE_REQUESTS, None);
 
     // Increase the throttle and run a second load test, so we can compare the difference
     // and confirm the throttle is actually working.
@@ -297,11 +297,11 @@ fn test_throttle_gaggle() {
     // Build the load test for the Workers.
     // Launch each worker in its own thread, storing the join handles.
     let mut worker_handles = Vec::new();
-    let mut metrics_files = Vec::new();
+    let mut requests_files = Vec::new();
     for i in 0..EXPECT_WORKERS {
         let mut worker_configuration = configuration.clone();
-        worker_configuration.metrics_file = metrics_file.clone() + &i.to_string();
-        metrics_files.push(worker_configuration.metrics_file.clone());
+        worker_configuration.requests_file = requests_file.clone() + &i.to_string();
+        requests_files.push(worker_configuration.requests_file.clone());
         let worker_goose_attack =
             common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
         // Start worker instance of the load test.
@@ -321,7 +321,7 @@ fn test_throttle_gaggle() {
     // Confirm that the load test was actually throttled, at an increased rate.
     let _ = validate_test(
         &mock_endpoints,
-        &metrics_files,
+        &requests_files,
         increased_throttle,
         Some(test1_lines),
     );

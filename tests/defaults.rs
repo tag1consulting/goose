@@ -76,7 +76,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
 fn validate_test(
     goose_metrics: GooseMetrics,
     mock_endpoints: &[MockRef],
-    metrics_files: &[String],
+    requests_files: &[String],
     debug_files: &[String],
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
@@ -113,9 +113,9 @@ fn validate_test(
 
     // Verify that the metrics file was created and has the correct number of lines.
     let mut metrics_lines = 0;
-    for metrics_file in metrics_files {
-        assert!(std::path::Path::new(metrics_file).exists());
-        metrics_lines += common::file_length(metrics_file);
+    for requests_file in requests_files {
+        assert!(std::path::Path::new(requests_file).exists());
+        metrics_lines += common::file_length(requests_file);
     }
     assert!(
         metrics_lines
@@ -135,11 +135,11 @@ fn validate_test(
     // Be sure there were no more requests made than the throttle should allow.
     // In the case of a gaggle, there's multiple processes running with the same
     // throttle.
-    let number_of_processes = metrics_files.len();
+    let number_of_processes = requests_files.len();
     assert!(metrics_lines <= (RUN_TIME + 1) * THROTTLE_REQUESTS * number_of_processes);
 
     // Cleanup from test.
-    for file in metrics_files {
+    for file in requests_files {
         common::cleanup_files(vec![file]);
     }
     for file in debug_files {
@@ -151,11 +151,11 @@ fn validate_test(
 // Configure load test with set_default.
 fn test_defaults() {
     // Multiple tests run together, so set a unique name.
-    let metrics_file = "defaults-".to_string() + METRICS_FILE;
+    let requests_file = "defaults-".to_string() + METRICS_FILE;
     let debug_file = "defaults-".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
-    common::cleanup_files(vec![&metrics_file, &debug_file]);
+    common::cleanup_files(vec![&requests_file, &debug_file]);
 
     let server = MockServer::start();
 
@@ -185,9 +185,9 @@ fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::LogLevel, LOG_LEVEL)
         .unwrap()
-        .set_default(GooseDefault::MetricsFile, metrics_file.as_str())
+        .set_default(GooseDefault::RequestsFile, requests_file.as_str())
         .unwrap()
-        .set_default(GooseDefault::MetricsFormat, LOG_FORMAT)
+        .set_default(GooseDefault::RequestsFormat, LOG_FORMAT)
         .unwrap()
         .set_default(GooseDefault::DebugFile, debug_file.as_str())
         .unwrap()
@@ -213,7 +213,7 @@ fn test_defaults() {
     validate_test(
         goose_metrics,
         &mock_endpoints,
-        &[metrics_file],
+        &[requests_file],
         &[debug_file],
     );
 }
@@ -224,12 +224,12 @@ fn test_defaults() {
 // Configure load test with set_default, run as Gaggle.
 fn test_defaults_gaggle() {
     // Multiple tests run together, so set a unique name.
-    let metrics_file = "gaggle-defaults".to_string() + METRICS_FILE;
+    let requests_file = "gaggle-defaults".to_string() + METRICS_FILE;
     let debug_file = "gaggle-defaults".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
     for i in 0..EXPECT_WORKERS {
-        let file = metrics_file.to_string() + &i.to_string();
+        let file = requests_file.to_string() + &i.to_string();
         common::cleanup_files(vec![&file]);
         let file = debug_file.to_string() + &i.to_string();
         common::cleanup_files(vec![&file]);
@@ -255,7 +255,7 @@ fn test_defaults_gaggle() {
     let mut worker_handles = Vec::new();
     for i in 0..EXPECT_WORKERS {
         let worker_configuration = configuration.clone();
-        let worker_metrics_file = metrics_file.clone() + &i.to_string();
+        let worker_requests_file = requests_file.clone() + &i.to_string();
         let worker_debug_file = debug_file.clone() + &i.to_string();
         worker_handles.push(std::thread::spawn(move || {
             let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
@@ -271,9 +271,9 @@ fn test_defaults_gaggle() {
                 .unwrap()
                 .set_default(GooseDefault::NoDebugBody, true)
                 .unwrap()
-                .set_default(GooseDefault::MetricsFile, worker_metrics_file.as_str())
+                .set_default(GooseDefault::RequestsFile, worker_requests_file.as_str())
                 .unwrap()
-                .set_default(GooseDefault::MetricsFormat, LOG_FORMAT)
+                .set_default(GooseDefault::RequestsFormat, LOG_FORMAT)
                 .unwrap()
                 // Worker configuration using defaults instead of run-time options.
                 .set_default(GooseDefault::Worker, true)
@@ -329,26 +329,31 @@ fn test_defaults_gaggle() {
         let _ = worker_handle.join();
     }
 
-    let mut metrics_files: Vec<String> = vec![];
+    let mut requests_files: Vec<String> = vec![];
     let mut debug_files: Vec<String> = vec![];
     for i in 0..EXPECT_WORKERS {
-        let file = metrics_file.to_string() + &i.to_string();
-        metrics_files.push(file);
+        let file = requests_file.to_string() + &i.to_string();
+        requests_files.push(file);
         let file = debug_file.to_string() + &i.to_string();
         debug_files.push(file);
     }
-    validate_test(goose_metrics, &mock_endpoints, &metrics_files, &debug_files);
+    validate_test(
+        goose_metrics,
+        &mock_endpoints,
+        &requests_files,
+        &debug_files,
+    );
 }
 
 #[test]
 // Configure load test with run time options (not with defaults).
 fn test_no_defaults() {
     // Multiple tests run together, so set a unique name.
-    let metrics_file = "nodefaults-".to_string() + METRICS_FILE;
+    let requests_file = "nodefaults-".to_string() + METRICS_FILE;
     let debug_file = "nodefaults-".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
-    common::cleanup_files(vec![&metrics_file, &debug_file]);
+    common::cleanup_files(vec![&requests_file, &debug_file]);
 
     let server = MockServer::start();
 
@@ -364,8 +369,8 @@ fn test_no_defaults() {
             &HATCH_RATE.to_string(),
             "--run-time",
             &RUN_TIME.to_string(),
-            "--metrics-file",
-            &metrics_file,
+            "--requests-file",
+            &requests_file,
             "--metrics-format",
             LOG_FORMAT,
             "--debug-file",
@@ -394,7 +399,7 @@ fn test_no_defaults() {
     validate_test(
         goose_metrics,
         &mock_endpoints,
-        &[metrics_file],
+        &[requests_file],
         &[debug_file],
     );
 }
@@ -404,12 +409,12 @@ fn test_no_defaults() {
 #[serial]
 // Configure load test with run time options (not with defaults), run as Gaggle.
 fn test_no_defaults_gaggle() {
-    let metrics_file = "gaggle-nodefaults".to_string() + METRICS_FILE;
+    let requests_file = "gaggle-nodefaults".to_string() + METRICS_FILE;
     let debug_file = "gaggle-nodefaults".to_string() + DEBUG_FILE;
 
     // Be sure there's no files left over from an earlier test.
     for i in 0..EXPECT_WORKERS {
-        let file = metrics_file.to_string() + &i.to_string();
+        let file = requests_file.to_string() + &i.to_string();
         common::cleanup_files(vec![&file]);
         let file = debug_file.to_string() + &i.to_string();
         common::cleanup_files(vec![&file]);
@@ -426,7 +431,7 @@ fn test_no_defaults_gaggle() {
     // Launch workers in their own threads, storing the thread handle.
     let mut worker_handles = Vec::new();
     for i in 0..EXPECT_WORKERS {
-        let worker_metrics_file = metrics_file.to_string() + &i.to_string();
+        let worker_requests_file = requests_file.to_string() + &i.to_string();
         let worker_debug_file = debug_file.to_string() + &i.to_string();
         let worker_configuration = common::build_configuration(
             &server,
@@ -436,8 +441,8 @@ fn test_no_defaults_gaggle() {
                 &HOST.to_string(),
                 "--manager-port",
                 &PORT.to_string(),
-                "--metrics-file",
-                &worker_metrics_file,
+                "--requests-file",
+                &worker_requests_file,
                 "--metrics-format",
                 LOG_FORMAT,
                 "--debug-file",
@@ -497,15 +502,20 @@ fn test_no_defaults_gaggle() {
         let _ = worker_handle.join();
     }
 
-    let mut metrics_files: Vec<String> = vec![];
+    let mut requests_files: Vec<String> = vec![];
     let mut debug_files: Vec<String> = vec![];
     for i in 0..EXPECT_WORKERS {
-        let file = metrics_file.to_string() + &i.to_string();
-        metrics_files.push(file);
+        let file = requests_file.to_string() + &i.to_string();
+        requests_files.push(file);
         let file = debug_file.to_string() + &i.to_string();
         debug_files.push(file);
     }
-    validate_test(goose_metrics, &mock_endpoints, &metrics_files, &debug_files);
+    validate_test(
+        goose_metrics,
+        &mock_endpoints,
+        &requests_files,
+        &debug_files,
+    );
 }
 
 #[test]

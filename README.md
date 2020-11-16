@@ -208,8 +208,8 @@ Metrics:
   --no-reset-metrics         Doesn't reset metrics after all users have started
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
-  -m, --metrics-file NAME    Sets metrics log file name
-  --metrics-format FORMAT    Sets metrics log format (csv, json, raw)
+  -m, --requests-file NAME   Sets requests log file name
+  --requests-format FORMAT   Sets requests log format (csv, json, raw)
   -d, --debug-file NAME      Sets debug log file name
   --debug-format FORMAT      Sets debug log format (json, raw)
   --no-debug-body            Do not include the response body in the debug log
@@ -385,8 +385,8 @@ All run-time options can be configured with custom defaults. For example, you ma
 The following defaults can be configured with a `&str`:
  - host: `GooseDefault::Host`
  - log file name: `GooseDefault::LogFile`
- - metrics log file name: `GooseDefault::MetricsFile`
- - metrics log file format: `GooseDefault::MetricsFormat`
+ - requests log file name: `GooseDefault::RequestsFile`
+ - requests log file format: `GooseDefault::RequestsFormat`
  - debug log file name: `GooseDefault::DebugFile`
  - debug log file format: `GooseDefault::DebugFormat`
  - host to bind Manager to: `GooseDefault::ManagerBindHost`
@@ -422,7 +422,7 @@ For example, without any run-time options the following load test would automati
             .register_task(task!(loadtest_index))
         )
         .set_default(GooseDefault::Host, "local.dev")?
-        .set_default(GooseDefault::MetricsFile, "goose-metrics.log")?
+        .set_default(GooseDefault::RequestsFile, "goose-requests.log")?
         .set_default(GooseDefault::DebugFile, "goose-debug.log")?
         .set_default(GooseDefault::Users, 20)?
         .set_default(GooseDefault::HatchRate, 4)?
@@ -447,11 +447,11 @@ $ cargo run --example simple -- --host http://local.dev/ -u100 -r20 -v --throttl
 
 In this example, Goose will launch 100 GooseUser threads, but the throttle will prevent them from generating a combined total of more than 5 requests per second. The `--throttle-requests` command line option imposes a maximum number of requests, not a minimum number of requests.
 
-## Logging Load Test Metrics
+## Logging Load Test Requests
 
-Goose can optionally log details about all load test requests to a file. To enable, add the `--metrics-log-file=foo` command line option, where `foo` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all load test requests to a file. To enable, add the `--requests-file=foo` command line option, where `foo` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
-When operating in Gaggle-mode, the `--metrics-log-file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+When operating in Gaggle-mode, the `--requests--file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
 
 By default, logs are written in JSON Lines format. For example:
 
@@ -477,7 +477,7 @@ Logs include the entire `GooseRawRequest` object as defined in `src/goose.rs`, w
 
 In the first line of the above example, `GooseUser` thread 0 made a `POST` request to `/login` and was successfully redirected to `/user/42` in 220 milliseconds. The second line is the same `GooseUser` thread which then made a `GET` request to `/` in 3 milliseconds. The third and fourth lines are a second `GooseUser` thread doing the same thing, first logging in and then loading the front page.
 
-By default Goose logs metrics in JSON Lines format. The `--metrics-log-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire `GooseRawRequest` object.
+By default Goose logs requests in JSON Lines format. The `--metrics-log-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire `GooseRawRequest` object.
 
 For example, `csv` output of the same requests logged above would look like:
 ```csv

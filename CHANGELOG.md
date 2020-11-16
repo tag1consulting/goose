@@ -4,6 +4,11 @@
  - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
  - start each debug log file with a line feed in case the page is too big for the buffer; increase the debug logger buffer size from 8K to 8M.
  - introduce `--no-debug-body` flag to optionally prevent debug log from including the response body
+ - rename the metrics file to requests file to better reflect what it is
+    o `--metrics-file` becomes `--requests-file`
+    o `--metrics-format` becomes `--requests-format`
+    o `GooseDebug::MetricsFile` becomes `GooseDebug::RequestsFile`
+    o `GooseDebug::MetricsFormat` becomes `GooseDebug::RequestsFormat`
 
 ## 0.10.6 Nov 10, 2020
  - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
