@@ -730,13 +730,10 @@ pub struct GooseAttackRunState {
     spawn_user_in_ms: usize,
     /// A counter tracking which GooseUser is being spawned.
     spawn_user_counter: usize,
-    /// New users are spawned at the configured hatch_rate. This variable accounts
-    /// for time spent preparing threads and doing other work, avoiding an
-    /// unintentional drift in time and ensuring threads are hatched at precisely
-    /// the desired rate.
-    spawning_user_drift: tokio::time::Instant,
-    /// Account for time spent doing things other than sleeping.
-    run_time_drift: tokio::time::Instant,
+    /// This variable accounts for time spent doing things which is then subtracted from
+    /// the time sleeping to avoid an unintentional drift in events that are supposed to
+    /// happen regularly.
+    drift_timer: tokio::time::Instant,
     /// Unbounded sender used by all GooseUser threads to send metrics to parent.
     all_threads_metrics_tx: mpsc::UnboundedSender<GooseMetric>,
     /// Unbounded receiver used by Goose parent to receive metrics from GooseUsers.
@@ -1289,6 +1286,27 @@ impl GooseAttack {
         }
 
         Ok(())
+    }
+
+    // Change from one attack_phase to another.
+    fn set_attack_phase(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        phase: AttackPhase,
+    ) {
+        // There's nothing to do if already in the specified phase.
+        if self.attack_phase == phase {
+            return;
+        }
+
+        // The drift timer starts at 0 any time the phase is changed.
+        goose_attack_run_state.drift_timer = tokio::time::Instant::now();
+
+        // Optional debug output.
+        info!("entering GooseAttack phase: {:?}", &phase);
+
+        // Update the current phase.
+        self.attack_phase = phase;
     }
 
     // Determine how many workers to expect.
@@ -2500,13 +2518,11 @@ impl GooseAttack {
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
         let std_now = std::time::Instant::now();
-        let tokio_now = tokio::time::Instant::now();
         let goose_attack_run_state = GooseAttackRunState {
             spawn_user_timer: std_now,
             spawn_user_in_ms: 0,
             spawn_user_counter: 0,
-            spawning_user_drift: tokio_now,
-            run_time_drift: tokio_now,
+            drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
             metrics_rx,
             debug_logger,
@@ -2551,8 +2567,7 @@ impl GooseAttack {
         if util::timer_expired(self.started.unwrap(), self.run_time)
             || goose_attack_run_state.canceled.load(Ordering::SeqCst)
         {
-            self.attack_phase = AttackPhase::Stopping;
-            info!("stopping GooseAttack...");
+            self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
             return Ok(());
         }
 
@@ -2675,11 +2690,9 @@ impl GooseAttack {
             };
 
             // Otherwise, sleep until the next time something needs to happen.
-            let mut update_timer = false;
             let sleep_duration = if running_metrics > 0
                 && running_metrics * 1_000 < goose_attack_run_state.spawn_user_in_ms
             {
-                update_timer = true;
                 let sleep_delay = self.configuration.running_metrics.unwrap() * 1_000;
                 goose_attack_run_state.spawn_user_in_ms -= sleep_delay;
                 tokio::time::Duration::from_millis(sleep_delay as u64)
@@ -2687,13 +2700,8 @@ impl GooseAttack {
                 tokio::time::Duration::from_millis(goose_attack_run_state.spawn_user_in_ms as u64)
             };
             debug!("sleeping {:?}...", sleep_duration);
-            goose_attack_run_state.spawning_user_drift =
-                util::sleep_minus_drift(sleep_duration, goose_attack_run_state.spawning_user_drift)
-                    .await;
-            // Shift spawn_user_timer as we did a partial sleep to handle displaying metrics.
-            if update_timer {
-                goose_attack_run_state.spawn_user_timer = time::Instant::now();
-            }
+            goose_attack_run_state.drift_timer =
+                util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer).await;
         }
 
         // If enough users have been spawned, move onto the next attack phase.
@@ -2712,9 +2720,7 @@ impl GooseAttack {
             }
 
             self.reset_metrics(goose_attack_run_state).await?;
-
-            self.attack_phase = AttackPhase::Running;
-            info!("running GooseAttack...");
+            self.set_attack_phase(goose_attack_run_state, AttackPhase::Running);
         }
 
         Ok(())
@@ -2817,14 +2823,13 @@ impl GooseAttack {
             }
 
             // All users are done, exit out of loop for final cleanup.
-            self.attack_phase = AttackPhase::Stopping;
-            info!("stopping GooseAttack...");
+            self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
         } else {
             // Subtract the time spent doing other things, with the goal of running the
             // main parent loop once every second.
-            goose_attack_run_state.run_time_drift = util::sleep_minus_drift(
+            goose_attack_run_state.drift_timer = util::sleep_minus_drift(
                 time::Duration::from_secs(1),
-                goose_attack_run_state.run_time_drift,
+                goose_attack_run_state.drift_timer,
             )
             .await;
         }
@@ -2976,9 +2981,9 @@ impl GooseAttack {
             .initialize_attack(socket)
             .await
             .expect("failed to initialize GooseAttackRunState");
+
         // Only initialize once, then change to the next attack phase.
-        self.attack_phase = AttackPhase::Starting;
-        info!("starting GooseAttack...");
+        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
 
         loop {
             match self.attack_phase {
