@@ -1691,7 +1691,12 @@ impl GooseUser {
     /// is running. This can be especially helpful when writing a load test. Each entry
     /// must include a tag, which is an arbitrary string identifying the debug message.
     /// It may also optionally include references to the GooseRawRequest made, the headers
-    /// returned by the server, and the text returned by the server,
+    /// returned by the server, and the response body returned by the server,
+    ///
+    /// As the response body can be large, the `--no-debug-body` option (or
+    /// `GooseDefault::NoDebugBody` default) can be set to prevent the debug log from
+    /// including the response body. When this option is enabled, the body will always
+    /// show up as `null` in the debug log.
     ///
     /// Calls to
     /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
@@ -1765,7 +1770,11 @@ impl GooseUser {
             // Logger is not defined when running test_start_task, test_stop_task,
             // and during testing.
             if let Some(debug_logger) = self.debug_logger.clone() {
-                debug_logger.send(Some(GooseDebug::new(tag, request, headers, body)))?;
+                if self.config.no_debug_body {
+                    debug_logger.send(Some(GooseDebug::new(tag, request, headers, None)))?;
+                } else {
+                    debug_logger.send(Some(GooseDebug::new(tag, request, headers, body)))?;
+                }
             }
         }
 
