@@ -22,7 +22,7 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut task = task!(loadtest_index_page);
+//! let mut task = task!(post_to_form);
 //!
 //! async fn post_to_form(user: &GooseUser) -> GooseTaskResult {
 //!     let path = "/path/to/form";
@@ -47,23 +47,36 @@
 //!     // request that was sent to the server.
 //!     user.log_debug(
 //!         &format!("POSTing {:#?} on {}", &params, path),
-//!         Some(goose.request),
+//!         Some(&goose.request),
 //!         None,
 //!         None,
 //!     )?;
 //!
 //!     Ok(())
 //! }
+//! ```
 //!
-//! The first call to `log_debug` results in something like the following log message:
+//! The first call to `log_debug` results in a debug log message similar to:
 //! {"body":null,"header":null,"request":null,"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
 //!
-//! The second call to `log_debug` results in something like the following log message:
+//! The second call to `log_debug` results in a debug log message similar to:
 //! {"body":null,"header":null,"request":{"elapsed":1,"final_url":"http://local.dev/path/to/form","method":"POST","name":"(Anon) post to form","redirected":false,"response_time":22,"status_code":404,"success":false,"update":false,"url":"http://local.dev/path/to/form","user":0},"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
 //!
 //! For a more complex debug logging example, refer to the
 //! [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug)
 //! documentation.
+//!
+//! ## Reducing File And Memory Usage
+//!
+//! The debug logger can result in a very large debug file, as by default it includes the
+//! entire body of any pages returned that result in an error. This also requires allocating
+//! a bigger BufWriter, and can generate a lot of disk io.
+//!
+//! If you don't need to log response bodies, you can disable this functionality (and reduce
+//! the amount of RAM required by the BufWriter) by setting the `--no-debug-body` command-line
+//! option, or the `GooseDefault::NoDebugBody` default configuration option. The debug logger
+//! will still record any custom messages, details about the request (when available), and all
+//! server response headers (when available).
 
 use serde_json::json;
 use tokio::fs::File;
