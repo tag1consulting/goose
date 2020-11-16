@@ -10,6 +10,7 @@
     o `GooseDebug::MetricsFile` becomes `GooseDebug::RequestsFile`
     o `GooseDebug::MetricsFormat` becomes `GooseDebug::RequestsFormat`
  - reset drift timer any time the attack_phase changes
+ - document all public high level files and functions
 
 ## 0.10.6 Nov 10, 2020
  - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default

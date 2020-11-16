@@ -664,6 +664,7 @@ pub struct GooseDefaults {
     manager_port: Option<u16>,
 }
 
+/// Allows the optional configuration of Goose's defaults.
 #[derive(Debug)]
 pub enum GooseDefault {
     /// An optional default host to run this load test against.
