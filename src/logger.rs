@@ -57,10 +57,14 @@
 //! ```
 //!
 //! The first call to `log_debug` results in a debug log message similar to:
+//! ```json
 //! {"body":null,"header":null,"request":null,"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//! ```
 //!
 //! The second call to `log_debug` results in a debug log message similar to:
+//! ```json
 //! {"body":null,"header":null,"request":{"elapsed":1,"final_url":"http://local.dev/path/to/form","method":"POST","name":"(Anon) post to form","redirected":false,"response_time":22,"status_code":404,"success":false,"update":false,"url":"http://local.dev/path/to/form","user":0},"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//! ```
 //!
 //! For a more complex debug logging example, refer to the
 //! [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug)
