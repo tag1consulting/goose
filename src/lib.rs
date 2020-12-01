@@ -408,13 +408,17 @@ pub mod logger;
 mod manager;
 pub mod metrics;
 pub mod prelude;
+mod report;
 mod throttle;
 mod user;
 mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
+use chrono::prelude::*;
+use chrono::Duration;
 use gumdrop::Options;
+use handlebars::Handlebars;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
@@ -630,6 +634,8 @@ pub struct GooseDefaults {
     no_metrics: Option<bool>,
     /// An optional default for not tracking task metrics.
     no_task_metrics: Option<bool>,
+    /// An optional default for the html-formatted report file name.
+    report_file: Option<String>,
     /// An optional default for the requests log file name.
     requests_file: Option<String>,
     /// An optional default for the requests log file format.
@@ -689,6 +695,8 @@ pub enum GooseDefault {
     NoMetrics,
     /// An optional default for not tracking task metrics.
     NoTaskMetrics,
+    /// An optional default for the report file name.
+    ReportFile,
     /// An optional default for the requests log file name.
     RequestsFile,
     /// An optional default for the requests log file format.
@@ -1939,6 +1947,28 @@ impl GooseAttack {
         Ok(())
     }
 
+    // If enabled, returns the path of the report_file, otherwise returns None.
+    fn get_report_file_path(&mut self) -> Result<Option<String>, GooseError> {
+        // If metrics are disabled, or running in Manager mode, there is no
+        // report file, exit immediately.
+        if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
+            return Ok(None);
+        }
+
+        // If --report-file is set, return it.
+        if !self.configuration.report_file.is_empty() {
+            return Ok(Some(self.configuration.report_file.to_string()));
+        }
+
+        // If GooseDefault::ReportFile is set, return it.
+        if let Some(default_report_file) = &self.defaults.report_file {
+            return Ok(Some(default_report_file.to_string()));
+        }
+
+        // Otherwise there is no report file.
+        Ok(None)
+    }
+
     // If enabled, returns the path of the requests_file, otherwise returns None.
     fn get_requests_file_path(&mut self) -> Result<Option<&str>, GooseError> {
         // If metrics are disabled, or running in Manager mode, there is no
@@ -2003,7 +2033,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If enabled, returns the path of the requests_file, otherwise returns None.
+    // If enabled, returns the path of the debug_file, otherwise returns None.
     fn get_debug_file_path(&self) -> Result<Option<&str>, GooseError> {
         // If running in Manager mode there is no debug file, exit immediately.
         if self.attack_mode == AttackMode::Manager {
@@ -2551,8 +2581,12 @@ impl GooseAttack {
         self.metrics
             .initialize_task_metrics(&self.task_sets, &self.configuration);
 
-        // Our load test is officially starting.
+        // Our load test is officially starting. Store an initial measurement
+        // of a monotonically nondecreasing clock
         self.started = Some(time::Instant::now());
+
+        // Also store a formattable timestamp, for human readable reports.
+        self.metrics.started = Some(Local::now());
 
         Ok(goose_attack_run_state)
     }
@@ -2972,6 +3006,66 @@ impl GooseAttack {
         Ok(())
     }
 
+    async fn write_html_report(&mut self) -> Result<(), GooseError> {
+        // Only write the report if enabled.
+        if let Some(report_file) = self.get_report_file_path()? {
+            // create the handlebars registry
+            let mut handlebars = Handlebars::new();
+
+            // Load report template into memory.
+            handlebars
+                .register_template_string("report", report::TEMPLATE)
+                .expect("failed to parase built-in template");
+
+            // Configure template replacements.
+            let mut replace = BTreeMap::new();
+            let started = self.metrics.started.clone().unwrap();
+            replace.insert(
+                "start_time".to_string(),
+                started.format("%Y-%m-%d %H:%M:%S").to_string(),
+            );
+            replace.insert(
+                "end_time".to_string(),
+                (started + Duration::seconds(self.metrics.duration as i64))
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+            );
+            if let Some(host) = self.get_configuration_host() {
+                replace.insert("host".to_string(), host);
+            }
+
+            // Render the template, performing handlebars replacements.
+            let report = handlebars.render("report", &replace).unwrap();
+
+            // @TODO do this earlier so we don't risk losing data.
+            // Open the report file.
+            let mut writer = match File::create(&report_file.clone()).await {
+                Ok(w) => w,
+                Err(e) => {
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report_file.to_string(),
+                        detail: format!("Failed to create report file: {}", e),
+                    })
+                }
+            };
+            // Write the report to file.
+            if let Err(e) = writer.write(report.as_ref()).await {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: report_file.to_string(),
+                    detail: format!("Failed to create report file: {}", e),
+                });
+            };
+            // Be sure the file flushes to disk.
+            writer.flush();
+
+            info!("wrote html report file to: {}", &report_file);
+        }
+
+        Ok(())
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
         trace!("start_attack: socket({:?})", socket);
@@ -2999,6 +3093,7 @@ impl GooseAttack {
                 AttackPhase::Stopping => {
                     self.stop_attack(&mut goose_attack_run_state).await?;
                     self.sync_metrics(&mut goose_attack_run_state).await?;
+                    self.write_html_report().await?;
                     break;
                 }
                 _ => panic!("GooseAttack entered an impossible phase"),
@@ -3168,6 +3263,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
             GooseDefault::Host => self.defaults.host = Some(value.to_string()),
             GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
+            GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestsFile => self.defaults.requests_file = Some(value.to_string()),
             GooseDefault::RequestsFormat => self.defaults.metrics_format = Some(value.to_string()),
             GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
@@ -3227,6 +3323,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::Host
             | GooseDefault::HatchRate
             | GooseDefault::LogFile
+            | GooseDefault::ReportFile
             | GooseDefault::RequestsFile
             | GooseDefault::RequestsFormat
             | GooseDefault::DebugFile
@@ -3279,6 +3376,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
             | GooseDefault::LogFile
+            | GooseDefault::ReportFile
             | GooseDefault::RequestsFile
             | GooseDefault::RequestsFormat
             | GooseDefault::RunningMetrics
@@ -3369,6 +3467,9 @@ pub struct GooseConfiguration {
     /// Doesn't track task metrics
     #[options(no_short)]
     pub no_task_metrics: bool,
+    /// Create an html-formatted report
+    #[options(meta = "NAME")]
+    pub report_file: String,
     /// Sets requests log file name
     #[options(short = "m", meta = "NAME")]
     pub requests_file: String,
@@ -3675,6 +3776,7 @@ mod test {
         let log_level: usize = 1;
         let log_file = "custom-goose.log".to_string();
         let verbose: usize = 0;
+        let report_file = "custom-goose-report.html".to_string();
         let requests_file = "custom-goose-metrics.log".to_string();
         let metrics_format = "raw".to_string();
         let debug_file = "custom-goose-debug.log".to_string();
@@ -3709,6 +3811,8 @@ mod test {
             .set_default(GooseDefault::NoMetrics, true)
             .unwrap()
             .set_default(GooseDefault::NoTaskMetrics, true)
+            .unwrap()
+            .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
             .unwrap()
@@ -3755,6 +3859,7 @@ mod test {
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
+        assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.metrics_format == Some(metrics_format));
         assert!(goose_attack.defaults.debug_file == Some(debug_file));

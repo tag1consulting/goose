@@ -3,6 +3,7 @@
 //! By default, Goose collects a large number of metrics while performing a load test.
 //! The metrics collected and the display of these metrics are defined in this file.
 
+use chrono::prelude::*;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
@@ -199,6 +200,8 @@ pub struct GooseMetrics {
     /// A hash of the load test, useful to verify if different metrics are from
     /// the same load test.
     pub hash: u64,
+    /// The system timestamp of when the load test started.
+    pub started: Option<DateTime<Local>>,
     /// How many seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
