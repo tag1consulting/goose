@@ -1,3 +1,19 @@
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RequestMetric {
+    pub method: String,
+    pub name: String,
+    pub number_of_requests: usize,
+    pub number_of_failures: usize,
+    pub response_time_average: usize,
+    pub response_time_minimum: usize,
+    pub response_time_maximum: usize,
+    pub content_length_average: usize,
+    pub requests_per_second: usize,
+    pub failures_per_second: usize,
+}
+
 pub const TEMPLATE: &str = r#"<!DOCTYPE html>
 <html>
 <head>
@@ -68,7 +84,7 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
         </div>
 
         <div class="requests">
-            <h2>Request Statistics</h2>
+            <h2>Request Metrics</h2>
             <table>
                 <thead>
                     <tr>
@@ -85,12 +101,26 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                     </tr>
                 </thead>
                 <tbody>
+                    {{#each requests as |request| ~}}
+                    <tr>
+                        <td>{{ request.method }}</td>
+                        <td>{{ request.name }}</td>
+                        <td>{{ request.number_of_requests }}</td>
+                        <td>{{ request.number_of_failures }}</td>
+                        <td>{{ request.response_time_average }}</td>
+                        <td>{{ request.response_time_minimum }}</td>
+                        <td>{{ request.response_time_maximum }}</td>
+                        <td>{{ request.content_length_average }}</td>
+                        <td>{{ request.requests_per_second }}</td>
+                        <td>{{ request.failures_per_second }}</td>
+                    </tr>
+                    {{/each}}
                 </tbody>
             </table>
         </div>
 
         <div class="responses">
-            <h2>Response Time Statistics</h2>
+            <h2>Response Time Metrics</h2>
             <table>
                 <thead>
                     <tr>
@@ -112,7 +142,7 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
         </div>
 
         <div class="failures">
-            <h2>Failures Statistics</h2>
+            <h2>Failures Metrics</h2>
             <table>
                 <thead>
                     <tr>
@@ -128,7 +158,7 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
         </div>
 
         <div class="exceptions">
-            <h2>Exceptions Statistics</h2>
+            <h2>Exceptions Metrics</h2>
             <table>
                 <thead>
                     <tr>

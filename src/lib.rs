@@ -418,7 +418,8 @@ mod worker;
 use chrono::prelude::*;
 use chrono::Duration;
 use gumdrop::Options;
-use handlebars::Handlebars;
+use handlebars::{to_json, Handlebars};
+use itertools::Itertools;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
@@ -3020,25 +3021,59 @@ impl GooseAttack {
             // Configure template replacements.
             let mut replace = BTreeMap::new();
             let started = self.metrics.started.clone().unwrap();
+
+            // Populate {{ start_time }}.
             replace.insert(
                 "start_time".to_string(),
-                started.format("%Y-%m-%d %H:%M:%S").to_string(),
+                to_json(started.format("%Y-%m-%d %H:%M:%S").to_string()),
             );
+            // Populate {{ end_time }}.
             replace.insert(
                 "end_time".to_string(),
-                (started + Duration::seconds(self.metrics.duration as i64))
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string(),
+                to_json(
+                    (started + Duration::seconds(self.metrics.duration as i64))
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                ),
             );
+            // Populate {{ host }}.
+            // @TODO: What if this is empty?
             if let Some(host) = self.get_configuration_host() {
-                replace.insert("host".to_string(), host);
+                replace.insert("host".to_string(), to_json(host));
             }
+            // Populate RequestMetric vector {{ requests }}.
+            let mut request_metrics = Vec::new();
+            for (request_key, request) in self.metrics.requests.iter().sorted() {
+                let method = format!("{:?}", request.method);
+                // @TODO: this feels like a sloppy way to get the name, maybe it should
+                // be added as a field to the GooseRequest object.
+                let name = request_key
+                    .strip_prefix(&format!("{:?} ", request.method))
+                    .unwrap()
+                    .to_string();
+                let request_metric = report::RequestMetric {
+                    method,
+                    name,
+                    number_of_requests: request.success_count,
+                    number_of_failures: request.fail_count,
+                    response_time_average: request.total_response_time
+                        / request.response_time_counter,
+                    response_time_minimum: request.min_response_time,
+                    response_time_maximum: request.max_response_time,
+                    // @TODO: store this
+                    content_length_average: 0,
+                    requests_per_second: request.success_count / self.metrics.duration,
+                    failures_per_second: request.fail_count / self.metrics.duration,
+                };
+                request_metrics.push(request_metric);
+            }
+            replace.insert("requests".to_string(), to_json(&request_metrics));
 
             // Render the template, performing handlebars replacements.
             let report = handlebars.render("report", &replace).unwrap();
 
-            // @TODO do this earlier so we don't risk losing data.
-            // Open the report file.
+            // @TODO create the file earlier so we don't risk losing data.
+            // Create the report file.
             let mut writer = match File::create(&report_file.clone()).await {
                 Ok(w) => w,
                 Err(e) => {
