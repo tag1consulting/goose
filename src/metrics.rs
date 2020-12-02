@@ -1086,7 +1086,7 @@ pub fn update_max_time(mut global_max: usize, max: usize) -> usize {
 }
 
 /// Get the response time that a certain number of percent of the requests finished within.
-fn calculate_response_time_percentile(
+pub fn calculate_response_time_percentile(
     response_times: &BTreeMap<usize, usize>,
     total_requests: usize,
     min: usize,

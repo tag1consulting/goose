@@ -3043,6 +3043,7 @@ impl GooseAttack {
             }
             // Populate RequestMetric vector {{ requests }}.
             let mut request_metrics = Vec::new();
+            let mut response_metrics = Vec::new();
             for (request_key, request) in self.metrics.requests.iter().sorted() {
                 let method = format!("{:?}", request.method);
                 // @TODO: this feels like a sloppy way to get the name, maybe it should
@@ -3052,8 +3053,8 @@ impl GooseAttack {
                     .unwrap()
                     .to_string();
                 let request_metric = report::RequestMetric {
-                    method,
-                    name,
+                    method: method.to_string(),
+                    name: name.to_string(),
                     number_of_requests: request.success_count,
                     number_of_failures: request.fail_count,
                     response_time_average: request.total_response_time
@@ -3066,8 +3067,70 @@ impl GooseAttack {
                     failures_per_second: request.fail_count / self.metrics.duration,
                 };
                 request_metrics.push(request_metric);
+                let response_metric = report::ResponseMetric {
+                    method,
+                    name,
+                    percentile_50: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        0.5,
+                    ),
+                    percentile_60: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        0.6,
+                    ),
+                    percentile_70: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        0.7,
+                    ),
+                    percentile_80: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        0.8,
+                    ),
+                    percentile_90: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        0.9,
+                    ),
+                    percentile_95: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        0.95,
+                    ),
+                    percentile_99: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        0.99,
+                    ),
+                    percentile_100: metrics::calculate_response_time_percentile(
+                        &request.response_times,
+                        request.response_time_counter,
+                        request.min_response_time,
+                        request.max_response_time,
+                        1.0,
+                    ),
+                };
+                response_metrics.push(response_metric);
             }
             replace.insert("requests".to_string(), to_json(&request_metrics));
+            replace.insert("responses".to_string(), to_json(&response_metrics));
 
             // Render the template, performing handlebars replacements.
             let report = handlebars.render("report", &replace).unwrap();

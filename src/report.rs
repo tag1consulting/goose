@@ -14,6 +14,20 @@ pub struct RequestMetric {
     pub failures_per_second: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ResponseMetric {
+    pub method: String,
+    pub name: String,
+    pub percentile_50: String,
+    pub percentile_60: String,
+    pub percentile_70: String,
+    pub percentile_80: String,
+    pub percentile_90: String,
+    pub percentile_95: String,
+    pub percentile_99: String,
+    pub percentile_100: String,
+}
+
 pub const TEMPLATE: &str = r#"<!DOCTYPE html>
 <html>
 <head>
@@ -137,6 +151,20 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                     </tr>
                 </thead>
                 <tbody>
+                    {{#each responses as |response| ~}}
+                    <tr>
+                        <td>{{ response.method }}</td>
+                        <td>{{ response.name }}</td>
+                        <td>{{ response.percentile_50 }}</td>
+                        <td>{{ response.percentile_60 }}</td>
+                        <td>{{ response.percentile_70 }}</td>
+                        <td>{{ response.percentile_80 }}</td>
+                        <td>{{ response.percentile_90 }}</td>
+                        <td>{{ response.percentile_95 }}</td>
+                        <td>{{ response.percentile_99 }}</td>
+                        <td>{{ response.percentile_100 }}</td>
+                    </tr>
+                    {{/each}}
                 </tbody>
             </table>
         </div>
