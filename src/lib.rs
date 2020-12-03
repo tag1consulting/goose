@@ -758,6 +758,8 @@ pub struct GooseAttackRunState {
     parent_to_throttle_tx: Option<mpsc::Sender<bool>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
+    /// Optional unbuffered writer for html-formatted report file, if enabled.
+    report_file: Option<File>,
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
@@ -2459,6 +2461,15 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
+    // Prepare an asynchronous file writer for report_file (if enabled).
+    async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
+        if let Some(report_file_path) = self.get_report_file_path()? {
+            Ok(Some(File::create(&report_file_path).await?))
+        } else {
+            Ok(None)
+        }
+    }
+
     // Prepare an asynchronous buffered file writer for requests_file (if enabled).
     async fn prepare_requests_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
         if let Some(requests_file_path) = self.get_requests_file_path()? {
@@ -2561,6 +2572,7 @@ impl GooseAttack {
             all_threads_debug_logger_tx,
             throttle_threads_tx,
             parent_to_throttle_tx,
+            report_file: self.prepare_report_file().await.unwrap(),
             requests_file: self.prepare_requests_file().await.unwrap(),
             metrics_header_displayed: false,
             users: Vec::new(),
@@ -3007,9 +3019,12 @@ impl GooseAttack {
         Ok(())
     }
 
-    async fn write_html_report(&mut self) -> Result<(), GooseError> {
+    async fn write_html_report(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
         // Only write the report if enabled.
-        if let Some(report_file) = self.get_report_file_path()? {
+        if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
             // create the handlebars registry
             let mut handlebars = Handlebars::new();
 
@@ -3066,82 +3081,30 @@ impl GooseAttack {
                     request.fail_count,
                 );
                 // Display per-request metrics.
-                let request_metric = report::RequestMetric {
+                request_metrics.push(report::RequestMetric {
                     method: method.to_string(),
                     name: name.to_string(),
                     number_of_requests: total_request_count,
                     number_of_failures: request.fail_count,
-                    response_time_average: request.total_response_time as f32
-                        / request.response_time_counter as f32,
+                    response_time_average: format!(
+                        "{:.2}",
+                        request.total_response_time as f32 / request.response_time_counter as f32
+                    ),
                     response_time_minimum: request.min_response_time,
                     response_time_maximum: request.max_response_time,
-                    requests_per_second: requests_per_second,
-                    failures_per_second: failures_per_second,
-                };
-                request_metrics.push(request_metric);
+                    requests_per_second: format!("{:.2}", requests_per_second),
+                    failures_per_second: format!("{:.2}", failures_per_second),
+                });
 
                 // Display per-response metrics.
-                let response_metric = report::ResponseMetric {
-                    method,
-                    name,
-                    percentile_50: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        0.5,
-                    ),
-                    percentile_60: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        0.6,
-                    ),
-                    percentile_70: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        0.7,
-                    ),
-                    percentile_80: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        0.8,
-                    ),
-                    percentile_90: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        0.9,
-                    ),
-                    percentile_95: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        0.95,
-                    ),
-                    percentile_99: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        0.99,
-                    ),
-                    percentile_100: metrics::calculate_response_time_percentile(
-                        &request.response_times,
-                        request.response_time_counter,
-                        request.min_response_time,
-                        request.max_response_time,
-                        1.0,
-                    ),
-                };
-                response_metrics.push(response_metric);
+                response_metrics.push(report::get_response_metric(
+                    &method,
+                    &name,
+                    &request.response_times,
+                    request.response_time_counter,
+                    request.min_response_time,
+                    request.max_response_time,
+                ));
 
                 // Aggregate the data for display at the bottom of the table.
                 aggregate_total_count += total_request_count;
@@ -3166,122 +3129,55 @@ impl GooseAttack {
                     aggregate_total_count,
                     aggregate_fail_count,
                 );
-            let aggregated_request_metrics = report::RequestMetric {
+            request_metrics.push(report::RequestMetric {
                 method: "".to_string(),
                 name: "Aggregated".to_string(),
                 number_of_requests: aggregate_total_count,
                 number_of_failures: aggregate_fail_count,
-                response_time_average: aggregate_response_time_counter as f32
-                    / aggregate_total_count as f32,
+                response_time_average: format!(
+                    "{:.2}",
+                    aggregate_response_time_counter as f32 / aggregate_total_count as f32
+                ),
                 response_time_minimum: aggregate_response_time_minimum,
                 response_time_maximum: aggregate_response_time_maximum,
-                requests_per_second: aggregate_requests_per_second,
-                failures_per_second: aggregate_failures_per_second,
-            };
-            request_metrics.push(aggregated_request_metrics);
-
-            info!(
-                "counter: {}, minimum: {}, maximum: {}",
-                aggregate_response_time_counter,
-                aggregate_response_time_minimum,
-                aggregate_response_time_maximum,
-            );
-            info!("response_times: {:#?}", &aggregate_response_times);
+                requests_per_second: format!("{:.2}", aggregate_requests_per_second),
+                failures_per_second: format!("{:.2}", aggregate_failures_per_second),
+            });
 
             // Display aggregate per-response metrics.
-            let aggregate_response_metric = report::ResponseMetric {
-                method: "".to_string(),
-                name: "Aggregated".to_string(),
-                percentile_50: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    0.5,
-                ),
-                percentile_60: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    0.6,
-                ),
-                percentile_70: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    0.7,
-                ),
-                percentile_80: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    0.8,
-                ),
-                percentile_90: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    0.9,
-                ),
-                percentile_95: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    0.95,
-                ),
-                percentile_99: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    0.99,
-                ),
-                percentile_100: metrics::calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_total_count,
-                    aggregate_response_time_minimum,
-                    aggregate_response_time_maximum,
-                    1.0,
-                ),
-            };
-            info!("aggregate: {:#?}", aggregate_response_metric);
-            response_metrics.push(aggregate_response_metric);
+            response_metrics.push(report::get_response_metric(
+                "",
+                "Aggregated",
+                &aggregate_response_times,
+                aggregate_total_count,
+                aggregate_response_time_minimum,
+                aggregate_response_time_maximum,
+            ));
 
+            // Populate {{ requests }}.
             replace.insert("requests".to_string(), to_json(&request_metrics));
+
+            // Populate {{ responses }}.
             replace.insert("responses".to_string(), to_json(&response_metrics));
 
             // Render the template, performing handlebars replacements.
             let report = handlebars.render("report", &replace).unwrap();
 
-            // @TODO create the file earlier so we don't risk losing data.
-            // Create the report file.
-            let mut writer = match File::create(&report_file.clone()).await {
-                Ok(w) => w,
-                Err(e) => {
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: report_file.to_string(),
-                        detail: format!("Failed to create report file: {}", e),
-                    })
-                }
-            };
             // Write the report to file.
-            if let Err(e) = writer.write(report.as_ref()).await {
+            if let Err(e) = report_file.write(report.as_ref()).await {
                 return Err(GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: report_file.to_string(),
+                    value: self.get_report_file_path()?.unwrap(),
                     detail: format!("Failed to create report file: {}", e),
                 });
             };
             // Be sure the file flushes to disk.
-            writer.flush();
+            report_file.flush();
 
-            info!("wrote html report file to: {}", &report_file);
+            info!(
+                "wrote html report file to: {}",
+                self.get_report_file_path()?.unwrap()
+            );
         }
 
         Ok(())
@@ -3314,7 +3210,7 @@ impl GooseAttack {
                 AttackPhase::Stopping => {
                     self.stop_attack(&mut goose_attack_run_state).await?;
                     self.sync_metrics(&mut goose_attack_run_state).await?;
-                    self.write_html_report().await?;
+                    self.write_html_report(&mut goose_attack_run_state).await?;
                     break;
                 }
                 _ => panic!("GooseAttack entered an impossible phase"),

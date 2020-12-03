@@ -1,18 +1,27 @@
+//! Optionally writes an html-formatted summary report after running a load test.
+
+use crate::metrics;
+
+use std::collections::BTreeMap;
+use std::mem;
+
 use serde::Serialize;
 
+/// Defines the metrics reported about requests.
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestMetric {
     pub method: String,
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
-    pub response_time_average: f32,
+    pub response_time_average: String,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    pub requests_per_second: f32,
-    pub failures_per_second: f32,
+    pub requests_per_second: String,
+    pub failures_per_second: String,
 }
 
+/// Defines the metrics reported about responses.
 #[derive(Debug, Clone, Serialize)]
 pub struct ResponseMetric {
     pub method: String,
@@ -27,6 +36,43 @@ pub struct ResponseMetric {
     pub percentile_100: String,
 }
 
+/// Helper to generate a single response metric.
+pub fn get_response_metric(
+    method: &str,
+    name: &str,
+    response_times: &BTreeMap<usize, usize>,
+    total_request_count: usize,
+    response_time_minimum: usize,
+    response_time_maximum: usize,
+) -> ResponseMetric {
+    // Calculate percentiles in a loop.
+    let mut percentiles = Vec::new();
+    for percent in vec![0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
+        percentiles.push(metrics::calculate_response_time_percentile(
+            response_times,
+            total_request_count,
+            response_time_minimum,
+            response_time_maximum,
+            percent,
+        ));
+    }
+
+    // Now take the Strings out of the Vector and build a ResponseMetric object.
+    ResponseMetric {
+        method: method.to_string(),
+        name: name.to_string(),
+        percentile_50: mem::take(&mut percentiles[0]),
+        percentile_60: mem::take(&mut percentiles[1]),
+        percentile_70: mem::take(&mut percentiles[2]),
+        percentile_80: mem::take(&mut percentiles[3]),
+        percentile_90: mem::take(&mut percentiles[4]),
+        percentile_95: mem::take(&mut percentiles[5]),
+        percentile_99: mem::take(&mut percentiles[6]),
+        percentile_100: mem::take(&mut percentiles[7]),
+    }
+}
+
+/// Default template used to generate an HTML report.
 pub const TEMPLATE: &str = r#"<!DOCTYPE html>
 <html>
 <head>
@@ -91,7 +137,6 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
         <h1>Goose Test Report</h1>
 
         <div class="info">
-            <p class="download"><a href="?download=1">Download the Report</a></p>
             <p>During: <span>{{ start_time }} - {{ end_time }}</span></p>
             <p>Target Host: <span>{{ host }}</span></p>
         </div>
@@ -164,10 +209,6 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                     {{/each}}
                 </tbody>
             </table>
-        </div>
-
-        <div class="charts-container">
-            <h2>Charts</h2>
         </div>
     </div>
 </body>
