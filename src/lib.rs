@@ -3044,29 +3044,43 @@ impl GooseAttack {
             // Populate RequestMetric vector {{ requests }}.
             let mut request_metrics = Vec::new();
             let mut response_metrics = Vec::new();
+            let mut aggregate_total_count = 0;
+            let mut aggregate_fail_count = 0;
+            let mut aggregate_response_time_counter: usize = 0;
+            let mut aggregate_response_time_minimum: usize = 0;
+            let mut aggregate_response_time_maximum: usize = 0;
+            let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
             for (request_key, request) in self.metrics.requests.iter().sorted() {
                 let method = format!("{:?}", request.method);
-                // @TODO: this feels like a sloppy way to get the name, maybe it should
-                // be added as a field to the GooseRequest object.
+                // The request_key is "METHOD NAME", so by stripping the "METHOD "
+                // prefix we get the name.
+                // @TODO: consider storing the name as a field in GooseRequest.
                 let name = request_key
                     .strip_prefix(&format!("{:?} ", request.method))
                     .unwrap()
                     .to_string();
+                let total_request_count = request.success_count + request.fail_count;
+                let (requests_per_second, failures_per_second) = metrics::per_second_calculations(
+                    self.metrics.duration,
+                    total_request_count,
+                    request.fail_count,
+                );
+                // Display per-request metrics.
                 let request_metric = report::RequestMetric {
                     method: method.to_string(),
                     name: name.to_string(),
-                    number_of_requests: request.success_count,
+                    number_of_requests: total_request_count,
                     number_of_failures: request.fail_count,
-                    response_time_average: request.total_response_time
-                        / request.response_time_counter,
+                    response_time_average: request.total_response_time as f32
+                        / request.response_time_counter as f32,
                     response_time_minimum: request.min_response_time,
                     response_time_maximum: request.max_response_time,
-                    // @TODO: store this
-                    content_length_average: 0,
-                    requests_per_second: request.success_count / self.metrics.duration,
-                    failures_per_second: request.fail_count / self.metrics.duration,
+                    requests_per_second: requests_per_second,
+                    failures_per_second: failures_per_second,
                 };
                 request_metrics.push(request_metric);
+
+                // Display per-response metrics.
                 let response_metric = report::ResponseMetric {
                     method,
                     name,
@@ -3128,7 +3142,116 @@ impl GooseAttack {
                     ),
                 };
                 response_metrics.push(response_metric);
+
+                // Aggregate the data for display at the bottom of the table.
+                aggregate_total_count += total_request_count;
+                aggregate_fail_count += request.fail_count;
+                aggregate_response_time_counter += request.total_response_time;
+                aggregate_response_time_minimum = metrics::update_min_time(
+                    aggregate_response_time_minimum,
+                    request.min_response_time,
+                );
+                aggregate_response_time_maximum = metrics::update_max_time(
+                    aggregate_response_time_maximum,
+                    request.max_response_time,
+                );
+                aggregate_response_times =
+                    metrics::merge_times(aggregate_response_times, request.response_times.clone());
             }
+
+            // Display aggregate per-request metrics.
+            let (aggregate_requests_per_second, aggregate_failures_per_second) =
+                metrics::per_second_calculations(
+                    self.metrics.duration,
+                    aggregate_total_count,
+                    aggregate_fail_count,
+                );
+            let aggregated_request_metrics = report::RequestMetric {
+                method: "".to_string(),
+                name: "Aggregated".to_string(),
+                number_of_requests: aggregate_total_count,
+                number_of_failures: aggregate_fail_count,
+                response_time_average: aggregate_response_time_counter as f32
+                    / aggregate_total_count as f32,
+                response_time_minimum: aggregate_response_time_minimum,
+                response_time_maximum: aggregate_response_time_maximum,
+                requests_per_second: aggregate_requests_per_second,
+                failures_per_second: aggregate_failures_per_second,
+            };
+            request_metrics.push(aggregated_request_metrics);
+
+            info!(
+                "counter: {}, minimum: {}, maximum: {}",
+                aggregate_response_time_counter,
+                aggregate_response_time_minimum,
+                aggregate_response_time_maximum,
+            );
+            info!("response_times: {:#?}", &aggregate_response_times);
+
+            // Display aggregate per-response metrics.
+            let aggregate_response_metric = report::ResponseMetric {
+                method: "".to_string(),
+                name: "Aggregated".to_string(),
+                percentile_50: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    0.5,
+                ),
+                percentile_60: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    0.6,
+                ),
+                percentile_70: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    0.7,
+                ),
+                percentile_80: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    0.8,
+                ),
+                percentile_90: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    0.9,
+                ),
+                percentile_95: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    0.95,
+                ),
+                percentile_99: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    0.99,
+                ),
+                percentile_100: metrics::calculate_response_time_percentile(
+                    &aggregate_response_times,
+                    aggregate_total_count,
+                    aggregate_response_time_minimum,
+                    aggregate_response_time_maximum,
+                    1.0,
+                ),
+            };
+            info!("aggregate: {:#?}", aggregate_response_metric);
+            response_metrics.push(aggregate_response_metric);
+
             replace.insert("requests".to_string(), to_json(&request_metrics));
             replace.insert("responses".to_string(), to_json(&response_metrics));
 

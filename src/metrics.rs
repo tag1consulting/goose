@@ -1022,7 +1022,7 @@ impl fmt::Display for GooseMetrics {
 }
 
 /// Helper to calculate requests and fails per seconds.
-fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
+pub fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
     let requests_per_second;
     let fails_per_second;
     if duration == 0 {

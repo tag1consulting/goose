@@ -6,12 +6,11 @@ pub struct RequestMetric {
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
-    pub response_time_average: usize,
+    pub response_time_average: f32,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    pub content_length_average: usize,
-    pub requests_per_second: usize,
-    pub failures_per_second: usize,
+    pub requests_per_second: f32,
+    pub failures_per_second: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,7 +108,6 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                         <th>Average (ms)</th>
                         <th>Min (ms)</th>
                         <th>Max (ms)</th>
-                        <th>Average size (bytes)</th>
                         <th>RPS</th>
                         <th>Failures/s</th>
                     </tr>
@@ -124,7 +122,6 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                         <td>{{ request.response_time_average }}</td>
                         <td>{{ request.response_time_minimum }}</td>
                         <td>{{ request.response_time_maximum }}</td>
-                        <td>{{ request.content_length_average }}</td>
                         <td>{{ request.requests_per_second }}</td>
                         <td>{{ request.failures_per_second }}</td>
                     </tr>
@@ -165,38 +162,6 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                         <td>{{ response.percentile_100 }}</td>
                     </tr>
                     {{/each}}
-                </tbody>
-            </table>
-        </div>
-
-        <div class="failures">
-            <h2>Failures Metrics</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Method</th>
-                        <th>Name</th>
-                        <th>Error</th>
-                        <th>Occurrences</th>
-                    </tr>
-                </thead>
-                <tbody>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="exceptions">
-            <h2>Exceptions Metrics</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Count</th>
-                        <th>Message</th>
-                        <th>Traceback</th>
-                        <th>Nodes</th>
-                    </tr>
-                </thead>
-                <tbody>
                 </tbody>
             </table>
         </div>
