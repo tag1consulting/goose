@@ -47,13 +47,13 @@ pub fn get_response_metric(
 ) -> ResponseMetric {
     // Calculate percentiles in a loop.
     let mut percentiles = Vec::new();
-    for percent in vec![0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
+    for percent in &[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
         percentiles.push(metrics::calculate_response_time_percentile(
             response_times,
             total_request_count,
             response_time_minimum,
             response_time_maximum,
-            percent,
+            *percent,
         ));
     }
 

@@ -2560,7 +2560,34 @@ impl GooseAttack {
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
+        // Grab now() once from the standard library, used by multiple timers in
+        // the run state.
         let std_now = std::time::Instant::now();
+
+        // If the report file is enabled, open it now to confirm we have access
+        let report_file = match self.prepare_report_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: self.get_report_file_path()?.unwrap(),
+                    detail: format!("Failed to create report file: {}", e),
+                })
+            }
+        };
+
+        // If the requests file is enabled, open it now to confirm we have access
+        let requests_file = match self.prepare_requests_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--requests-file".to_string(),
+                    value: self.get_requests_file_path()?.unwrap().to_string(),
+                    detail: format!("Failed to create request file: {}", e),
+                })
+            }
+        };
+
         let goose_attack_run_state = GooseAttackRunState {
             spawn_user_timer: std_now,
             spawn_user_in_ms: 0,
@@ -2572,8 +2599,8 @@ impl GooseAttack {
             all_threads_debug_logger_tx,
             throttle_threads_tx,
             parent_to_throttle_tx,
-            report_file: self.prepare_report_file().await.unwrap(),
-            requests_file: self.prepare_requests_file().await.unwrap(),
+            report_file,
+            requests_file,
             metrics_header_displayed: false,
             users: Vec::new(),
             user_channels: Vec::new(),
@@ -2595,7 +2622,8 @@ impl GooseAttack {
             .initialize_task_metrics(&self.task_sets, &self.configuration);
 
         // Our load test is officially starting. Store an initial measurement
-        // of a monotonically nondecreasing clock
+        // of a monotonically nondecreasing clock so we can see how long has
+        // elapsed without worrying about the clock going backward.
         self.started = Some(time::Instant::now());
 
         // Also store a formattable timestamp, for human readable reports.
