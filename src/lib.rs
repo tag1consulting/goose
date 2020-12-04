@@ -418,7 +418,6 @@ mod worker;
 use chrono::prelude::*;
 use chrono::Duration;
 use gumdrop::Options;
-use handlebars::{to_json, Handlebars};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
@@ -3053,38 +3052,18 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         // Only write the report if enabled.
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
-            // create the handlebars registry
-            let mut handlebars = Handlebars::new();
-
-            // Load report template into memory.
-            handlebars
-                .register_template_string("report", report::TEMPLATE)
-                .expect("failed to parase built-in template");
-
-            // Configure template replacements.
-            let mut replace = BTreeMap::new();
+            // Prepare report summary variables.
             let started = self.metrics.started.clone().unwrap();
+            let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
+            let end_time = (started + Duration::seconds(self.metrics.duration as i64))
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            let host = match self.get_configuration_host() {
+                Some(h) => h.to_string(),
+                None => "".to_string(),
+            };
 
-            // Populate {{ start_time }}.
-            replace.insert(
-                "start_time".to_string(),
-                to_json(started.format("%Y-%m-%d %H:%M:%S").to_string()),
-            );
-            // Populate {{ end_time }}.
-            replace.insert(
-                "end_time".to_string(),
-                to_json(
-                    (started + Duration::seconds(self.metrics.duration as i64))
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string(),
-                ),
-            );
-            // Populate {{ host }}.
-            // @TODO: What if this is empty?
-            if let Some(host) = self.get_configuration_host() {
-                replace.insert("host".to_string(), to_json(host));
-            }
-            // Populate RequestMetric vector {{ requests }}.
+            // Prepare requests and responses variables.
             let mut request_metrics = Vec::new();
             let mut response_metrics = Vec::new();
             let mut aggregate_total_count = 0;
@@ -3095,7 +3074,7 @@ impl GooseAttack {
             let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
             for (request_key, request) in self.metrics.requests.iter().sorted() {
                 let method = format!("{:?}", request.method);
-                // The request_key is "METHOD NAME", so by stripping the "METHOD "
+                // The request_key is "{method} {name}", so by stripping the "{method} "
                 // prefix we get the name.
                 // @TODO: consider storing the name as a field in GooseRequest.
                 let name = request_key
@@ -3108,7 +3087,7 @@ impl GooseAttack {
                     total_request_count,
                     request.fail_count,
                 );
-                // Display per-request metrics.
+                // Prepare per-request metrics.
                 request_metrics.push(report::RequestMetric {
                     method: method.to_string(),
                     name: name.to_string(),
@@ -3124,7 +3103,7 @@ impl GooseAttack {
                     failures_per_second: format!("{:.2}", failures_per_second),
                 });
 
-                // Display per-response metrics.
+                // Prepare per-response metrics.
                 response_metrics.push(report::get_response_metric(
                     &method,
                     &name,
@@ -3134,7 +3113,7 @@ impl GooseAttack {
                     request.max_response_time,
                 ));
 
-                // Aggregate the data for display at the bottom of the table.
+                // Collect aggregated request and response metrics.
                 aggregate_total_count += total_request_count;
                 aggregate_fail_count += request.fail_count;
                 aggregate_response_time_counter += request.total_response_time;
@@ -3150,7 +3129,7 @@ impl GooseAttack {
                     metrics::merge_times(aggregate_response_times, request.response_times.clone());
             }
 
-            // Display aggregate per-request metrics.
+            // Prepare aggregate per-request metrics.
             let (aggregate_requests_per_second, aggregate_failures_per_second) =
                 metrics::per_second_calculations(
                     self.metrics.duration,
@@ -3172,7 +3151,7 @@ impl GooseAttack {
                 failures_per_second: format!("{:.2}", aggregate_failures_per_second),
             });
 
-            // Display aggregate per-response metrics.
+            // Prepare aggregate per-response metrics.
             response_metrics.push(report::get_response_metric(
                 "",
                 "Aggregated",
@@ -3182,14 +3161,26 @@ impl GooseAttack {
                 aggregate_response_time_maximum,
             ));
 
-            // Populate {{ requests }}.
-            replace.insert("requests".to_string(), to_json(&request_metrics));
+            // Compile the request metrics template.
+            let mut request_template = Vec::new();
+            for metric in request_metrics {
+                request_template.push(report::request_metrics_template(metric));
+            }
 
-            // Populate {{ responses }}.
-            replace.insert("responses".to_string(), to_json(&response_metrics));
+            // Compile the response metrics template.
+            let mut response_template = Vec::new();
+            for metric in response_metrics {
+                response_template.push(report::response_metrics_template(metric));
+            }
 
-            // Render the template, performing handlebars replacements.
-            let report = handlebars.render("report", &replace).unwrap();
+            // Compile the report template.
+            let report = report::build_report(
+                &start_time,
+                &end_time,
+                &host,
+                &request_template.join("\n"),
+                &response_template.join("\n"),
+            );
 
             // Write the report to file.
             if let Err(e) = report_file.write(report.as_ref()).await {

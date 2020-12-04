@@ -72,13 +72,72 @@ pub fn get_response_metric(
     }
 }
 
-/// Default template used to generate an HTML report.
-pub const TEMPLATE: &str = r#"<!DOCTYPE html>
+pub fn request_metrics_template(metric: RequestMetric) -> String {
+    format!(
+        r#"<tr>
+        <td>{method}</td>
+        <td>{name}</td>
+        <td>{number_of_requests}</td>
+        <td>{number_of_failures}</td>
+        <td>{response_time_average}</td>
+        <td>{response_time_minimum}</td>
+        <td>{response_time_maximum}</td>
+        <td>{requests_per_second}</td>
+        <td>{failures_per_second}</td>
+    </tr>"#,
+        method = metric.method,
+        name = metric.name,
+        number_of_requests = metric.number_of_requests,
+        number_of_failures = metric.number_of_failures,
+        response_time_average = metric.response_time_average,
+        response_time_minimum = metric.response_time_minimum,
+        response_time_maximum = metric.response_time_maximum,
+        requests_per_second = metric.requests_per_second,
+        failures_per_second = metric.failures_per_second,
+    )
+}
+
+pub fn response_metrics_template(metric: ResponseMetric) -> String {
+    format!(
+        r#"<tr>
+            <td>{method}</td>
+            <td>{name}</td>
+            <td>{percentile_50}</td>
+            <td>{percentile_60}</td>
+            <td>{percentile_70}</td>
+            <td>{percentile_80}</td>
+            <td>{percentile_90}</td>
+            <td>{percentile_95}</td>
+            <td>{percentile_99}</td>
+            <td>{percentile_100}</td>
+        </tr>"#,
+        method = metric.method,
+        name = metric.name,
+        percentile_50 = metric.percentile_50,
+        percentile_60 = metric.percentile_60,
+        percentile_70 = metric.percentile_70,
+        percentile_80 = metric.percentile_80,
+        percentile_90 = metric.percentile_90,
+        percentile_95 = metric.percentile_95,
+        percentile_99 = metric.percentile_99,
+        percentile_100 = metric.percentile_100,
+    )
+}
+
+pub fn build_report(
+    start_time: &str,
+    end_time: &str,
+    host: &str,
+    requests_template: &str,
+    responses_template: &str,
+) -> String {
+    format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Test Report</title>
     <style>
-        .container {
+        .container {{
             width: 1000px;
             margin: 0 auto;
             padding: 10px;
@@ -86,50 +145,50 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
             font-family: Arial, Helvetica, sans-serif;
             font-size: 14px;
             color: #fff;
-        }
+        }}
 
-        .info span{
+        .info span{{
             color: #b3c3bc;
-        }
+        }}
 
-        table {
+        table {{
             border-collapse: collapse;
             text-align: center;
             width: 100%;
-        }
+        }}
 
-        td, th {
+        td, th {{
             border: 1px solid #cad9ea;
             color: #666;
             height: 30px;
-        }
+        }}
 
-        thead th {
+        thead th {{
             background-color: #cce8eb;
             width: 100px;
-        }
+        }}
 
-        tr:nth-child(odd) {
+        tr:nth-child(odd) {{
             background: #fff;
-        }
+        }}
 
-        tr:nth-child(even) {
+        tr:nth-child(even) {{
             background: #f5fafa;
-        }
+        }}
 
-        .charts-container .chart {
+        .charts-container .chart {{
             width: 100%;
             height: 350px;
             margin-bottom: 30px;
-        }
+        }}
 
-        .download {
+        .download {{
             float: right;
-        }
+        }}
 
-        .download a {
+        .download a {{
             color: #00ca5a;
-        }
+        }}
     </style>
 </head>
 <body>
@@ -137,8 +196,8 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
         <h1>Goose Test Report</h1>
 
         <div class="info">
-            <p>During: <span>{{ start_time }} - {{ end_time }}</span></p>
-            <p>Target Host: <span>{{ host }}</span></p>
+            <p>During: <span>{start_time} - {end_time}</span></p>
+            <p>Target Host: <span>{host}</span></p>
         </div>
 
         <div class="requests">
@@ -158,19 +217,7 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                     </tr>
                 </thead>
                 <tbody>
-                    {{#each requests as |request| ~}}
-                    <tr>
-                        <td>{{ request.method }}</td>
-                        <td>{{ request.name }}</td>
-                        <td>{{ request.number_of_requests }}</td>
-                        <td>{{ request.number_of_failures }}</td>
-                        <td>{{ request.response_time_average }}</td>
-                        <td>{{ request.response_time_minimum }}</td>
-                        <td>{{ request.response_time_maximum }}</td>
-                        <td>{{ request.requests_per_second }}</td>
-                        <td>{{ request.failures_per_second }}</td>
-                    </tr>
-                    {{/each}}
+                    {requests_template}
                 </tbody>
             </table>
         </div>
@@ -193,23 +240,17 @@ pub const TEMPLATE: &str = r#"<!DOCTYPE html>
                     </tr>
                 </thead>
                 <tbody>
-                    {{#each responses as |response| ~}}
-                    <tr>
-                        <td>{{ response.method }}</td>
-                        <td>{{ response.name }}</td>
-                        <td>{{ response.percentile_50 }}</td>
-                        <td>{{ response.percentile_60 }}</td>
-                        <td>{{ response.percentile_70 }}</td>
-                        <td>{{ response.percentile_80 }}</td>
-                        <td>{{ response.percentile_90 }}</td>
-                        <td>{{ response.percentile_95 }}</td>
-                        <td>{{ response.percentile_99 }}</td>
-                        <td>{{ response.percentile_100 }}</td>
-                    </tr>
-                    {{/each}}
+                    {responses_template}
                 </tbody>
             </table>
         </div>
     </div>
 </body>
-</html>"#;
+</html>"#,
+        start_time = start_time,
+        end_time = end_time,
+        host = host,
+        requests_template = requests_template,
+        responses_template = responses_template,
+    )
+}
