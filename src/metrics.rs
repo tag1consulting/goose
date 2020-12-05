@@ -1044,7 +1044,7 @@ fn determine_precision(value: f32) -> usize {
 }
 
 // Format large number in locale appropriate style.
-fn format_number(number: usize) -> String {
+pub fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
 }
 

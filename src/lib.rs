@@ -3162,15 +3162,114 @@ impl GooseAttack {
             ));
 
             // Compile the request metrics template.
-            let mut request_template = Vec::new();
+            let mut requests_rows = Vec::new();
             for metric in request_metrics {
-                request_template.push(report::request_metrics_template(metric));
+                requests_rows.push(report::request_metrics_row(metric));
             }
 
             // Compile the response metrics template.
-            let mut response_template = Vec::new();
+            let mut responses_rows = Vec::new();
             for metric in response_metrics {
-                response_template.push(report::response_metrics_template(metric));
+                responses_rows.push(report::response_metrics_row(metric));
+            }
+
+            // Only build the tasks template if --no-task-metrics isn't enabled.
+            let tasks_template: String;
+            if !self.configuration.no_task_metrics {
+                let mut task_metrics = Vec::new();
+                let mut task_set_counter: usize = 0;
+                let mut aggregate_total_count = 0;
+                let mut aggregate_fail_count = 0;
+                let mut aggregate_task_time_counter: usize = 0;
+                let mut aggregate_task_time_minimum: usize = 0;
+                let mut aggregate_task_time_maximum: usize = 0;
+                let mut aggregate_task_times: BTreeMap<usize, usize> = BTreeMap::new();
+                for task_set in &self.metrics.tasks {
+                    let mut task_counter: usize = 0;
+                    task_set_counter += 1;
+                    for task in task_set {
+                        if task_counter == 0 {
+                            // Only the taskset_name is used for task sets.
+                            task_metrics.push(report::TaskMetric {
+                                is_task_set: true,
+                                task: "".to_string(),
+                                name: format!("{}", task.taskset_name),
+                                number_of_requests: 0,
+                                number_of_failures: 0,
+                                response_time_average: "".to_string(),
+                                response_time_minimum: 0,
+                                response_time_maximum: 0,
+                                requests_per_second: "".to_string(),
+                                failures_per_second: "".to_string(),
+                            });
+                        }
+                        task_counter += 1;
+                        let total_run_count = task.success_count + task.fail_count;
+                        let (requests_per_second, failures_per_second) =
+                            metrics::per_second_calculations(
+                                self.metrics.duration,
+                                total_run_count,
+                                task.fail_count,
+                            );
+                        let average = match task.counter {
+                            0 => 0.00,
+                            _ => task.total_time as f32 / task.counter as f32,
+                        };
+                        task_metrics.push(report::TaskMetric {
+                            is_task_set: false,
+                            task: format!("{}.{}", task_set_counter, task_counter),
+                            name: format!("{}", task.task_name),
+                            number_of_requests: total_run_count,
+                            number_of_failures: task.fail_count,
+                            response_time_average: format!("{:.2}", average),
+                            response_time_minimum: task.min_time,
+                            response_time_maximum: task.max_time,
+                            requests_per_second: format!("{:.2}", requests_per_second),
+                            failures_per_second: format!("{:.2}", failures_per_second),
+                        });
+
+                        aggregate_total_count += total_run_count;
+                        aggregate_fail_count += task.fail_count;
+                        aggregate_task_times =
+                            metrics::merge_times(aggregate_task_times, task.times.clone());
+                        aggregate_task_time_counter += &task.counter;
+                        aggregate_task_time_minimum =
+                            metrics::update_min_time(aggregate_task_time_minimum, task.min_time);
+                        aggregate_task_time_maximum =
+                            metrics::update_max_time(aggregate_task_time_maximum, task.max_time);
+                    }
+                }
+
+                let (aggregate_requests_per_second, aggregate_failures_per_second) =
+                    metrics::per_second_calculations(
+                        self.metrics.duration,
+                        aggregate_total_count,
+                        aggregate_fail_count,
+                    );
+                task_metrics.push(report::TaskMetric {
+                    is_task_set: false,
+                    task: "".to_string(),
+                    name: "Aggregated".to_string(),
+                    number_of_requests: aggregate_total_count,
+                    number_of_failures: aggregate_fail_count,
+                    response_time_average: format!(
+                        "{:.2}",
+                        aggregate_response_time_counter as f32 / aggregate_total_count as f32
+                    ),
+                    response_time_minimum: aggregate_task_time_minimum,
+                    response_time_maximum: aggregate_task_time_maximum,
+                    requests_per_second: format!("{:.2}", aggregate_requests_per_second),
+                    failures_per_second: format!("{:.2}", aggregate_failures_per_second),
+                });
+                let mut tasks_rows = Vec::new();
+                // Compile the task metrics template.
+                for metric in task_metrics {
+                    tasks_rows.push(report::task_metrics_row(metric));
+                }
+
+                tasks_template = report::task_metrics_template(&tasks_rows.join("\n"));
+            } else {
+                tasks_template = "".to_string();
             }
 
             // Compile the report template.
@@ -3178,8 +3277,9 @@ impl GooseAttack {
                 &start_time,
                 &end_time,
                 &host,
-                &request_template.join("\n"),
-                &response_template.join("\n"),
+                &requests_rows.join("\n"),
+                &responses_rows.join("\n"),
+                &tasks_template,
             );
 
             // Write the report to file.

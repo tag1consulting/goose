@@ -36,6 +36,21 @@ pub struct ResponseMetric {
     pub percentile_100: String,
 }
 
+/// Defines the metrics reported about tasks.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskMetric {
+    pub is_task_set: bool,
+    pub task: String,
+    pub name: String,
+    pub number_of_requests: usize,
+    pub number_of_failures: usize,
+    pub response_time_average: String,
+    pub response_time_minimum: usize,
+    pub response_time_maximum: usize,
+    pub requests_per_second: String,
+    pub failures_per_second: String,
+}
+
 /// Helper to generate a single response metric.
 pub fn get_response_metric(
     method: &str,
@@ -72,7 +87,7 @@ pub fn get_response_metric(
     }
 }
 
-pub fn request_metrics_template(metric: RequestMetric) -> String {
+pub fn request_metrics_row(metric: RequestMetric) -> String {
     format!(
         r#"<tr>
         <td>{method}</td>
@@ -97,7 +112,7 @@ pub fn request_metrics_template(metric: RequestMetric) -> String {
     )
 }
 
-pub fn response_metrics_template(metric: ResponseMetric) -> String {
+pub fn response_metrics_row(metric: ResponseMetric) -> String {
     format!(
         r#"<tr>
             <td>{method}</td>
@@ -124,12 +139,72 @@ pub fn response_metrics_template(metric: ResponseMetric) -> String {
     )
 }
 
+pub fn task_metrics_template(task_rows: &str) -> String {
+    format!(
+        r#"<div class="tasks">
+        <h2>Task Metrics</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th colspan="2">Task</th>
+                    <th># Times Run</th>
+                    <th># Fails</th>
+                    <th>Average (ms)</th>
+                    <th>Min (ms)</th>
+                    <th>Max (ms)</th>
+                    <th>RPS</th>
+                    <th>Failures/s</th>
+                </tr>
+            </thead>
+            <tbody>
+                {task_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        task_rows = task_rows,
+    )
+}
+
+pub fn task_metrics_row(metric: TaskMetric) -> String {
+    if metric.is_task_set {
+        format!(
+            r#"<tr>
+            <td colspan="10" align="left"><strong>{name}</strong></td>
+        </tr>"#,
+            name = metric.name,
+        )
+    } else {
+        format!(
+            r#"<tr>
+            <td colspan="2">{task} {name}</strong></td>
+            <td>{number_of_requests}</td>
+            <td>{number_of_failures}</td>
+            <td>{response_time_average}</td>
+            <td>{response_time_minimum}</td>
+            <td>{response_time_maximum}</td>
+            <td>{requests_per_second}</td>
+            <td>{failures_per_second}</td>
+        </tr>"#,
+            task = metric.task,
+            name = metric.name,
+            number_of_requests = metrics::format_number(metric.number_of_requests),
+            number_of_failures = metrics::format_number(metric.number_of_failures),
+            response_time_average = metric.response_time_average,
+            response_time_minimum = metric.response_time_minimum,
+            response_time_maximum = metric.response_time_maximum,
+            requests_per_second = metric.requests_per_second,
+            failures_per_second = metric.failures_per_second,
+        )
+    }
+}
+
 pub fn build_report(
     start_time: &str,
     end_time: &str,
     host: &str,
     requests_template: &str,
     responses_template: &str,
+    tasks_template: &str,
 ) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -244,6 +319,9 @@ pub fn build_report(
                 </tbody>
             </table>
         </div>
+
+        {tasks_template}
+
     </div>
 </body>
 </html>"#,
@@ -252,5 +330,6 @@ pub fn build_report(
         host = host,
         requests_template = requests_template,
         responses_template = responses_template,
+        tasks_template = tasks_template,
     )
 }
