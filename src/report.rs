@@ -51,6 +51,13 @@ pub struct TaskMetric {
     pub failures_per_second: String,
 }
 
+/// Defines the metrics reported about status codes.
+pub struct StatusCodeMetric {
+    pub method: String,
+    pub name: String,
+    pub status_codes: String,
+}
+
 /// Helper to generate a single response metric.
 pub fn get_response_metric(
     method: &str,
@@ -87,6 +94,7 @@ pub fn get_response_metric(
     }
 }
 
+/// Build an individual row of request metrics in the html report.
 pub fn request_metrics_row(metric: RequestMetric) -> String {
     format!(
         r#"<tr>
@@ -112,6 +120,7 @@ pub fn request_metrics_row(metric: RequestMetric) -> String {
     )
 }
 
+/// Build an individual row of response metrics in the html report.
 pub fn response_metrics_row(metric: ResponseMetric) -> String {
     format!(
         r#"<tr>
@@ -139,6 +148,44 @@ pub fn response_metrics_row(metric: ResponseMetric) -> String {
     )
 }
 
+/// If status code metrics are enabled, add a status code metrics table to the
+/// html report.
+pub fn status_code_metrics_template(status_code_rows: &str) -> String {
+    format!(
+        r#"<div class="status_codes">
+        <h2>Status Code Metrics</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th colspan="2">Name</th>
+                    <th colspan="3">Status Codes</th>
+                </tr>
+            </thead>
+            <tbody>
+                {status_code_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        status_code_rows = status_code_rows,
+    )
+}
+
+/// Build an individual row of status code metrics in the html report.
+pub fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
+    format!(
+        r#"<tr>
+        <td>{method}</td>
+        <td colspan="2">{name}</td>
+        <td colspan="3">{status_codes}</td>
+    </tr>"#,
+        method = metric.method,
+        name = metric.name,
+        status_codes = metric.status_codes,
+    )
+}
+
+/// If task metrics are enabled, add a task metrics table to the html report.
 pub fn task_metrics_template(task_rows: &str) -> String {
     format!(
         r#"<div class="tasks">
@@ -165,6 +212,7 @@ pub fn task_metrics_template(task_rows: &str) -> String {
     )
 }
 
+/// Build an individual row of task metrics in the html report.
 pub fn task_metrics_row(metric: TaskMetric) -> String {
     if metric.is_task_set {
         format!(
@@ -198,6 +246,7 @@ pub fn task_metrics_row(metric: TaskMetric) -> String {
     }
 }
 
+/// Build the html report.
 pub fn build_report(
     start_time: &str,
     end_time: &str,
@@ -205,6 +254,7 @@ pub fn build_report(
     requests_template: &str,
     responses_template: &str,
     tasks_template: &str,
+    status_codes_template: &str,
 ) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -320,6 +370,8 @@ pub fn build_report(
             </table>
         </div>
 
+        {status_codes_template}
+
         {tasks_template}
 
     </div>
@@ -331,5 +383,6 @@ pub fn build_report(
         requests_template = requests_template,
         responses_template = responses_template,
         tasks_template = tasks_template,
+        status_codes_template = status_codes_template,
     )
 }

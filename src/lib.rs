@@ -3177,23 +3177,20 @@ impl GooseAttack {
             let tasks_template: String;
             if !self.configuration.no_task_metrics {
                 let mut task_metrics = Vec::new();
-                let mut task_set_counter: usize = 0;
                 let mut aggregate_total_count = 0;
                 let mut aggregate_fail_count = 0;
                 let mut aggregate_task_time_counter: usize = 0;
                 let mut aggregate_task_time_minimum: usize = 0;
                 let mut aggregate_task_time_maximum: usize = 0;
                 let mut aggregate_task_times: BTreeMap<usize, usize> = BTreeMap::new();
-                for task_set in &self.metrics.tasks {
-                    let mut task_counter: usize = 0;
-                    task_set_counter += 1;
-                    for task in task_set {
+                for (task_set_counter, task_set) in self.metrics.tasks.iter().enumerate() {
+                    for (task_counter, task) in task_set.iter().enumerate() {
                         if task_counter == 0 {
                             // Only the taskset_name is used for task sets.
                             task_metrics.push(report::TaskMetric {
                                 is_task_set: true,
                                 task: "".to_string(),
-                                name: format!("{}", task.taskset_name),
+                                name: task.taskset_name.to_string(),
                                 number_of_requests: 0,
                                 number_of_failures: 0,
                                 response_time_average: "".to_string(),
@@ -3203,7 +3200,6 @@ impl GooseAttack {
                                 failures_per_second: "".to_string(),
                             });
                         }
-                        task_counter += 1;
                         let total_run_count = task.success_count + task.fail_count;
                         let (requests_per_second, failures_per_second) =
                             metrics::per_second_calculations(
@@ -3218,7 +3214,7 @@ impl GooseAttack {
                         task_metrics.push(report::TaskMetric {
                             is_task_set: false,
                             task: format!("{}.{}", task_set_counter, task_counter),
-                            name: format!("{}", task.task_name),
+                            name: task.task_name.to_string(),
                             number_of_requests: total_run_count,
                             number_of_failures: task.fail_count,
                             response_time_average: format!("{:.2}", average),
@@ -3272,6 +3268,60 @@ impl GooseAttack {
                 tasks_template = "".to_string();
             }
 
+            // Only build the status_code template if --status-codes is enabled.
+            let status_code_template: String;
+            if self.configuration.status_codes {
+                let mut status_code_metrics = Vec::new();
+                let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
+                for (request_key, request) in self.metrics.requests.iter().sorted() {
+                    let method = format!("{:?}", request.method);
+                    // The request_key is "{method} {name}", so by stripping the "{method} "
+                    // prefix we get the name.
+                    // @TODO: consider storing the name as a field in GooseRequest.
+                    let name = request_key
+                        .strip_prefix(&format!("{:?} ", request.method))
+                        .unwrap()
+                        .to_string();
+
+                    // Build a list of status codes, and update the aggregate record.
+                    let codes = metrics::prepare_status_codes(
+                        &request.status_code_counts,
+                        &mut Some(&mut aggregated_status_code_counts),
+                    );
+
+                    // Add a row of data for the status code table.
+                    status_code_metrics.push(report::StatusCodeMetric {
+                        method,
+                        name,
+                        status_codes: codes,
+                    });
+                }
+
+                // Build a list of aggregate status codes.
+                let aggregated_codes =
+                    metrics::prepare_status_codes(&aggregated_status_code_counts, &mut None);
+
+                // Add a final row of aggregate data for the status code table.
+                status_code_metrics.push(report::StatusCodeMetric {
+                    method: "".to_string(),
+                    name: "Aggregated".to_string(),
+                    status_codes: aggregated_codes,
+                });
+
+                // Compile the status_code metrics rows.
+                let mut status_code_rows = Vec::new();
+                for metric in status_code_metrics {
+                    status_code_rows.push(report::status_code_metrics_row(metric));
+                }
+
+                // Compile the status_code metrics template.
+                status_code_template =
+                    report::status_code_metrics_template(&status_code_rows.join("\n"));
+            } else {
+                // If --status-codes is not enabled, return an empty template.
+                status_code_template = "".to_string();
+            }
+
             // Compile the report template.
             let report = report::build_report(
                 &start_time,
@@ -3280,6 +3330,7 @@ impl GooseAttack {
                 &requests_rows.join("\n"),
                 &responses_rows.join("\n"),
                 &tasks_template,
+                &status_code_template,
             );
 
             // Write the report to file.
