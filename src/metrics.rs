@@ -3,6 +3,7 @@
 //! By default, Goose collects a large number of metrics while performing a load test.
 //! The metrics collected and the display of these metrics are defined in this file.
 
+use chrono::prelude::*;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,7 @@ pub struct GooseRawTask {
     pub user: usize,
 }
 impl GooseRawTask {
+    /// Create a new GooseRawTask metric.
     pub fn new(
         elapsed: u128,
         taskset_index: usize,
@@ -63,6 +65,7 @@ impl GooseRawTask {
         }
     }
 
+    /// Update a GooseRawTask metric.
     pub fn set_time(&mut self, time: u128, success: bool) {
         self.run_time = time as u64;
         self.success = success;
@@ -96,6 +99,7 @@ pub struct GooseTaskMetric {
     pub fail_count: usize,
 }
 impl GooseTaskMetric {
+    /// Create a new GooseTaskMetric.
     pub fn new(
         taskset_index: usize,
         taskset_name: &str,
@@ -117,7 +121,7 @@ impl GooseTaskMetric {
         }
     }
 
-    // Track task function elapsed time.
+    /// Track task function elapsed time.
     pub fn set_time(&mut self, time: u64, success: bool) {
         // Perform this conversion only once, then re-use throughout this function.
         let time_usize = time as usize;
@@ -199,6 +203,8 @@ pub struct GooseMetrics {
     /// A hash of the load test, useful to verify if different metrics are from
     /// the same load test.
     pub hash: u64,
+    /// The system timestamp of when the load test started.
+    pub started: Option<DateTime<Local>>,
     /// How many seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
@@ -217,8 +223,8 @@ pub struct GooseMetrics {
     /// defaults to false because we're deriving Default.
     pub display_metrics: bool,
 }
-
 impl GooseMetrics {
+    /// Create a new GooseMetrics object.
     pub fn initialize_task_metrics(
         &mut self,
         task_sets: &[GooseTaskSet],
@@ -557,7 +563,7 @@ impl GooseMetrics {
         Ok(())
     }
 
-    // Optionally prepares a table of task times.
+    /// Optionally prepares a table of task times.
     pub fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.tasks.is_empty() || !self.display_metrics {
@@ -672,7 +678,7 @@ impl GooseMetrics {
         Ok(())
     }
 
-    // Optionally prepares a table of response times.
+    /// Optionally prepares a table of response times.
     pub fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
@@ -769,7 +775,7 @@ impl GooseMetrics {
         Ok(())
     }
 
-    // Optionally prepares a table of slowest response times within several percentiles.
+    /// Optionally prepares a table of slowest response times within several percentiles.
     pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_percentile {
@@ -926,7 +932,7 @@ impl GooseMetrics {
         Ok(())
     }
 
-    // Optionally prepares a table of response status codes.
+    /// Optionally prepares a table of response status codes.
     pub fn fmt_status_codes(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_status_codes {
@@ -944,32 +950,10 @@ impl GooseMetrics {
         )?;
         let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
         for (request_key, request) in self.requests.iter().sorted() {
-            let mut codes: String = "".to_string();
-            for (status_code, count) in &request.status_code_counts {
-                if codes.is_empty() {
-                    codes = format!(
-                        "{} [{}]",
-                        count.to_formatted_string(&Locale::en),
-                        status_code
-                    );
-                } else {
-                    codes = format!(
-                        "{}, {} [{}]",
-                        codes.clone(),
-                        count.to_formatted_string(&Locale::en),
-                        status_code
-                    );
-                }
-                let new_count;
-                if let Some(existing_status_code_count) =
-                    aggregated_status_code_counts.get(&status_code)
-                {
-                    new_count = *existing_status_code_count + *count;
-                } else {
-                    new_count = *count;
-                }
-                aggregated_status_code_counts.insert(*status_code, new_count);
-            }
+            let codes = prepare_status_codes(
+                &request.status_code_counts,
+                &mut Some(&mut aggregated_status_code_counts),
+            );
 
             writeln!(
                 fmt,
@@ -982,23 +966,7 @@ impl GooseMetrics {
             fmt,
             " -------------------------+----------------------------------------------------"
         )?;
-        let mut codes: String = "".to_string();
-        for (status_code, count) in &aggregated_status_code_counts {
-            if codes.is_empty() {
-                codes = format!(
-                    "{} [{}]",
-                    count.to_formatted_string(&Locale::en),
-                    status_code
-                );
-            } else {
-                codes = format!(
-                    "{}, {} [{}]",
-                    codes.clone(),
-                    count.to_formatted_string(&Locale::en),
-                    status_code
-                );
-            }
-        }
+        let codes = prepare_status_codes(&aggregated_status_code_counts, &mut None);
         writeln!(fmt, " {:<24} | {:>51} ", "Aggregated", codes)?;
 
         Ok(())
@@ -1019,7 +987,7 @@ impl fmt::Display for GooseMetrics {
 }
 
 /// Helper to calculate requests and fails per seconds.
-fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
+pub fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
     let requests_per_second;
     let fails_per_second;
     if duration == 0 {
@@ -1040,8 +1008,8 @@ fn determine_precision(value: f32) -> usize {
     }
 }
 
-// Format large number in locale appropriate style.
-fn format_number(number: usize) -> String {
+/// Format large number in locale appropriate style.
+pub fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
 }
 
@@ -1083,7 +1051,7 @@ pub fn update_max_time(mut global_max: usize, max: usize) -> usize {
 }
 
 /// Get the response time that a certain number of percent of the requests finished within.
-fn calculate_response_time_percentile(
+pub fn calculate_response_time_percentile(
     response_times: &BTreeMap<usize, usize>,
     total_requests: usize,
     min: usize,
@@ -1111,6 +1079,41 @@ fn calculate_response_time_percentile(
         }
     }
     format_number(0)
+}
+
+/// Helper to count and aggregate seen status codes.
+pub fn prepare_status_codes(
+    status_code_counts: &HashMap<u16, usize>,
+    aggregate_counts: &mut Option<&mut HashMap<u16, usize>>,
+) -> String {
+    let mut codes: String = "".to_string();
+    for (status_code, count) in status_code_counts {
+        if codes.is_empty() {
+            codes = format!(
+                "{} [{}]",
+                count.to_formatted_string(&Locale::en),
+                status_code
+            );
+        } else {
+            codes = format!(
+                "{}, {} [{}]",
+                codes.clone(),
+                count.to_formatted_string(&Locale::en),
+                status_code
+            );
+        }
+        if let Some(aggregate_status_code_counts) = aggregate_counts.as_mut() {
+            let new_count;
+            if let Some(existing_status_code_count) = aggregate_status_code_counts.get(&status_code)
+            {
+                new_count = *existing_status_code_count + *count;
+            } else {
+                new_count = *count;
+            }
+            aggregate_status_code_counts.insert(*status_code, new_count);
+        }
+    }
+    codes
 }
 
 #[cfg(test)]

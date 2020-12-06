@@ -408,13 +408,17 @@ pub mod logger;
 mod manager;
 pub mod metrics;
 pub mod prelude;
+mod report;
 mod throttle;
 mod user;
 mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
+use chrono::prelude::*;
+use chrono::Duration;
 use gumdrop::Options;
+use itertools::Itertools;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
@@ -630,6 +634,8 @@ pub struct GooseDefaults {
     no_metrics: Option<bool>,
     /// An optional default for not tracking task metrics.
     no_task_metrics: Option<bool>,
+    /// An optional default for the html-formatted report file name.
+    report_file: Option<String>,
     /// An optional default for the requests log file name.
     requests_file: Option<String>,
     /// An optional default for the requests log file format.
@@ -689,6 +695,8 @@ pub enum GooseDefault {
     NoMetrics,
     /// An optional default for not tracking task metrics.
     NoTaskMetrics,
+    /// An optional default for the report file name.
+    ReportFile,
     /// An optional default for the requests log file name.
     RequestsFile,
     /// An optional default for the requests log file format.
@@ -749,6 +757,8 @@ pub struct GooseAttackRunState {
     parent_to_throttle_tx: Option<mpsc::Sender<bool>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
+    /// Optional unbuffered writer for html-formatted report file, if enabled.
+    report_file: Option<File>,
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
@@ -1939,6 +1949,28 @@ impl GooseAttack {
         Ok(())
     }
 
+    // If enabled, returns the path of the report_file, otherwise returns None.
+    fn get_report_file_path(&mut self) -> Result<Option<String>, GooseError> {
+        // If metrics are disabled, or running in Manager mode, there is no
+        // report file, exit immediately.
+        if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
+            return Ok(None);
+        }
+
+        // If --report-file is set, return it.
+        if !self.configuration.report_file.is_empty() {
+            return Ok(Some(self.configuration.report_file.to_string()));
+        }
+
+        // If GooseDefault::ReportFile is set, return it.
+        if let Some(default_report_file) = &self.defaults.report_file {
+            return Ok(Some(default_report_file.to_string()));
+        }
+
+        // Otherwise there is no report file.
+        Ok(None)
+    }
+
     // If enabled, returns the path of the requests_file, otherwise returns None.
     fn get_requests_file_path(&mut self) -> Result<Option<&str>, GooseError> {
         // If metrics are disabled, or running in Manager mode, there is no
@@ -2003,7 +2035,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If enabled, returns the path of the requests_file, otherwise returns None.
+    // If enabled, returns the path of the debug_file, otherwise returns None.
     fn get_debug_file_path(&self) -> Result<Option<&str>, GooseError> {
         // If running in Manager mode there is no debug file, exit immediately.
         if self.attack_mode == AttackMode::Manager {
@@ -2428,6 +2460,15 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
+    // Prepare an asynchronous file writer for report_file (if enabled).
+    async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
+        if let Some(report_file_path) = self.get_report_file_path()? {
+            Ok(Some(File::create(&report_file_path).await?))
+        } else {
+            Ok(None)
+        }
+    }
+
     // Prepare an asynchronous buffered file writer for requests_file (if enabled).
     async fn prepare_requests_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
         if let Some(requests_file_path) = self.get_requests_file_path()? {
@@ -2518,7 +2559,34 @@ impl GooseAttack {
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
+        // Grab now() once from the standard library, used by multiple timers in
+        // the run state.
         let std_now = std::time::Instant::now();
+
+        // If the report file is enabled, open it now to confirm we have access
+        let report_file = match self.prepare_report_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: self.get_report_file_path()?.unwrap(),
+                    detail: format!("Failed to create report file: {}", e),
+                })
+            }
+        };
+
+        // If the requests file is enabled, open it now to confirm we have access
+        let requests_file = match self.prepare_requests_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--requests-file".to_string(),
+                    value: self.get_requests_file_path()?.unwrap().to_string(),
+                    detail: format!("Failed to create request file: {}", e),
+                })
+            }
+        };
+
         let goose_attack_run_state = GooseAttackRunState {
             spawn_user_timer: std_now,
             spawn_user_in_ms: 0,
@@ -2530,7 +2598,8 @@ impl GooseAttack {
             all_threads_debug_logger_tx,
             throttle_threads_tx,
             parent_to_throttle_tx,
-            requests_file: self.prepare_requests_file().await.unwrap(),
+            report_file,
+            requests_file,
             metrics_header_displayed: false,
             users: Vec::new(),
             user_channels: Vec::new(),
@@ -2551,8 +2620,13 @@ impl GooseAttack {
         self.metrics
             .initialize_task_metrics(&self.task_sets, &self.configuration);
 
-        // Our load test is officially starting.
+        // Our load test is officially starting. Store an initial measurement
+        // of a monotonically nondecreasing clock so we can see how long has
+        // elapsed without worrying about the clock going backward.
         self.started = Some(time::Instant::now());
+
+        // Also store a formattable timestamp, for human readable reports.
+        self.metrics.started = Some(Local::now());
 
         Ok(goose_attack_run_state)
     }
@@ -2972,6 +3046,313 @@ impl GooseAttack {
         Ok(())
     }
 
+    async fn write_html_report(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        // Only write the report if enabled.
+        if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
+            // Prepare report summary variables.
+            let started = self.metrics.started.clone().unwrap();
+            let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
+            let end_time = (started + Duration::seconds(self.metrics.duration as i64))
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            let host = match self.get_configuration_host() {
+                Some(h) => h.to_string(),
+                None => "".to_string(),
+            };
+
+            // Prepare requests and responses variables.
+            let mut request_metrics = Vec::new();
+            let mut response_metrics = Vec::new();
+            let mut aggregate_total_count = 0;
+            let mut aggregate_fail_count = 0;
+            let mut aggregate_response_time_counter: usize = 0;
+            let mut aggregate_response_time_minimum: usize = 0;
+            let mut aggregate_response_time_maximum: usize = 0;
+            let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+            for (request_key, request) in self.metrics.requests.iter().sorted() {
+                let method = format!("{:?}", request.method);
+                // The request_key is "{method} {name}", so by stripping the "{method} "
+                // prefix we get the name.
+                // @TODO: consider storing the name as a field in GooseRequest.
+                let name = request_key
+                    .strip_prefix(&format!("{:?} ", request.method))
+                    .unwrap()
+                    .to_string();
+                let total_request_count = request.success_count + request.fail_count;
+                let (requests_per_second, failures_per_second) = metrics::per_second_calculations(
+                    self.metrics.duration,
+                    total_request_count,
+                    request.fail_count,
+                );
+                // Prepare per-request metrics.
+                request_metrics.push(report::RequestMetric {
+                    method: method.to_string(),
+                    name: name.to_string(),
+                    number_of_requests: total_request_count,
+                    number_of_failures: request.fail_count,
+                    response_time_average: format!(
+                        "{:.2}",
+                        request.total_response_time as f32 / request.response_time_counter as f32
+                    ),
+                    response_time_minimum: request.min_response_time,
+                    response_time_maximum: request.max_response_time,
+                    requests_per_second: format!("{:.2}", requests_per_second),
+                    failures_per_second: format!("{:.2}", failures_per_second),
+                });
+
+                // Prepare per-response metrics.
+                response_metrics.push(report::get_response_metric(
+                    &method,
+                    &name,
+                    &request.response_times,
+                    request.response_time_counter,
+                    request.min_response_time,
+                    request.max_response_time,
+                ));
+
+                // Collect aggregated request and response metrics.
+                aggregate_total_count += total_request_count;
+                aggregate_fail_count += request.fail_count;
+                aggregate_response_time_counter += request.total_response_time;
+                aggregate_response_time_minimum = metrics::update_min_time(
+                    aggregate_response_time_minimum,
+                    request.min_response_time,
+                );
+                aggregate_response_time_maximum = metrics::update_max_time(
+                    aggregate_response_time_maximum,
+                    request.max_response_time,
+                );
+                aggregate_response_times =
+                    metrics::merge_times(aggregate_response_times, request.response_times.clone());
+            }
+
+            // Prepare aggregate per-request metrics.
+            let (aggregate_requests_per_second, aggregate_failures_per_second) =
+                metrics::per_second_calculations(
+                    self.metrics.duration,
+                    aggregate_total_count,
+                    aggregate_fail_count,
+                );
+            request_metrics.push(report::RequestMetric {
+                method: "".to_string(),
+                name: "Aggregated".to_string(),
+                number_of_requests: aggregate_total_count,
+                number_of_failures: aggregate_fail_count,
+                response_time_average: format!(
+                    "{:.2}",
+                    aggregate_response_time_counter as f32 / aggregate_total_count as f32
+                ),
+                response_time_minimum: aggregate_response_time_minimum,
+                response_time_maximum: aggregate_response_time_maximum,
+                requests_per_second: format!("{:.2}", aggregate_requests_per_second),
+                failures_per_second: format!("{:.2}", aggregate_failures_per_second),
+            });
+
+            // Prepare aggregate per-response metrics.
+            response_metrics.push(report::get_response_metric(
+                "",
+                "Aggregated",
+                &aggregate_response_times,
+                aggregate_total_count,
+                aggregate_response_time_minimum,
+                aggregate_response_time_maximum,
+            ));
+
+            // Compile the request metrics template.
+            let mut requests_rows = Vec::new();
+            for metric in request_metrics {
+                requests_rows.push(report::request_metrics_row(metric));
+            }
+
+            // Compile the response metrics template.
+            let mut responses_rows = Vec::new();
+            for metric in response_metrics {
+                responses_rows.push(report::response_metrics_row(metric));
+            }
+
+            // Only build the tasks template if --no-task-metrics isn't enabled.
+            let tasks_template: String;
+            if !self.configuration.no_task_metrics {
+                let mut task_metrics = Vec::new();
+                let mut aggregate_total_count = 0;
+                let mut aggregate_fail_count = 0;
+                let mut aggregate_task_time_counter: usize = 0;
+                let mut aggregate_task_time_minimum: usize = 0;
+                let mut aggregate_task_time_maximum: usize = 0;
+                let mut aggregate_task_times: BTreeMap<usize, usize> = BTreeMap::new();
+                for (task_set_counter, task_set) in self.metrics.tasks.iter().enumerate() {
+                    for (task_counter, task) in task_set.iter().enumerate() {
+                        if task_counter == 0 {
+                            // Only the taskset_name is used for task sets.
+                            task_metrics.push(report::TaskMetric {
+                                is_task_set: true,
+                                task: "".to_string(),
+                                name: task.taskset_name.to_string(),
+                                number_of_requests: 0,
+                                number_of_failures: 0,
+                                response_time_average: "".to_string(),
+                                response_time_minimum: 0,
+                                response_time_maximum: 0,
+                                requests_per_second: "".to_string(),
+                                failures_per_second: "".to_string(),
+                            });
+                        }
+                        let total_run_count = task.success_count + task.fail_count;
+                        let (requests_per_second, failures_per_second) =
+                            metrics::per_second_calculations(
+                                self.metrics.duration,
+                                total_run_count,
+                                task.fail_count,
+                            );
+                        let average = match task.counter {
+                            0 => 0.00,
+                            _ => task.total_time as f32 / task.counter as f32,
+                        };
+                        task_metrics.push(report::TaskMetric {
+                            is_task_set: false,
+                            task: format!("{}.{}", task_set_counter, task_counter),
+                            name: task.task_name.to_string(),
+                            number_of_requests: total_run_count,
+                            number_of_failures: task.fail_count,
+                            response_time_average: format!("{:.2}", average),
+                            response_time_minimum: task.min_time,
+                            response_time_maximum: task.max_time,
+                            requests_per_second: format!("{:.2}", requests_per_second),
+                            failures_per_second: format!("{:.2}", failures_per_second),
+                        });
+
+                        aggregate_total_count += total_run_count;
+                        aggregate_fail_count += task.fail_count;
+                        aggregate_task_times =
+                            metrics::merge_times(aggregate_task_times, task.times.clone());
+                        aggregate_task_time_counter += &task.counter;
+                        aggregate_task_time_minimum =
+                            metrics::update_min_time(aggregate_task_time_minimum, task.min_time);
+                        aggregate_task_time_maximum =
+                            metrics::update_max_time(aggregate_task_time_maximum, task.max_time);
+                    }
+                }
+
+                let (aggregate_requests_per_second, aggregate_failures_per_second) =
+                    metrics::per_second_calculations(
+                        self.metrics.duration,
+                        aggregate_total_count,
+                        aggregate_fail_count,
+                    );
+                task_metrics.push(report::TaskMetric {
+                    is_task_set: false,
+                    task: "".to_string(),
+                    name: "Aggregated".to_string(),
+                    number_of_requests: aggregate_total_count,
+                    number_of_failures: aggregate_fail_count,
+                    response_time_average: format!(
+                        "{:.2}",
+                        aggregate_response_time_counter as f32 / aggregate_total_count as f32
+                    ),
+                    response_time_minimum: aggregate_task_time_minimum,
+                    response_time_maximum: aggregate_task_time_maximum,
+                    requests_per_second: format!("{:.2}", aggregate_requests_per_second),
+                    failures_per_second: format!("{:.2}", aggregate_failures_per_second),
+                });
+                let mut tasks_rows = Vec::new();
+                // Compile the task metrics template.
+                for metric in task_metrics {
+                    tasks_rows.push(report::task_metrics_row(metric));
+                }
+
+                tasks_template = report::task_metrics_template(&tasks_rows.join("\n"));
+            } else {
+                tasks_template = "".to_string();
+            }
+
+            // Only build the status_code template if --status-codes is enabled.
+            let status_code_template: String;
+            if self.configuration.status_codes {
+                let mut status_code_metrics = Vec::new();
+                let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
+                for (request_key, request) in self.metrics.requests.iter().sorted() {
+                    let method = format!("{:?}", request.method);
+                    // The request_key is "{method} {name}", so by stripping the "{method} "
+                    // prefix we get the name.
+                    // @TODO: consider storing the name as a field in GooseRequest.
+                    let name = request_key
+                        .strip_prefix(&format!("{:?} ", request.method))
+                        .unwrap()
+                        .to_string();
+
+                    // Build a list of status codes, and update the aggregate record.
+                    let codes = metrics::prepare_status_codes(
+                        &request.status_code_counts,
+                        &mut Some(&mut aggregated_status_code_counts),
+                    );
+
+                    // Add a row of data for the status code table.
+                    status_code_metrics.push(report::StatusCodeMetric {
+                        method,
+                        name,
+                        status_codes: codes,
+                    });
+                }
+
+                // Build a list of aggregate status codes.
+                let aggregated_codes =
+                    metrics::prepare_status_codes(&aggregated_status_code_counts, &mut None);
+
+                // Add a final row of aggregate data for the status code table.
+                status_code_metrics.push(report::StatusCodeMetric {
+                    method: "".to_string(),
+                    name: "Aggregated".to_string(),
+                    status_codes: aggregated_codes,
+                });
+
+                // Compile the status_code metrics rows.
+                let mut status_code_rows = Vec::new();
+                for metric in status_code_metrics {
+                    status_code_rows.push(report::status_code_metrics_row(metric));
+                }
+
+                // Compile the status_code metrics template.
+                status_code_template =
+                    report::status_code_metrics_template(&status_code_rows.join("\n"));
+            } else {
+                // If --status-codes is not enabled, return an empty template.
+                status_code_template = "".to_string();
+            }
+
+            // Compile the report template.
+            let report = report::build_report(
+                &start_time,
+                &end_time,
+                &host,
+                &requests_rows.join("\n"),
+                &responses_rows.join("\n"),
+                &tasks_template,
+                &status_code_template,
+            );
+
+            // Write the report to file.
+            if let Err(e) = report_file.write(report.as_ref()).await {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: self.get_report_file_path()?.unwrap(),
+                    detail: format!("Failed to create report file: {}", e),
+                });
+            };
+            // Be sure the file flushes to disk.
+            report_file.flush();
+
+            info!(
+                "wrote html report file to: {}",
+                self.get_report_file_path()?.unwrap()
+            );
+        }
+
+        Ok(())
+    }
+
     /// Called internally in local-mode and gaggle-mode.
     async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
         trace!("start_attack: socket({:?})", socket);
@@ -2999,6 +3380,7 @@ impl GooseAttack {
                 AttackPhase::Stopping => {
                     self.stop_attack(&mut goose_attack_run_state).await?;
                     self.sync_metrics(&mut goose_attack_run_state).await?;
+                    self.write_html_report(&mut goose_attack_run_state).await?;
                     break;
                 }
                 _ => panic!("GooseAttack entered an impossible phase"),
@@ -3168,6 +3550,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
             GooseDefault::Host => self.defaults.host = Some(value.to_string()),
             GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
+            GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestsFile => self.defaults.requests_file = Some(value.to_string()),
             GooseDefault::RequestsFormat => self.defaults.metrics_format = Some(value.to_string()),
             GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
@@ -3227,6 +3610,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::Host
             | GooseDefault::HatchRate
             | GooseDefault::LogFile
+            | GooseDefault::ReportFile
             | GooseDefault::RequestsFile
             | GooseDefault::RequestsFormat
             | GooseDefault::DebugFile
@@ -3279,6 +3663,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
             | GooseDefault::LogFile
+            | GooseDefault::ReportFile
             | GooseDefault::RequestsFile
             | GooseDefault::RequestsFormat
             | GooseDefault::RunningMetrics
@@ -3369,6 +3754,9 @@ pub struct GooseConfiguration {
     /// Doesn't track task metrics
     #[options(no_short)]
     pub no_task_metrics: bool,
+    /// Create an html-formatted report
+    #[options(meta = "NAME")]
+    pub report_file: String,
     /// Sets requests log file name
     #[options(short = "m", meta = "NAME")]
     pub requests_file: String,
@@ -3675,6 +4063,7 @@ mod test {
         let log_level: usize = 1;
         let log_file = "custom-goose.log".to_string();
         let verbose: usize = 0;
+        let report_file = "custom-goose-report.html".to_string();
         let requests_file = "custom-goose-metrics.log".to_string();
         let metrics_format = "raw".to_string();
         let debug_file = "custom-goose-debug.log".to_string();
@@ -3709,6 +4098,8 @@ mod test {
             .set_default(GooseDefault::NoMetrics, true)
             .unwrap()
             .set_default(GooseDefault::NoTaskMetrics, true)
+            .unwrap()
+            .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
             .unwrap()
@@ -3755,6 +4146,7 @@ mod test {
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
+        assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.metrics_format == Some(metrics_format));
         assert!(goose_attack.defaults.debug_file == Some(debug_file));

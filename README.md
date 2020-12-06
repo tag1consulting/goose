@@ -208,6 +208,7 @@ Metrics:
   --no-reset-metrics         Doesn't reset metrics after all users have started
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
+  -R, --report-file NAME     Create an html-formatted report
   -m, --requests-file NAME   Sets requests log file name
   --requests-format FORMAT   Sets requests log format (csv, json, raw)
   -d, --debug-file NAME      Sets debug log file name
@@ -385,6 +386,7 @@ All run-time options can be configured with custom defaults. For example, you ma
 The following defaults can be configured with a `&str`:
  - host: `GooseDefault::Host`
  - log file name: `GooseDefault::LogFile`
+ - html-formatted report file name: `GooseDefault::ReportFile`
  - requests log file name: `GooseDefault::RequestsFile`
  - requests log file format: `GooseDefault::RequestsFormat`
  - debug log file name: `GooseDefault::DebugFile`
