@@ -1,7 +1,7 @@
 use httpmock::Method::GET;
 use httpmock::{Mock, MockRef, MockServer};
 use serial_test::serial;
-use tokio::time::{delay_for, Duration};
+use tokio::time::{sleep, Duration};
 
 mod common;
 
@@ -33,7 +33,7 @@ pub async fn one_with_delay(user: &GooseUser) -> GooseTaskResult {
     // "Run out the clock" on the load test when this function runs. Sleep for
     // the total duration the test is to run plus 1 second to be sure no
     // additional tasks will run after this one.
-    delay_for(Duration::from_secs(RUN_TIME as u64 + 1)).await;
+    sleep(Duration::from_secs(RUN_TIME as u64 + 1)).await;
 
     Ok(())
 }
@@ -45,7 +45,7 @@ pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
     // "Run out the clock" on the load test when this function runs. Sleep for
     // the total duration the test is to run plus 1 second to be sure no
     // additional tasks will run after this one.
-    delay_for(Duration::from_secs(RUN_TIME as u64 + 1)).await;
+    sleep(Duration::from_secs(RUN_TIME as u64 + 1)).await;
 
     Ok(())
 }

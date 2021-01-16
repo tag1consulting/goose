@@ -1,3 +1,4 @@
+use futures::FutureExt;
 use tokio::sync::mpsc::Receiver;
 use tokio::time;
 
@@ -52,7 +53,7 @@ pub async fn throttle_main(
         throttle_drift = util::sleep_minus_drift(sleep_duration, throttle_drift).await;
 
         // A message will be received when the load test is over.
-        if parent_receiver.try_recv().is_ok() {
+        if parent_receiver.recv().now_or_never().is_some() {
             // Close throttle channel to prevent any further requests.
             info!("load test complete, closing throttle channel");
             throttle_receiver.close();
@@ -62,7 +63,7 @@ pub async fn throttle_main(
         // Remove tokens from the channel, freeing spots for request to be made.
         for token in 0..tokens_per_duration {
             // If the channel is empty, we will get an error, so stop trying to remove tokens.
-            if throttle_receiver.try_recv().is_err() {
+            if throttle_receiver.recv().now_or_never().is_none() {
                 debug!("empty channel, exit after removing {} tokens", token);
                 break;
             }

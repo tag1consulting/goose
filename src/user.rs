@@ -1,3 +1,4 @@
+use futures::FutureExt;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
@@ -112,9 +113,10 @@ pub async fn user_main(
         // Check if the parent thread has sent us any messages.
         let mut in_sleep_loop = true;
         while in_sleep_loop {
-            let mut message = thread_receiver.try_recv();
-            while message.is_ok() {
-                match message.unwrap() {
+            let mut message = thread_receiver.recv().now_or_never();
+            while message.is_some() {
+                // @TODO: Why a double unwrap()? @FIXME
+                match message.unwrap().unwrap() {
                     // Time to exit.
                     GooseUserCommand::EXIT => {
                         // No need to reset per-thread counters, we're exiting and memory will be freed
@@ -124,7 +126,7 @@ pub async fn user_main(
                         debug!("ignoring unexpected GooseUserCommand: {:?}", command);
                     }
                 }
-                message = thread_receiver.try_recv();
+                message = thread_receiver.recv().now_or_never();
             }
             if thread_continue && thread_user.max_wait > 0 {
                 let sleep_duration = time::Duration::from_secs(1);

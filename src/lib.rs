@@ -417,6 +417,7 @@ mod worker;
 
 use chrono::prelude::*;
 use chrono::Duration;
+use futures::FutureExt;
 use gumdrop::Options;
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -436,8 +437,7 @@ use std::sync::{
 };
 use std::{fmt, io, time};
 use tokio::fs::File;
-use tokio::io::BufWriter;
-use tokio::prelude::*;
+use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use url::Url;
@@ -2783,7 +2783,7 @@ impl GooseAttack {
         // If enough users have been spawned, move onto the next attack phase.
         if self.metrics.users >= self.weighted_users.len() {
             // Pause a tenth of a second waiting for the final user to fully start up.
-            tokio::time::delay_for(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
             if self.attack_mode == AttackMode::Worker {
                 info!(
@@ -2848,7 +2848,7 @@ impl GooseAttack {
             }
 
             // If throttle is enabled, tell throttle thread the load test is over.
-            if let Some(mut tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
+            if let Some(tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
                 let _ = tx.send(false).await;
             }
 
@@ -3397,11 +3397,12 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<bool, GooseError> {
         let mut received_message = false;
-        let mut message = goose_attack_run_state.metrics_rx.try_recv();
+        let mut message = goose_attack_run_state.metrics_rx.recv().now_or_never();
 
-        while message.is_ok() {
+        while message.is_some() {
             received_message = true;
-            match message.unwrap() {
+            // @TODO: why double unwrap? @FIXME
+            match message.unwrap().unwrap() {
                 GooseMetric::Request(raw_request) => {
                     // Options should appear above, search for formatted_log.
                     let formatted_log = match self.configuration.metrics_format.as_str() {
@@ -3463,7 +3464,7 @@ impl GooseAttack {
                         .set_time(raw_task.run_time, raw_task.success);
                 }
             }
-            message = goose_attack_run_state.metrics_rx.try_recv();
+            message = goose_attack_run_state.metrics_rx.recv().now_or_never();
         }
 
         Ok(received_message)
