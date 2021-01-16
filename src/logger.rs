@@ -85,9 +85,9 @@
 use futures::FutureExt;
 use serde_json::json;
 use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::io::BufWriter;
 use tokio::sync::mpsc;
-use tokio::io::AsyncWriteExt;
 
 use crate::goose::GooseDebug;
 use crate::GooseConfiguration;
