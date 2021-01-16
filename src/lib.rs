@@ -424,6 +424,7 @@
 #[macro_use]
 extern crate log;
 
+pub mod control;
 pub mod goose;
 pub mod logger;
 #[cfg(feature = "gaggle")]
@@ -2736,6 +2737,8 @@ impl GooseAttack {
 
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
+
+        let control_thread = tokio::spawn(control::control_main(self.configuration.clone()));
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
