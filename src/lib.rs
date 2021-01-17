@@ -2399,7 +2399,7 @@ impl GooseAttack {
             "".to_string()
         };
         // If the logger isn't configured, return immediately.
-        if self.configuration.debug_file == "" {
+        if self.configuration.debug_file.is_empty() {
             return Ok((None, None));
         }
 
@@ -2760,10 +2760,7 @@ impl GooseAttack {
         } else {
             // If displaying running metrics, be sure we wake up often enough to
             // display them at the configured rate.
-            let running_metrics = match self.configuration.running_metrics {
-                Some(r) => r,
-                None => 0,
-            };
+            let running_metrics = self.configuration.running_metrics.unwrap_or(0);
 
             // Otherwise, sleep until the next time something needs to happen.
             let sleep_duration = if running_metrics > 0
@@ -3343,7 +3340,7 @@ impl GooseAttack {
                 });
             };
             // Be sure the file flushes to disk.
-            report_file.flush();
+            report_file.flush().await?;
 
             info!(
                 "wrote html report file to: {}",
