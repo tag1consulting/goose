@@ -344,7 +344,7 @@ pub enum GooseTaskError {
     /// The `GooseRawRequest` that was not recorded can be extracted from the error
     /// chain, available inside `.source`.
     MetricsFailed {
-        source: mpsc::error::SendError<GooseMetric>,
+        source: flume::SendError<GooseMetric>,
     },
     /// Attempt to send debug detail to logger failed.
     /// There was an error sending debug information to the logger thread. The
@@ -435,8 +435,8 @@ impl From<mpsc::error::SendError<bool>> for GooseTaskError {
 }
 
 /// Attempt to send metrics to the parent thread failed.
-impl From<mpsc::error::SendError<GooseMetric>> for GooseTaskError {
-    fn from(source: mpsc::error::SendError<GooseMetric>) -> GooseTaskError {
+impl From<flume::SendError<GooseMetric>> for GooseTaskError {
+    fn from(source: flume::SendError<GooseMetric>) -> GooseTaskError {
         GooseTaskError::MetricsFailed { source }
     }
 }
@@ -914,7 +914,7 @@ pub struct GooseUser {
     /// Normal tasks are optionally throttled, test_start and test_stop tasks are not.
     pub is_throttled: bool,
     /// Channel to parent.
-    pub channel_to_parent: Option<mpsc::UnboundedSender<GooseMetric>>,
+    pub channel_to_parent: Option<flume::Sender<GooseMetric>>,
     /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
     pub weighted_users_index: usize,
     /// A weighted list of all tasks that run when the user first starts.

@@ -417,7 +417,6 @@ mod worker;
 
 use chrono::prelude::*;
 use chrono::Duration;
-use futures::FutureExt;
 use gumdrop::Options;
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -745,9 +744,9 @@ pub struct GooseAttackRunState {
     /// happen regularly.
     drift_timer: tokio::time::Instant,
     /// Unbounded sender used by all GooseUser threads to send metrics to parent.
-    all_threads_metrics_tx: mpsc::UnboundedSender<GooseMetric>,
+    all_threads_metrics_tx: flume::Sender<GooseMetric>,
     /// Unbounded receiver used by Goose parent to receive metrics from GooseUsers.
-    metrics_rx: mpsc::UnboundedReceiver<GooseMetric>,
+    metrics_rx: flume::Receiver<GooseMetric>,
     /// Optional unbounded receiver for logger thread, if enabled.
     debug_logger: DebugLoggerHandle,
     /// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
@@ -2550,9 +2549,9 @@ impl GooseAttack {
         // Create a single channel used to send metrics from GooseUser threads
         // to parent thread.
         let (all_threads_metrics_tx, metrics_rx): (
-            mpsc::UnboundedSender<GooseMetric>,
-            mpsc::UnboundedReceiver<GooseMetric>,
-        ) = mpsc::unbounded_channel();
+            flume::Sender<GooseMetric>,
+            flume::Receiver<GooseMetric>,
+        ) = flume::unbounded();
 
         // If enabled, spawn a logger thread.
         let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger()?;
@@ -3394,12 +3393,11 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<bool, GooseError> {
         let mut received_message = false;
-        let mut message = goose_attack_run_state.metrics_rx.recv().now_or_never();
+        let mut message = goose_attack_run_state.metrics_rx.try_recv();
 
-        while message.is_some() {
+        while message.is_ok() {
             received_message = true;
-            // Double unwrap because now_or_never() adds an extra some().
-            match message.unwrap().unwrap() {
+            match message.unwrap() {
                 GooseMetric::Request(raw_request) => {
                     // Options should appear above, search for formatted_log.
                     let formatted_log = match self.configuration.metrics_format.as_str() {
@@ -3461,7 +3459,7 @@ impl GooseAttack {
                         .set_time(raw_task.run_time, raw_task.success);
                 }
             }
-            message = goose_attack_run_state.metrics_rx.recv().now_or_never();
+            message = goose_attack_run_state.metrics_rx.try_recv();
         }
 
         Ok(received_message)
