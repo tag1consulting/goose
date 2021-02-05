@@ -82,7 +82,6 @@
 //! will still record any custom messages, details about the request (when available), and all
 //! server response headers (when available).
 
-use futures::FutureExt;
 use serde_json::json;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -126,7 +125,7 @@ pub async fn logger_main(
     }
 
     // Loop waiting for and writing error logs from GooseUser threads.
-    while let Some(message) = log_receiver.recv().now_or_never() {
+    while let Some(message) = log_receiver.recv().await {
         if let Some(goose_debug) = message {
             // All Options are defined above, search for formatted_log.
             if let Some(file) = debug_file.as_mut() {

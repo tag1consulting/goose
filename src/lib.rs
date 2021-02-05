@@ -3398,7 +3398,7 @@ impl GooseAttack {
 
         while message.is_some() {
             received_message = true;
-            // @TODO: why double unwrap? @FIXME
+            // Double unwrap because now_or_never() adds an extra some().
             match message.unwrap().unwrap() {
                 GooseMetric::Request(raw_request) => {
                     // Options should appear above, search for formatted_log.

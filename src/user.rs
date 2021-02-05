@@ -115,7 +115,7 @@ pub async fn user_main(
         while in_sleep_loop {
             let mut message = thread_receiver.recv().now_or_never();
             while message.is_some() {
-                // @TODO: Why a double unwrap()? @FIXME
+                // Double unwrap because now_or_never() adds an extra some().
                 match message.unwrap().unwrap() {
                     // Time to exit.
                     GooseUserCommand::EXIT => {
