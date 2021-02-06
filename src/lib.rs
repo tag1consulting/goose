@@ -438,7 +438,6 @@ use std::{fmt, io, time};
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
 use url::Url;
 
 use crate::goose::{
@@ -460,7 +459,7 @@ lazy_static! {
 type WeightedGooseTasks = Vec<Vec<(usize, String)>>;
 
 type DebugLoggerHandle = Option<tokio::task::JoinHandle<()>>;
-type DebugLoggerChannel = Option<mpsc::UnboundedSender<Option<GooseDebug>>>;
+type DebugLoggerChannel = Option<flume::Sender<Option<GooseDebug>>>;
 
 /// Worker ID to aid in tracing logs when running a Gaggle.
 pub fn get_worker_id() -> usize {
@@ -752,9 +751,9 @@ pub struct GooseAttackRunState {
     /// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
     all_threads_debug_logger_tx: DebugLoggerChannel,
     /// Optional receiver for all GooseUsers from throttle thread, if enabled.
-    throttle_threads_tx: Option<mpsc::Sender<bool>>,
+    throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
-    parent_to_throttle_tx: Option<mpsc::Sender<bool>>,
+    parent_to_throttle_tx: Option<flume::Sender<bool>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
@@ -765,7 +764,7 @@ pub struct GooseAttackRunState {
     /// Collection of all GooseUser threads so they can be stopped later.
     users: Vec<tokio::task::JoinHandle<()>>,
     /// All unbounded senders to allow communication with GooseUser threads.
-    user_channels: Vec<mpsc::UnboundedSender<GooseUserCommand>>,
+    user_channels: Vec<flume::Sender<GooseUserCommand>>,
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
     /// Boolean flag indicating if running metrics should be displayed.
@@ -2404,9 +2403,9 @@ impl GooseAttack {
 
         // Create an unbounded channel allowing GooseUser threads to log errors.
         let (all_threads_debug_logger, logger_receiver): (
-            mpsc::UnboundedSender<Option<GooseDebug>>,
-            mpsc::UnboundedReceiver<Option<GooseDebug>>,
-        ) = mpsc::unbounded_channel();
+            flume::Sender<Option<GooseDebug>>,
+            flume::Receiver<Option<GooseDebug>>,
+        ) = flume::unbounded();
         // Launch a new thread for logging.
         let logger_thread = tokio::spawn(logger::logger_main(
             self.configuration.clone(),
@@ -2420,9 +2419,9 @@ impl GooseAttack {
         &self,
     ) -> (
         // A channel used by GooseClients to throttle requests.
-        Option<mpsc::Sender<bool>>,
+        Option<flume::Sender<bool>>,
         // A channel used by parent to tell throttle the load test is complete.
-        Option<mpsc::Sender<bool>>,
+        Option<flume::Sender<bool>>,
     ) {
         // If the throttle isn't enabled, return immediately.
         if self.configuration.throttle_requests == 0 {
@@ -2431,13 +2430,13 @@ impl GooseAttack {
 
         // Create a bounded channel allowing single-sender multi-receiver to throttle
         // GooseUser threads.
-        let (all_threads_throttle, throttle_receiver): (mpsc::Sender<bool>, mpsc::Receiver<bool>) =
-            mpsc::channel(self.configuration.throttle_requests);
+        let (all_threads_throttle, throttle_receiver): (flume::Sender<bool>, flume::Receiver<bool>) =
+            flume::bounded(self.configuration.throttle_requests);
 
         // Create a channel allowing the parent to inform the throttle thread when the
         // load test is finished. Even though we only send one message, we can't use a
         // oneshot channel as we don't want to block waiting for a message.
-        let (parent_to_throttle_tx, throttle_rx) = mpsc::channel(1);
+        let (parent_to_throttle_tx, throttle_rx) = flume::bounded(1);
 
         // Launch a new thread for throttling, no need to rejoin it.
         let _ = Some(tokio::spawn(throttle::throttle_main(
@@ -2454,7 +2453,7 @@ impl GooseAttack {
         // throttle thread "leaks out" a token thereby creating space. More information
         // can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
         for _ in 1..self.configuration.throttle_requests {
-            let _ = sender.send(true).await;
+            let _ = sender.send_async(true).await;
         }
 
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
@@ -2691,9 +2690,9 @@ impl GooseAttack {
 
             // Create a per-thread channel allowing parent thread to control child threads.
             let (parent_sender, thread_receiver): (
-                mpsc::UnboundedSender<GooseUserCommand>,
-                mpsc::UnboundedReceiver<GooseUserCommand>,
-            ) = mpsc::unbounded_channel();
+                flume::Sender<GooseUserCommand>,
+                flume::Receiver<GooseUserCommand>,
+            ) = flume::unbounded();
             goose_attack_run_state.user_channels.push(parent_sender);
 
             if self.get_debug_file_path()?.is_some() {
@@ -2845,7 +2844,7 @@ impl GooseAttack {
 
             // If throttle is enabled, tell throttle thread the load test is over.
             if let Some(tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
-                let _ = tx.send(false).await;
+                let _ = tx.send(false);
             }
 
             // Take the users vector out of the GooseAttackRunState object so it can be

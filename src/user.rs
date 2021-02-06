@@ -1,10 +1,8 @@
-use futures::FutureExt;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
 use std::sync::atomic::Ordering;
 use std::time;
-use tokio::sync::mpsc;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
@@ -14,7 +12,7 @@ pub async fn user_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     mut thread_user: GooseUser,
-    mut thread_receiver: mpsc::UnboundedReceiver<GooseUserCommand>,
+    thread_receiver: flume::Receiver<GooseUserCommand>,
     worker: bool,
 ) {
     if worker {
@@ -113,10 +111,9 @@ pub async fn user_main(
         // Check if the parent thread has sent us any messages.
         let mut in_sleep_loop = true;
         while in_sleep_loop {
-            let mut message = thread_receiver.recv().now_or_never();
-            while message.is_some() {
-                // Double unwrap because now_or_never() adds an extra some().
-                match message.unwrap().unwrap() {
+            let mut message = thread_receiver.try_recv();
+            while message.is_ok() {
+                match message.unwrap() {
                     // Time to exit.
                     GooseUserCommand::EXIT => {
                         // No need to reset per-thread counters, we're exiting and memory will be freed
@@ -126,7 +123,7 @@ pub async fn user_main(
                         debug!("ignoring unexpected GooseUserCommand: {:?}", command);
                     }
                 }
-                message = thread_receiver.recv().now_or_never();
+                message = thread_receiver.try_recv();
             }
             if thread_continue && thread_user.max_wait > 0 {
                 let sleep_duration = time::Duration::from_secs(1);

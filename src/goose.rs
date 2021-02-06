@@ -293,7 +293,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{self, AtomicUsize};
 use std::sync::Arc;
 use std::{future::Future, pin::Pin, time::Instant};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
 use crate::metrics::GooseMetric;
@@ -334,11 +334,10 @@ pub enum GooseTaskError {
     /// `.raw_request`.
     RequestFailed { raw_request: GooseRawRequest },
     /// The request was canceled (this happens when the throttle is enabled and
-    /// the load test finished). The mpsc SendError can be found in `.source`.
-    /// A `GooseRawRequest` has not yet been constructed, so is not available in
-    /// this error.
+    /// the load test finished). A `GooseRawRequest` has not yet been constructed,
+    // so is not available in this error.
     RequestCanceled {
-        source: mpsc::error::SendError<bool>,
+        source: flume::SendError<bool>,
     },
     /// There was an error sending the metrics for a request to the parent thread.
     /// The `GooseRawRequest` that was not recorded can be extracted from the error
@@ -351,7 +350,7 @@ pub enum GooseTaskError {
     /// `GooseDebug` that was not logged can be extracted from the error chain,
     /// available inside `.source`.
     LoggerFailed {
-        source: mpsc::error::SendError<Option<GooseDebug>>,
+        source: flume::SendError<Option<GooseDebug>>,
     },
     /// Attempted an unrecognized HTTP request method. The unrecognized method
     /// is available in `.method`.
@@ -426,10 +425,10 @@ impl From<url::ParseError> for GooseTaskError {
 }
 
 /// When the throttle is enabled and the load test ends, the throttle channel is
-/// shut down. This causes mpsc SendError, which gets automatically converted to
-/// `RequestCanceled`.
-impl From<mpsc::error::SendError<bool>> for GooseTaskError {
-    fn from(source: mpsc::error::SendError<bool>) -> GooseTaskError {
+/// shut down. This causes a SendError, which gets automatically converted to
+// `RequestCanceled`.
+impl From<flume::SendError<bool>> for GooseTaskError {
+    fn from(source: flume::SendError<bool>) -> GooseTaskError {
         GooseTaskError::RequestCanceled { source }
     }
 }
@@ -442,8 +441,8 @@ impl From<flume::SendError<GooseMetric>> for GooseTaskError {
 }
 
 /// Attempt to send logs to the logger thread failed.
-impl From<mpsc::error::SendError<Option<GooseDebug>>> for GooseTaskError {
-    fn from(source: mpsc::error::SendError<Option<GooseDebug>>) -> GooseTaskError {
+impl From<flume::SendError<Option<GooseDebug>>> for GooseTaskError {
+    fn from(source: flume::SendError<Option<GooseDebug>>) -> GooseTaskError {
         GooseTaskError::LoggerFailed { source }
     }
 }
@@ -908,9 +907,9 @@ pub struct GooseUser {
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
     /// Channel to logger.
-    pub debug_logger: Option<mpsc::UnboundedSender<Option<GooseDebug>>>,
+    pub debug_logger: Option<flume::Sender<Option<GooseDebug>>>,
     /// Channel to throttle.
-    pub throttle: Option<mpsc::Sender<bool>>,
+    pub throttle: Option<flume::Sender<bool>>,
     /// Normal tasks are optionally throttled, test_start and test_stop tasks are not.
     pub is_throttled: bool,
     /// Channel to parent.
@@ -1424,9 +1423,9 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `user.goose_send()` returns a `Result` containing a `GooseResponse` on success,
-    /// and a `tokio::sync::mpsc::error::SendError<bool>` on failure. Failure only happens when
-    /// `--throttle-requests` is enabled and the load test completes. The `GooseResponse` object
-    // contains a copy of the request made
+    /// and a `flume::SendError<bool>` on failure. Failure only happens when `--throttle-requests`
+    /// is enabled and the load test completes. The `GooseResponse` object contains a copy of the
+    /// request made
     /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the
     /// Reqwest response ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
@@ -1457,7 +1456,7 @@ impl GooseUser {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
             debug!("GooseUser: waiting on throttle");
             // Will result in GooseTaskError::RequestCanceled if this fails.
-            self.throttle.clone().unwrap().send(true).await?;
+            self.throttle.clone().unwrap().send_async(true).await?;
         };
 
         let started = Instant::now();
