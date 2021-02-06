@@ -2430,8 +2430,10 @@ impl GooseAttack {
 
         // Create a bounded channel allowing single-sender multi-receiver to throttle
         // GooseUser threads.
-        let (all_threads_throttle, throttle_receiver): (flume::Sender<bool>, flume::Receiver<bool>) =
-            flume::bounded(self.configuration.throttle_requests);
+        let (all_threads_throttle, throttle_receiver): (
+            flume::Sender<bool>,
+            flume::Receiver<bool>,
+        ) = flume::bounded(self.configuration.throttle_requests);
 
         // Create a channel allowing the parent to inform the throttle thread when the
         // load test is finished. Even though we only send one message, we can't use a

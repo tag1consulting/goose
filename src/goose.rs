@@ -336,9 +336,7 @@ pub enum GooseTaskError {
     /// The request was canceled (this happens when the throttle is enabled and
     /// the load test finished). A `GooseRawRequest` has not yet been constructed,
     // so is not available in this error.
-    RequestCanceled {
-        source: flume::SendError<bool>,
-    },
+    RequestCanceled { source: flume::SendError<bool> },
     /// There was an error sending the metrics for a request to the parent thread.
     /// The `GooseRawRequest` that was not recorded can be extracted from the error
     /// chain, available inside `.source`.
