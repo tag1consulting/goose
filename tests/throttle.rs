@@ -285,7 +285,12 @@ fn test_throttle_gaggle() {
 
     // Confirm that the load test was actually throttled.
     // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
-    let test1_lines = validate_test(&mock_endpoints, &requests_files, THROTTLE_REQUESTS * EXPECT_WORKERS, None);
+    let test1_lines = validate_test(
+        &mock_endpoints,
+        &requests_files,
+        THROTTLE_REQUESTS * EXPECT_WORKERS,
+        None,
+    );
 
     // Increase the throttle and run a second load test, so we can compare the difference
     // and confirm the throttle is actually working.
