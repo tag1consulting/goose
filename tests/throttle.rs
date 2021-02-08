@@ -284,10 +284,10 @@ fn test_throttle_gaggle() {
     common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test was actually throttled.
-    // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
     let test1_lines = validate_test(
         &mock_endpoints,
         &requests_files,
+        // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
         THROTTLE_REQUESTS * EXPECT_WORKERS,
         None,
     );
@@ -325,10 +325,10 @@ fn test_throttle_gaggle() {
     common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     // Confirm that the load test was actually throttled, at an increased rate.
-    // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
     let _ = validate_test(
         &mock_endpoints,
         &requests_files,
+        // Throttle is configured per-worker, so multiply by EXPECT_WORKERS.
         increased_throttle * EXPECT_WORKERS,
         Some(test1_lines),
     );
