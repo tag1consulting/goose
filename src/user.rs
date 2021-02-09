@@ -3,7 +3,6 @@ use rand::thread_rng;
 use rand::Rng;
 use std::sync::atomic::Ordering;
 use std::time;
-use tokio::sync::mpsc;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
@@ -13,7 +12,7 @@ pub async fn user_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     mut thread_user: GooseUser,
-    mut thread_receiver: mpsc::UnboundedReceiver<GooseUserCommand>,
+    thread_receiver: flume::Receiver<GooseUserCommand>,
     worker: bool,
 ) {
     if worker {
@@ -132,7 +131,7 @@ pub async fn user_main(
                     "user {} from {} sleeping {:?} second...",
                     thread_number, thread_task_set.name, sleep_duration
                 );
-                tokio::time::delay_for(sleep_duration).await;
+                tokio::time::sleep(sleep_duration).await;
                 slept += 1;
                 if slept > wait_time {
                     in_sleep_loop = false;

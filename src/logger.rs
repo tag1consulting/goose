@@ -84,9 +84,8 @@
 
 use serde_json::json;
 use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::io::BufWriter;
-use tokio::prelude::*;
-use tokio::sync::mpsc;
 
 use crate::goose::GooseDebug;
 use crate::GooseConfiguration;
@@ -95,7 +94,7 @@ use crate::GooseConfiguration;
 /// GooseUser threads. This function is not intended to be invoked manually.
 pub async fn logger_main(
     configuration: GooseConfiguration,
-    mut log_receiver: mpsc::UnboundedReceiver<Option<GooseDebug>>,
+    log_receiver: flume::Receiver<Option<GooseDebug>>,
 ) {
     // Determine if a debug file has been configured.
     let mut debug_file_path: Option<String> = None;
@@ -125,7 +124,7 @@ pub async fn logger_main(
     }
 
     // Loop waiting for and writing error logs from GooseUser threads.
-    while let Some(message) = log_receiver.recv().await {
+    while let Ok(message) = log_receiver.recv_async().await {
         if let Some(goose_debug) = message {
             // All Options are defined above, search for formatted_log.
             if let Some(file) = debug_file.as_mut() {

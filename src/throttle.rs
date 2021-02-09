@@ -1,4 +1,3 @@
-use tokio::sync::mpsc::Receiver;
 use tokio::time;
 
 use crate::util;
@@ -12,8 +11,8 @@ use crate::util;
 /// can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
 pub async fn throttle_main(
     throttle_requests: usize,
-    mut throttle_receiver: Receiver<bool>,
-    mut parent_receiver: Receiver<bool>,
+    throttle_receiver: flume::Receiver<bool>,
+    parent_receiver: flume::Receiver<bool>,
 ) {
     // Use microseconds to allow configurations up to 1,000,000 requests per second.
     let mut sleep_duration = time::Duration::from_micros(1_000_000 / throttle_requests as u64);
@@ -55,7 +54,7 @@ pub async fn throttle_main(
         if parent_receiver.try_recv().is_ok() {
             // Close throttle channel to prevent any further requests.
             info!("load test complete, closing throttle channel");
-            throttle_receiver.close();
+            drop(throttle_receiver);
             break;
         }
 
