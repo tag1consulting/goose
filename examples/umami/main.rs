@@ -80,7 +80,7 @@ fn main() -> Result<(), GooseError> {
                         .set_weight(2)?,
                 ),
         )
-        .set_default(GooseDefault::Host, "https://drupal-9.0.7.ddev.site/")?
+        .set_default(GooseDefault::Host, "https://drupal-9.ddev.site/")?
         .execute()?
         .print();
 

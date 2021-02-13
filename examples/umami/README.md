@@ -6,7 +6,7 @@ https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile
 The load test was developed using a locally hosted Drupal 9 install hosted in a DDEV container:
 https://www.ddev.com/
 
-By default it will try and load pages from https://drupal-9.0.7.ddev.site/.
+By default it will try and load pages from https://drupal-9.ddev.site/. Use the `--host` flag to specify a different domain to load test.
 
 ## Load Test Implementation
 
@@ -48,5 +48,5 @@ Each admin load test user logs in one time in English, and then runs the followi
  The load test needs to know what username and password to use to log in. By default it will attempt to log in with the username `admin` and the password `P@ssw0rd1234`. However, you can use the ADMIN_USERNAME and/or ADMIN_PASSWORD environment variables to log in with different values. In the following example, the load test will attempt to log in with the username `foo` and the password `bar`:
 
  ```
- ADMIN_USERNAME=foo ADMIN_PASSWORD=bar cargo run --release --example umami -- -H https://drupal-9.0.7.ddev.site -v -u50
+ ADMIN_USERNAME=foo ADMIN_PASSWORD=bar cargo run --release --example umami -- -H https://drupal-9.ddev.site -v -u150
  ```
