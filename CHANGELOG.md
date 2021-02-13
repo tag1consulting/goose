@@ -3,6 +3,7 @@
 ## 0.10.8-dev
  - introduce `--report-file` (and `GooseDefault::ReportFile`) to optionally generate an HTML report when the load test completes
  - upgrade to `tokio` 1.x, and switch to `flume` for all multi-producer, multi-consumer channels
+ - make `examples/umami` more generic for easier load testing of any Drupal 9 version of the demo install profile
 
 ## 0.10.7 Nov 16, 2020
  - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
