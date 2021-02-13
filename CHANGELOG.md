@@ -1,13 +1,13 @@
 # Changelog
 
-## 0.10.8-dev
+## 0.10.8 Feb 13, 2021
  - introduce `--report-file` (and `GooseDefault::ReportFile`) to optionally generate an HTML report when the load test completes
  - upgrade to `tokio` 1.x, and switch to `flume` for all multi-producer, multi-consumer channels
  - make `examples/umami` more generic for easier load testing of any Drupal 9 version of the demo install profile
 
 ## 0.10.7 Nov 16, 2020
  - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
- - start each debug log file with a line feed in case the page is too big for the buffer; increase the debug logger buffer size from 8K to 8M.
+ - start each debug log file with a line feed in case the page is too big for the buffer; increase the debug logger buffer size from 8K to 8M
  - introduce `--no-debug-body` flag to optionally prevent debug log from including the response body
  - rename the metrics file to requests file to better reflect what it is
     o `--metrics-file` becomes `--requests-file`
