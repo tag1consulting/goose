@@ -1249,7 +1249,7 @@ impl GooseAttack {
                 });
             }
 
-            if self.get_debug_file_path()?.is_some() {
+            if self.get_debug_file_path().is_some() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-file".to_string(),
                     value: self.configuration.debug_file.clone(),
@@ -2035,24 +2035,24 @@ impl GooseAttack {
     }
 
     // If enabled, returns the path of the debug_file, otherwise returns None.
-    fn get_debug_file_path(&self) -> Result<Option<&str>, GooseError> {
+    fn get_debug_file_path(&self) -> Option<&str> {
         // If running in Manager mode there is no debug file, exit immediately.
         if self.attack_mode == AttackMode::Manager {
-            return Ok(None);
+            return None;
         }
 
         // If --debug-file is set, return it.
         if !self.configuration.debug_file.is_empty() {
-            return Ok(Some(&self.configuration.debug_file));
+            return Some(&self.configuration.debug_file);
         }
 
         // If GooseDefault::DebugFile is set, return it.
         if let Some(default_debug_file) = &self.defaults.debug_file {
-            return Ok(Some(default_debug_file));
+            return Some(default_debug_file);
         }
 
         // Otherwise there is no debug file.
-        Ok(None)
+        None
     }
 
     // Configure debug log format.
@@ -2391,7 +2391,7 @@ impl GooseAttack {
     ) -> Result<(DebugLoggerHandle, DebugLoggerChannel), GooseError> {
         // Set configuration from default if available, making it available to
         // GooseUser threads.
-        self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path()? {
+        self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path() {
             debug_file.to_string()
         } else {
             "".to_string()
@@ -2697,7 +2697,7 @@ impl GooseAttack {
             ) = flume::unbounded();
             goose_attack_run_state.user_channels.push(parent_sender);
 
-            if self.get_debug_file_path()?.is_some() {
+            if self.get_debug_file_path().is_some() {
                 // Copy the GooseUser-to-logger sender channel, used by all threads.
                 thread_user.debug_logger = Some(
                     goose_attack_run_state
@@ -2855,7 +2855,7 @@ impl GooseAttack {
             futures::future::join_all(users).await;
             debug!("all users exited");
 
-            if self.get_debug_file_path()?.is_some() {
+            if self.get_debug_file_path().is_some() {
                 // Tell logger thread to flush and exit.
                 if let Err(e) = goose_attack_run_state
                     .all_threads_debug_logger_tx
