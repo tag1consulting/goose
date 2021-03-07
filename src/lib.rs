@@ -2386,9 +2386,7 @@ impl GooseAttack {
     }
 
     // Helper to spawn a logger thread if configured.
-    fn setup_debug_logger(
-        &mut self,
-    ) -> Result<(DebugLoggerHandle, DebugLoggerChannel), GooseError> {
+    fn setup_debug_logger(&mut self) -> (DebugLoggerHandle, DebugLoggerChannel) {
         // Set configuration from default if available, making it available to
         // GooseUser threads.
         self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path() {
@@ -2398,7 +2396,7 @@ impl GooseAttack {
         };
         // If the logger isn't configured, return immediately.
         if self.configuration.debug_file.is_empty() {
-            return Ok((None, None));
+            return (None, None);
         }
 
         // Create an unbounded channel allowing GooseUser threads to log errors.
@@ -2411,7 +2409,7 @@ impl GooseAttack {
             self.configuration.clone(),
             logger_receiver,
         ));
-        Ok((Some(logger_thread), Some(all_threads_debug_logger)))
+        (Some(logger_thread), Some(all_threads_debug_logger))
     }
 
     // Helper to spawn a throttle thread if configured.
@@ -2555,7 +2553,7 @@ impl GooseAttack {
         ) = flume::unbounded();
 
         // If enabled, spawn a logger thread.
-        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger()?;
+        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger();
 
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
