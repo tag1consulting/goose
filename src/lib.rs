@@ -1949,25 +1949,25 @@ impl GooseAttack {
     }
 
     // If enabled, returns the path of the report_file, otherwise returns None.
-    fn get_report_file_path(&mut self) -> Result<Option<String>, GooseError> {
+    fn get_report_file_path(&mut self) -> Option<String> {
         // If metrics are disabled, or running in Manager mode, there is no
         // report file, exit immediately.
         if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
-            return Ok(None);
+            return None;
         }
 
         // If --report-file is set, return it.
         if !self.configuration.report_file.is_empty() {
-            return Ok(Some(self.configuration.report_file.to_string()));
+            return Some(self.configuration.report_file.to_string());
         }
 
         // If GooseDefault::ReportFile is set, return it.
         if let Some(default_report_file) = &self.defaults.report_file {
-            return Ok(Some(default_report_file.to_string()));
+            return Some(default_report_file.to_string());
         }
 
         // Otherwise there is no report file.
-        Ok(None)
+        None
     }
 
     // If enabled, returns the path of the requests_file, otherwise returns None.
@@ -2461,7 +2461,7 @@ impl GooseAttack {
 
     // Prepare an asynchronous file writer for report_file (if enabled).
     async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
-        if let Some(report_file_path) = self.get_report_file_path()? {
+        if let Some(report_file_path) = self.get_report_file_path() {
             Ok(Some(File::create(&report_file_path).await?))
         } else {
             Ok(None)
@@ -2568,7 +2568,7 @@ impl GooseAttack {
             Err(e) => {
                 return Err(GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: self.get_report_file_path()?.unwrap(),
+                    value: self.get_report_file_path().unwrap(),
                     detail: format!("Failed to create report file: {}", e),
                 })
             }
@@ -3333,7 +3333,7 @@ impl GooseAttack {
             if let Err(e) = report_file.write(report.as_ref()).await {
                 return Err(GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: self.get_report_file_path()?.unwrap(),
+                    value: self.get_report_file_path().unwrap(),
                     detail: format!("Failed to create report file: {}", e),
                 });
             };
@@ -3342,7 +3342,7 @@ impl GooseAttack {
 
             info!(
                 "wrote html report file to: {}",
-                self.get_report_file_path()?.unwrap()
+                self.get_report_file_path().unwrap()
             );
         }
 
