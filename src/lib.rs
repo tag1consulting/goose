@@ -1249,7 +1249,7 @@ impl GooseAttack {
                 });
             }
 
-            if self.get_debug_file_path()?.is_some() {
+            if self.get_debug_file_path().is_some() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-file".to_string(),
                     value: self.configuration.debug_file.clone(),
@@ -1949,47 +1949,47 @@ impl GooseAttack {
     }
 
     // If enabled, returns the path of the report_file, otherwise returns None.
-    fn get_report_file_path(&mut self) -> Result<Option<String>, GooseError> {
+    fn get_report_file_path(&mut self) -> Option<String> {
         // If metrics are disabled, or running in Manager mode, there is no
         // report file, exit immediately.
         if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
-            return Ok(None);
+            return None;
         }
 
         // If --report-file is set, return it.
         if !self.configuration.report_file.is_empty() {
-            return Ok(Some(self.configuration.report_file.to_string()));
+            return Some(self.configuration.report_file.to_string());
         }
 
         // If GooseDefault::ReportFile is set, return it.
         if let Some(default_report_file) = &self.defaults.report_file {
-            return Ok(Some(default_report_file.to_string()));
+            return Some(default_report_file.to_string());
         }
 
         // Otherwise there is no report file.
-        Ok(None)
+        None
     }
 
     // If enabled, returns the path of the requests_file, otherwise returns None.
-    fn get_requests_file_path(&mut self) -> Result<Option<&str>, GooseError> {
+    fn get_requests_file_path(&mut self) -> Option<&str> {
         // If metrics are disabled, or running in Manager mode, there is no
         // requests file, exit immediately.
         if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
-            return Ok(None);
+            return None;
         }
 
         // If --requests-file is set, return it.
         if !self.configuration.requests_file.is_empty() {
-            return Ok(Some(&self.configuration.requests_file));
+            return Some(&self.configuration.requests_file);
         }
 
         // If GooseDefault::MetricFile is set, return it.
         if let Some(default_requests_file) = &self.defaults.requests_file {
-            return Ok(Some(default_requests_file));
+            return Some(default_requests_file);
         }
 
         // Otherwise there is no requests file.
-        Ok(None)
+        None
     }
 
     // Configure requests log format.
@@ -2010,7 +2010,7 @@ impl GooseAttack {
                 });
             }
             // Log format isn't relevant if log not enabled.
-            else if self.get_requests_file_path()?.is_none() {
+            else if self.get_requests_file_path().is_none() {
                 return Err(GooseError::InvalidOption {
                     option: "--requests-format".to_string(),
                     value: self.configuration.metrics_format.clone(),
@@ -2035,24 +2035,24 @@ impl GooseAttack {
     }
 
     // If enabled, returns the path of the debug_file, otherwise returns None.
-    fn get_debug_file_path(&self) -> Result<Option<&str>, GooseError> {
+    fn get_debug_file_path(&self) -> Option<&str> {
         // If running in Manager mode there is no debug file, exit immediately.
         if self.attack_mode == AttackMode::Manager {
-            return Ok(None);
+            return None;
         }
 
         // If --debug-file is set, return it.
         if !self.configuration.debug_file.is_empty() {
-            return Ok(Some(&self.configuration.debug_file));
+            return Some(&self.configuration.debug_file);
         }
 
         // If GooseDefault::DebugFile is set, return it.
         if let Some(default_debug_file) = &self.defaults.debug_file {
-            return Ok(Some(default_debug_file));
+            return Some(default_debug_file);
         }
 
         // Otherwise there is no debug file.
-        Ok(None)
+        None
     }
 
     // Configure debug log format.
@@ -2386,19 +2386,17 @@ impl GooseAttack {
     }
 
     // Helper to spawn a logger thread if configured.
-    fn setup_debug_logger(
-        &mut self,
-    ) -> Result<(DebugLoggerHandle, DebugLoggerChannel), GooseError> {
+    fn setup_debug_logger(&mut self) -> (DebugLoggerHandle, DebugLoggerChannel) {
         // Set configuration from default if available, making it available to
         // GooseUser threads.
-        self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path()? {
+        self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path() {
             debug_file.to_string()
         } else {
             "".to_string()
         };
         // If the logger isn't configured, return immediately.
         if self.configuration.debug_file.is_empty() {
-            return Ok((None, None));
+            return (None, None);
         }
 
         // Create an unbounded channel allowing GooseUser threads to log errors.
@@ -2411,7 +2409,7 @@ impl GooseAttack {
             self.configuration.clone(),
             logger_receiver,
         ));
-        Ok((Some(logger_thread), Some(all_threads_debug_logger)))
+        (Some(logger_thread), Some(all_threads_debug_logger))
     }
 
     // Helper to spawn a throttle thread if configured.
@@ -2463,7 +2461,7 @@ impl GooseAttack {
 
     // Prepare an asynchronous file writer for report_file (if enabled).
     async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
-        if let Some(report_file_path) = self.get_report_file_path()? {
+        if let Some(report_file_path) = self.get_report_file_path() {
             Ok(Some(File::create(&report_file_path).await?))
         } else {
             Ok(None)
@@ -2472,7 +2470,7 @@ impl GooseAttack {
 
     // Prepare an asynchronous buffered file writer for requests_file (if enabled).
     async fn prepare_requests_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
-        if let Some(requests_file_path) = self.get_requests_file_path()? {
+        if let Some(requests_file_path) = self.get_requests_file_path() {
             Ok(Some(BufWriter::new(
                 File::create(&requests_file_path).await?,
             )))
@@ -2555,7 +2553,7 @@ impl GooseAttack {
         ) = flume::unbounded();
 
         // If enabled, spawn a logger thread.
-        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger()?;
+        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger();
 
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
@@ -2570,7 +2568,7 @@ impl GooseAttack {
             Err(e) => {
                 return Err(GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: self.get_report_file_path()?.unwrap(),
+                    value: self.get_report_file_path().unwrap(),
                     detail: format!("Failed to create report file: {}", e),
                 })
             }
@@ -2582,7 +2580,7 @@ impl GooseAttack {
             Err(e) => {
                 return Err(GooseError::InvalidOption {
                     option: "--requests-file".to_string(),
-                    value: self.get_requests_file_path()?.unwrap().to_string(),
+                    value: self.get_requests_file_path().unwrap().to_string(),
                     detail: format!("Failed to create request file: {}", e),
                 })
             }
@@ -2697,7 +2695,7 @@ impl GooseAttack {
             ) = flume::unbounded();
             goose_attack_run_state.user_channels.push(parent_sender);
 
-            if self.get_debug_file_path()?.is_some() {
+            if self.get_debug_file_path().is_some() {
                 // Copy the GooseUser-to-logger sender channel, used by all threads.
                 thread_user.debug_logger = Some(
                     goose_attack_run_state
@@ -2855,7 +2853,7 @@ impl GooseAttack {
             futures::future::join_all(users).await;
             debug!("all users exited");
 
-            if self.get_debug_file_path()?.is_some() {
+            if self.get_debug_file_path().is_some() {
                 // Tell logger thread to flush and exit.
                 if let Err(e) = goose_attack_run_state
                     .all_threads_debug_logger_tx
@@ -3034,7 +3032,7 @@ impl GooseAttack {
                 "flushing requests_file: {}",
                 // Unwrap is safe as we can't get here unless a requests file path
                 // is defined.
-                self.get_requests_file_path()?.unwrap()
+                self.get_requests_file_path().unwrap()
             );
             let _ = file.flush().await;
         };
@@ -3335,7 +3333,7 @@ impl GooseAttack {
             if let Err(e) = report_file.write(report.as_ref()).await {
                 return Err(GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: self.get_report_file_path()?.unwrap(),
+                    value: self.get_report_file_path().unwrap(),
                     detail: format!("Failed to create report file: {}", e),
                 });
             };
@@ -3344,7 +3342,7 @@ impl GooseAttack {
 
             info!(
                 "wrote html report file to: {}",
-                self.get_report_file_path()?.unwrap()
+                self.get_report_file_path().unwrap()
             );
         }
 
@@ -3418,7 +3416,7 @@ impl GooseAttack {
                                     "failed to write metrics to {}: {}",
                                     // Unwrap is safe as we can't get here unless a requests file path
                                     // is defined.
-                                    self.get_requests_file_path()?.unwrap(),
+                                    self.get_requests_file_path().unwrap(),
                                     e
                                 );
                             }
