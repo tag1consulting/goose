@@ -1971,25 +1971,25 @@ impl GooseAttack {
     }
 
     // If enabled, returns the path of the requests_file, otherwise returns None.
-    fn get_requests_file_path(&mut self) -> Result<Option<&str>, GooseError> {
+    fn get_requests_file_path(&mut self) -> Option<&str> {
         // If metrics are disabled, or running in Manager mode, there is no
         // requests file, exit immediately.
         if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
-            return Ok(None);
+            return None;
         }
 
         // If --requests-file is set, return it.
         if !self.configuration.requests_file.is_empty() {
-            return Ok(Some(&self.configuration.requests_file));
+            return Some(&self.configuration.requests_file);
         }
 
         // If GooseDefault::MetricFile is set, return it.
         if let Some(default_requests_file) = &self.defaults.requests_file {
-            return Ok(Some(default_requests_file));
+            return Some(default_requests_file);
         }
 
         // Otherwise there is no requests file.
-        Ok(None)
+        None
     }
 
     // Configure requests log format.
@@ -2010,7 +2010,7 @@ impl GooseAttack {
                 });
             }
             // Log format isn't relevant if log not enabled.
-            else if self.get_requests_file_path()?.is_none() {
+            else if self.get_requests_file_path().is_none() {
                 return Err(GooseError::InvalidOption {
                     option: "--requests-format".to_string(),
                     value: self.configuration.metrics_format.clone(),
@@ -2470,7 +2470,7 @@ impl GooseAttack {
 
     // Prepare an asynchronous buffered file writer for requests_file (if enabled).
     async fn prepare_requests_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
-        if let Some(requests_file_path) = self.get_requests_file_path()? {
+        if let Some(requests_file_path) = self.get_requests_file_path() {
             Ok(Some(BufWriter::new(
                 File::create(&requests_file_path).await?,
             )))
@@ -2580,7 +2580,7 @@ impl GooseAttack {
             Err(e) => {
                 return Err(GooseError::InvalidOption {
                     option: "--requests-file".to_string(),
-                    value: self.get_requests_file_path()?.unwrap().to_string(),
+                    value: self.get_requests_file_path().unwrap().to_string(),
                     detail: format!("Failed to create request file: {}", e),
                 })
             }
@@ -3032,7 +3032,7 @@ impl GooseAttack {
                 "flushing requests_file: {}",
                 // Unwrap is safe as we can't get here unless a requests file path
                 // is defined.
-                self.get_requests_file_path()?.unwrap()
+                self.get_requests_file_path().unwrap()
             );
             let _ = file.flush().await;
         };
@@ -3416,7 +3416,7 @@ impl GooseAttack {
                                     "failed to write metrics to {}: {}",
                                     // Unwrap is safe as we can't get here unless a requests file path
                                     // is defined.
-                                    self.get_requests_file_path()?.unwrap(),
+                                    self.get_requests_file_path().unwrap(),
                                     e
                                 );
                             }
