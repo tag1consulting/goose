@@ -42,5 +42,5 @@ gaggle = ["nng"]
 rustls = ["reqwest/rustls-tls"]
 
 [dev-dependencies]
-httpmock = "0.4"
+httpmock = "0.5"
 serial_test = "0.5"

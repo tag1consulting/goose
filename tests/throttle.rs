@@ -1,5 +1,4 @@
-use httpmock::Method::GET;
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{Method::GET, MockRef, MockServer};
 
 mod common;
 
@@ -38,21 +37,15 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
 
     // First set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(INDEX_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(INDEX_PATH);
+        then.status(200);
+    }));
     // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(ABOUT_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(ABOUT_PATH);
+        then.status(200);
+    }));
 
     endpoints
 }
@@ -133,8 +126,8 @@ fn validate_test(
     }
 
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
+    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
 
     // Requests are made while GooseUsers are hatched, and then for RUN_TIME seconds.
     assert!(current_requests_file_lines <= (RUN_TIME + 1) * throttle_value);

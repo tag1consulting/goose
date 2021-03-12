@@ -1,5 +1,7 @@
-use httpmock::Method::{GET, POST};
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{
+    Method::{GET, POST},
+    MockRef, MockServer,
+};
 use serial_test::serial;
 
 mod common;
@@ -57,29 +59,20 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
 
     // First set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(INDEX_PATH)
-            .return_status(201)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(INDEX_PATH);
+        then.status(201);
+    }));
     // Next set up SETUP_PATH, store in vector at SETUP_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(POST)
-            .expect_path(SETUP_PATH)
-            .return_status(205)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(POST).path(SETUP_PATH);
+        then.status(205);
+    }));
     // Next set up TEARDOWN_PATH, store in vector at TEARDOWN_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(POST)
-            .expect_path(TEARDOWN_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(POST).path(TEARDOWN_PATH);
+        then.status(200);
+    }));
 
     endpoints
 }
@@ -113,27 +106,27 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     // Confirm the load test ran.
-    assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
+    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
 
     // Now confirm TestType-specific counters.
     match test_type {
         TestType::Start => {
             // Confirm setup ran one time.
-            assert!(mock_endpoints[SETUP_KEY].times_called() == 1);
+            mock_endpoints[SETUP_KEY].assert_hits(1);
             // Confirm teardown did not run.
-            assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 0);
+            mock_endpoints[TEARDOWN_KEY].assert_hits(0);
         }
         TestType::Stop => {
             // Confirm setup did not run.
-            assert!(mock_endpoints[SETUP_KEY].times_called() == 0);
+            mock_endpoints[SETUP_KEY].assert_hits(0);
             // Confirm teardown ran one time.
-            assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 1);
+            mock_endpoints[TEARDOWN_KEY].assert_hits(1);
         }
         TestType::StartAndStop => {
             // Confirm setup ran one time.
-            assert!(mock_endpoints[SETUP_KEY].times_called() == 1);
+            mock_endpoints[SETUP_KEY].assert_hits(1);
             // Confirm teardown ran one time.
-            assert!(mock_endpoints[TEARDOWN_KEY].times_called() == 1);
+            mock_endpoints[TEARDOWN_KEY].assert_hits(1);
         }
     }
 }

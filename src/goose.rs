@@ -2226,8 +2226,10 @@ mod tests {
     use super::*;
 
     use gumdrop::Options;
-    use httpmock::Method::{GET, POST};
-    use httpmock::{Mock, MockServer};
+    use httpmock::{
+        Method::{GET, POST},
+        MockServer,
+    };
 
     const EMPTY_ARGS: Vec<&str> = vec![];
 
@@ -2762,14 +2764,13 @@ mod tests {
 
         // Set up a mock http server endpoint.
         const INDEX_PATH: &str = "/";
-        let index = Mock::new()
-            .expect_method(GET)
-            .expect_path(INDEX_PATH)
-            .return_status(200)
-            .create_on(&server);
+        let index = server.mock(|when, then| {
+            when.method(GET).path(INDEX_PATH);
+            then.status(200);
+        });
 
         // Make a GET request to the mock http server and confirm we get a 200 response.
-        assert_eq!(index.times_called(), 0);
+        assert_eq!(index.hits(), 0);
         let goose = user
             .get(INDEX_PATH)
             .await
@@ -2781,18 +2782,17 @@ mod tests {
         assert_eq!(goose.request.success, true);
         assert_eq!(goose.request.update, false);
         assert_eq!(goose.request.status_code, 200);
-        assert_eq!(index.times_called(), 1);
+        assert_eq!(index.hits(), 1);
 
         const NO_SUCH_PATH: &str = "/no/such/path";
         // Set up a mock http server endpoint.
-        let not_found = Mock::new()
-            .expect_method(GET)
-            .expect_path(NO_SUCH_PATH)
-            .return_status(404)
-            .create_on(&server);
+        let not_found = server.mock(|when, then| {
+            when.method(GET).path(NO_SUCH_PATH);
+            then.status(404);
+        });
 
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
-        assert_eq!(not_found.times_called(), 0);
+        assert_eq!(not_found.hits(), 0);
         let goose = user
             .get(NO_SUCH_PATH)
             .await
@@ -2804,20 +2804,17 @@ mod tests {
         assert_eq!(goose.request.success, false);
         assert_eq!(goose.request.update, false);
         assert_eq!(goose.request.status_code, 404,);
-        assert_eq!(not_found.times_called(), 1);
+        not_found.assert_hits(1);
 
         // Set up a mock http server endpoint.
         const COMMENT_PATH: &str = "/comment";
-        let comment = Mock::new()
-            .expect_method(POST)
-            .expect_path(COMMENT_PATH)
-            .return_status(200)
-            .expect_body("foo")
-            .return_body("foo")
-            .create_on(&server);
+        let comment = server.mock(|when, then| {
+            when.method(POST).path(COMMENT_PATH).body("foo");
+            then.status(200).body("foo");
+        });
 
         // Make a POST request to the mock http server and confirm we get a 200 OK response.
-        assert_eq!(comment.times_called(), 0);
+        assert_eq!(comment.hits(), 0);
         let goose = user
             .post(COMMENT_PATH, "foo")
             .await
@@ -2832,6 +2829,6 @@ mod tests {
         assert_eq!(goose.request.success, true);
         assert_eq!(goose.request.update, false);
         assert_eq!(goose.request.status_code, 200);
-        assert_eq!(comment.times_called(), 1);
+        comment.assert_hits(1);
     }
 }

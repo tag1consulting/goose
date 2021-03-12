@@ -1,5 +1,7 @@
-use httpmock::Method::{GET, POST};
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{
+    Method::{GET, POST},
+    MockRef, MockServer,
+};
 
 mod common;
 
@@ -39,21 +41,15 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
 
     // First set up LOGIN_PATH, store in vector at LOGIN_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(POST)
-            .expect_path(LOGIN_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(POST).path(LOGIN_PATH);
+        then.status(200);
+    }));
     // Next set up LOGOUT_PATH, store in vector at LOGOUT_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(LOGOUT_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(LOGOUT_PATH);
+        then.status(200);
+    }));
 
     endpoints
 }
@@ -101,8 +97,8 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(mock_endpoints: &[MockRef]) {
     // Confirm that the on_start and on_exit tasks actually ran once per GooseUser.
-    assert!(mock_endpoints[LOGIN_KEY].times_called() == USERS);
-    assert!(mock_endpoints[LOGOUT_KEY].times_called() == USERS);
+    mock_endpoints[LOGIN_KEY].assert_hits(USERS);
+    mock_endpoints[LOGOUT_KEY].assert_hits(USERS);
 }
 
 // Returns the appropriate taskset needed to build these tests.

@@ -1,5 +1,4 @@
-use httpmock::Method::GET;
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{Method::GET, MockRef, MockServer};
 use serial_test::serial;
 
 mod common;
@@ -103,93 +102,60 @@ fn setup_mock_server_endpoints<'a>(
     match test_type {
         TestType::Chain => {
             // First set up INDEX_PATH, store in vector at INDEX_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(INDEX_PATH)
-                    .return_status(200)
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(INDEX_PATH);
+                then.status(200);
+            }));
             // Next set up REDIRECT_PATH, store in vector at REDIRECT_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(REDIRECT_PATH)
-                    .return_status(301)
-                    .return_header("Location", REDIRECT2_PATH)
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(REDIRECT_PATH);
+                then.status(301).header("Location", REDIRECT2_PATH);
+            }));
             // Next set up REDIRECT2_PATH, store in vector at REDIRECT2_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(REDIRECT2_PATH)
-                    .return_status(302)
-                    .return_header("Location", REDIRECT3_PATH)
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(REDIRECT2_PATH);
+                then.status(302).header("Location", REDIRECT3_PATH);
+            }));
             // Next set up REDIRECT3_PATH, store in vector at REDIRECT3_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(REDIRECT3_PATH)
-                    .return_status(303)
-                    .return_header("Location", ABOUT_PATH)
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(REDIRECT3_PATH);
+                then.status(303).header("Location", ABOUT_PATH);
+            }));
             // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(ABOUT_PATH)
-                    .return_status(200)
-                    .return_body("<HTML><BODY>about page</BODY></HTML>")
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(ABOUT_PATH);
+                then.status(200)
+                    .body("<HTML><BODY>about page</BODY></HTML>");
+            }));
         }
         TestType::Domain | TestType::Sticky => {
             // First set up INDEX_PATH, store in vector at SERVER1_INDEX_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(INDEX_PATH)
-                    .return_status(200)
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(INDEX_PATH);
+                then.status(200);
+            }));
             // Next set up ABOUT_PATH, store in vector at SERVER1_ABOUT_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(ABOUT_PATH)
-                    .return_status(200)
-                    .return_body("<HTML><BODY>about page</BODY></HTML>")
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(ABOUT_PATH);
+                then.status(200)
+                    .body("<HTML><BODY>about page</BODY></HTML>");
+            }));
             // Next set up REDIRECT_PATH, store in vector at SERVER1_REDIRECT_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(REDIRECT_PATH)
-                    .return_status(301)
-                    .return_header("Location", &server2.unwrap().url(INDEX_PATH))
-                    .create_on(&server),
-            );
+            endpoints.push(server.mock(|when, then| {
+                when.method(GET).path(REDIRECT_PATH);
+                then.status(301)
+                    .header("Location", &server2.unwrap().url(INDEX_PATH));
+            }));
             // Next set up INDEX_PATH on server 2, store in vector at SERVER2_INDEX_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(INDEX_PATH)
-                    .return_status(200)
-                    .create_on(&server2.unwrap()),
-            );
+            endpoints.push(server2.unwrap().mock(|when, then| {
+                when.method(GET).path(INDEX_PATH);
+                then.status(200);
+            }));
             // Next set up ABOUT_PATH on server 2, store in vector at SERVER2_ABOUT_KEY.
-            endpoints.push(
-                Mock::new()
-                    .expect_method(GET)
-                    .expect_path(ABOUT_PATH)
-                    .return_status(200)
-                    .create_on(&server2.unwrap()),
-            );
+            endpoints.push(server2.unwrap().mock(|when, then| {
+                when.method(GET).path(ABOUT_PATH);
+                then.status(200);
+            }));
         }
     }
 
@@ -272,64 +238,55 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
         TestType::Chain => {
             // Confirm that all pages are loaded, even those not requested directly but
             // that are only loaded due to redirects.
-            assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
-            assert!(mock_endpoints[REDIRECT_KEY].times_called() > 0);
-            assert!(mock_endpoints[REDIRECT_KEY2].times_called() > 0);
-            assert!(mock_endpoints[REDIRECT_KEY3].times_called() > 0);
-            assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
+            assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+            assert!(mock_endpoints[REDIRECT_KEY].hits() > 0);
+            assert!(mock_endpoints[REDIRECT_KEY2].hits() > 0);
+            assert!(mock_endpoints[REDIRECT_KEY3].hits() > 0);
+            assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
 
             // Confirm the entire redirect chain is loaded the same number of times.
-            assert!(
-                mock_endpoints[REDIRECT_KEY].times_called()
-                    == mock_endpoints[REDIRECT_KEY2].times_called()
-            );
-            assert!(
-                mock_endpoints[REDIRECT_KEY].times_called()
-                    == mock_endpoints[REDIRECT_KEY3].times_called()
-            );
-            assert!(
-                mock_endpoints[REDIRECT_KEY].times_called()
-                    == mock_endpoints[ABOUT_KEY].times_called()
-            );
+            mock_endpoints[REDIRECT_KEY].assert_hits(mock_endpoints[REDIRECT_KEY2].hits());
+            mock_endpoints[REDIRECT_KEY].assert_hits(mock_endpoints[REDIRECT_KEY3].hits());
+            mock_endpoints[REDIRECT_KEY].assert_hits(mock_endpoints[ABOUT_KEY].hits());
         }
         TestType::Domain => {
             // All pages on Server1 are loaded.
-            assert!(mock_endpoints[SERVER1_INDEX_KEY].times_called() > 0);
-            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].times_called() > 0);
-            assert!(mock_endpoints[SERVER1_ABOUT_KEY].times_called() > 0);
+            assert!(mock_endpoints[SERVER1_INDEX_KEY].hits() > 0);
+            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].hits() > 0);
+            assert!(mock_endpoints[SERVER1_ABOUT_KEY].hits() > 0);
 
             // GooseUsers are redirected to Server2 correctly.
-            assert!(mock_endpoints[SERVER2_INDEX_KEY].times_called() > 0);
+            assert!(mock_endpoints[SERVER2_INDEX_KEY].hits() > 0);
 
             // GooseUsers do not stick to Server2 and load the other page.
-            assert!(mock_endpoints[SERVER2_ABOUT_KEY].times_called() == 0);
+            mock_endpoints[SERVER2_ABOUT_KEY].assert_hits(0);
         }
         TestType::Sticky => {
             // Each GooseUser loads the redirect on Server1 one time.
             println!(
                 "SERVER1_REDIRECT: {}, USERS: {}",
-                mock_endpoints[SERVER1_REDIRECT_KEY].times_called(),
+                mock_endpoints[SERVER1_REDIRECT_KEY].hits(),
                 USERS,
             );
             println!(
                 "SERVER1_INDEX: {}, SERVER1_ABOUT: {}",
-                mock_endpoints[SERVER1_INDEX_KEY].times_called(),
-                mock_endpoints[SERVER1_ABOUT_KEY].times_called(),
+                mock_endpoints[SERVER1_INDEX_KEY].hits(),
+                mock_endpoints[SERVER1_ABOUT_KEY].hits(),
             );
             println!(
                 "SERVER2_INDEX: {}, SERVER2_ABOUT: {}",
-                mock_endpoints[SERVER2_INDEX_KEY].times_called(),
-                mock_endpoints[SERVER2_ABOUT_KEY].times_called(),
+                mock_endpoints[SERVER2_INDEX_KEY].hits(),
+                mock_endpoints[SERVER2_ABOUT_KEY].hits(),
             );
-            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].times_called() == USERS);
+            mock_endpoints[SERVER1_REDIRECT_KEY].assert_hits(USERS);
 
             // Redirected to Server2, no user load anything else on Server1.
-            assert!(mock_endpoints[SERVER1_INDEX_KEY].times_called() == 0);
-            assert!(mock_endpoints[SERVER1_ABOUT_KEY].times_called() == 0);
+            mock_endpoints[SERVER1_INDEX_KEY].assert_hits(0);
+            mock_endpoints[SERVER1_ABOUT_KEY].assert_hits(0);
 
             // All GooseUsers go on to load pages on Server2.
-            assert!(mock_endpoints[SERVER2_INDEX_KEY].times_called() > 0);
-            assert!(mock_endpoints[SERVER2_ABOUT_KEY].times_called() > 0);
+            assert!(mock_endpoints[SERVER2_INDEX_KEY].hits() > 0);
+            assert!(mock_endpoints[SERVER2_ABOUT_KEY].hits() > 0);
         }
     }
 }

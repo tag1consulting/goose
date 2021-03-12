@@ -1,5 +1,4 @@
-use httpmock::Method::GET;
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{Method::GET, MockRef, MockServer};
 use serial_test::serial;
 
 mod common;
@@ -53,21 +52,15 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
 
     // First, set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(INDEX_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(INDEX_PATH);
+        then.status(200);
+    }));
     // Next, set up ABOUT_PATH, store in vector at ABOUT_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(ABOUT_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(ABOUT_PATH);
+        then.status(200);
+    }));
 
     endpoints
 }
@@ -81,8 +74,8 @@ fn validate_test(
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
-    assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
+    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
 
     let index_metrics = goose_metrics
         .requests
@@ -94,11 +87,11 @@ fn validate_test(
         .unwrap();
 
     // Confirm that Goose and the server saw the same number of page loads.
-    assert!(index_metrics.response_time_counter == mock_endpoints[INDEX_KEY].times_called());
-    assert!(index_metrics.success_count == mock_endpoints[INDEX_KEY].times_called());
+    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.response_time_counter);
+    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
+    mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.response_time_counter);
+    mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.success_count);
     assert!(index_metrics.fail_count == 0);
-    assert!(about_metrics.response_time_counter == mock_endpoints[ABOUT_KEY].times_called());
-    assert!(about_metrics.success_count == mock_endpoints[ABOUT_KEY].times_called());
     assert!(about_metrics.fail_count == 0);
 
     // Confirm that we tracked status codes.
@@ -117,10 +110,7 @@ fn validate_test(
         assert!(std::path::Path::new(requests_file).exists());
         metrics_lines += common::file_length(requests_file);
     }
-    assert!(
-        metrics_lines
-            == mock_endpoints[INDEX_KEY].times_called() + mock_endpoints[ABOUT_KEY].times_called()
-    );
+    assert!(metrics_lines == mock_endpoints[INDEX_KEY].hits() + mock_endpoints[ABOUT_KEY].hits());
 
     // Verify that the debug file was created and is empty.
     for debug_file in debug_files {
@@ -550,8 +540,8 @@ fn test_defaults_no_metrics() {
         .unwrap();
 
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
+    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
 
     // Confirm that we did not track metrics.
     assert!(goose_metrics.requests.is_empty());

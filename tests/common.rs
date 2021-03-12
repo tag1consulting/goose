@@ -21,7 +21,7 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
     // Start with an empty configuration.
     let mut configuration: Vec<&str> = vec![];
     // Declare server_url here no matter what, so its lifetime is sufficient when needed.
-    let server_url = server.url("/");
+    let server_url = server.base_url();
 
     // Merge in all custom options first.
     configuration.extend_from_slice(&custom);

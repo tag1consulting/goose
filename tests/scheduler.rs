@@ -1,5 +1,4 @@
-use httpmock::Method::GET;
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{Method::GET, MockRef, MockServer};
 use serial_test::serial;
 use tokio::time::{sleep, Duration};
 
@@ -69,37 +68,25 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
 
     // First set up ONE_PATH, store in vector at ONE_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(ONE_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(ONE_PATH);
+        then.status(200);
+    }));
     // Next set up TWO_PATH, store in vector at TWO_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(TWO_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(TWO_PATH);
+        then.status(200);
+    }));
     // Next set up START_ONE_PATH, store in vector at START_ONE_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(START_ONE_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(START_ONE_PATH);
+        then.status(200);
+    }));
     // Next set up STOP_ONE_PATH, store in vector at STOP_ONE_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(STOP_ONE_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(STOP_ONE_PATH);
+        then.status(200);
+    }));
 
     endpoints
 }
@@ -147,37 +134,32 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(scheduler: &GooseTaskSetScheduler, mock_endpoints: &[MockRef]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
-    assert!(mock_endpoints[START_ONE_KEY].times_called() == 1);
+    mock_endpoints[START_ONE_KEY].assert_hits(1);
 
     // Now validate scheduler-specific counters.
     match scheduler {
         GooseTaskSetScheduler::RoundRobin => {
             // We launch an equal number of each task set, so we call both endpoints
             // an equal number of times.
-            assert!(
-                mock_endpoints[TWO_KEY].times_called() == mock_endpoints[ONE_KEY].times_called()
-            );
-            assert!(mock_endpoints[ONE_KEY].times_called() == USERS / 2);
+            mock_endpoints[TWO_KEY].assert_hits(mock_endpoints[ONE_KEY].hits());
+            mock_endpoints[ONE_KEY].assert_hits(USERS / 2);
         }
         GooseTaskSetScheduler::Serial => {
             // As we only launch as many users as the weight of the first task set, we only
             // call the first endpoint, never the second endpoint.
-            assert!(mock_endpoints[ONE_KEY].times_called() == USERS);
-            assert!(mock_endpoints[TWO_KEY].times_called() == 0);
+            mock_endpoints[ONE_KEY].assert_hits(USERS);
+            mock_endpoints[TWO_KEY].assert_hits(0);
         }
         GooseTaskSetScheduler::Random => {
             // When scheduling task sets randomly, we don't know how many of each will get
             // launched, but we do now that added together they will equal the total number
             // of users.
-            assert!(
-                mock_endpoints[ONE_KEY].times_called() + mock_endpoints[TWO_KEY].times_called()
-                    == USERS
-            );
+            assert!(mock_endpoints[ONE_KEY].hits() + mock_endpoints[TWO_KEY].hits() == USERS);
         }
     }
 
     // STOP_ONE_PATH is loaded one and only one time on all variations.
-    assert!(mock_endpoints[STOP_ONE_KEY].times_called() == 1);
+    mock_endpoints[STOP_ONE_KEY].assert_hits(1);
 }
 
 // Returns the appropriate taskset, start_task and stop_task needed to build these tests.
