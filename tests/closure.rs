@@ -61,7 +61,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
         let path = item.path;
         let mock_endpoint = server.mock(|when, then| {
             when.method(GET).path(path);
-            then.status(item.status_code.into());
+            then.status(item.status_code);
         });
 
         // Ensure the index matches.
