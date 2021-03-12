@@ -1,5 +1,4 @@
-use httpmock::Method::GET;
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{Method::GET, MockRef, MockServer};
 use std::sync::Arc;
 
 mod common;
@@ -60,11 +59,10 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut mock_endpoints = Vec::with_capacity(test_endpoints.len());
     for (idx, item) in test_endpoints.iter().enumerate() {
         let path = item.path;
-        let mock_endpoint = Mock::new()
-            .expect_method(GET)
-            .expect_path(path)
-            .return_status(item.status_code.into())
-            .create_on(&server);
+        let mock_endpoint = server.mock(|when, then| {
+            when.method(GET).path(path);
+            then.status(item.status_code);
+        });
 
         // Ensure the index matches.
         assert!(idx == mock_endpoints.len());
@@ -163,7 +161,7 @@ fn validate_closer_test(
 
         // Confirm that we loaded the mock endpoint.
         assert!(
-            mock_endpoint.times_called() > 0,
+            mock_endpoint.hits() > 0,
             format_item("Endpoint was not called > 0", &item)
         );
         let expect_error = format_item("Item does not exist in goose_metrics", &item);
@@ -185,16 +183,16 @@ fn validate_closer_test(
         let status_code: u16 = item.status_code;
 
         assert!(
-            endpoint_metrics.response_time_counter == mock_endpoint.times_called(),
-            format_item("response_time_counter != times_called()", &item)
+            endpoint_metrics.response_time_counter == mock_endpoint.hits(),
+            format_item("response_time_counter != hits()", &item)
         );
         assert!(
-            endpoint_metrics.status_code_counts[&status_code] == mock_endpoint.times_called(),
-            format_item("status_code_counts != times_called()", &item)
+            endpoint_metrics.status_code_counts[&status_code] == mock_endpoint.hits(),
+            format_item("status_code_counts != hits()", &item)
         );
         assert!(
-            endpoint_metrics.success_count == mock_endpoint.times_called(),
-            format_item("success_count != times_called()", &item)
+            endpoint_metrics.success_count == mock_endpoint.hits(),
+            format_item("success_count != hits()", &item)
         );
         assert!(
             endpoint_metrics.fail_count == 0,
@@ -207,8 +205,8 @@ fn validate_closer_test(
     let about = &mock_endpoints[1];
 
     // Confirm that we loaded the index roughly three times as much as the about page.
-    let one_third_index = index.times_called() / 3;
-    let difference = about.times_called() as i32 - one_third_index as i32;
+    let one_third_index = index.hits() / 3;
+    let difference = about.hits() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 
     // Verify that Goose started the correct number of users.

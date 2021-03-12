@@ -1,5 +1,4 @@
-use httpmock::Method::GET;
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{Method::GET, MockRef, MockServer};
 use serial_test::serial;
 
 mod common;
@@ -45,21 +44,15 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
 
     // First set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(INDEX_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(INDEX_PATH);
+        then.status(200);
+    }));
     // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(ABOUT_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(ABOUT_PATH);
+        then.status(200);
+    }));
 
     endpoints
 }
@@ -92,12 +85,12 @@ fn validate_one_taskset(
     test_type: TestType,
 ) {
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].times_called() > 0);
+    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
 
     // Confirm that we loaded the index roughly three times as much as the about page.
-    let one_third_index = mock_endpoints[INDEX_KEY].times_called() / 3;
-    let difference = mock_endpoints[ABOUT_KEY].times_called() as i32 - one_third_index as i32;
+    let one_third_index = mock_endpoints[INDEX_KEY].hits() / 3;
+    let difference = mock_endpoints[ABOUT_KEY].hits() as i32 - one_third_index as i32;
     assert!(difference >= -2 && difference <= 2);
 
     // Get index and about out of goose metrics.
@@ -124,41 +117,29 @@ fn validate_one_taskset(
             println!(
                 "response_time_counter: {}, mock_endpoint_called: {}",
                 index_metrics.response_time_counter,
-                mock_endpoints[INDEX_KEY].times_called()
+                mock_endpoints[INDEX_KEY].hits()
             );
 
-            assert!(index_metrics.response_time_counter < mock_endpoints[INDEX_KEY].times_called());
+            assert!(index_metrics.response_time_counter < mock_endpoints[INDEX_KEY].hits());
             assert!(
-                index_metrics.status_code_counts[&status_code]
-                    < mock_endpoints[INDEX_KEY].times_called()
+                index_metrics.status_code_counts[&status_code] < mock_endpoints[INDEX_KEY].hits()
             );
-            assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].times_called());
-            assert!(about_metrics.response_time_counter < mock_endpoints[ABOUT_KEY].times_called());
+            assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].hits());
+            assert!(about_metrics.response_time_counter < mock_endpoints[ABOUT_KEY].hits());
             assert!(
-                about_metrics.status_code_counts[&status_code]
-                    < mock_endpoints[ABOUT_KEY].times_called()
+                about_metrics.status_code_counts[&status_code] < mock_endpoints[ABOUT_KEY].hits()
             );
-            assert!(about_metrics.success_count < mock_endpoints[ABOUT_KEY].times_called());
+            assert!(about_metrics.success_count < mock_endpoints[ABOUT_KEY].hits());
         }
         TestType::NoResetMetrics => {
             // Statistics were not reset, so Goose should report the same number of page
             // loads as the server actually saw.
-            assert!(
-                index_metrics.response_time_counter == mock_endpoints[INDEX_KEY].times_called()
-            );
-            assert!(
-                index_metrics.status_code_counts[&status_code]
-                    == mock_endpoints[INDEX_KEY].times_called()
-            );
-            assert!(index_metrics.success_count == mock_endpoints[INDEX_KEY].times_called());
-            assert!(
-                about_metrics.response_time_counter == mock_endpoints[ABOUT_KEY].times_called()
-            );
-            assert!(
-                about_metrics.status_code_counts[&status_code]
-                    == mock_endpoints[ABOUT_KEY].times_called()
-            );
-            assert!(about_metrics.success_count == mock_endpoints[ABOUT_KEY].times_called());
+            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.response_time_counter);
+            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.status_code_counts[&status_code]);
+            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
+            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.response_time_counter);
+            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.status_code_counts[&status_code]);
+            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.success_count);
         }
     }
 

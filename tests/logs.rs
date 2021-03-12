@@ -1,5 +1,4 @@
-use httpmock::Method::GET;
-use httpmock::{Mock, MockRef, MockServer};
+use httpmock::{Method::GET, MockRef, MockServer};
 use serial_test::serial;
 use std::fmt;
 
@@ -71,21 +70,15 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
     let mut endpoints: Vec<MockRef> = Vec::new();
 
     // First, set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(INDEX_PATH)
-            .return_status(200)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(INDEX_PATH);
+        then.status(200);
+    }));
     // Next, set up ERROR_PATH, store in vector at ERROR_KEY.
-    endpoints.push(
-        Mock::new()
-            .expect_method(GET)
-            .expect_path(ERROR_PATH)
-            .return_status(503)
-            .create_on(&server),
-    );
+    endpoints.push(server.mock(|when, then| {
+        when.method(GET).path(ERROR_PATH);
+        then.status(503);
+    }));
 
     endpoints
 }
@@ -108,8 +101,8 @@ fn validate_test(
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].times_called() > 0);
-    assert!(mock_endpoints[ERROR_KEY].times_called() > 0);
+    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    assert!(mock_endpoints[ERROR_KEY].hits() > 0);
 
     // Confirm that the test duration was correct.
     assert!(goose_metrics.duration == 2);
