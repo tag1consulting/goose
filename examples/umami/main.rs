@@ -33,6 +33,7 @@ fn main() -> Result<(), GooseError> {
                         .set_weight(4)?,
                 )
                 .register_task(task!(page_by_nid).set_name("anon /node/%nid"))
+                /*
                 .register_task(
                     task!(term_listing_en)
                         .set_name("anon /en term")
@@ -40,6 +41,7 @@ fn main() -> Result<(), GooseError> {
                 )
                 .register_task(task!(search_en).set_name("anon /en/search"))
                 .register_task(task!(anonymous_contact_form_en).set_name("anon /en/contact")),
+                */
         )
         .register_taskset(
             taskset!("Anonymous Spanish user")
@@ -54,6 +56,7 @@ fn main() -> Result<(), GooseError> {
                         .set_weight(2)?,
                 )
                 .register_task(task!(recipe_listing_es).set_name("anon /es/recipes/"))
+                /*
                 .register_task(
                     task!(recipe_es)
                         .set_name("anon /es/recipes/%")
@@ -66,7 +69,9 @@ fn main() -> Result<(), GooseError> {
                 )
                 .register_task(task!(search_es).set_name("anon /es/search"))
                 .register_task(task!(anonymous_contact_form_es).set_name("anon /es/contact")),
+                */
         )
+        /*
         .register_taskset(
             taskset!("Admin user")
                 .set_weight(1)?
@@ -80,6 +85,7 @@ fn main() -> Result<(), GooseError> {
                         .set_weight(2)?,
                 ),
         )
+        */
         .set_default(GooseDefault::Host, "https://drupal-9.ddev.site/")?
         .execute()?
         .print();
