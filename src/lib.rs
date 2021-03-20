@@ -3424,6 +3424,12 @@ impl GooseAttack {
 
         // Start a timer to track when to next synchronize the metrics.
         let mut sync_metrics_timer = std::time::Instant::now();
+        // Sync at least as often as we display metrics, or every five seconds.
+        let mut sync_every = self.configuration.running_metrics.unwrap_or(5);
+        if sync_every > 5 {
+            sync_every = 5;
+        }
+
         loop {
             match self.attack_phase {
                 // Start spawning GooseUser threads.
@@ -3442,8 +3448,8 @@ impl GooseAttack {
                 }
                 _ => panic!("GooseAttack entered an impossible phase"),
             }
-            // If five seconds has elapsed synchronize the metrics.
-            if util::timer_expired(sync_metrics_timer, 5) {
+            // Synchronize metrics if enough time has elapsed.
+            if util::timer_expired(sync_metrics_timer, sync_every) {
                 self.sync_metrics(&mut goose_attack_run_state).await?;
                 sync_metrics_timer = std::time::Instant::now();
             }
