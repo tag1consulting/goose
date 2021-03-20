@@ -1526,7 +1526,7 @@ impl GooseAttack {
             value = users;
         // If not, check if a default for users is set.
         } else if let Some(default_users) = self.defaults.users {
-            // On Worker hatch_rate comes from the Manager.
+            // On Worker users comes from the Manager.
             if self.attack_mode == AttackMode::Worker {
                 self.configuration.users = None;
             // Otherwise use default.
@@ -3422,6 +3422,8 @@ impl GooseAttack {
         // Only initialize once, then change to the next attack phase.
         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
 
+        // Start a timer to track when to next synchronize the metrics.
+        let mut sync_metrics_timer = std::time::Instant::now();
         loop {
             match self.attack_phase {
                 // Start spawning GooseUser threads.
@@ -3440,7 +3442,11 @@ impl GooseAttack {
                 }
                 _ => panic!("GooseAttack entered an impossible phase"),
             }
-            self.sync_metrics(&mut goose_attack_run_state).await?;
+            // If five seconds has elapsed synchronize the metrics.
+            if util::timer_expired(sync_metrics_timer, 5) {
+                self.sync_metrics(&mut goose_attack_run_state).await?;
+                sync_metrics_timer = std::time::Instant::now();
+            }
         }
 
         Ok(self)

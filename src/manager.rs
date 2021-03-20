@@ -536,8 +536,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         break;
                     }
                     if !load_test_finished {
-                        // Sleep half a second then return to the loop.
-                        thread::sleep(time::Duration::from_millis(500));
+                        // Sleep a tenth of a second then return to the loop.
+                        thread::sleep(time::Duration::from_millis(100));
                     }
                 } else {
                     panic!("error receiving user message: {}", e);
