@@ -220,7 +220,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         "tcp://{}:{}",
         goose_attack.configuration.manager_bind_host, goose_attack.configuration.manager_bind_port
     );
-    info!("worker connecting to manager at {}", &address);
+    debug!("preparing to listen for workers at: {}", &address);
 
     // Create a Rep0 reply socket.
     let server = Socket::new(Protocol::Rep0)
@@ -250,7 +250,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     let (users_per_worker, mut users_remainder) = distribute_users(&goose_attack);
 
     // A mutable bucket of users to be assigned to workers.
-    let mut available_users = goose_attack.weighted_users.clone();
+    let mut available_users = goose_attack.weighted_gaggle_users.clone();
 
     // Track how many workers we've seen.
     let mut workers: HashSet<Pipe> = HashSet::new();
@@ -419,6 +419,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         let mut users = Vec::new();
 
                         // Pop users from available_users vector and build worker initializer.
+                        debug!("sending {} users to worker", user_batch);
                         for _ in 1..=user_batch {
                             let user = match available_users.pop() {
                                 Some(u) => u,
@@ -440,6 +441,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
                         // Send vector of user initializers to worker.
                         let mut message = Message::new();
+                        info!("encoding users with serde_cbor...");
                         serde_cbor::to_writer(&mut message, &users)
                             .map_err(|error| eprintln!("{:?}", error))
                             .expect("failed to serialize user initializers");

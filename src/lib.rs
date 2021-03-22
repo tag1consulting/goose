@@ -441,7 +441,8 @@ use tokio::runtime::Runtime;
 use url::Url;
 
 use crate::goose::{
-    GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand,
+    GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
+    GooseUserCommand,
 };
 use crate::metrics::{GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
@@ -788,6 +789,8 @@ pub struct GooseAttack {
     task_sets: Vec<GooseTaskSet>,
     /// A weighted vector containing a GooseUser object for each user that will run during this load test.
     weighted_users: Vec<GooseUser>,
+    /// A weighted vector containing a lightweight GaggleUser object that will get sent to Workers.
+    weighted_gaggle_users: Vec<GaggleUser>,
     /// An optional default host to run this load test against.
     defaults: GooseDefaults,
     /// Configuration object managed by StructOpt.
@@ -821,6 +824,7 @@ impl GooseAttack {
             test_stop_task: None,
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
+            weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             run_time: 0,
@@ -851,6 +855,7 @@ impl GooseAttack {
             test_stop_task: None,
             task_sets: Vec::new(),
             weighted_users: Vec::new(),
+            weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             configuration,
             run_time: 0,
@@ -1088,9 +1093,10 @@ impl GooseAttack {
         self
     }
 
-    /// Allocate a vector of weighted GooseUser.
-    fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
-        trace!("weight_task_set_users");
+    /// Use configured GooseTaskSetScheduler to build out a properly
+    /// weighted list of TaskSets to be assigned to GooseUsers.
+    fn allocate_tasks(&mut self) -> Vec<usize> {
+        trace!("allocate_tasks");
 
         let mut u: usize = 0;
         let mut v: usize;
@@ -1181,6 +1187,14 @@ impl GooseAttack {
                 }
             }
         }
+        weighted_task_sets
+    }
+
+    /// Allocate a vector of weighted GooseUser.
+    fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
+        trace!("weight_task_set_users");
+
+        let weighted_task_sets = self.allocate_tasks();
 
         // Allocate a state for each user that will be hatched.
         info!("initializing user states...");
@@ -1188,6 +1202,11 @@ impl GooseAttack {
         let mut user_count = 0;
         loop {
             for task_sets_index in &weighted_task_sets {
+                debug!(
+                    "creating user state: {} ({})",
+                    weighted_users.len(),
+                    task_sets_index
+                );
                 let base_url = goose::get_base_url(
                     self.get_configuration_host(),
                     self.task_sets[*task_sets_index].host.clone(),
@@ -1204,7 +1223,42 @@ impl GooseAttack {
                 user_count += 1;
                 // Users are required here so unwrap() is safe.
                 if user_count >= self.configuration.users.unwrap() {
-                    trace!("created {} weighted_users", user_count);
+                    debug!("created {} weighted_users", user_count);
+                    return Ok(weighted_users);
+                }
+            }
+        }
+    }
+
+    /// Allocate a vector of weighted GaggleUser.
+    fn prepare_worker_task_set_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
+        trace!("prepare_worker_task_set_users");
+
+        let weighted_task_sets = self.allocate_tasks();
+
+        // Determine the users sent to each Worker.
+        info!("preparing users for Workers...");
+        let mut weighted_users = Vec::new();
+        let mut user_count = 0;
+        loop {
+            for task_sets_index in &weighted_task_sets {
+                let base_url = goose::get_base_url(
+                    self.get_configuration_host(),
+                    self.task_sets[*task_sets_index].host.clone(),
+                    self.defaults.host.clone(),
+                )?;
+                weighted_users.push(GaggleUser::new(
+                    self.task_sets[*task_sets_index].task_sets_index,
+                    base_url,
+                    self.task_sets[*task_sets_index].min_wait,
+                    self.task_sets[*task_sets_index].max_wait,
+                    &self.configuration,
+                    self.metrics.hash,
+                ));
+                user_count += 1;
+                // Users are required here so unwrap() is safe.
+                if user_count >= self.configuration.users.unwrap() {
+                    debug!("prepared {} weighted_gaggle_users", user_count);
                     return Ok(weighted_users);
                 }
             }
@@ -2278,12 +2332,17 @@ impl GooseAttack {
         }
 
         if self.attack_mode != AttackMode::Worker {
-            // Allocate a state for each of the users we are about to start.
-            self.weighted_users = self.weight_task_set_users()?;
-
             // Stand-alone and Manager processes can display metrics.
             if !self.configuration.no_metrics {
                 self.metrics.display_metrics = true;
+            }
+
+            if self.attack_mode == AttackMode::StandAlone {
+                // Allocate a state for each of the users we are about to start.
+                self.weighted_users = self.weight_task_set_users()?;
+            } else if self.attack_mode == AttackMode::Manager {
+                // Build a list of users to be allocated on Workers.
+                self.weighted_gaggle_users = self.prepare_worker_task_set_users()?;
             }
         }
 
