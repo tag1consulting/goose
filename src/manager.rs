@@ -2,6 +2,7 @@ use lazy_static::lazy_static;
 use nng::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::io::BufWriter;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
@@ -439,15 +440,21 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             });
                         }
 
-                        // Send vector of user initializers to worker.
-                        let mut message = Message::new();
-                        info!("encoding users with serde_cbor...");
+                        // Prepare to serialize the list of users to send to the Worker.
+                        let mut message = BufWriter::new(Message::new());
+
+                        info!("serializing users with serde_cbor...");
                         serde_cbor::to_writer(&mut message, &users)
                             .map_err(|error| eprintln!("{:?}", error))
                             .expect("failed to serialize user initializers");
 
                         info!("sending {} users to worker {}", users.len(), workers.len());
-                        if !send_message_to_worker(&server, message) {
+                        if !send_message_to_worker(
+                            &server,
+                            message
+                                .into_inner()
+                                .expect("failed to extract nng message from buffer"),
+                        ) {
                             // All workers have exited, shut down the load
                             // test.
                             break;
