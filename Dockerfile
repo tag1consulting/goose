@@ -22,6 +22,10 @@ RUN apt-get update && \
   rm -rf /var/lib/apt/lists/*
 
 RUN cargo build --features "${GOOSE_FEATURES}" --release --example "${GOOSE_EXAMPLE}"
+
+#Bug workaround with coreos
+RUN echo '151.101.2.132 umami.tag1.io' >> /etc/hosts
+
 RUN chmod +x ./docker-entrypoint.sh
 
 EXPOSE 5115
