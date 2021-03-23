@@ -2967,7 +2967,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If metrics are enabled, synchronize metrics from child reads to the parent.
+    // If metrics are enabled, synchronize metrics from child threads to the parent.
     async fn sync_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3424,10 +3424,10 @@ impl GooseAttack {
 
         // Start a timer to track when to next synchronize the metrics.
         let mut sync_metrics_timer = std::time::Instant::now();
-        // Sync at least as often as we display metrics, or every five seconds.
-        let mut sync_every = self.configuration.running_metrics.unwrap_or(5);
-        if sync_every > 5 {
-            sync_every = 5;
+        // Sync at least as often as we display metrics, or every ten seconds.
+        let mut sync_every = self.configuration.running_metrics.unwrap_or(10);
+        if sync_every > 10 {
+            sync_every = 10;
         }
 
         loop {
