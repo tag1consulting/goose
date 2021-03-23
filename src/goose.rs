@@ -883,6 +883,44 @@ impl GooseDebug {
     }
 }
 
+/// The elements needed to build an individual user state on a Gaggle Worker.
+#[derive(Debug, Clone)]
+pub struct GaggleUser {
+    /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
+    pub task_sets_index: usize,
+    /// The base URL to prepend to all relative paths.
+    pub base_url: Arc<RwLock<Url>>,
+    /// Minimum amount of time to sleep after running a task.
+    pub min_wait: usize,
+    /// Maximum amount of time to sleep after running a task.
+    pub max_wait: usize,
+    /// A local copy of the global GooseConfiguration.
+    pub config: GooseConfiguration,
+    /// Load test hash.
+    pub load_test_hash: u64,
+}
+impl GaggleUser {
+    /// Create a new user state.
+    pub fn new(
+        task_sets_index: usize,
+        base_url: Url,
+        min_wait: usize,
+        max_wait: usize,
+        configuration: &GooseConfiguration,
+        load_test_hash: u64,
+    ) -> Self {
+        trace!("new gaggle user");
+        GaggleUser {
+            task_sets_index,
+            base_url: Arc::new(RwLock::new(base_url)),
+            min_wait,
+            max_wait,
+            config: configuration.clone(),
+            load_test_hash,
+        }
+    }
+}
+
 /// An individual user state, repeatedly running all GooseTasks in a specific GooseTaskSet.
 #[derive(Debug, Clone)]
 pub struct GooseUser {

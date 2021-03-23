@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.10.9-dev
+ - avoid unnecessary work on Manager when starting a Gaggle
 
 ## 0.10.8 Feb 13, 2021
  - introduce `--report-file` (and `GooseDefault::ReportFile`) to optionally generate an HTML report when the load test completes
