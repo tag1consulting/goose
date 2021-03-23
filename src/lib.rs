@@ -1526,7 +1526,7 @@ impl GooseAttack {
             value = users;
         // If not, check if a default for users is set.
         } else if let Some(default_users) = self.defaults.users {
-            // On Worker hatch_rate comes from the Manager.
+            // On Worker users comes from the Manager.
             if self.attack_mode == AttackMode::Worker {
                 self.configuration.users = None;
             // Otherwise use default.
@@ -2967,7 +2967,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If metrics are enabled, synchronize metrics from child reads to the parent.
+    // If metrics are enabled, synchronize metrics from child threads to the parent.
     async fn sync_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3422,6 +3422,14 @@ impl GooseAttack {
         // Only initialize once, then change to the next attack phase.
         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
 
+        // Start a timer to track when to next synchronize the metrics.
+        let mut sync_metrics_timer = std::time::Instant::now();
+        // Sync at least as often as we display metrics, or every ten seconds.
+        let mut sync_every = self.configuration.running_metrics.unwrap_or(10);
+        if sync_every > 10 {
+            sync_every = 10;
+        }
+
         loop {
             match self.attack_phase {
                 // Start spawning GooseUser threads.
@@ -3440,7 +3448,11 @@ impl GooseAttack {
                 }
                 _ => panic!("GooseAttack entered an impossible phase"),
             }
-            self.sync_metrics(&mut goose_attack_run_state).await?;
+            // Synchronize metrics if enough time has elapsed.
+            if util::timer_expired(sync_metrics_timer, sync_every) {
+                self.sync_metrics(&mut goose_attack_run_state).await?;
+                sync_metrics_timer = std::time::Instant::now();
+            }
         }
 
         Ok(self)

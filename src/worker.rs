@@ -1,6 +1,7 @@
 use gumdrop::Options;
 use nng::*;
 use serde::{Deserialize, Serialize};
+use std::io::BufWriter;
 use std::sync::atomic::Ordering;
 use std::{thread, time};
 use url::Url;
@@ -246,14 +247,18 @@ pub fn push_metrics_to_manager(
     get_response: bool,
 ) -> bool {
     debug!("[{}] pushing metrics to manager", get_worker_id(),);
-    let mut message = Message::new();
+    let mut message = BufWriter::new(Message::new());
 
     serde_cbor::to_writer(&mut message, &metrics)
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("failed to serialize GaggleMetrics");
 
     manager
-        .try_send(message)
+        .try_send(
+            message
+                .into_inner()
+                .expect("failed to extract nng message from buffer"),
+        )
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("communication failure");
 
