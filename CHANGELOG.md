@@ -2,7 +2,9 @@
 
 ## 0.10.9-dev
  - avoid unnecessary work on Manager when starting a Gaggle
- - respect `--hatch-rate` when starting a Gaggle mode
+ - respect `--hatch-rate` when starting a Gaggle
+ - update httpmock for running tests
+ - remove unnecessary `Result()` types where no error was possible
 
 ## 0.10.8 Feb 13, 2021
  - introduce `--report-file` (and `GooseDefault::ReportFile`) to optionally generate an HTML report when the load test completes
