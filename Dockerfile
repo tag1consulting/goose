@@ -24,7 +24,8 @@ RUN apt-get update && \
 RUN cargo build --features "${GOOSE_FEATURES}" --release --example "${GOOSE_EXAMPLE}"
 
 #Bug workaround with coreos
-RUN echo '151.101.2.132 umami.tag1.io' >> /etc/hosts
+RUN echo '151.101.2.132 umami.tag1.io' >> /etc/hosts && \
+    echo 'hosts: files dns' > /etc/nsswitch.conf
 
 RUN chmod +x ./docker-entrypoint.sh
 
