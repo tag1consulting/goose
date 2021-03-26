@@ -669,6 +669,8 @@ pub struct GooseRawRequest {
     pub update: bool,
     /// Which GooseUser thread processed the request.
     pub user: usize,
+    /// The optional error caused by this request.
+    pub error: String,
 }
 impl GooseRawRequest {
     pub fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
@@ -684,6 +686,7 @@ impl GooseRawRequest {
             success: true,
             update: false,
             user,
+            error: "".to_string(),
         }
     }
 
@@ -1556,6 +1559,7 @@ impl GooseUser {
                 warn!("{:?}: {}", &path, e);
                 raw_request.success = false;
                 raw_request.set_status_code(None);
+                raw_request.error = e.to_string();
             }
         };
 

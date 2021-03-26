@@ -454,7 +454,7 @@ use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
 };
-use crate::metrics::{GooseMetric, GooseMetrics};
+use crate::metrics::{GooseErrorMetric, GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -3503,11 +3503,19 @@ impl GooseAttack {
                             }
                         }
                     }
+
+                    // If there was an error, store it.
+                    if !raw_request.error.is_empty() {
+                        // Add or update the GooseErrorMetric
+                        self.record_error(&raw_request);
+                    }
+
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.metrics.requests.get(&key) {
                         Some(m) => m.clone(),
                         None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
                     };
+
                     // Handle a metrics update.
                     if raw_request.update {
                         if raw_request.success {
@@ -3543,6 +3551,28 @@ impl GooseAttack {
         }
 
         Ok(received_message)
+    }
+
+    /// Update error metrics.
+    pub fn record_error(&mut self, raw_request: &GooseRawRequest) {
+        // Create a string to uniquely identify errors for tracking metrics.
+        let error_string = format!(
+            "{}.{:?}.{}",
+            raw_request.error, raw_request.method, raw_request.name
+        );
+
+        let mut error_metrics = match self.metrics.errors.get(&error_string) {
+            // We've seen this error before.
+            Some(m) => m.clone(),
+            // First time we've seen this error.
+            None => GooseErrorMetric::new(
+                raw_request.method.clone(),
+                raw_request.name.to_string(),
+                raw_request.error.to_string(),
+            ),
+        };
+        error_metrics.occurrences += 1;
+        self.metrics.errors.insert(error_string, error_metrics);
     }
 }
 
