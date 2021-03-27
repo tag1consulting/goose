@@ -1002,12 +1002,7 @@ impl GooseMetrics {
 
         // Reverse sort errors to display the error occuring the most first.
         for (occurrences, error) in errors.iter().sorted().rev() {
-            writeln!(
-                fmt,
-                " {:<12}  {}",
-                format_number(occurrences.clone()),
-                error
-            )?;
+            writeln!(fmt, " {:<12}  {}", format_number(*occurrences), error)?;
         }
 
         writeln!(
