@@ -644,6 +644,8 @@ pub struct GooseDefaults {
     no_metrics: Option<bool>,
     /// An optional default for not tracking task metrics.
     no_task_metrics: Option<bool>,
+    /// An optional default for not displaying an error summary.
+    no_error_summary: Option<bool>,
     /// An optional default for the html-formatted report file name.
     report_file: Option<String>,
     /// An optional default for the requests log file name.
@@ -705,6 +707,8 @@ pub enum GooseDefault {
     NoMetrics,
     /// An optional default for not tracking task metrics.
     NoTaskMetrics,
+    /// An optional default for not displaying an error summary.
+    NoErrorSummary,
     /// An optional default for the report file name.
     ReportFile,
     /// An optional default for the requests log file name.
@@ -1879,6 +1883,38 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Determine if the no_error_summary flag is enabled.
+    fn set_no_error_summary(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_error_summary";
+        let mut value = false;
+
+        if self.configuration.no_error_summary {
+            key = "--no-error-summary";
+            value = true;
+        // If not otherwise set and not Worker, check if there's a default.
+        } else if self.attack_mode != AttackMode::Worker {
+            // Optionally set default.
+            if let Some(default_no_error_summary) = self.defaults.no_error_summary {
+                key = "set_default(GooseDefault::NoErrorSummary)";
+                value = default_no_error_summary;
+
+                self.configuration.no_error_summary = default_no_error_summary;
+            }
+        }
+
+        // Setting --no-error-summary with --worker is not allowed.
+        if self.configuration.no_error_summary && self.attack_mode == AttackMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
+            });
+        }
+
+        Ok(())
+    }
+
     // Determine if the no_metrics flag is enabled.
     fn set_no_metrics(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2283,6 +2319,9 @@ impl GooseAttack {
 
         // Configure no_task_metrics flag.
         self.set_no_task_metrics()?;
+
+        // Configure no_error_summary flag.
+        self.set_no_error_summary()?;
 
         // Configure no_metrics flag.
         self.set_no_metrics()?;
@@ -3555,6 +3594,11 @@ impl GooseAttack {
 
     /// Update error metrics.
     pub fn record_error(&mut self, raw_request: &GooseRawRequest) {
+        // If the error summary is disabled, return immediately without collecting errors.
+        if self.configuration.no_error_summary {
+            return;
+        }
+
         // Create a string to uniquely identify errors for tracking metrics.
         let error_string = format!(
             "{}.{:?}.{}",
@@ -3627,6 +3671,7 @@ impl GooseAttack {
 ///  - GooseDefault::NoResetMetrics
 ///  - GooseDefault::NoMetrics
 ///  - GooseDefault::NoTaskMetrics
+///  - GooseDefault::NoErrorSummary
 ///  - GooseDefault::NoDebugBody
 ///  - GooseDefault::StatusCodes
 ///  - GooseDefault::StickyFollow
@@ -3688,6 +3733,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
@@ -3736,6 +3782,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
@@ -3761,6 +3808,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
+            GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
@@ -3861,6 +3909,9 @@ pub struct GooseConfiguration {
     /// Doesn't track task metrics
     #[options(no_short)]
     pub no_task_metrics: bool,
+    /// Doesn't display an error summary
+    #[options(no_short)]
+    pub no_error_summary: bool,
     /// Create an html-formatted report
     #[options(meta = "NAME")]
     pub report_file: String,
@@ -4206,6 +4257,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoTaskMetrics, true)
             .unwrap()
+            .set_default(GooseDefault::NoErrorSummary, true)
+            .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
@@ -4253,6 +4306,7 @@ mod test {
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
+        assert!(goose_attack.defaults.no_error_summary == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.metrics_format == Some(metrics_format));

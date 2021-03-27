@@ -983,7 +983,7 @@ impl GooseMetrics {
 
         // Write the errors into a vector which can then be sorted by occurrences.
         let mut errors: Vec<(usize, String)> = Vec::new();
-        for (_description, error) in &self.errors {
+        for error in self.errors.values() {
             errors.push((
                 error.occurrences,
                 format!("{:?} {}: {}", error.method, error.name, error.error),
@@ -994,19 +994,25 @@ impl GooseMetrics {
             fmt,
             "\n === ERRORS ===\n ------------------------------------------------------------------------------"
         )?;
-        writeln!(fmt, " {:<14} | Error ", "Count")?;
-        write!(
+        writeln!(fmt, " {:<11} | Error", "Count")?;
+        writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
 
+        // Reverse sort errors to display the error occuring the most first.
         for (occurrences, error) in errors.iter().sorted().rev() {
-            print!("\n {:<14}  {}", occurrences, error);
+            writeln!(
+                fmt,
+                " {:<12}  {}",
+                format_number(occurrences.clone()),
+                error
+            )?;
         }
 
         writeln!(
             fmt,
-            "\n ------------------------------------------------------------------------------"
+            " ------------------------------------------------------------------------------"
         )?;
 
         Ok(())
