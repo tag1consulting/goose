@@ -1532,6 +1532,7 @@ impl GooseUser {
                 // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                 if !status_code.is_success() {
                     raw_request.success = false;
+                    raw_request.error = format!("{}: {}", status_code, &path);
                 }
                 raw_request.set_status_code(Some(status_code));
                 raw_request.set_final_url(r.url().as_str());

@@ -3545,7 +3545,6 @@ impl GooseAttack {
 
                     // If there was an error, store it.
                     if !raw_request.error.is_empty() {
-                        // Add or update the GooseErrorMetric
                         self.record_error(&raw_request);
                     }
 
