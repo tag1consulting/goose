@@ -981,7 +981,7 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        //pub errors: BTreeMap<String, GooseErrorMetric>,
+        // Write the errors into a vector which can then be sorted by occurrences.
         let mut errors: Vec<(usize, String)> = Vec::new();
         for (_description, error) in &self.errors {
             errors.push((
@@ -992,10 +992,10 @@ impl GooseMetrics {
 
         writeln!(
             fmt,
-            " ------------------------------------------------------------------------------"
+            "\n === ERRORS ===\n ------------------------------------------------------------------------------"
         )?;
-        writeln!(fmt, " {:<14} | {} ", "Count", "Error")?;
-        writeln!(
+        writeln!(fmt, " {:<14} | Error ", "Count")?;
+        write!(
             fmt,
             " ------------------------------------------------------------------------------"
         )?;

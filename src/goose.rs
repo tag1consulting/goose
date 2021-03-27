@@ -1665,6 +1665,11 @@ impl GooseUser {
     /// parameters, `header` and `body`, are optional and used to provide more detail in
     /// logs.
     ///
+    /// The value of `tag` will normally be collected into the errors summary table if
+    /// metrics are being displayed. However, if `set_failure` is called multiple times,
+    /// or is called on a request that was already an error, only the first error will
+    /// be collected.
+    ///
     /// This also calls
     /// [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug).
     ///
@@ -1711,6 +1716,7 @@ impl GooseUser {
         if request.success {
             request.success = false;
             request.update = true;
+            request.error = tag.to_string();
             self.send_to_parent(GooseMetric::Request(request.clone()))?;
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
