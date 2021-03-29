@@ -219,9 +219,9 @@ pub struct GooseMetrics {
     pub tasks: GooseTaskMetrics,
     /// Error-related metrics.
     pub errors: BTreeMap<String, GooseErrorMetric>,
-    /// Flag indicating whether or not to display percentile. Because we're deriving Default,
-    /// this defaults to false.
-    pub display_percentile: bool,
+    /// Flag indicating whether or not these are the final metrics. Because we're deriving
+    /// Default, this defaults to false.
+    pub final_metrics: bool,
     /// Flag indicating whether or not to display status_codes. Because we're deriving Default,
     /// this defaults to false.
     pub display_status_codes: bool,
@@ -783,8 +783,8 @@ impl GooseMetrics {
 
     /// Optionally prepares a table of slowest response times within several percentiles.
     pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // If there's nothing to display, exit immediately.
-        if !self.display_percentile {
+        // Only include percentiles when displaying the final metrics report.
+        if !self.final_metrics {
             return Ok(());
         }
 
@@ -980,8 +980,9 @@ impl GooseMetrics {
 
     /// Optionally prepares a table of errors.
     pub fn fmt_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // If there's nothing to display, exit immediately.
-        if self.errors.is_empty() {
+        // Only include errors when displaying the final metrics report, and if there are
+        // errors to display.
+        if !self.final_metrics || self.errors.is_empty() {
             return Ok(());
         }
 

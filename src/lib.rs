@@ -3145,8 +3145,8 @@ impl GooseAttack {
             );
             let _ = file.flush().await;
         };
-        // Only display percentile once the load test is finished.
-        self.metrics.display_percentile = true;
+        // Percentile and errors are only displayed when the load test is finished.
+        self.metrics.final_metrics = true;
 
         Ok(())
     }
