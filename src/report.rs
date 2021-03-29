@@ -7,6 +7,16 @@ use std::mem;
 
 use serde::Serialize;
 
+/// The following templates are necessary to build an html-formatted summary report.
+#[derive(Debug)]
+pub struct GooseReportTemplates<'a> {
+    pub requests_template: &'a str,
+    pub responses_template: &'a str,
+    pub tasks_template: &'a str,
+    pub status_codes_template: &'a str,
+    pub errors_template: &'a str,
+}
+
 /// Defines the metrics reported about requests.
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestMetric {
@@ -284,11 +294,7 @@ pub fn build_report(
     start_time: &str,
     end_time: &str,
     host: &str,
-    requests_template: &str,
-    responses_template: &str,
-    tasks_template: &str,
-    status_codes_template: &str,
-    errors_template: &str,
+    templates: GooseReportTemplates,
 ) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -416,10 +422,10 @@ pub fn build_report(
         start_time = start_time,
         end_time = end_time,
         host = host,
-        requests_template = requests_template,
-        responses_template = responses_template,
-        tasks_template = tasks_template,
-        status_codes_template = status_codes_template,
-        errors_template = errors_template,
+        requests_template = templates.requests_template,
+        responses_template = templates.responses_template,
+        tasks_template = templates.tasks_template,
+        status_codes_template = templates.status_codes_template,
+        errors_template = templates.errors_template,
     )
 }

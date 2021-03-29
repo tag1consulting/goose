@@ -3444,11 +3444,13 @@ impl GooseAttack {
                 &start_time,
                 &end_time,
                 &host,
-                &requests_rows.join("\n"),
-                &responses_rows.join("\n"),
-                &tasks_template,
-                &status_code_template,
-                &errors_template,
+                report::GooseReportTemplates {
+                    requests_template: &requests_rows.join("\n"),
+                    responses_template: &responses_rows.join("\n"),
+                    tasks_template: &tasks_template,
+                    status_codes_template: &status_code_template,
+                    errors_template: &errors_template,
+                },
             );
 
             // Write the report to file.

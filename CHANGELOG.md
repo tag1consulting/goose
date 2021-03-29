@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.10.10-dev
+ - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
 
 ## 0.10.9 March 23, 2021
  - avoid unnecessary work on Manager when starting a Gaggle
