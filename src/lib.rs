@@ -2993,6 +2993,7 @@ impl GooseAttack {
                         &goose_attack_run_state.socket.clone().unwrap(),
                         vec![
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
+                            GaggleMetrics::Errors(self.metrics.errors.clone()),
                             GaggleMetrics::Tasks(self.metrics.tasks.clone()),
                         ],
                         true,
@@ -3578,6 +3579,25 @@ impl GooseAttack {
                     }
 
                     self.metrics.requests.insert(key.to_string(), merge_request);
+                }
+                GooseMetric::Error(raw_error) => {
+                    // Recreate the string used to uniquely identify errors.
+                    let error_key = format!(
+                        "{}.{:?}.{}",
+                        raw_error.error, raw_error.method, raw_error.name
+                    );
+                    let mut merge_error = match self.metrics.errors.get(&error_key) {
+                        Some(error) => error.clone(),
+                        None => GooseErrorMetric::new(
+                            raw_error.method.clone(),
+                            raw_error.name.to_string(),
+                            raw_error.error.to_string(),
+                        ),
+                    };
+                    merge_error.occurrences += raw_error.occurrences;
+                    self.metrics
+                        .errors
+                        .insert(error_key.to_string(), merge_error);
                 }
                 GooseMetric::Task(raw_task) => {
                     // Store a new metric.

@@ -10,7 +10,7 @@ const EMPTY_ARGS: Vec<&str> = vec![];
 
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
-use crate::metrics::{GooseRequestMetrics, GooseTaskMetrics};
+use crate::metrics::{GooseErrorMetrics, GooseRequestMetrics, GooseTaskMetrics};
 use crate::{get_worker_id, AttackMode, GooseAttack, GooseConfiguration, WORKER_ID};
 
 /// Workers send GaggleMetrics to the Manager process to be aggregated together.
@@ -22,6 +22,8 @@ pub enum GaggleMetrics {
     Requests(GooseRequestMetrics),
     /// Goose task metrics.
     Tasks(GooseTaskMetrics),
+    /// Goose error metrics.
+    Errors(GooseErrorMetrics),
 }
 
 // If pipe closes unexpectedly, panic.

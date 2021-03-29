@@ -19,6 +19,7 @@ use crate::GooseConfiguration;
 pub enum GooseMetric {
     Request(GooseRawRequest),
     Task(GooseRawTask),
+    Error(GooseErrorMetric),
 }
 
 /// Goose optionally tracks metrics about requests made during a load test.
@@ -26,6 +27,9 @@ pub type GooseRequestMetrics = HashMap<String, GooseRequest>;
 
 /// Goose optionally tracks metrics about tasks run during a load test.
 pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetric>>;
+
+/// Goose optionally tracks errors generated during a load test.
+pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetric>;
 
 /// The per-task metrics collected each time a task is invoked.
 #[derive(Debug, Clone, Serialize, Deserialize)]

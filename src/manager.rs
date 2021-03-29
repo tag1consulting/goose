@@ -8,7 +8,10 @@ use std::sync::Arc;
 use std::{thread, time};
 
 use crate::goose::GooseRequest;
-use crate::metrics::{self, GooseRequestMetrics, GooseTaskMetric, GooseTaskMetrics};
+use crate::metrics::{
+    self, GooseErrorMetric, GooseErrorMetrics, GooseRequestMetrics, GooseTaskMetric,
+    GooseTaskMetrics,
+};
 use crate::util;
 use crate::worker::GaggleMetrics;
 use crate::{GooseAttack, GooseConfiguration, GooseUserCommand};
@@ -148,6 +151,19 @@ fn merge_requests_from_worker(
     merged_request
 }
 
+/// Merge per-Worker errors into global Manager metrics
+fn merge_errors_from_worker(
+    manager_error: &GooseErrorMetric,
+    worker_error: &GooseErrorMetric,
+) -> GooseErrorMetric {
+    // Make a mutable copy where we can merge things
+    let mut merged_error = manager_error.clone();
+    // Add in how many additional times this happened on the Worker.
+    merged_error.occurrences += worker_error.occurrences;
+    // Nothing else changes, so return the merged error.
+    merged_error
+}
+
 /// Helper to send EXIT command to worker.
 fn tell_worker_to_exit(server: &Socket) -> bool {
     let mut message = Message::new();
@@ -210,6 +226,27 @@ fn merge_task_metrics(goose_attack: &mut GooseAttack, tasks: GooseTaskMetrics) {
                 &task,
             );
             goose_attack.metrics.tasks[task.taskset_index][task.task_index] = merged_task;
+        }
+    }
+}
+
+/// Helper to merge in errors from the Worker.
+fn merge_error_metrics(goose_attack: &mut GooseAttack, errors: GooseErrorMetrics) {
+    if !errors.is_empty() {
+        debug!("errors received: {:?}", errors.len());
+        for (error_key, error) in errors {
+            trace!("error_key: {}", error_key);
+            let merged_error;
+            if let Some(parent_error) = goose_attack.metrics.errors.get(&error_key) {
+                merged_error = merge_errors_from_worker(parent_error, &error);
+            } else {
+                // First time seeing this error, simply insert it.
+                merged_error = error.clone();
+            }
+            goose_attack
+                .metrics
+                .errors
+                .insert(error_key.to_string(), merged_error);
         }
     }
 }
@@ -504,6 +541,10 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             // Merge in task metrics from Worker.
                             GaggleMetrics::Tasks(tasks) => {
                                 merge_task_metrics(&mut goose_attack, tasks)
+                            }
+                            // Merge in error metrics from Worker.
+                            GaggleMetrics::Errors(errors) => {
+                                merge_error_metrics(&mut goose_attack, errors)
                             }
                             // Ignore Worker heartbeats.
                             GaggleMetrics::WorkerInit(_) => (),
