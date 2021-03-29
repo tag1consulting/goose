@@ -3373,6 +3373,18 @@ impl GooseAttack {
                 tasks_template = "".to_string();
             }
 
+            // Only build the tasks template if --no-task-metrics isn't enabled.
+            let errors_template: String;
+            if !self.metrics.errors.is_empty() {
+                let mut error_rows = Vec::new();
+                for error in self.metrics.errors.values() {
+                    error_rows.push(report::error_row(error));
+                }
+                errors_template = report::errors_template(&error_rows.join("\n"));
+            } else {
+                errors_template = "".to_string();
+            }
+
             // Only build the status_code template if --status-codes is enabled.
             let status_code_template: String;
             if self.configuration.status_codes {
@@ -3436,6 +3448,7 @@ impl GooseAttack {
                 &responses_rows.join("\n"),
                 &tasks_template,
                 &status_code_template,
+                &errors_template,
             );
 
             // Write the report to file.
