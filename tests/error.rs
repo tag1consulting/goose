@@ -91,11 +91,11 @@ fn validate_error(
     // Get request metrics.
     let index_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", INDEX_PATH))
+        .get(&format!("Get {}", INDEX_PATH))
         .unwrap();
     let a_404_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", A_404_PATH))
+        .get(&format!("Get {}", A_404_PATH))
         .unwrap();
 
     // Get error metrics.
@@ -103,9 +103,9 @@ fn validate_error(
 
     // Confirm that the path and method are correct in the metrics.
     assert!(index_metrics.path == INDEX_PATH);
-    assert!(index_metrics.method == GooseMethod::GET);
+    assert!(index_metrics.method == GooseMethod::Get);
     assert!(a_404_metrics.path == A_404_PATH);
-    assert!(a_404_metrics.method == GooseMethod::GET);
+    assert!(a_404_metrics.method == GooseMethod::Get);
 
     // All requests to the index succeeded.
     mock_endpoints[INDEX_KEY].assert_hits(index_metrics.response_time_counter);
@@ -121,7 +121,7 @@ fn validate_error(
             // Extract the error from the BTreeMap.
             for error in a_404_errors {
                 // The captured error was a GET request.
-                assert!(error.1.method == GooseMethod::GET);
+                assert!(error.1.method == GooseMethod::Get);
                 // The captured error was for the 404 path.
                 assert!(error.1.name == A_404_PATH);
                 // The error was captured the number of times we requested the 404 path.

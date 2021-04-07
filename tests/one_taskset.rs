@@ -96,18 +96,18 @@ fn validate_one_taskset(
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", INDEX_PATH))
+        .get(&format!("Get {}", INDEX_PATH))
         .unwrap();
     let about_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", ABOUT_PATH))
+        .get(&format!("Get {}", ABOUT_PATH))
         .unwrap();
 
     // Confirm that the path and method are correct in the statistics.
     assert!(index_metrics.path == INDEX_PATH);
-    assert!(index_metrics.method == GooseMethod::GET);
+    assert!(index_metrics.method == GooseMethod::Get);
     assert!(about_metrics.path == ABOUT_PATH);
-    assert!(about_metrics.method == GooseMethod::GET);
+    assert!(about_metrics.method == GooseMethod::Get);
 
     let status_code: u16 = 200;
     match test_type {

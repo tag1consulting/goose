@@ -2935,7 +2935,7 @@ impl GooseAttack {
                 );
             }
             for (index, send_to_user) in goose_attack_run_state.user_channels.iter().enumerate() {
-                match send_to_user.send(GooseUserCommand::EXIT) {
+                match send_to_user.send(GooseUserCommand::Exit) {
                     Ok(_) => {
                         debug!("telling user {} to exit", index);
                     }
@@ -3052,7 +3052,7 @@ impl GooseAttack {
                         ],
                         true,
                     ) {
-                        // EXIT received, cancel.
+                        // GooseUserCommand::Exit received, cancel.
                         goose_attack_run_state
                             .canceled
                             .store(true, Ordering::SeqCst);

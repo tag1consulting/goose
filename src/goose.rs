@@ -607,32 +607,32 @@ impl GooseTaskSet {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GooseUserCommand {
     /// Tell worker process to pause load test.
-    WAIT,
+    Wait,
     /// Tell worker process to start load test.
-    RUN,
+    Run,
     /// Tell user thread to exit.
-    EXIT,
+    Exit,
 }
 
 /// Supported HTTP methods.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
 pub enum GooseMethod {
-    DELETE,
-    GET,
-    HEAD,
-    PATCH,
-    POST,
-    PUT,
+    Delete,
+    Get,
+    Head,
+    Patch,
+    Post,
+    Put,
 }
 
 fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskError> {
     Ok(match method {
-        Method::DELETE => GooseMethod::DELETE,
-        Method::GET => GooseMethod::GET,
-        Method::HEAD => GooseMethod::HEAD,
-        Method::PATCH => GooseMethod::PATCH,
-        Method::POST => GooseMethod::POST,
-        Method::PUT => GooseMethod::PUT,
+        Method::DELETE => GooseMethod::Delete,
+        Method::GET => GooseMethod::Get,
+        Method::HEAD => GooseMethod::Head,
+        Method::PATCH => GooseMethod::Patch,
+        Method::POST => GooseMethod::Post,
+        Method::PUT => GooseMethod::Put,
         _ => {
             return Err(GooseTaskError::InvalidMethod { method });
         }
@@ -649,7 +649,7 @@ fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskErro
 pub struct GooseRawRequest {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// The method being used (ie, GET, POST, etc).
+    /// The method being used (ie, Get, Post, etc).
     pub method: GooseMethod,
     /// The optional name of the request.
     pub name: String,
@@ -2472,8 +2472,8 @@ mod tests {
     #[test]
     fn goose_raw_request() {
         const PATH: &str = "http://127.0.0.1/";
-        let mut raw_request = GooseRawRequest::new(GooseMethod::GET, "/", PATH, 0, 0);
-        assert_eq!(raw_request.method, GooseMethod::GET);
+        let mut raw_request = GooseRawRequest::new(GooseMethod::Get, "/", PATH, 0, 0);
+        assert_eq!(raw_request.method, GooseMethod::Get);
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, 0);
@@ -2483,7 +2483,7 @@ mod tests {
 
         let response_time = 123;
         raw_request.set_response_time(response_time);
-        assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.method, GooseMethod::Get);
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time as u64);
@@ -2493,7 +2493,7 @@ mod tests {
 
         let status_code = http::StatusCode::OK;
         raw_request.set_status_code(Some(status_code));
-        assert_eq!(raw_request.method, GooseMethod::GET);
+        assert_eq!(raw_request.method, GooseMethod::Get);
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time as u64);
@@ -2504,9 +2504,9 @@ mod tests {
 
     #[test]
     fn goose_request() {
-        let mut request = GooseRequest::new("/", GooseMethod::GET, 0);
+        let mut request = GooseRequest::new("/", GooseMethod::Get, 0);
         assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, GooseMethod::GET);
+        assert_eq!(request.method, GooseMethod::Get);
         assert_eq!(request.response_times.len(), 0);
         assert_eq!(request.min_response_time, 0);
         assert_eq!(request.max_response_time, 0);
@@ -2532,7 +2532,7 @@ mod tests {
         assert_eq!(request.response_time_counter, 1);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, GooseMethod::GET);
+        assert_eq!(request.method, GooseMethod::Get);
         assert_eq!(request.status_code_counts.len(), 0);
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
@@ -2553,7 +2553,7 @@ mod tests {
         assert_eq!(request.response_time_counter, 2);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, GooseMethod::GET);
+        assert_eq!(request.method, GooseMethod::Get);
         assert_eq!(request.status_code_counts.len(), 0);
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
@@ -2826,7 +2826,7 @@ mod tests {
             .expect("get returned unexpected error");
         let status = goose.response.unwrap().status();
         assert_eq!(status, 200);
-        assert_eq!(goose.request.method, GooseMethod::GET);
+        assert_eq!(goose.request.method, GooseMethod::Get);
         assert_eq!(goose.request.name, INDEX_PATH);
         assert_eq!(goose.request.success, true);
         assert_eq!(goose.request.update, false);
@@ -2848,7 +2848,7 @@ mod tests {
             .expect("get returned unexpected error");
         let status = goose.response.unwrap().status();
         assert_eq!(status, 404);
-        assert_eq!(goose.request.method, GooseMethod::GET);
+        assert_eq!(goose.request.method, GooseMethod::Get);
         assert_eq!(goose.request.name, NO_SUCH_PATH);
         assert_eq!(goose.request.success, false);
         assert_eq!(goose.request.update, false);
@@ -2873,7 +2873,7 @@ mod tests {
         assert_eq!(status, 200);
         let body = unwrapped_response.text().await.unwrap();
         assert_eq!(body, "foo");
-        assert_eq!(goose.request.method, GooseMethod::POST);
+        assert_eq!(goose.request.method, GooseMethod::Post);
         assert_eq!(goose.request.name, COMMENT_PATH);
         assert_eq!(goose.request.success, true);
         assert_eq!(goose.request.update, false);

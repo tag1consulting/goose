@@ -164,10 +164,10 @@ fn merge_errors_from_worker(
     merged_error
 }
 
-/// Helper to send EXIT command to worker.
+/// Helper to send GooseUserCommand::Exit command to worker.
 fn tell_worker_to_exit(server: &Socket) -> bool {
     let mut message = Message::new();
-    serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
+    serde_cbor::to_writer(&mut message, &GooseUserCommand::Exit)
         .map_err(|error| eprintln!("{:?}", error))
         .expect("failed to serialize user command");
     send_message_to_worker(server, message)
@@ -398,7 +398,8 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             workers.len() + 1,
                             goose_attack.configuration.expect_workers.unwrap()
                         );
-                        // We already have enough workers, tell this extra one to EXIT.
+                        // We already have enough workers, tell this extra one to
+                        // GooseUserCommand::Exit.
                         if !tell_worker_to_exit(&server) {
                             // All workers have exited, shut down the
                             // load test.
@@ -411,7 +412,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         // GaggleMetrics::WorkerInit object or it's invalid.
                         if gaggle_metrics.len() != 1 {
                             warn!("invalid message from Worker, exiting load test");
-                            // Invalid message, tell worker to EXIT.
+                            // Invalid message, tell worker to GooseUserCommand::Exit.
                             if !tell_worker_to_exit(&server) {
                                 // All workers have exited, shut down the
                                 // load test.
@@ -430,7 +431,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             }
                         } else {
                             // Unexpected object received, tell the worker
-                            // to EXIT.
+                            // to GooseUserCommand::Exit.
                             warn!("invalid object from Worker, exiting load test");
                             if !tell_worker_to_exit(&server) {
                                 // All workers have exited, shut down the
@@ -522,7 +523,7 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     // test is still waiting to start.
                     if !load_test_running {
                         // Assume this is the Worker heartbeat, tell it to keep waiting.
-                        serde_cbor::to_writer(&mut message, &GooseUserCommand::WAIT)
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::Wait)
                             .map_err(|error| eprintln!("{:?}", error))
                             .expect("failed to serialize user command");
                         if !send_message_to_worker(&server, message) {
@@ -553,13 +554,13 @@ pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
                     if load_test_finished {
                         debug!("telling worker to exit");
-                        serde_cbor::to_writer(&mut message, &GooseUserCommand::EXIT)
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::Exit)
                             .map_err(|error| eprintln!("{:?}", error))
                             .expect("failed to serialize user command");
                     }
                     // Notify the worker that the load test is still running.
                     else {
-                        serde_cbor::to_writer(&mut message, &GooseUserCommand::RUN)
+                        serde_cbor::to_writer(&mut message, &GooseUserCommand::Run)
                             .map_err(|error| eprintln!("{:?}", error))
                             .expect("failed to serialize user command");
                     }

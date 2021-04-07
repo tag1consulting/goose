@@ -167,7 +167,7 @@ fn validate_closer_test(
         let expect_error = format_item("Item does not exist in goose_metrics", &item);
         let endpoint_metrics = goose_metrics
             .requests
-            .get(&format!("GET {}", item.path))
+            .get(&format!("Get {}", item.path))
             .expect(&expect_error);
 
         assert!(
@@ -177,7 +177,7 @@ fn validate_closer_test(
                 &item
             )
         );
-        assert!(endpoint_metrics.method == GooseMethod::GET);
+        assert!(endpoint_metrics.method == GooseMethod::Get);
 
         // Confirm that Goose and the server saw the same number of page loads.
         let status_code: u16 = item.status_code;
