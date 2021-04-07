@@ -7,6 +7,16 @@ use std::mem;
 
 use serde::Serialize;
 
+/// The following templates are necessary to build an html-formatted summary report.
+#[derive(Debug)]
+pub struct GooseReportTemplates<'a> {
+    pub requests_template: &'a str,
+    pub responses_template: &'a str,
+    pub tasks_template: &'a str,
+    pub status_codes_template: &'a str,
+    pub errors_template: &'a str,
+}
+
 /// Defines the metrics reported about requests.
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestMetric {
@@ -246,15 +256,45 @@ pub fn task_metrics_row(metric: TaskMetric) -> String {
     }
 }
 
+/// If there are errors, add an errors table to the html report.
+pub fn errors_template(error_rows: &str) -> String {
+    format!(
+        r#"<div class="errors">
+        <h2>Errors</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th colspan="3">Error</th>
+                </tr>
+            </thead>
+            <tbody>
+                {error_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        error_rows = error_rows,
+    )
+}
+
+/// Build an individual error row in the html report.
+pub fn error_row(error: &metrics::GooseErrorMetric) -> String {
+    format!(
+        r#"<tr>
+        <td>{occurrences}</td>
+        <td colspan="4">{error}</strong></td>
+    </tr>"#,
+        occurrences = error.occurrences,
+        error = error.error,
+    )
+}
+
 /// Build the html report.
 pub fn build_report(
     start_time: &str,
     end_time: &str,
     host: &str,
-    requests_template: &str,
-    responses_template: &str,
-    tasks_template: &str,
-    status_codes_template: &str,
+    templates: GooseReportTemplates,
 ) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -374,15 +414,18 @@ pub fn build_report(
 
         {tasks_template}
 
+        {errors_template}
+
     </div>
 </body>
 </html>"#,
         start_time = start_time,
         end_time = end_time,
         host = host,
-        requests_template = requests_template,
-        responses_template = responses_template,
-        tasks_template = tasks_template,
-        status_codes_template = status_codes_template,
+        requests_template = templates.requests_template,
+        responses_template = templates.responses_template,
+        tasks_template = templates.tasks_template,
+        status_codes_template = templates.status_codes_template,
+        errors_template = templates.errors_template,
     )
 }

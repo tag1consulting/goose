@@ -669,6 +669,8 @@ pub struct GooseRawRequest {
     pub update: bool,
     /// Which GooseUser thread processed the request.
     pub user: usize,
+    /// The optional error caused by this request.
+    pub error: String,
 }
 impl GooseRawRequest {
     pub fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
@@ -684,6 +686,7 @@ impl GooseRawRequest {
             success: true,
             update: false,
             user,
+            error: "".to_string(),
         }
     }
 
@@ -1529,6 +1532,7 @@ impl GooseUser {
                 // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                 if !status_code.is_success() {
                     raw_request.success = false;
+                    raw_request.error = format!("{}: {}", status_code, &path);
                 }
                 raw_request.set_status_code(Some(status_code));
                 raw_request.set_final_url(r.url().as_str());
@@ -1556,6 +1560,7 @@ impl GooseUser {
                 warn!("{:?}: {}", &path, e);
                 raw_request.success = false;
                 raw_request.set_status_code(None);
+                raw_request.error = e.to_string();
             }
         };
 
@@ -1661,6 +1666,11 @@ impl GooseUser {
     /// parameters, `header` and `body`, are optional and used to provide more detail in
     /// logs.
     ///
+    /// The value of `tag` will normally be collected into the errors summary table if
+    /// metrics are being displayed. However, if `set_failure` is called multiple times,
+    /// or is called on a request that was already an error, only the first error will
+    /// be collected.
+    ///
     /// This also calls
     /// [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug).
     ///
@@ -1707,6 +1717,7 @@ impl GooseUser {
         if request.success {
             request.success = false;
             request.update = true;
+            request.error = tag.to_string();
             self.send_to_parent(GooseMetric::Request(request.clone()))?;
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.

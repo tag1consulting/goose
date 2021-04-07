@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::{f32, fmt};
 
-use crate::goose::{GooseRawRequest, GooseRequest, GooseTaskSet};
+use crate::goose::{GooseMethod, GooseRawRequest, GooseRequest, GooseTaskSet};
 use crate::util;
 use crate::GooseConfiguration;
 
@@ -19,6 +19,7 @@ use crate::GooseConfiguration;
 pub enum GooseMetric {
     Request(GooseRawRequest),
     Task(GooseRawTask),
+    Error(GooseErrorMetric),
 }
 
 /// Goose optionally tracks metrics about requests made during a load test.
@@ -26,6 +27,9 @@ pub type GooseRequestMetrics = HashMap<String, GooseRequest>;
 
 /// Goose optionally tracks metrics about tasks run during a load test.
 pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetric>>;
+
+/// Goose optionally tracks errors generated during a load test.
+pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetric>;
 
 /// The per-task metrics collected each time a task is invoked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,9 +217,11 @@ pub struct GooseMetrics {
     pub requests: GooseRequestMetrics,
     /// Goose task metrics.
     pub tasks: GooseTaskMetrics,
-    /// Flag indicating whether or not to display percentile. Because we're deriving Default,
-    /// this defaults to false.
-    pub display_percentile: bool,
+    /// Error-related metrics.
+    pub errors: BTreeMap<String, GooseErrorMetric>,
+    /// Flag indicating whether or not these are the final metrics. Because we're deriving
+    /// Default, this defaults to false.
+    pub final_metrics: bool,
     /// Flag indicating whether or not to display status_codes. Because we're deriving Default,
     /// this defaults to false.
     pub display_status_codes: bool,
@@ -224,7 +230,7 @@ pub struct GooseMetrics {
     pub display_metrics: bool,
 }
 impl GooseMetrics {
-    /// Create a new GooseMetrics object.
+    /// Initialize the task_metrics vector.
     pub fn initialize_task_metrics(
         &mut self,
         task_sets: &[GooseTaskSet],
@@ -777,8 +783,8 @@ impl GooseMetrics {
 
     /// Optionally prepares a table of slowest response times within several percentiles.
     pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // If there's nothing to display, exit immediately.
-        if !self.display_percentile {
+        // Only include percentiles when displaying the final metrics report.
+        if !self.final_metrics {
             return Ok(());
         }
 
@@ -971,6 +977,46 @@ impl GooseMetrics {
 
         Ok(())
     }
+
+    /// Optionally prepares a table of errors.
+    pub fn fmt_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Only include errors when displaying the final metrics report, and if there are
+        // errors to display.
+        if !self.final_metrics || self.errors.is_empty() {
+            return Ok(());
+        }
+
+        // Write the errors into a vector which can then be sorted by occurrences.
+        let mut errors: Vec<(usize, String)> = Vec::new();
+        for error in self.errors.values() {
+            errors.push((
+                error.occurrences,
+                format!("{:?} {}: {}", error.method, error.name, error.error),
+            ));
+        }
+
+        writeln!(
+            fmt,
+            "\n === ERRORS ===\n ------------------------------------------------------------------------------"
+        )?;
+        writeln!(fmt, " {:<11} | Error", "Count")?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+
+        // Reverse sort errors to display the error occuring the most first.
+        for (occurrences, error) in errors.iter().sorted().rev() {
+            writeln!(fmt, " {:<12}  {}", format_number(*occurrences), error)?;
+        }
+
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+
+        Ok(())
+    }
 }
 
 impl fmt::Display for GooseMetrics {
@@ -982,7 +1028,31 @@ impl fmt::Display for GooseMetrics {
         self.fmt_requests(fmt)?;
         self.fmt_response_times(fmt)?;
         self.fmt_percentiles(fmt)?;
-        self.fmt_status_codes(fmt)
+        self.fmt_status_codes(fmt)?;
+        self.fmt_errors(fmt)
+    }
+}
+
+/// Track and count errors.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct GooseErrorMetric {
+    /// The method that resulted in an error.
+    pub method: GooseMethod,
+    /// The optional name of the request.
+    pub name: String,
+    /// The error string.
+    pub error: String,
+    /// A counter reflecting how many times this error occurred.
+    pub occurrences: usize,
+}
+impl GooseErrorMetric {
+    pub fn new(method: GooseMethod, name: String, error: String) -> Self {
+        GooseErrorMetric {
+            method,
+            name,
+            error,
+            occurrences: 0,
+        }
     }
 }
 

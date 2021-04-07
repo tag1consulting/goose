@@ -454,7 +454,7 @@ use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
 };
-use crate::metrics::{GooseMetric, GooseMetrics};
+use crate::metrics::{GooseErrorMetric, GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -644,6 +644,8 @@ pub struct GooseDefaults {
     no_metrics: Option<bool>,
     /// An optional default for not tracking task metrics.
     no_task_metrics: Option<bool>,
+    /// An optional default for not displaying an error summary.
+    no_error_summary: Option<bool>,
     /// An optional default for the html-formatted report file name.
     report_file: Option<String>,
     /// An optional default for the requests log file name.
@@ -705,6 +707,8 @@ pub enum GooseDefault {
     NoMetrics,
     /// An optional default for not tracking task metrics.
     NoTaskMetrics,
+    /// An optional default for not displaying an error summary.
+    NoErrorSummary,
     /// An optional default for the report file name.
     ReportFile,
     /// An optional default for the requests log file name.
@@ -1879,6 +1883,38 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Determine if the no_error_summary flag is enabled.
+    fn set_no_error_summary(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_error_summary";
+        let mut value = false;
+
+        if self.configuration.no_error_summary {
+            key = "--no-error-summary";
+            value = true;
+        // If not otherwise set and not Worker, check if there's a default.
+        } else if self.attack_mode != AttackMode::Worker {
+            // Optionally set default.
+            if let Some(default_no_error_summary) = self.defaults.no_error_summary {
+                key = "set_default(GooseDefault::NoErrorSummary)";
+                value = default_no_error_summary;
+
+                self.configuration.no_error_summary = default_no_error_summary;
+            }
+        }
+
+        // Setting --no-error-summary with --worker is not allowed.
+        if self.configuration.no_error_summary && self.attack_mode == AttackMode::Worker {
+            return Err(GooseError::InvalidOption {
+                option: key.to_string(),
+                value: value.to_string(),
+                detail: format!("{} can not be set together with the --worker flag.", key),
+            });
+        }
+
+        Ok(())
+    }
+
     // Determine if the no_metrics flag is enabled.
     fn set_no_metrics(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2283,6 +2319,9 @@ impl GooseAttack {
 
         // Configure no_task_metrics flag.
         self.set_no_task_metrics()?;
+
+        // Configure no_error_summary flag.
+        self.set_no_error_summary()?;
 
         // Configure no_metrics flag.
         self.set_no_metrics()?;
@@ -2954,6 +2993,7 @@ impl GooseAttack {
                         &goose_attack_run_state.socket.clone().unwrap(),
                         vec![
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
+                            GaggleMetrics::Errors(self.metrics.errors.clone()),
                             GaggleMetrics::Tasks(self.metrics.tasks.clone()),
                         ],
                         true,
@@ -3105,8 +3145,8 @@ impl GooseAttack {
             );
             let _ = file.flush().await;
         };
-        // Only display percentile once the load test is finished.
-        self.metrics.display_percentile = true;
+        // Percentile and errors are only displayed when the load test is finished.
+        self.metrics.final_metrics = true;
 
         Ok(())
     }
@@ -3333,6 +3373,18 @@ impl GooseAttack {
                 tasks_template = "".to_string();
             }
 
+            // Only build the tasks template if --no-task-metrics isn't enabled.
+            let errors_template: String;
+            if !self.metrics.errors.is_empty() {
+                let mut error_rows = Vec::new();
+                for error in self.metrics.errors.values() {
+                    error_rows.push(report::error_row(error));
+                }
+                errors_template = report::errors_template(&error_rows.join("\n"));
+            } else {
+                errors_template = "".to_string();
+            }
+
             // Only build the status_code template if --status-codes is enabled.
             let status_code_template: String;
             if self.configuration.status_codes {
@@ -3392,10 +3444,13 @@ impl GooseAttack {
                 &start_time,
                 &end_time,
                 &host,
-                &requests_rows.join("\n"),
-                &responses_rows.join("\n"),
-                &tasks_template,
-                &status_code_template,
+                report::GooseReportTemplates {
+                    requests_template: &requests_rows.join("\n"),
+                    responses_template: &responses_rows.join("\n"),
+                    tasks_template: &tasks_template,
+                    status_codes_template: &status_code_template,
+                    errors_template: &errors_template,
+                },
             );
 
             // Write the report to file.
@@ -3503,11 +3558,18 @@ impl GooseAttack {
                             }
                         }
                     }
+
+                    // If there was an error, store it.
+                    if !raw_request.error.is_empty() {
+                        self.record_error(&raw_request);
+                    }
+
                     let key = format!("{:?} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.metrics.requests.get(&key) {
                         Some(m) => m.clone(),
                         None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
                     };
+
                     // Handle a metrics update.
                     if raw_request.update {
                         if raw_request.success {
@@ -3533,6 +3595,25 @@ impl GooseAttack {
 
                     self.metrics.requests.insert(key.to_string(), merge_request);
                 }
+                GooseMetric::Error(raw_error) => {
+                    // Recreate the string used to uniquely identify errors.
+                    let error_key = format!(
+                        "{}.{:?}.{}",
+                        raw_error.error, raw_error.method, raw_error.name
+                    );
+                    let mut merge_error = match self.metrics.errors.get(&error_key) {
+                        Some(error) => error.clone(),
+                        None => GooseErrorMetric::new(
+                            raw_error.method.clone(),
+                            raw_error.name.to_string(),
+                            raw_error.error.to_string(),
+                        ),
+                    };
+                    merge_error.occurrences += raw_error.occurrences;
+                    self.metrics
+                        .errors
+                        .insert(error_key.to_string(), merge_error);
+                }
                 GooseMetric::Task(raw_task) => {
                     // Store a new metric.
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
@@ -3543,6 +3624,33 @@ impl GooseAttack {
         }
 
         Ok(received_message)
+    }
+
+    /// Update error metrics.
+    pub fn record_error(&mut self, raw_request: &GooseRawRequest) {
+        // If the error summary is disabled, return immediately without collecting errors.
+        if self.configuration.no_error_summary {
+            return;
+        }
+
+        // Create a string to uniquely identify errors for tracking metrics.
+        let error_string = format!(
+            "{}.{:?}.{}",
+            raw_request.error, raw_request.method, raw_request.name
+        );
+
+        let mut error_metrics = match self.metrics.errors.get(&error_string) {
+            // We've seen this error before.
+            Some(m) => m.clone(),
+            // First time we've seen this error.
+            None => GooseErrorMetric::new(
+                raw_request.method.clone(),
+                raw_request.name.to_string(),
+                raw_request.error.to_string(),
+            ),
+        };
+        error_metrics.occurrences += 1;
+        self.metrics.errors.insert(error_string, error_metrics);
     }
 }
 
@@ -3597,6 +3705,7 @@ impl GooseAttack {
 ///  - GooseDefault::NoResetMetrics
 ///  - GooseDefault::NoMetrics
 ///  - GooseDefault::NoTaskMetrics
+///  - GooseDefault::NoErrorSummary
 ///  - GooseDefault::NoDebugBody
 ///  - GooseDefault::StatusCodes
 ///  - GooseDefault::StickyFollow
@@ -3658,6 +3767,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
@@ -3706,6 +3816,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
@@ -3731,6 +3842,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
+            GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
@@ -3831,6 +3943,9 @@ pub struct GooseConfiguration {
     /// Doesn't track task metrics
     #[options(no_short)]
     pub no_task_metrics: bool,
+    /// Doesn't display an error summary
+    #[options(no_short)]
+    pub no_error_summary: bool,
     /// Create an html-formatted report
     #[options(meta = "NAME")]
     pub report_file: String,
@@ -4176,6 +4291,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoTaskMetrics, true)
             .unwrap()
+            .set_default(GooseDefault::NoErrorSummary, true)
+            .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
@@ -4223,6 +4340,7 @@ mod test {
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
+        assert!(goose_attack.defaults.no_error_summary == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.metrics_format == Some(metrics_format));
