@@ -38,20 +38,18 @@ pub async fn logout(user: &GooseUser) -> GooseTaskResult {
 
 // All tests in this file run against common endpoints.
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
-    let mut endpoints: Vec<MockRef> = Vec::new();
-
-    // First set up LOGIN_PATH, store in vector at LOGIN_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(POST).path(LOGIN_PATH);
-        then.status(200);
-    }));
-    // Next set up LOGOUT_PATH, store in vector at LOGOUT_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(GET).path(LOGOUT_PATH);
-        then.status(200);
-    }));
-
-    endpoints
+    vec![
+        // First set up LOGIN_PATH, store in vector at LOGIN_KEY.
+        server.mock(|when, then| {
+            when.method(POST).path(LOGIN_PATH);
+            then.status(200);
+        }),
+        // Next set up LOGOUT_PATH, store in vector at LOGOUT_KEY.
+        server.mock(|when, then| {
+            when.method(GET).path(LOGOUT_PATH);
+            then.status(200);
+        }),
+    ]
 }
 
 // Build appropriate configuration for these tests.

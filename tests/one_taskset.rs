@@ -41,20 +41,18 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 
 // All tests in this file run against common endpoints.
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
-    let mut endpoints: Vec<MockRef> = Vec::new();
-
-    // First set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(GET).path(INDEX_PATH);
-        then.status(200);
-    }));
-    // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(GET).path(ABOUT_PATH);
-        then.status(200);
-    }));
-
-    endpoints
+    vec![
+        // First set up INDEX_PATH, store in vector at INDEX_KEY.
+        server.mock(|when, then| {
+            when.method(GET).path(INDEX_PATH);
+            then.status(200);
+        }),
+        // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
+        server.mock(|when, then| {
+            when.method(GET).path(ABOUT_PATH);
+            then.status(200);
+        }),
+    ]
 }
 
 // Build appropriate configuration for these tests.

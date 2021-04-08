@@ -97,69 +97,69 @@ fn setup_mock_server_endpoints<'a>(
     server: &'a MockServer,
     server2: Option<&'a MockServer>,
 ) -> Vec<MockRef<'a>> {
-    let mut endpoints: Vec<MockRef> = Vec::new();
-
     match test_type {
         TestType::Chain => {
-            // First set up INDEX_PATH, store in vector at INDEX_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(INDEX_PATH);
-                then.status(200);
-            }));
-            // Next set up REDIRECT_PATH, store in vector at REDIRECT_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(REDIRECT_PATH);
-                then.status(301).header("Location", REDIRECT2_PATH);
-            }));
-            // Next set up REDIRECT2_PATH, store in vector at REDIRECT2_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(REDIRECT2_PATH);
-                then.status(302).header("Location", REDIRECT3_PATH);
-            }));
-            // Next set up REDIRECT3_PATH, store in vector at REDIRECT3_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(REDIRECT3_PATH);
-                then.status(303).header("Location", ABOUT_PATH);
-            }));
-            // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(ABOUT_PATH);
-                then.status(200)
-                    .body("<HTML><BODY>about page</BODY></HTML>");
-            }));
+            vec![
+                // First set up INDEX_PATH, store in vector at INDEX_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(INDEX_PATH);
+                    then.status(200);
+                }),
+                // Next set up REDIRECT_PATH, store in vector at REDIRECT_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(REDIRECT_PATH);
+                    then.status(301).header("Location", REDIRECT2_PATH);
+                }),
+                // Next set up REDIRECT2_PATH, store in vector at REDIRECT2_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(REDIRECT2_PATH);
+                    then.status(302).header("Location", REDIRECT3_PATH);
+                }),
+                // Next set up REDIRECT3_PATH, store in vector at REDIRECT3_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(REDIRECT3_PATH);
+                    then.status(303).header("Location", ABOUT_PATH);
+                }),
+                // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(ABOUT_PATH);
+                    then.status(200)
+                        .body("<HTML><BODY>about page</BODY></HTML>");
+                }),
+            ]
         }
         TestType::Domain | TestType::Sticky => {
-            // First set up INDEX_PATH, store in vector at SERVER1_INDEX_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(INDEX_PATH);
-                then.status(200);
-            }));
-            // Next set up ABOUT_PATH, store in vector at SERVER1_ABOUT_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(ABOUT_PATH);
-                then.status(200)
-                    .body("<HTML><BODY>about page</BODY></HTML>");
-            }));
-            // Next set up REDIRECT_PATH, store in vector at SERVER1_REDIRECT_KEY.
-            endpoints.push(server.mock(|when, then| {
-                when.method(GET).path(REDIRECT_PATH);
-                then.status(301)
-                    .header("Location", &server2.unwrap().url(INDEX_PATH));
-            }));
-            // Next set up INDEX_PATH on server 2, store in vector at SERVER2_INDEX_KEY.
-            endpoints.push(server2.unwrap().mock(|when, then| {
-                when.method(GET).path(INDEX_PATH);
-                then.status(200);
-            }));
-            // Next set up ABOUT_PATH on server 2, store in vector at SERVER2_ABOUT_KEY.
-            endpoints.push(server2.unwrap().mock(|when, then| {
-                when.method(GET).path(ABOUT_PATH);
-                then.status(200);
-            }));
+            vec![
+                // First set up INDEX_PATH, store in vector at SERVER1_INDEX_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(INDEX_PATH);
+                    then.status(200);
+                }),
+                // Next set up ABOUT_PATH, store in vector at SERVER1_ABOUT_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(ABOUT_PATH);
+                    then.status(200)
+                        .body("<HTML><BODY>about page</BODY></HTML>");
+                }),
+                // Next set up REDIRECT_PATH, store in vector at SERVER1_REDIRECT_KEY.
+                server.mock(|when, then| {
+                    when.method(GET).path(REDIRECT_PATH);
+                    then.status(301)
+                        .header("Location", &server2.unwrap().url(INDEX_PATH));
+                }),
+                // Next set up INDEX_PATH on server 2, store in vector at SERVER2_INDEX_KEY.
+                server2.unwrap().mock(|when, then| {
+                    when.method(GET).path(INDEX_PATH);
+                    then.status(200);
+                }),
+                // Next set up ABOUT_PATH on server 2, store in vector at SERVER2_ABOUT_KEY.
+                server2.unwrap().mock(|when, then| {
+                    when.method(GET).path(ABOUT_PATH);
+                    then.status(200);
+                }),
+            ]
         }
     }
-
-    endpoints
 }
 
 // Build appropriate configuration for these tests.
