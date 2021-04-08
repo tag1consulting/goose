@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.10.10-dev
+## 0.11.0-dev
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
- - enforce Rust naming conventions in regards to case
+ - API change: all `GooseMethod`s renamed to enforce Rust naming conventions in regards to case, for example `GooseMethod::GET` becomes `GooseMethod::Get`
 
 ## 0.10.9 March 23, 2021
  - avoid unnecessary work on Manager when starting a Gaggle
