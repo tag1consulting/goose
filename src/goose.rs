@@ -628,12 +628,12 @@ pub enum GooseMethod {
 impl fmt::Display for GooseMethod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            GooseMethod::Delete => write!(f, "{}", "DELETE"),
-            GooseMethod::Get => write!(f, "{}", "GET"),
-            GooseMethod::Head => write!(f, "{}", "HEAD"),
-            GooseMethod::Patch => write!(f, "{}", "PATCH"),
-            GooseMethod::Post => write!(f, "{}", "POST"),
-            GooseMethod::Put => write!(f, "{}", "PUT"),
+            GooseMethod::Delete => write!(f, "DELETE"),
+            GooseMethod::Get => write!(f, "GET"),
+            GooseMethod::Head => write!(f, "HEAD"),
+            GooseMethod::Patch => write!(f, "PATCH"),
+            GooseMethod::Post => write!(f, "POST"),
+            GooseMethod::Put => write!(f, "PUT"),
         }
     }
 }
