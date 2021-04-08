@@ -96,11 +96,11 @@ fn validate_one_taskset(
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics
         .requests
-        .get(&format!("Get {}", INDEX_PATH))
+        .get(&format!("GET {}", INDEX_PATH))
         .unwrap();
     let about_metrics = goose_metrics
         .requests
-        .get(&format!("Get {}", ABOUT_PATH))
+        .get(&format!("GET {}", ABOUT_PATH))
         .unwrap();
 
     // Confirm that the path and method are correct in the statistics.

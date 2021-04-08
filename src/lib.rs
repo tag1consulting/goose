@@ -2457,7 +2457,7 @@ impl GooseAttack {
     ) -> String {
         let body = format!(
             // Put quotes around name, url and final_url as they are strings.
-            "{},{:?},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
+            "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
             raw_request.elapsed,
             raw_request.method,
             raw_request.name,
@@ -3178,12 +3178,12 @@ impl GooseAttack {
             let mut aggregate_response_time_maximum: usize = 0;
             let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
             for (request_key, request) in self.metrics.requests.iter().sorted() {
-                let method = format!("{:?}", request.method);
+                let method = format!("{}", request.method);
                 // The request_key is "{method} {name}", so by stripping the "{method} "
                 // prefix we get the name.
                 // @TODO: consider storing the name as a field in GooseRequest.
                 let name = request_key
-                    .strip_prefix(&format!("{:?} ", request.method))
+                    .strip_prefix(&format!("{} ", request.method))
                     .unwrap()
                     .to_string();
                 let total_request_count = request.success_count + request.fail_count;
@@ -3391,12 +3391,12 @@ impl GooseAttack {
                 let mut status_code_metrics = Vec::new();
                 let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
                 for (request_key, request) in self.metrics.requests.iter().sorted() {
-                    let method = format!("{:?}", request.method);
+                    let method = format!("{}", request.method);
                     // The request_key is "{method} {name}", so by stripping the "{method} "
                     // prefix we get the name.
                     // @TODO: consider storing the name as a field in GooseRequest.
                     let name = request_key
-                        .strip_prefix(&format!("{:?} ", request.method))
+                        .strip_prefix(&format!("{} ", request.method))
                         .unwrap()
                         .to_string();
 
@@ -3564,7 +3564,7 @@ impl GooseAttack {
                         self.record_error(&raw_request);
                     }
 
-                    let key = format!("{:?} {}", raw_request.method, raw_request.name);
+                    let key = format!("{} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.metrics.requests.get(&key) {
                         Some(m) => m.clone(),
                         None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
@@ -3598,7 +3598,7 @@ impl GooseAttack {
                 GooseMetric::Error(raw_error) => {
                     // Recreate the string used to uniquely identify errors.
                     let error_key = format!(
-                        "{}.{:?}.{}",
+                        "{}.{}.{}",
                         raw_error.error, raw_error.method, raw_error.name
                     );
                     let mut merge_error = match self.metrics.errors.get(&error_key) {
@@ -3635,7 +3635,7 @@ impl GooseAttack {
 
         // Create a string to uniquely identify errors for tracking metrics.
         let error_string = format!(
-            "{}.{:?}.{}",
+            "{}.{}.{}",
             raw_request.error, raw_request.method, raw_request.name
         );
 

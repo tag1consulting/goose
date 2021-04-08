@@ -79,11 +79,11 @@ fn validate_test(
 
     let index_metrics = goose_metrics
         .requests
-        .get(&format!("Get {}", INDEX_PATH))
+        .get(&format!("GET {}", INDEX_PATH))
         .unwrap();
     let about_metrics = goose_metrics
         .requests
-        .get(&format!("Get {}", ABOUT_PATH))
+        .get(&format!("GET {}", ABOUT_PATH))
         .unwrap();
 
     // Confirm that Goose and the server saw the same number of page loads.

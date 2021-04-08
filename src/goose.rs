@@ -624,6 +624,19 @@ pub enum GooseMethod {
     Post,
     Put,
 }
+/// Display method in upper case.
+impl fmt::Display for GooseMethod {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            GooseMethod::Delete => write!(f, "{}", "DELETE"),
+            GooseMethod::Get => write!(f, "{}", "GET"),
+            GooseMethod::Head => write!(f, "{}", "HEAD"),
+            GooseMethod::Patch => write!(f, "{}", "PATCH"),
+            GooseMethod::Post => write!(f, "{}", "POST"),
+            GooseMethod::Put => write!(f, "{}", "PUT"),
+        }
+    }
+}
 
 fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskError> {
     Ok(match method {

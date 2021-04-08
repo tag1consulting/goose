@@ -167,7 +167,7 @@ fn validate_closer_test(
         let expect_error = format_item("Item does not exist in goose_metrics", &item);
         let endpoint_metrics = goose_metrics
             .requests
-            .get(&format!("Get {}", item.path))
+            .get(&format!("GET {}", item.path))
             .expect(&expect_error);
 
         assert!(
