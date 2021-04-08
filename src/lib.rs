@@ -3773,10 +3773,16 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
-            | GooseDefault::Worker => panic!(format!(
-                "set_default(GooseDefault::{:?}, {}) expected bool value, received &str",
-                key, value
-            )),
+            | GooseDefault::Worker => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected bool value, received &str",
+                        key, value
+                    ),
+                });
+            }
         }
         Ok(Box::new(self))
     }
