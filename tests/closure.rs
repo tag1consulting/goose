@@ -155,16 +155,12 @@ fn validate_closer_test(
     for (idx, item) in test_endpoints.iter().enumerate() {
         let mock_endpoint = &mock_endpoints[idx];
 
-        let format_item = |message, assert_item| {
-            return format!("{} for item = {:#?}", message, assert_item);
-        };
-
         // Confirm that we loaded the mock endpoint.
         assert!(
             mock_endpoint.hits() > 0,
-            format_item("Endpoint was not called > 0", &item)
+            format!("Endpoint was not called > 0 for item: {:#?}", &item)
         );
-        let expect_error = format_item("Item does not exist in goose_metrics", &item);
+        let expect_error = format!("Item does not exist in goose_metrics: {:#?}", &item);
         let endpoint_metrics = goose_metrics
             .requests
             .get(&format!("GET {}", item.path))
@@ -172,9 +168,9 @@ fn validate_closer_test(
 
         assert!(
             endpoint_metrics.path == item.path,
-            format_item(
-                &format!("{} != {}", endpoint_metrics.path, item.path),
-                &item
+            format!(
+                "{} != {} for item: {:#?}",
+                endpoint_metrics.path, item.path, &item
             )
         );
         assert!(endpoint_metrics.method == GooseMethod::Get);
@@ -184,19 +180,19 @@ fn validate_closer_test(
 
         assert!(
             endpoint_metrics.response_time_counter == mock_endpoint.hits(),
-            format_item("response_time_counter != hits()", &item)
+            format!("response_time_counter != hits() for item: {:#?}", &item)
         );
         assert!(
             endpoint_metrics.status_code_counts[&status_code] == mock_endpoint.hits(),
-            format_item("status_code_counts != hits()", &item)
+            format!("status_code_counts != hits() for item: {:#?}", &item)
         );
         assert!(
             endpoint_metrics.success_count == mock_endpoint.hits(),
-            format_item("success_count != hits()", &item)
+            format!("success_count != hits() for item: {:#?}", &item)
         );
         assert!(
             endpoint_metrics.fail_count == 0,
-            format_item("fail_count != 0", &item)
+            format!("fail_count != 0 for item: {:#?}", &item)
         );
     }
 
