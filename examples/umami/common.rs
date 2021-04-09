@@ -32,145 +32,145 @@ pub struct Term<'a> {
 
 /// Returns a vector of all nodes of a specified content type.
 pub fn get_nodes(content_type: &ContentType) -> Vec<Node> {
-    let mut nodes: Vec<Node> = Vec::new();
-
     match content_type {
         ContentType::Article => {
-            nodes.push(Node {
-                nid: 10,
-                url_en: "/en/articles/give-it-a-go-and-grow-your-own-herbs",
-                url_es: "/es/articles/prueba-y-cultiva-tus-propias-hierbas",
-                title_en: "Give it a go and grow your own herbs",
-                title_es: "Prueba y cultiva tus propias hierbas",
-            });
-            nodes.push(Node {
-                nid: 11,
-                url_en: "/en/articles/dairy-free-and-delicious-milk-chocolate",
-                url_es: "/es/articles/delicioso-chocolate-sin-lactosa",
-                title_en: "Dairy-free and delicious milk chocolate",
-                title_es: "Delicioso chocolate sin lactosa",
-            });
-            nodes.push(Node {
-                nid: 12,
-                url_en: "/en/articles/the-real-deal-for-supermarket-savvy-shopping",
-                url_es: "/es/articles/el-verdadeo-negocio-para-comprar-en-el-supermercado",
-                title_en: "The real deal for supermarket savvy shopping",
-                title_es: "El verdadero negocio para comprar en el supermercado",
-            });
-            nodes.push(Node {
-                nid: 13,
-                url_en: "/en/articles/the-umami-guide-to-our-favourite-mushrooms",
-                url_es: "/es/articles/guia-umami-de-nuestras-setas-preferidas",
-                title_en: "The Umami guide to our favorite mushrooms",
-                title_es: "Guía Umami de nuestras setas preferidas",
-            });
-            nodes.push(Node {
-                nid: 14,
-                url_en: "/en/articles/lets-hear-it-for-carrots",
-                url_es: "/es/articles/un-aplauso-para-las-zanahorias",
-                title_en: "Let&#039;s hear it for carrots",
-                title_es: "Un aplauso para las zanahorias",
-            });
-            nodes.push(Node {
-                nid: 15,
-                url_en: "/en/articles/baking-mishaps-our-troubleshooting-tips",
-                url_es:
-                    "/es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas",
-                title_en: "Baking mishaps - our troubleshooting tips",
-                title_es: "Percances al hornear - nuestros consejos para solucionar los problemas",
-            });
-            nodes.push(Node {
-                nid: 16,
-                url_en: "/en/articles/skip-the-spirits-with-delicious-mocktails",
-                url_es: "/es/articles/salta-los-espiritus-con-deliciosos-cocteles-sin-alcohol",
-                title_en: "Skip the spirits with delicious mocktails",
-                title_es: "Salta los espíritus con deliciosos cócteles sin alcohol",
-            });
-            nodes.push(Node {
-                nid: 17,
-                url_en: "/en/articles/give-your-oatmeal-the-ultimate-makeover",
-                url_es: "/es/articles/dale-a-tu-avena-el-cambio-de-imagen-definitivo",
-                title_en: "Give your oatmeal the ultimate makeover",
-                title_es: "Dale a tu avena el cambio de imagen definitivo",
-            });
+            vec![
+                Node {
+                    nid: 10,
+                    url_en: "/en/articles/give-it-a-go-and-grow-your-own-herbs",
+                    url_es: "/es/articles/prueba-y-cultiva-tus-propias-hierbas",
+                    title_en: "Give it a go and grow your own herbs",
+                    title_es: "Prueba y cultiva tus propias hierbas",
+                },
+                Node {
+                    nid: 11,
+                    url_en: "/en/articles/dairy-free-and-delicious-milk-chocolate",
+                    url_es: "/es/articles/delicioso-chocolate-sin-lactosa",
+                    title_en: "Dairy-free and delicious milk chocolate",
+                    title_es: "Delicioso chocolate sin lactosa",
+                },
+                Node {
+                    nid: 12,
+                    url_en: "/en/articles/the-real-deal-for-supermarket-savvy-shopping",
+                    url_es: "/es/articles/el-verdadeo-negocio-para-comprar-en-el-supermercado",
+                    title_en: "The real deal for supermarket savvy shopping",
+                    title_es: "El verdadero negocio para comprar en el supermercado",
+                },
+                Node {
+                    nid: 13,
+                    url_en: "/en/articles/the-umami-guide-to-our-favourite-mushrooms",
+                    url_es: "/es/articles/guia-umami-de-nuestras-setas-preferidas",
+                    title_en: "The Umami guide to our favorite mushrooms",
+                    title_es: "Guía Umami de nuestras setas preferidas",
+                },
+                Node {
+                    nid: 14,
+                    url_en: "/en/articles/lets-hear-it-for-carrots",
+                    url_es: "/es/articles/un-aplauso-para-las-zanahorias",
+                    title_en: "Let&#039;s hear it for carrots",
+                    title_es: "Un aplauso para las zanahorias",
+                },
+                Node {
+                    nid: 15,
+                    url_en: "/en/articles/baking-mishaps-our-troubleshooting-tips",
+                    url_es:
+                        "/es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas",
+                    title_en: "Baking mishaps - our troubleshooting tips",
+                    title_es: "Percances al hornear - nuestros consejos para solucionar los problemas",
+                },
+                Node {
+                    nid: 16,
+                    url_en: "/en/articles/skip-the-spirits-with-delicious-mocktails",
+                    url_es: "/es/articles/salta-los-espiritus-con-deliciosos-cocteles-sin-alcohol",
+                    title_en: "Skip the spirits with delicious mocktails",
+                    title_es: "Salta los espíritus con deliciosos cócteles sin alcohol",
+                },
+                Node {
+                    nid: 17,
+                    url_en: "/en/articles/give-your-oatmeal-the-ultimate-makeover",
+                    url_es: "/es/articles/dale-a-tu-avena-el-cambio-de-imagen-definitivo",
+                    title_en: "Give your oatmeal the ultimate makeover",
+                    title_es: "Dale a tu avena el cambio de imagen definitivo",
+                },
+            ]
         }
         ContentType::BasicPage => {
-            nodes.push(Node {
+            vec![Node {
                 nid: 18,
                 url_en: "/en/about-umami",
                 url_es: "/es/acerca-de-umami",
                 title_en: "About Umami",
                 title_es: "Acerca de Umami",
-            });
+            }]
         }
         ContentType::Recipe => {
-            nodes.push(Node {
-                nid: 1,
-                url_en: "/en/recipes/deep-mediterranean-quiche",
-                url_es: "/es/recipes/quiche-mediterráneo-profundo",
-                title_en: "Deep mediterranean quiche",
-                title_es: "Quiche mediterráneo profundo",
-            });
-            nodes.push(Node {
-                nid: 2,
-                url_en: "/en/recipes/vegan-chocolate-and-nut-brownies",
-                url_es: "/es/recipes/bizcochos-veganos-de-chocolate-y-nueces",
-                title_en: "Vegan chocolate and nut brownies",
-                title_es: "Bizcochos veganos de chocolate y nueces",
-            });
-            nodes.push(Node {
-                nid: 3,
-                url_en: "/en/recipes/super-easy-vegetarian-pasta-bake",
-                url_es: "/es/recipes/pasta-vegetariana-horno-super-facil",
-                title_en: "Super easy vegetarian pasta bake",
-                title_es: "Pasta vegetariana al horno súper fácil",
-            });
-            nodes.push(Node {
-                nid: 4,
-                url_en: "/en/recipes/watercress-soup",
-                url_es: "/es/recipes/sopa-de-berro",
-                title_en: "Watercress soup",
-                title_es: "Sopa de berro",
-            });
-            nodes.push(Node {
-                nid: 5,
-                url_en: "/en/recipes/victoria-sponge-cake",
-                url_es: "/es/recipes/pastel-victoria",
-                title_en: "Victoria sponge cake",
-                title_es: "Pastel Victoria",
-            });
-            nodes.push(Node {
-                nid: 6,
-                url_en: "/en/recipes/gluten-free-pizza",
-                url_es: "/es/recipes/pizza-sin-gluten",
-                title_en: "Gluten free pizza",
-                title_es: "Pizza sin gluten",
-            });
-            nodes.push(Node {
-                nid: 7,
-                url_en: "/en/recipes/thai-green-curry",
-                url_es: "/es/recipes/curry-verde-tailandes",
-                title_en: "Thai green curry",
-                title_es: "Curry verde tailandés",
-            });
-            nodes.push(Node {
-                nid: 8,
-                url_en: "/en/recipes/crema-catalana",
-                url_es: "/es/recipes/crema-catalana",
-                title_en: "Crema catalana",
-                title_es: "Crema catalana",
-            });
-            nodes.push(Node {
-                nid: 9,
-                url_en: "/en/recipes/fiery-chili-sauce",
-                url_es: "/es/recipes/salsa-de-chile-ardiente",
-                title_en: "Fiery chili sauce",
-                title_es: "Salsa de chile ardiente",
-            });
+            vec![
+                Node {
+                    nid: 1,
+                    url_en: "/en/recipes/deep-mediterranean-quiche",
+                    url_es: "/es/recipes/quiche-mediterráneo-profundo",
+                    title_en: "Deep mediterranean quiche",
+                    title_es: "Quiche mediterráneo profundo",
+                },
+                Node {
+                    nid: 2,
+                    url_en: "/en/recipes/vegan-chocolate-and-nut-brownies",
+                    url_es: "/es/recipes/bizcochos-veganos-de-chocolate-y-nueces",
+                    title_en: "Vegan chocolate and nut brownies",
+                    title_es: "Bizcochos veganos de chocolate y nueces",
+                },
+                Node {
+                    nid: 3,
+                    url_en: "/en/recipes/super-easy-vegetarian-pasta-bake",
+                    url_es: "/es/recipes/pasta-vegetariana-horno-super-facil",
+                    title_en: "Super easy vegetarian pasta bake",
+                    title_es: "Pasta vegetariana al horno súper fácil",
+                },
+                Node {
+                    nid: 4,
+                    url_en: "/en/recipes/watercress-soup",
+                    url_es: "/es/recipes/sopa-de-berro",
+                    title_en: "Watercress soup",
+                    title_es: "Sopa de berro",
+                },
+                Node {
+                    nid: 5,
+                    url_en: "/en/recipes/victoria-sponge-cake",
+                    url_es: "/es/recipes/pastel-victoria",
+                    title_en: "Victoria sponge cake",
+                    title_es: "Pastel Victoria",
+                },
+                Node {
+                    nid: 6,
+                    url_en: "/en/recipes/gluten-free-pizza",
+                    url_es: "/es/recipes/pizza-sin-gluten",
+                    title_en: "Gluten free pizza",
+                    title_es: "Pizza sin gluten",
+                },
+                Node {
+                    nid: 7,
+                    url_en: "/en/recipes/thai-green-curry",
+                    url_es: "/es/recipes/curry-verde-tailandes",
+                    title_en: "Thai green curry",
+                    title_es: "Curry verde tailandés",
+                },
+                Node {
+                    nid: 8,
+                    url_en: "/en/recipes/crema-catalana",
+                    url_es: "/es/recipes/crema-catalana",
+                    title_en: "Crema catalana",
+                    title_es: "Crema catalana",
+                },
+                Node {
+                    nid: 9,
+                    url_en: "/en/recipes/fiery-chili-sauce",
+                    url_es: "/es/recipes/salsa-de-chile-ardiente",
+                    title_en: "Fiery chili sauce",
+                    title_es: "Salsa de chile ardiente",
+                },
+            ]
         }
     }
-
-    nodes
 }
 
 /// Returns a vector of all taxonomy terms.
