@@ -2,7 +2,11 @@
 
 ## 0.11.0-dev
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
- - API change: all `GooseMethod`s renamed to enforce Rust naming conventions in regards to case, for example `GooseMethod::GET` becomes `GooseMethod::Get`
+ - clippy cleanups:
+    o API change: all `GooseMethod`s renamed to enforce Rust naming conventions in regards to case, for example `GooseMethod::GET` becomes `GooseMethod::Get`
+    o use `vec![]` macro to avoid unnecessarily pushing data into mutable vectors
+    o call `format!` macro directly for improved readability
+    o remove unnecessary `panic!`
 
 ## 0.10.9 March 23, 2021
  - avoid unnecessary work on Manager when starting a Gaggle

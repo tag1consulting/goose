@@ -175,208 +175,206 @@ pub fn get_nodes(content_type: &ContentType) -> Vec<Node> {
 
 /// Returns a vector of all taxonomy terms.
 pub fn get_terms() -> Vec<Term<'static>> {
-    let mut terms: Vec<Term> = Vec::new();
-
-    terms.push(Term {
-        url_en: "/en/recipe-category/accompaniments",
-        url_es: "/es/recipe-category/acompañamientos",
-        title_en: "Accompaniments",
-        title_es: "Acompañamientos",
-    });
-    terms.push(Term {
-        url_en: "/en/recipe-category/desserts",
-        url_es: "/es/recipe-category/postres",
-        title_en: "Desserts",
-        title_es: "Postres",
-    });
-    terms.push(Term {
-        url_en: "/en/recipe-category/main-courses",
-        url_es: "/es/recipe-category/platos-principales",
-        title_en: "Main courses",
-        title_es: "Platos principales",
-    });
-    terms.push(Term {
-        url_en: "/en/recipe-category/snacks",
-        url_es: "/es/recipe-category/tentempiés",
-        title_en: "Snacks",
-        title_es: "Tentempiés",
-    });
-    terms.push(Term {
-        url_en: "/en/recipe-category/starters",
-        url_es: "/es/recipe-category/entrantes",
-        title_en: "Starters",
-        title_es: "Entrantes",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/alcohol-free",
-        url_es: "/es/tags/sin-alcohol",
-        title_en: "Alcohol free",
-        title_es: "Sin alcohol",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/baked",
-        url_es: "/es/tags/horneado",
-        title_en: "Baked",
-        title_es: "Horneado",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/baking",
-        url_es: "/es/tags/cocción",
-        title_en: "Baking",
-        title_es: "Cocción",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/breakfast",
-        url_es: "/es/tags/desayuno",
-        title_en: "Breakfast",
-        title_es: "Desayuno",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/cake",
-        url_es: "/es/tags/pastel",
-        title_en: "Cake",
-        title_es: "Pastel",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/carrots",
-        url_es: "/es/tags/zanahorias",
-        title_en: "Carrots",
-        title_es: "Zanahorias",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/chocolate",
-        url_es: "/es/tags/chocolate",
-        title_en: "Chocolate",
-        title_es: "Chocolate",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/cocktail-party",
-        url_es: "/es/tags/fiesta-de-coctel",
-        title_en: "Cocktail party",
-        title_es: "Fiesta de coctel",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/dairy-free",
-        url_es: "/es/tags/sin-Lactosa",
-        title_en: "Dairy-free",
-        title_es: "Sin Lactosa",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/dessert",
-        url_es: "/es/tags/postre",
-        title_en: "Dessert",
-        title_es: "Postre",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/dinner-party",
-        url_es: "/es/tags/fiesta-de-cena",
-        title_en: "Dinner party",
-        title_es: "Fiesta de cena",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/drinks",
-        url_es: "/es/tags/bebidas",
-        title_en: "Drinks",
-        title_es: "Bebidas",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/egg",
-        url_es: "/es/tags/huevo",
-        title_en: "Egg",
-        title_es: "Huevo",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/grow-your-own",
-        url_es: "/es/tags/cultiva-los-tuyos",
-        title_en: "Grow your own",
-        title_es: "Cultiva los tuyos",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/healthy",
-        url_es: "/es/tags/saludable",
-        title_en: "Healthy",
-        title_es: "Saludable",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/herbs",
-        url_es: "/es/tags/hierbas",
-        title_en: "Herbs",
-        title_es: "Hierbas",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/learn-to-cook",
-        url_es: "/es/tags/aprender-a-cocinar",
-        title_en: "Learn to cook",
-        title_es: "Aprender a cocinar",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/mushrooms",
-        url_es: "/es/tags/champiñones",
-        title_en: "Mushrooms",
-        title_es: "Champiñones",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/oats",
-        url_es: "/es/tags/avena",
-        title_en: "Oats",
-        title_es: "Avena",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/party",
-        url_es: "/es/tags/fiesta",
-        title_en: "Party",
-        title_es: "Fiesta",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/pasta",
-        url_es: "/es/tags/pastas",
-        title_en: "Pasta",
-        title_es: "Pastas",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/pastry",
-        url_es: "/es/tags/repostería",
-        title_en: "Pastry",
-        title_es: "Repostería",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/seasonal",
-        url_es: "/es/tags/estacional",
-        title_en: "Seasonal",
-        title_es: "Estacional",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/shopping",
-        url_es: "/es/tags/compras",
-        title_en: "Shopping",
-        title_es: "Compras",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/soup",
-        url_es: "/es/tags/sopa",
-        title_en: "Soup",
-        title_es: "Sopa",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/supermarkets",
-        url_es: "/es/tags/supermercados",
-        title_en: "Supermarkets",
-        title_es: "Supermercados",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/vegan",
-        url_es: "/es/tags/vegano",
-        title_en: "Vegan",
-        title_es: "Vegano",
-    });
-    terms.push(Term {
-        url_en: "/en/tags/vegetarian",
-        url_es: "/es/tags/vegetariano",
-        title_en: "Vegetarian",
-        title_es: "Vegetariano",
-    });
-
-    terms
+    vec![
+        Term {
+            url_en: "/en/recipe-category/accompaniments",
+            url_es: "/es/recipe-category/acompañamientos",
+            title_en: "Accompaniments",
+            title_es: "Acompañamientos",
+        },
+        Term {
+            url_en: "/en/recipe-category/desserts",
+            url_es: "/es/recipe-category/postres",
+            title_en: "Desserts",
+            title_es: "Postres",
+        },
+        Term {
+            url_en: "/en/recipe-category/main-courses",
+            url_es: "/es/recipe-category/platos-principales",
+            title_en: "Main courses",
+            title_es: "Platos principales",
+        },
+        Term {
+            url_en: "/en/recipe-category/snacks",
+            url_es: "/es/recipe-category/tentempiés",
+            title_en: "Snacks",
+            title_es: "Tentempiés",
+        },
+        Term {
+            url_en: "/en/recipe-category/starters",
+            url_es: "/es/recipe-category/entrantes",
+            title_en: "Starters",
+            title_es: "Entrantes",
+        },
+        Term {
+            url_en: "/en/tags/alcohol-free",
+            url_es: "/es/tags/sin-alcohol",
+            title_en: "Alcohol free",
+            title_es: "Sin alcohol",
+        },
+        Term {
+            url_en: "/en/tags/baked",
+            url_es: "/es/tags/horneado",
+            title_en: "Baked",
+            title_es: "Horneado",
+        },
+        Term {
+            url_en: "/en/tags/baking",
+            url_es: "/es/tags/cocción",
+            title_en: "Baking",
+            title_es: "Cocción",
+        },
+        Term {
+            url_en: "/en/tags/breakfast",
+            url_es: "/es/tags/desayuno",
+            title_en: "Breakfast",
+            title_es: "Desayuno",
+        },
+        Term {
+            url_en: "/en/tags/cake",
+            url_es: "/es/tags/pastel",
+            title_en: "Cake",
+            title_es: "Pastel",
+        },
+        Term {
+            url_en: "/en/tags/carrots",
+            url_es: "/es/tags/zanahorias",
+            title_en: "Carrots",
+            title_es: "Zanahorias",
+        },
+        Term {
+            url_en: "/en/tags/chocolate",
+            url_es: "/es/tags/chocolate",
+            title_en: "Chocolate",
+            title_es: "Chocolate",
+        },
+        Term {
+            url_en: "/en/tags/cocktail-party",
+            url_es: "/es/tags/fiesta-de-coctel",
+            title_en: "Cocktail party",
+            title_es: "Fiesta de coctel",
+        },
+        Term {
+            url_en: "/en/tags/dairy-free",
+            url_es: "/es/tags/sin-Lactosa",
+            title_en: "Dairy-free",
+            title_es: "Sin Lactosa",
+        },
+        Term {
+            url_en: "/en/tags/dessert",
+            url_es: "/es/tags/postre",
+            title_en: "Dessert",
+            title_es: "Postre",
+        },
+        Term {
+            url_en: "/en/tags/dinner-party",
+            url_es: "/es/tags/fiesta-de-cena",
+            title_en: "Dinner party",
+            title_es: "Fiesta de cena",
+        },
+        Term {
+            url_en: "/en/tags/drinks",
+            url_es: "/es/tags/bebidas",
+            title_en: "Drinks",
+            title_es: "Bebidas",
+        },
+        Term {
+            url_en: "/en/tags/egg",
+            url_es: "/es/tags/huevo",
+            title_en: "Egg",
+            title_es: "Huevo",
+        },
+        Term {
+            url_en: "/en/tags/grow-your-own",
+            url_es: "/es/tags/cultiva-los-tuyos",
+            title_en: "Grow your own",
+            title_es: "Cultiva los tuyos",
+        },
+        Term {
+            url_en: "/en/tags/healthy",
+            url_es: "/es/tags/saludable",
+            title_en: "Healthy",
+            title_es: "Saludable",
+        },
+        Term {
+            url_en: "/en/tags/herbs",
+            url_es: "/es/tags/hierbas",
+            title_en: "Herbs",
+            title_es: "Hierbas",
+        },
+        Term {
+            url_en: "/en/tags/learn-to-cook",
+            url_es: "/es/tags/aprender-a-cocinar",
+            title_en: "Learn to cook",
+            title_es: "Aprender a cocinar",
+        },
+        Term {
+            url_en: "/en/tags/mushrooms",
+            url_es: "/es/tags/champiñones",
+            title_en: "Mushrooms",
+            title_es: "Champiñones",
+        },
+        Term {
+            url_en: "/en/tags/oats",
+            url_es: "/es/tags/avena",
+            title_en: "Oats",
+            title_es: "Avena",
+        },
+        Term {
+            url_en: "/en/tags/party",
+            url_es: "/es/tags/fiesta",
+            title_en: "Party",
+            title_es: "Fiesta",
+        },
+        Term {
+            url_en: "/en/tags/pasta",
+            url_es: "/es/tags/pastas",
+            title_en: "Pasta",
+            title_es: "Pastas",
+        },
+        Term {
+            url_en: "/en/tags/pastry",
+            url_es: "/es/tags/repostería",
+            title_en: "Pastry",
+            title_es: "Repostería",
+        },
+        Term {
+            url_en: "/en/tags/seasonal",
+            url_es: "/es/tags/estacional",
+            title_en: "Seasonal",
+            title_es: "Estacional",
+        },
+        Term {
+            url_en: "/en/tags/shopping",
+            url_es: "/es/tags/compras",
+            title_en: "Shopping",
+            title_es: "Compras",
+        },
+        Term {
+            url_en: "/en/tags/soup",
+            url_es: "/es/tags/sopa",
+            title_en: "Soup",
+            title_es: "Sopa",
+        },
+        Term {
+            url_en: "/en/tags/supermarkets",
+            url_es: "/es/tags/supermercados",
+            title_en: "Supermarkets",
+            title_es: "Supermercados",
+        },
+        Term {
+            url_en: "/en/tags/vegan",
+            url_es: "/es/tags/vegano",
+            title_en: "Vegan",
+            title_es: "Vegano",
+        },
+        Term {
+            url_en: "/en/tags/vegetarian",
+            url_es: "/es/tags/vegetariano",
+            title_en: "Vegetarian",
+            title_es: "Vegetariano",
+        },
+    ]
 }
 
 /// Return a vector of random words taken from node titles in the specified
