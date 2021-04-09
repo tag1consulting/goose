@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.11.1-dev
+
 ## 0.11.0 April 9, 2021
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
  - clippy cleanups (prepare for Rust 2021 https://blog.rust-lang.org/inside-rust/2021/03/04/planning-rust-2021.html):
