@@ -991,7 +991,7 @@ impl GooseMetrics {
         for error in self.errors.values() {
             errors.push((
                 error.occurrences,
-                format!("{:?} {}: {}", error.method, error.name, error.error),
+                format!("{} {}: {}", error.method, error.name, error.error),
             ));
         }
 

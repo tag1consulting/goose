@@ -41,20 +41,18 @@ pub async fn get_404_path(user: &GooseUser) -> GooseTaskResult {
 
 // All tests in this file run against common endpoints.
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
-    let mut endpoints: Vec<MockRef> = Vec::new();
-
-    // First set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(GET).path(INDEX_PATH);
-        then.status(200);
-    }));
-    // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(GET).path(A_404_PATH);
-        then.status(404);
-    }));
-
-    endpoints
+    vec![
+        // First set up INDEX_PATH, store in vector at INDEX_KEY.
+        server.mock(|when, then| {
+            when.method(GET).path(INDEX_PATH);
+            then.status(200);
+        }),
+        // Next set up ABOUT_PATH, store in vector at ABOUT_KEY.
+        server.mock(|when, then| {
+            when.method(GET).path(A_404_PATH);
+            then.status(404);
+        }),
+    ]
 }
 
 // Build appropriate configuration for these tests.
@@ -103,9 +101,9 @@ fn validate_error(
 
     // Confirm that the path and method are correct in the metrics.
     assert!(index_metrics.path == INDEX_PATH);
-    assert!(index_metrics.method == GooseMethod::GET);
+    assert!(index_metrics.method == GooseMethod::Get);
     assert!(a_404_metrics.path == A_404_PATH);
-    assert!(a_404_metrics.method == GooseMethod::GET);
+    assert!(a_404_metrics.method == GooseMethod::Get);
 
     // All requests to the index succeeded.
     mock_endpoints[INDEX_KEY].assert_hits(index_metrics.response_time_counter);
@@ -121,7 +119,7 @@ fn validate_error(
             // Extract the error from the BTreeMap.
             for error in a_404_errors {
                 // The captured error was a GET request.
-                assert!(error.1.method == GooseMethod::GET);
+                assert!(error.1.method == GooseMethod::Get);
                 // The captured error was for the 404 path.
                 assert!(error.1.name == A_404_PATH);
                 // The error was captured the number of times we requested the 404 path.

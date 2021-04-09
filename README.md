@@ -38,7 +38,7 @@ This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` 
 
 ```toml
 [dependencies]
-goose = "^0.10"
+goose = "^0.11"
 ```
 
 At this point it's possible to compile all dependencies, though the resulting binary only displays "Hello, world!":
@@ -46,9 +46,9 @@ At this point it's possible to compile all dependencies, though the resulting bi
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.10.9
+  Downloaded goose v0.11.0
       ...
-   Compiling goose v0.10.9
+   Compiling goose v0.11.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -536,7 +536,7 @@ When writing load test applications, you can default to compiling in the Gaggle 
 
 ```toml
 [dependencies]
-goose = { version = "^0.10", features = ["gaggle"] }
+goose = { version = "^0.11", features = ["gaggle"] }
 ```
 
 ### Gaggle Manager
@@ -596,5 +596,5 @@ By default Reqwest (and therefore Goose) uses the system-native transport layer 
 
 ```toml
 [dependencies]
-goose = { version = "^0.10", default-features = false, features = ["rustls"] }
+goose = { version = "^0.11", default-features = false, features = ["rustls"] }
 ```

@@ -119,8 +119,8 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                 }
             };
             match command {
-                GooseUserCommand::EXIT => {
-                    panic!("unexpected EXIT from manager during startup");
+                GooseUserCommand::Exit => {
+                    panic!("unexpected GooseUserCommand::Exit from manager during startup");
                 }
                 other => {
                     panic!("unknown command from manager: {:?}", other);
@@ -166,7 +166,7 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 
     // Wait for the manager to send go-ahead to start the load test.
     loop {
-        // Push metrics to manager to force a reply, waiting for RUN.
+        // Push metrics to manager to force a reply, waiting for GooseUserCommand::Run.
         push_metrics_to_manager(
             &manager,
             vec![GaggleMetrics::WorkerInit(goose_attack.metrics.hash)],
@@ -183,10 +183,13 @@ pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
 
         match command {
             // Break out of loop and start the load test.
-            GooseUserCommand::RUN => break,
+            GooseUserCommand::Run => break,
             // Exit worker process immediately.
-            GooseUserCommand::EXIT => {
-                warn!("[{}] received EXIT command from manager", get_worker_id());
+            GooseUserCommand::Exit => {
+                warn!(
+                    "[{}] received GooseUserCommand::Exit command from manager",
+                    get_worker_id()
+                );
                 std::process::exit(0);
             }
             // Sleep and then loop again.
@@ -275,8 +278,11 @@ pub fn push_metrics_to_manager(
             .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
             .expect("invalid message");
 
-        if command == GooseUserCommand::EXIT {
-            info!("[{}] received EXIT command from manager", get_worker_id());
+        if command == GooseUserCommand::Exit {
+            info!(
+                "[{}] received GooseUserCommand::Exit command from manager",
+                get_worker_id()
+            );
             // Shutting down, register shutdown pipe handler.
             register_shutdown_pipe_handler(manager);
             return false;

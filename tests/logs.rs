@@ -67,20 +67,18 @@ pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
 
 // All tests in this file run against common endpoints.
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
-    let mut endpoints: Vec<MockRef> = Vec::new();
-
-    // First, set up INDEX_PATH, store in vector at INDEX_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(GET).path(INDEX_PATH);
-        then.status(200);
-    }));
-    // Next, set up ERROR_PATH, store in vector at ERROR_KEY.
-    endpoints.push(server.mock(|when, then| {
-        when.method(GET).path(ERROR_PATH);
-        then.status(503);
-    }));
-
-    endpoints
+    vec![
+        // First, set up INDEX_PATH, store in vector at INDEX_KEY.
+        server.mock(|when, then| {
+            when.method(GET).path(INDEX_PATH);
+            then.status(200);
+        }),
+        // Next, set up ERROR_PATH, store in vector at ERROR_KEY.
+        server.mock(|when, then| {
+            when.method(GET).path(ERROR_PATH);
+            then.status(503);
+        }),
+    ]
 }
 
 // Returns the appropriate taskset, start_task and stop_task needed to build these tests.

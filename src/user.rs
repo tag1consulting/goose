@@ -115,7 +115,7 @@ pub async fn user_main(
             while message.is_ok() {
                 match message.unwrap() {
                     // Time to exit.
-                    GooseUserCommand::EXIT => {
+                    GooseUserCommand::Exit => {
                         // No need to reset per-thread counters, we're exiting and memory will be freed
                         thread_continue = false;
                     }
