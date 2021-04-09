@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.11.0-dev
+## 0.11.0 April 9, 2021
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
  - clippy cleanups (prepare for Rust 2021 https://blog.rust-lang.org/inside-rust/2021/03/04/planning-rust-2021.html):
     o API change: all `GooseMethod`s renamed to enforce Rust naming conventions in regards to case, for example `GooseMethod::GET` becomes `GooseMethod::Get`
@@ -14,12 +14,12 @@
  - update httpmock for running tests
  - remove unnecessary `Result()` types where no error was possible
 
-## 0.10.8 Feb 13, 2021
+## 0.10.8 February 13, 2021
  - introduce `--report-file` (and `GooseDefault::ReportFile`) to optionally generate an HTML report when the load test completes
  - upgrade to `tokio` 1.x, and switch to `flume` for all multi-producer, multi-consumer channels
  - make `examples/umami` more generic for easier load testing of any Drupal 9 version of the demo install profile
 
-## 0.10.7 Nov 16, 2020
+## 0.10.7 November 16, 2020
  - account for time spent doing things other than sleeping, maintaining more consistency when displaying statistics and shutting down
  - start each debug log file with a line feed in case the page is too big for the buffer; increase the debug logger buffer size from 8K to 8M
  - introduce `--no-debug-body` flag to optionally prevent debug log from including the response body
@@ -31,7 +31,7 @@
  - reset drift timer any time the attack_phase changes
  - document all public high level files and functions
 
-## 0.10.6 Nov 10, 2020
+## 0.10.6 November 10, 2020
  - replace `--only-summary` with `--running-metrics <usize>`, running metrics are disabled by default
  - allow configuration of the algorithm used when allocating `GooseTaskSet`s to starting `GooseUser`s:
     o `GooseTaskSetScheduler::RoundRobin` allocates 1 of each available `GooseTaskSet` at a time (new default)
@@ -39,35 +39,35 @@
     o `GooseTaskSetScheduler::Random` allocates 1 random `GooseTaskSet` from all available
  - when enabled, display running metrics for the entire duration of test, including ramp-up and shutdown
 
-## 0.10.5 Nov 5, 2020
+## 0.10.5 November 5, 2020
  - support floating point hatch rate (ie, hatch 1 user every 2 seconds with `-r .5`)
 
-## 0.10.4 Nov 1, 2020
+## 0.10.4 November 1, 2020
  - add new `examples/umami` for load testing Drupal 9 demo install profile
  - replace TermLogger with SimpleLogger for increased logging flexibility
  - add initial OCI Dockerfile for container-based workflows
  - use checked subtraction when calculating drift duration to prevent panic
  - update `nng-rs` dependency to fix bug when testing that the manager is ready
  
-## 0.10.3 Oct 14, 2020
+## 0.10.3 October 14, 2020
  - fixup sticky redirect tests to properly test functionality
  - add `test/sequence.rs` to confirm sequencing tests works correctly, even in Gaggle mode
  - deduplicate test logic by moving shared functionality into `tests/common.rs`; consistently test functionality both in standalone and Gaggle mode
  - properly create debug log when enabled in Gaggle mode
 
-## 0.10.2 Sep 27, 2020
+## 0.10.2 September 27, 2020
  - remove unnecessary `GooseAttack.number_of_cpus` instead calling `num_cpus::get()` directly
  - remove `tests/gaggle.rs`, instead mixing gaggle tests with per-feature integration tests
  - ensure `test_start` and `test_stop` run one and only one time even in Gaggle mode
 
-## 0.10.1 Sep 20, 2020
+## 0.10.1 September 20, 2020
  - rework `hatch_rate` to be stored in an `Option<usize>` as it can be `None` on a Worker
  - remove redundant `GooseAttack.users` instead using the `Option<usize>` in `configuration`
  - improve bounds handling of defaults, generate errors for invalid values
  - properly handle early shutdown of Gaggle distributed load test from Worker process
  - Manager starts timing Gaggle distributed load test only after all Workers start
 
-## 0.10.0 Sep 13, 2020
+## 0.10.0 September 13, 2020
  - default to resetting statistics, disable with `--no-reset-stats`, display spawning statistics before resetting
  - only run gaggle integration tests when feature is enabled
  - prevent time-drift when launching users and throttling requests
@@ -118,7 +118,7 @@
     o default host for Worker to connect to: `GooseDefault::ManagerHost` (&str)
     o default port for Worker to connect to: `GooseDefault::ManagerPort` (usize)
 
-## 0.9.1 Aug 1, 2020
+## 0.9.1 August 1, 2020
  - return `GooseStats` from `GooseAttack` `.execute()`
  - rework as methods of `GooseStats`: `.print()`, `.print_running()`, `fmt_requests()`,
    `fmt_response_times()`, `fmt_percentiles()`, and `fmt_status_codes()`
