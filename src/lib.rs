@@ -54,7 +54,10 @@
 //!     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
 //! };
 //! use goose::metrics::GooseMetrics;
-//! use goose::{task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError};
+//! use goose::{
+//!     task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError, GooseScheduler,
+//! };
+
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
@@ -609,13 +612,13 @@ pub enum AttackPhase {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
-pub enum GooseTaskSetScheduler {
-    /// Allocate one of each available type of GooseTaskSet at a time (default).
+/// Used to define the order GooseTasksSets and GooseTasks are allocated.
+pub enum GooseScheduler {
+    /// Allocate one of each available type at a time (default).
     RoundRobin,
-    /// Allocate GooseTaskSets in the order and weighting they are defined.
+    /// Allocate in the order and weighting defined.
     Serial,
-    /// Allocate GooseTaskSets in a random order.
+    /// Allocate in a random order.
     Random,
 }
 
@@ -816,7 +819,7 @@ pub struct GooseAttack {
     /// Which mode this GooseAttack is operating in.
     attack_phase: AttackPhase,
     /// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
-    scheduler: GooseTaskSetScheduler,
+    scheduler: GooseScheduler,
     /// When the load test started.
     started: Option<time::Instant>,
     /// All metrics merged together.
@@ -844,7 +847,7 @@ impl GooseAttack {
             run_time: 0,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Initializing,
-            scheduler: GooseTaskSetScheduler::RoundRobin,
+            scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -875,7 +878,7 @@ impl GooseAttack {
             run_time: 0,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Initializing,
-            scheduler: GooseTaskSetScheduler::RoundRobin,
+            scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -977,7 +980,7 @@ impl GooseAttack {
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
-    ///         .set_scheduler(GooseTaskSetScheduler::Random)
+    ///         .set_scheduler(GooseScheduler::Random)
     ///         .register_taskset(taskset!("A Tasks")
     ///             .set_weight(5)?
     ///             .register_task(task!(a_task_1))
@@ -1002,7 +1005,7 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_scheduler(mut self, scheduler: GooseTaskSetScheduler) -> Self {
+    pub fn set_scheduler(mut self, scheduler: GooseScheduler) -> Self {
         self.scheduler = scheduler;
         self
     }
@@ -1107,7 +1110,7 @@ impl GooseAttack {
         self
     }
 
-    /// Use configured GooseTaskSetScheduler to build out a properly
+    /// Use configured GooseScheduler to build out a properly
     /// weighted list of TaskSets to be assigned to GooseUsers.
     fn allocate_tasks(&mut self) -> Vec<usize> {
         trace!("allocate_tasks");
@@ -1153,7 +1156,7 @@ impl GooseAttack {
         // Now build the weighted list with the appropriate scheduler.
         let mut weighted_task_sets = Vec::new();
         match self.scheduler {
-            GooseTaskSetScheduler::RoundRobin => {
+            GooseScheduler::RoundRobin => {
                 // Allocate task sets round robin.
                 let task_sets_len = available_task_sets.len();
                 loop {
@@ -1172,7 +1175,7 @@ impl GooseAttack {
                     }
                 }
             }
-            GooseTaskSetScheduler::Serial => {
+            GooseScheduler::Serial => {
                 // Allocate task sets serially in the weighted order defined.
                 for (task_set_index, task_sets) in available_task_sets.iter().enumerate() {
                     debug!(
@@ -1183,7 +1186,7 @@ impl GooseAttack {
                     weighted_task_sets.append(&mut task_sets.clone());
                 }
             }
-            GooseTaskSetScheduler::Random => {
+            GooseScheduler::Random => {
                 // Allocate task sets randomly.
                 loop {
                     let task_set = available_task_sets.choose_mut(&mut rand::thread_rng());

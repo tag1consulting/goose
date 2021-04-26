@@ -130,25 +130,25 @@ fn common_build_configuration(
 }
 
 // Helper to confirm all variations generate appropriate results.
-fn validate_test(scheduler: &GooseTaskSetScheduler, mock_endpoints: &[MockRef]) {
+fn validate_test(scheduler: &GooseScheduler, mock_endpoints: &[MockRef]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
     mock_endpoints[START_ONE_KEY].assert_hits(1);
 
     // Now validate scheduler-specific counters.
     match scheduler {
-        GooseTaskSetScheduler::RoundRobin => {
+        GooseScheduler::RoundRobin => {
             // We launch an equal number of each task set, so we call both endpoints
             // an equal number of times.
             mock_endpoints[TWO_KEY].assert_hits(mock_endpoints[ONE_KEY].hits());
             mock_endpoints[ONE_KEY].assert_hits(USERS / 2);
         }
-        GooseTaskSetScheduler::Serial => {
+        GooseScheduler::Serial => {
             // As we only launch as many users as the weight of the first task set, we only
             // call the first endpoint, never the second endpoint.
             mock_endpoints[ONE_KEY].assert_hits(USERS);
             mock_endpoints[TWO_KEY].assert_hits(0);
         }
-        GooseTaskSetScheduler::Random => {
+        GooseScheduler::Random => {
             // When scheduling task sets randomly, we don't know how many of each will get
             // launched, but we do now that added together they will equal the total number
             // of users.
@@ -180,7 +180,7 @@ fn get_tasks() -> (GooseTaskSet, GooseTaskSet, GooseTask, GooseTask) {
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(scheduler: &GooseTaskSetScheduler) {
+fn run_standalone_test(scheduler: &GooseScheduler) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -210,7 +210,7 @@ fn run_standalone_test(scheduler: &GooseTaskSetScheduler) {
 }
 
 // Helper to run all gaggle tests.
-fn run_gaggle_test(scheduler: &GooseTaskSetScheduler) {
+fn run_gaggle_test(scheduler: &GooseScheduler) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -257,7 +257,7 @@ fn run_gaggle_test(scheduler: &GooseTaskSetScheduler) {
 #[test]
 // Load test with multiple tasks allocating GooseTaskSets in round robin order.
 fn test_round_robin() {
-    run_standalone_test(&GooseTaskSetScheduler::RoundRobin);
+    run_standalone_test(&GooseScheduler::RoundRobin);
 }
 
 #[test]
@@ -266,13 +266,13 @@ fn test_round_robin() {
 // Load test with multiple tasks allocating GooseTaskSets in round robin order, in
 // Gaggle mode.
 fn test_round_robin_gaggle() {
-    run_gaggle_test(&GooseTaskSetScheduler::RoundRobin);
+    run_gaggle_test(&GooseScheduler::RoundRobin);
 }
 
 #[test]
 // Load test with multiple tasks allocating GooseTaskSets in serial order.
 fn test_serial() {
-    run_standalone_test(&GooseTaskSetScheduler::Serial);
+    run_standalone_test(&GooseScheduler::Serial);
 }
 
 #[test]
@@ -281,13 +281,13 @@ fn test_serial() {
 // Load test with multiple tasks allocating GooseTaskSets in serial order, in
 // Gaggle mode.
 fn test_serial_gaggle() {
-    run_gaggle_test(&GooseTaskSetScheduler::Serial);
+    run_gaggle_test(&GooseScheduler::Serial);
 }
 
 #[test]
 // Load test with multiple tasks allocating GooseTaskSets in random order.
 fn test_random() {
-    run_standalone_test(&GooseTaskSetScheduler::Random);
+    run_standalone_test(&GooseScheduler::Random);
 }
 
 #[test]
@@ -296,5 +296,5 @@ fn test_random() {
 // Load test with multiple tasks allocating GooseTaskSets in random order, in
 // Gaggle mode.
 fn test_random_gaggle() {
-    run_gaggle_test(&GooseTaskSetScheduler::Random);
+    run_gaggle_test(&GooseScheduler::Random);
 }
