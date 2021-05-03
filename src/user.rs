@@ -1,5 +1,3 @@
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use rand::Rng;
 use std::sync::atomic::Ordering;
 use std::time;
@@ -11,7 +9,7 @@ use crate::metrics::{GooseMetric, GooseRawTask};
 pub async fn user_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
-    mut thread_user: GooseUser,
+    thread_user: GooseUser,
     thread_receiver: flume::Receiver<GooseUserCommand>,
     worker: bool,
 ) {
@@ -31,140 +29,102 @@ pub async fn user_main(
 
     // User is starting, first invoke the weighted on_start tasks.
     if !thread_user.weighted_on_start_tasks.is_empty() {
-        for mut sequence in thread_user.weighted_on_start_tasks.clone() {
-            if sequence.len() > 1 {
-                sequence.shuffle(&mut thread_rng());
-            }
-            for (thread_task_index, thread_task_name) in &sequence {
-                // Determine which task we're going to run next.
-                let function = &thread_task_set.tasks[*thread_task_index].function;
-                debug!(
-                    "launching on_start {} task from {}",
-                    thread_task_name, thread_task_set.name
-                );
-                // Invoke the task function.
-                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
-                    .await;
-            }
+        // Tasks are already weighted and scheduled, execute each in order.
+        for (thread_task_index, thread_task_name) in &thread_user.weighted_on_start_tasks {
+            // Determine which task we're going to run next.
+            let function = &thread_task_set.tasks[*thread_task_index].function;
+            debug!(
+                "[user {}]: launching on_start {} task from {}",
+                thread_number, thread_task_name, thread_task_set.name
+            );
+            // Invoke the task function.
+            invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                .await;
         }
     }
 
     // Repeatedly loop through all available tasks in a random order.
     let mut thread_continue: bool = true;
-    let mut weighted_bucket = thread_user.weighted_bucket.load(Ordering::SeqCst);
-    let mut weighted_bucket_position = thread_user.weighted_bucket_position.load(Ordering::SeqCst);
     if thread_user.weighted_tasks.is_empty() {
         // Handle the edge case where a load test doesn't define any normal tasks.
         thread_continue = false;
     }
+    let mut position = thread_user.position.load(Ordering::SeqCst);
     while thread_continue {
-        // Weighted_tasks is divided into buckets of tasks sorted by sequence, and then all non-sequenced tasks.
-        if thread_user.weighted_tasks[weighted_bucket].len() <= weighted_bucket_position {
-            // This bucket is exhausted, move on to position 0 of the next bucket.
-            weighted_bucket_position = 0;
-            thread_user
-                .weighted_bucket_position
-                .store(weighted_bucket_position, Ordering::SeqCst);
-
-            weighted_bucket += 1;
-            if thread_user.weighted_tasks.len() <= weighted_bucket {
-                weighted_bucket = 0;
-            }
-            thread_user
-                .weighted_bucket
-                .store(weighted_bucket_position, Ordering::SeqCst);
-            // Shuffle new bucket before we walk through the tasks.
-            thread_user.weighted_tasks[weighted_bucket].shuffle(&mut thread_rng());
+        for (thread_task_index, thread_task_name) in &thread_user.weighted_tasks {
+            // Determine which task we're going to run next.
+            let function = &thread_task_set.tasks[*thread_task_index].function;
             debug!(
-                "re-shuffled {} tasks: {:?}",
-                &thread_task_set.name, thread_user.weighted_tasks[weighted_bucket]
+                "launching on_start {} task from {}",
+                thread_task_name, thread_task_set.name
             );
-        }
+            // Invoke the task function.
+            invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                .await;
 
-        // Determine which task we're going to run next.
-        let (thread_weighted_task, thread_task_name) =
-            thread_user.weighted_tasks[weighted_bucket][weighted_bucket_position].clone();
-        let function = &thread_task_set.tasks[thread_weighted_task].function;
-        debug!(
-            "launching {} task from {}",
-            thread_task_name, thread_task_set.name
-        );
+            // Prepare to sleep for a random value from min_wait to max_wait.
+            let wait_time = if thread_user.max_wait > 0 {
+                rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
+            } else {
+                0
+            };
+            // Counter to track how long we've slept, waking regularly to check for messages.
+            let mut slept: usize = 0;
 
-        // Invoke the task function.
-        invoke_task_function(
-            function,
-            &thread_user,
-            thread_weighted_task,
-            &thread_task_name,
-        )
-        .await;
-
-        // Prepare to sleep for a random value from min_wait to max_wait.
-        let wait_time = if thread_user.max_wait > 0 {
-            rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
-        } else {
-            0
-        };
-        // Counter to track how long we've slept, waking regularly to check for messages.
-        let mut slept: usize = 0;
-
-        // Check if the parent thread has sent us any messages.
-        let mut in_sleep_loop = true;
-        while in_sleep_loop {
-            let mut message = thread_receiver.try_recv();
-            while message.is_ok() {
-                match message.unwrap() {
-                    // Time to exit.
-                    GooseUserCommand::Exit => {
-                        // No need to reset per-thread counters, we're exiting and memory will be freed
-                        thread_continue = false;
+            // Check if the parent thread has sent us any messages.
+            let mut in_sleep_loop = true;
+            while in_sleep_loop {
+                let mut message = thread_receiver.try_recv();
+                while message.is_ok() {
+                    match message.unwrap() {
+                        // Time to exit.
+                        GooseUserCommand::Exit => {
+                            // No need to reset per-thread counters, we're exiting and memory will be freed
+                            thread_continue = false;
+                        }
+                        command => {
+                            debug!("ignoring unexpected GooseUserCommand: {:?}", command);
+                        }
                     }
-                    command => {
-                        debug!("ignoring unexpected GooseUserCommand: {:?}", command);
-                    }
+                    message = thread_receiver.try_recv();
                 }
-                message = thread_receiver.try_recv();
-            }
-            if thread_continue && thread_user.max_wait > 0 {
-                let sleep_duration = time::Duration::from_secs(1);
-                debug!(
-                    "user {} from {} sleeping {:?} second...",
-                    thread_number, thread_task_set.name, sleep_duration
-                );
-                tokio::time::sleep(sleep_duration).await;
-                slept += 1;
-                if slept > wait_time {
+                if thread_continue && thread_user.max_wait > 0 {
+                    let sleep_duration = time::Duration::from_secs(1);
+                    debug!(
+                        "user {} from {} sleeping {:?} second...",
+                        thread_number, thread_task_set.name, sleep_duration
+                    );
+                    tokio::time::sleep(sleep_duration).await;
+                    slept += 1;
+                    if slept > wait_time {
+                        in_sleep_loop = false;
+                    }
+                } else {
                     in_sleep_loop = false;
                 }
-            } else {
-                in_sleep_loop = false;
             }
-        }
 
-        // Move to the next task in thread_user.weighted_tasks.
-        weighted_bucket_position += 1;
-        thread_user
-            .weighted_bucket_position
-            .store(weighted_bucket_position, Ordering::SeqCst);
+            // Move to the next task in thread_user.weighted_tasks.
+            position += 1;
+            thread_user.position.store(position, Ordering::SeqCst);
+        }
+        position = 0;
+        thread_user.position.store(position, Ordering::SeqCst);
     }
 
     // User is exiting, first invoke the weighted on_stop tasks.
     if !thread_user.weighted_on_stop_tasks.is_empty() {
-        for mut sequence in thread_user.weighted_on_stop_tasks.clone() {
-            if sequence.len() > 1 {
-                sequence.shuffle(&mut thread_rng());
-            }
-            for (thread_task_index, thread_task_name) in &sequence {
-                // Determine which task we're going to run next.
-                let function = &thread_task_set.tasks[*thread_task_index].function;
-                debug!(
-                    "launching on_stop {} task from {}",
-                    thread_task_name, thread_task_set.name
-                );
-                // Invoke the task function.
-                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
-                    .await;
-            }
+        // Tasks are already weighted and scheduled, execute each in order.
+        for (thread_task_index, thread_task_name) in &thread_user.weighted_on_stop_tasks {
+            // Determine which task we're going to run next.
+            let function = &thread_task_set.tasks[*thread_task_index].function;
+            debug!(
+                "[user: {}]: launching on_stop {} task from {}",
+                thread_number, thread_task_name, thread_task_set.name
+            );
+            // Invoke the task function.
+            invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                .await;
         }
     }
 
