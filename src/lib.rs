@@ -4177,10 +4177,7 @@ fn allocate_tasks(
 }
 
 /// Build a weighted vector of vectors of unsequenced GooseTasks.
-fn weight_unsequenced_tasks(
-    unsequenced_tasks: &UnsequencedGooseTasks,
-    u: usize,
-) -> (Vec<Vec<usize>>, usize) {
+fn weight_unsequenced_tasks(unsequenced_tasks: &[GooseTask], u: usize) -> (Vec<Vec<usize>>, usize) {
     // Build a vector of vectors to be used to schedule users.
     let mut available_unsequenced_tasks = Vec::with_capacity(unsequenced_tasks.len());
     let mut total_tasks = 0;
@@ -4238,7 +4235,7 @@ fn schedule_sequenced_tasks(
 
 // Return a list of tasks in the order to be run.
 fn schedule_unsequenced_tasks(
-    available_unsequenced_tasks: &Vec<Vec<usize>>,
+    available_unsequenced_tasks: &[Vec<usize>],
     total_tasks: usize,
     scheduler: &GooseScheduler,
 ) -> Vec<usize> {
@@ -4248,7 +4245,7 @@ fn schedule_unsequenced_tasks(
         GooseScheduler::RoundRobin => {
             // Allocate task sets round robin.
             let tasks_len = available_unsequenced_tasks.len();
-            let mut available_tasks = available_unsequenced_tasks.clone();
+            let mut available_tasks = available_unsequenced_tasks.to_owned();
             loop {
                 // Tasks are contained in a vector of vectors. The outer vectors each
                 // contain a different GooseTask, and the inner vectors contain each
