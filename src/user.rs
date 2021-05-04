@@ -49,8 +49,11 @@ pub async fn user_main(
         // Handle the edge case where a load test doesn't define any normal tasks.
         thread_continue = false;
     }
-    let mut position = thread_user.position.load(Ordering::SeqCst);
+    let mut position;
     while thread_continue {
+        // Start at the first task in thread_user.weighted_tasks.
+        position = 0;
+        thread_user.position.store(position, Ordering::SeqCst);
         for (thread_task_index, thread_task_name) in &thread_user.weighted_tasks {
             // Determine which task we're going to run next.
             let function = &thread_task_set.tasks[*thread_task_index].function;
@@ -104,12 +107,15 @@ pub async fn user_main(
                 }
             }
 
+            // Break out of this loop if we've been told to exit.
+            if !thread_continue {
+                break;
+            }
+
             // Move to the next task in thread_user.weighted_tasks.
             position += 1;
             thread_user.position.store(position, Ordering::SeqCst);
         }
-        position = 0;
-        thread_user.position.store(position, Ordering::SeqCst);
     }
 
     // User is exiting, first invoke the weighted on_stop tasks.
