@@ -31,8 +31,10 @@ const RUN_TIME: usize = 2;
 enum TestType {
     // No sequences defined in load test.
     NotSequenced,
-    // Sequences defined in load test.
-    Sequenced,
+    // Sequences defined in load test, scheduled round robin.
+    SequencedRoundRobin,
+    // Sequences defined in load test, scheduled serially.
+    SequencedSerial,
 }
 
 // Test task.
@@ -160,9 +162,20 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
             mock_endpoints[THREE_KEY].assert_hits(USERS);
             mock_endpoints[TWO_KEY].assert_hits(USERS);
         }
-        TestType::Sequenced => {
-            // Runs to completion (twice, weight of 2) first as it has a sequence defined.
-            mock_endpoints[ONE_KEY].assert_hits(USERS * 2);
+        TestType::SequencedRoundRobin => {
+            // Task ONE runs twice as it's scheduled first with a weight of 2. It then
+            // runs one more time in the next scheduling as it then round robins between
+            // ONE and TWO. When TWO runs it runs out the clock.
+            mock_endpoints[ONE_KEY].assert_hits(USERS * 3);
+            // Two runs out the clock, so three never runs.
+            mock_endpoints[TWO_KEY].assert_hits(USERS);
+            mock_endpoints[THREE_KEY].assert_hits(0);
+        }
+        TestType::SequencedSerial => {
+            // Task ONE runs twice as it's scheduled first with a weight of 2. It then
+            // runs two more times in the next scheduling as runs task serially as
+            // defined.
+            mock_endpoints[ONE_KEY].assert_hits(USERS * 4);
             // Two runs out the clock, so three never runs.
             mock_endpoints[TWO_KEY].assert_hits(USERS);
             mock_endpoints[THREE_KEY].assert_hits(0);
@@ -188,10 +201,22 @@ fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
             task!(stop_one),
         ),
         // Sequence added, so tasks run in the declared sequence order: 1, 1, 2, 3...
-        TestType::Sequenced => (
+        TestType::SequencedRoundRobin => (
             taskset!("LoadTest")
                 .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
                 .register_task(task!(three).set_sequence(3))
+                .register_task(task!(one).set_sequence(2).set_weight(2).unwrap())
+                .register_task(task!(two_with_delay).set_sequence(2)),
+            // Start runs before all other tasks, regardless of where defined.
+            task!(start_one),
+            // Stop runs after all other tasks, regardless of where defined.
+            task!(stop_one),
+        ),
+        TestType::SequencedSerial => (
+            taskset!("LoadTest")
+                .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
+                .register_task(task!(three).set_sequence(3))
+                .register_task(task!(one).set_sequence(2).set_weight(2).unwrap())
                 .register_task(task!(two_with_delay).set_sequence(2)),
             // Start runs before all other tasks, regardless of where defined.
             task!(start_one),
@@ -215,11 +240,30 @@ fn run_standalone_test(test_type: TestType) {
     // Get the taskset, start and stop tasks to build a load test.
     let (taskset, start_task, stop_task) = get_tasks(&test_type);
 
+    let goose_attack;
+    match test_type {
+        TestType::NotSequenced | TestType::SequencedRoundRobin => {
+            // Set up the common base configuration.
+            goose_attack = crate::GooseAttack::initialize_with_config(configuration)
+                .unwrap()
+                .register_taskset(taskset)
+                .test_start(start_task)
+                .test_stop(stop_task)
+                .set_scheduler(GooseScheduler::RoundRobin)
+        }
+        TestType::SequencedSerial => {
+            // Set up the common base configuration.
+            goose_attack = crate::GooseAttack::initialize_with_config(configuration)
+                .unwrap()
+                .register_taskset(taskset)
+                .test_start(start_task)
+                .test_stop(stop_task)
+                .set_scheduler(GooseScheduler::Serial)
+        }
+    }
+
     // Run the Goose Attack.
-    common::run_load_test(
-        common::build_load_test(configuration, &taskset, Some(&start_task), Some(&stop_task)),
-        None,
-    );
+    common::run_load_test(goose_attack, None);
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
@@ -239,13 +283,28 @@ fn run_gaggle_test(test_type: TestType) {
     // Get the taskset, start and stop tasks to build a load test.
     let (taskset, start_task, stop_task) = get_tasks(&test_type);
 
-    // Build the load test for the Workers.
-    let goose_attack = common::build_load_test(
-        worker_configuration,
-        &taskset,
-        Some(&start_task),
-        Some(&stop_task),
-    );
+    let goose_attack;
+    match test_type {
+        TestType::NotSequenced | TestType::SequencedRoundRobin => {
+            // Set up the common base configuration.
+            goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
+                .unwrap()
+                .register_taskset(taskset.clone())
+                .test_start(start_task.clone())
+                .test_stop(stop_task.clone())
+                // Unnecessary as this is the default.
+                .set_scheduler(GooseScheduler::RoundRobin);
+        }
+        TestType::SequencedSerial => {
+            // Set up the common base configuration.
+            goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
+                .unwrap()
+                .register_taskset(taskset.clone())
+                .test_start(start_task.clone())
+                .test_stop(stop_task.clone())
+                .set_scheduler(GooseScheduler::Serial);
+        }
+    }
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
@@ -253,13 +312,30 @@ fn run_gaggle_test(test_type: TestType) {
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
-    // Build the load test for the Manager.
-    let manager_goose_attack = common::build_load_test(
-        manager_configuration,
-        &taskset,
-        Some(&start_task),
-        Some(&stop_task),
-    );
+    let manager_goose_attack;
+    match test_type {
+        TestType::NotSequenced | TestType::SequencedRoundRobin => {
+            // Set up the common base configuration.
+            manager_goose_attack =
+                crate::GooseAttack::initialize_with_config(manager_configuration)
+                    .unwrap()
+                    .register_taskset(taskset)
+                    .test_start(start_task)
+                    .test_stop(stop_task)
+                    // Unnecessary as this is the default.
+                    .set_scheduler(GooseScheduler::RoundRobin);
+        }
+        TestType::SequencedSerial => {
+            // Set up the common base configuration.
+            manager_goose_attack =
+                crate::GooseAttack::initialize_with_config(manager_configuration)
+                    .unwrap()
+                    .register_taskset(taskset)
+                    .test_start(start_task)
+                    .test_stop(stop_task)
+                    .set_scheduler(GooseScheduler::Serial);
+        }
+    }
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles));
@@ -283,15 +359,33 @@ fn test_not_sequenced_gaggle() {
 }
 
 #[test]
-// Load test with multiple tasks and sequences defined.
-fn test_sequenced() {
-    run_standalone_test(TestType::Sequenced);
+// Load test with multiple tasks and sequences defined, using the
+// round robin scheduler.
+fn test_sequenced_round_robin() {
+    run_standalone_test(TestType::SequencedRoundRobin);
+}
+
+#[test]
+// Load test with multiple tasks and sequences defined, using the
+// sequential scheduler.
+fn test_sequenced_sequential() {
+    run_standalone_test(TestType::SequencedSerial);
 }
 
 #[test]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks and sequences defined, in Gaggle mode.
-fn test_sequenced_gaggle() {
-    run_gaggle_test(TestType::Sequenced);
+// Load test with multiple tasks and sequences defined, using the
+// round robin scheduler, in Gaggle mode.
+fn test_sequenced_round_robin_gaggle() {
+    run_gaggle_test(TestType::SequencedRoundRobin);
+}
+
+#[test]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+#[serial]
+// Load test with multiple tasks and sequences defined, using the
+// sequential scheduler, in Gaggle mode.
+fn test_sequenced_sequential_gaggle() {
+    run_gaggle_test(TestType::SequencedSerial);
 }
