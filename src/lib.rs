@@ -4170,7 +4170,7 @@ fn allocate_tasks(
 fn weight_unsequenced_tasks(unsequenced_tasks: &[GooseTask], u: usize) -> (Vec<Vec<usize>>, usize) {
     // Build a vector of vectors to be used to schedule users.
     let mut available_unsequenced_tasks = Vec::with_capacity(unsequenced_tasks.len());
-    let mut total_tasks = 1;
+    let mut total_tasks = 0;
     for task in unsequenced_tasks.iter() {
         // divide by greatest common divisor so vector is as short as possible
         let weight = task.weight / u;
@@ -4213,7 +4213,7 @@ fn schedule_sequenced_tasks(
     let mut weighted_tasks: Vec<usize> = Vec::new();
 
     for (_sequence, tasks) in available_sequenced_tasks.iter() {
-        let scheduled_tasks = schedule_unsequenced_tasks(tasks, tasks[0].len() + 1, scheduler);
+        let scheduled_tasks = schedule_unsequenced_tasks(tasks, tasks[0].len(), scheduler);
         weighted_tasks.extend(scheduled_tasks);
     }
 
@@ -4244,7 +4244,7 @@ fn schedule_unsequenced_tasks(
                         weighted_tasks.push(task);
                     }
                 }
-                if weighted_tasks.len() + 1 >= total_tasks {
+                if weighted_tasks.len() >= total_tasks {
                     break;
                 }
             }
