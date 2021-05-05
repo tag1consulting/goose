@@ -43,78 +43,69 @@ pub async fn user_main(
         }
     }
 
-    // Repeatedly loop through all available tasks in a random order.
-    let mut thread_continue: bool = true;
-    if thread_user.weighted_tasks.is_empty() {
-        // Handle the edge case where a load test doesn't define any normal tasks.
-        thread_continue = false;
-    }
-    let mut position;
-    while thread_continue {
-        // Start at the first task in thread_user.weighted_tasks.
-        position = 0;
-        thread_user.position.store(position, Ordering::SeqCst);
-        for (thread_task_index, thread_task_name) in &thread_user.weighted_tasks {
-            // Determine which task we're going to run next.
-            let function = &thread_task_set.tasks[*thread_task_index].function;
-            debug!(
-                "launching on_start {} task from {}",
-                thread_task_name, thread_task_set.name
-            );
-            // Invoke the task function.
-            invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
-                .await;
+    // If normal tasks are defined, loop launching tasks until parent tells us to stop.
+    if !thread_user.weighted_tasks.is_empty() {
+        let mut position;
+        'launch_tasks: loop {
+            // Start at the first task in thread_user.weighted_tasks.
+            position = 0;
+            thread_user.position.store(position, Ordering::SeqCst);
+            for (thread_task_index, thread_task_name) in &thread_user.weighted_tasks {
+                // Determine which task we're going to run next.
+                let function = &thread_task_set.tasks[*thread_task_index].function;
+                debug!(
+                    "launching on_start {} task from {}",
+                    thread_task_name, thread_task_set.name
+                );
+                // Invoke the task function.
+                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                    .await;
 
-            // Prepare to sleep for a random value from min_wait to max_wait.
-            let wait_time = if thread_user.max_wait > 0 {
-                rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
-            } else {
-                0
-            };
-            // Counter to track how long we've slept, waking regularly to check for messages.
-            let mut slept: usize = 0;
+                // Prepare to sleep for a random value from min_wait to max_wait.
+                let wait_time = if thread_user.max_wait > 0 {
+                    rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
+                } else {
+                    0
+                };
+                // Counter to track how long we've slept, waking regularly to check for messages.
+                let mut slept: usize = 0;
 
-            // Check if the parent thread has sent us any messages.
-            let mut in_sleep_loop = true;
-            while in_sleep_loop {
-                let mut message = thread_receiver.try_recv();
-                while message.is_ok() {
-                    match message.unwrap() {
-                        // Time to exit.
-                        GooseUserCommand::Exit => {
-                            // No need to reset per-thread counters, we're exiting and memory will be freed
-                            thread_continue = false;
+                // Check if the parent thread has sent us any messages.
+                let mut in_sleep_loop = true;
+                while in_sleep_loop {
+                    let mut message = thread_receiver.try_recv();
+                    while message.is_ok() {
+                        match message.unwrap() {
+                            // Time to exit, break out of launch_tasks loop.
+                            GooseUserCommand::Exit => {
+                                break 'launch_tasks;
+                            }
+                            command => {
+                                debug!("ignoring unexpected GooseUserCommand: {:?}", command);
+                            }
                         }
-                        command => {
-                            debug!("ignoring unexpected GooseUserCommand: {:?}", command);
-                        }
+                        message = thread_receiver.try_recv();
                     }
-                    message = thread_receiver.try_recv();
-                }
-                if thread_continue && thread_user.max_wait > 0 {
-                    let sleep_duration = time::Duration::from_secs(1);
-                    debug!(
-                        "user {} from {} sleeping {:?} second...",
-                        thread_number, thread_task_set.name, sleep_duration
-                    );
-                    tokio::time::sleep(sleep_duration).await;
-                    slept += 1;
-                    if slept > wait_time {
+                    if thread_user.max_wait > 0 {
+                        let sleep_duration = time::Duration::from_secs(1);
+                        debug!(
+                            "user {} from {} sleeping {:?} second...",
+                            thread_number, thread_task_set.name, sleep_duration
+                        );
+                        tokio::time::sleep(sleep_duration).await;
+                        slept += 1;
+                        if slept > wait_time {
+                            in_sleep_loop = false;
+                        }
+                    } else {
                         in_sleep_loop = false;
                     }
-                } else {
-                    in_sleep_loop = false;
                 }
-            }
 
-            // Break out of this loop if we've been told to exit.
-            if !thread_continue {
-                break;
+                // Move to the next task in thread_user.weighted_tasks.
+                position += 1;
+                thread_user.position.store(position, Ordering::SeqCst);
             }
-
-            // Move to the next task in thread_user.weighted_tasks.
-            position += 1;
-            thread_user.position.store(position, Ordering::SeqCst);
         }
     }
 
