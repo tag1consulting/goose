@@ -151,17 +151,18 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
     mock_endpoints[START_ONE_KEY].assert_hits(1);
 
-    // ONE_PATH is loaded twice per user (due to weight) on all variations.
-    mock_endpoints[ONE_KEY].assert_hits(USERS * 2);
-
     // Now confirm TestType-specific counters.
     match test_type {
         TestType::NotSequenced => {
-            // All tasks run one time.
+            // All tasks run one time, as they are launched RoundRobin in the order
+            // defined (and importantly three is defined before two in this test).
+            mock_endpoints[ONE_KEY].assert_hits(USERS);
+            mock_endpoints[THREE_KEY].assert_hits(USERS);
             mock_endpoints[TWO_KEY].assert_hits(USERS);
-            mock_endpoints[THREE_KEY].assert_hits(USERS)
         }
         TestType::Sequenced => {
+            // Runs to completion (twice, weight of 2) first as it has a sequence defined.
+            mock_endpoints[ONE_KEY].assert_hits(USERS * 2);
             // Two runs out the clock, so three never runs.
             mock_endpoints[TWO_KEY].assert_hits(USERS);
             mock_endpoints[THREE_KEY].assert_hits(0);
@@ -175,7 +176,7 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
 // Returns the appropriate taskset, start_task and stop_task needed to build these tests.
 fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
     match test_type {
-        // No sequence declared, so tasks run in the order they are defined: 1, 1, 3, 2...
+        // No sequence declared, so tasks run in default RoundRobin order: 1, 3, 2, 1...
         TestType::NotSequenced => (
             taskset!("LoadTest")
                 .register_task(task!(one).set_weight(2).unwrap())

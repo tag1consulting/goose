@@ -4099,12 +4099,9 @@ fn allocate_tasks(
     debug!("gcd: {}", u);
 
     // Apply weights to sequenced tasks.
-    let (weighted_sequenced_on_start_tasks, total_sequenced_on_start_tasks) =
-        weight_sequenced_tasks(&sequenced_on_start_tasks, u);
-    let (weighted_sequenced_tasks, total_sequenced_tasks) =
-        weight_sequenced_tasks(&sequenced_tasks, u);
-    let (weighted_sequenced_on_stop_tasks, total_sequenced_on_stop_tasks) =
-        weight_sequenced_tasks(&sequenced_on_stop_tasks, u);
+    let weighted_sequenced_on_start_tasks = weight_sequenced_tasks(&sequenced_on_start_tasks, u);
+    let weighted_sequenced_tasks = weight_sequenced_tasks(&sequenced_tasks, u);
+    let weighted_sequenced_on_stop_tasks = weight_sequenced_tasks(&sequenced_on_stop_tasks, u);
 
     // Apply weights to unsequenced tasks.
     let (weighted_unsequenced_on_start_tasks, total_unsequenced_on_start_tasks) =
@@ -4115,18 +4112,11 @@ fn allocate_tasks(
         weight_unsequenced_tasks(&unsequenced_on_stop_tasks, u);
 
     // Schedule sequenced tasks.
-    let scheduled_sequenced_on_start_tasks = schedule_sequenced_tasks(
-        &weighted_sequenced_on_start_tasks,
-        total_sequenced_on_start_tasks,
-        scheduler,
-    );
-    let scheduled_sequenced_tasks =
-        schedule_sequenced_tasks(&weighted_sequenced_tasks, total_sequenced_tasks, scheduler);
-    let scheduled_sequenced_on_stop_tasks = schedule_sequenced_tasks(
-        &weighted_sequenced_on_stop_tasks,
-        total_sequenced_on_stop_tasks,
-        scheduler,
-    );
+    let scheduled_sequenced_on_start_tasks =
+        schedule_sequenced_tasks(&weighted_sequenced_on_start_tasks, scheduler);
+    let scheduled_sequenced_tasks = schedule_sequenced_tasks(&weighted_sequenced_tasks, scheduler);
+    let scheduled_sequenced_on_stop_tasks =
+        schedule_sequenced_tasks(&weighted_sequenced_on_stop_tasks, scheduler);
 
     // Schedule unsequenced tasks.
     let scheduled_unsequenced_on_start_tasks = schedule_unsequenced_tasks(
@@ -4180,7 +4170,7 @@ fn allocate_tasks(
 fn weight_unsequenced_tasks(unsequenced_tasks: &[GooseTask], u: usize) -> (Vec<Vec<usize>>, usize) {
     // Build a vector of vectors to be used to schedule users.
     let mut available_unsequenced_tasks = Vec::with_capacity(unsequenced_tasks.len());
-    let mut total_tasks = 0;
+    let mut total_tasks = 1;
     for task in unsequenced_tasks.iter() {
         // divide by greatest common divisor so vector is as short as possible
         let weight = task.weight / u;
@@ -4202,31 +4192,28 @@ fn weight_unsequenced_tasks(unsequenced_tasks: &[GooseTask], u: usize) -> (Vec<V
 fn weight_sequenced_tasks(
     sequenced_tasks: &SequencedGooseTasks,
     u: usize,
-) -> (BTreeMap<usize, Vec<Vec<usize>>>, usize) {
+) -> BTreeMap<usize, Vec<Vec<usize>>> {
     // Build a sequenced BTreeMap containing weighted vectors of GooseTasks.
     let mut available_sequenced_tasks = BTreeMap::new();
-    let mut total_tasks = 0;
     // Step through sequences, each containing a bucket of all GooseTasks with the same
     // sequence value, allowing actual waiting to be done by weight_unsequenced_tasks().
     for (sequence, unsequenced_tasks) in sequenced_tasks.iter() {
-        let (weighted_tasks, total_weighted_tasks) =
+        let (weighted_tasks, _total_weighted_tasks) =
             weight_unsequenced_tasks(&unsequenced_tasks, u);
-        total_tasks += total_weighted_tasks;
         available_sequenced_tasks.insert(*sequence, weighted_tasks);
     }
 
-    (available_sequenced_tasks, total_tasks)
+    available_sequenced_tasks
 }
 
 fn schedule_sequenced_tasks(
     available_sequenced_tasks: &BTreeMap<usize, Vec<Vec<usize>>>,
-    total_tasks: usize,
     scheduler: &GooseScheduler,
 ) -> Vec<usize> {
     let mut weighted_tasks: Vec<usize> = Vec::new();
 
     for (_sequence, tasks) in available_sequenced_tasks.iter() {
-        let scheduled_tasks = schedule_unsequenced_tasks(tasks, total_tasks, scheduler);
+        let scheduled_tasks = schedule_unsequenced_tasks(tasks, tasks[0].len() + 1, scheduler);
         weighted_tasks.extend(scheduled_tasks);
     }
 
@@ -4241,6 +4228,7 @@ fn schedule_unsequenced_tasks(
 ) -> Vec<usize> {
     // Now build the weighted list with the appropriate scheduler.
     let mut weighted_tasks = Vec::new();
+
     match scheduler {
         GooseScheduler::RoundRobin => {
             // Allocate task sets round robin.
@@ -4256,7 +4244,7 @@ fn schedule_unsequenced_tasks(
                         weighted_tasks.push(task);
                     }
                 }
-                if weighted_tasks.len() >= total_tasks {
+                if weighted_tasks.len() + 1 >= total_tasks {
                     break;
                 }
             }

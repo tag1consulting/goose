@@ -67,10 +67,11 @@ pub async fn user_main(
                 } else {
                     0
                 };
+
                 // Counter to track how long we've slept, waking regularly to check for messages.
                 let mut slept: usize = 0;
 
-                // Check if the parent thread has sent us any messages.
+                // Wake every second to check if the parent thread has told us to exit.
                 let mut in_sleep_loop = true;
                 while in_sleep_loop {
                     let mut message = thread_receiver.try_recv();
