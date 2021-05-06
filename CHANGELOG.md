@@ -5,7 +5,7 @@
  - update dependencies: `itertools` to `0.10`, `simplelog` to `0.10`, `url` to `2`
  - update `nng` dependency for optional `gaggle` feature
  - simplify `examples/umami` regex when parsing form
- - allow configuration of algorithm used when allocating `GooseTask`s, in addition to when allocating `GooseTaskSet`s; `GooseTaskSetScheduler` becomes more generically `GooseScheduler`
+ - allow configuration of algorithm for allocating `GooseTask`s the same as `GooseTaskSet`s; `GooseTaskSetScheduler` becomes more generically `GooseScheduler`
 
 ## 0.11.0 April 9, 2021
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`

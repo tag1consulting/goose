@@ -1155,7 +1155,7 @@ impl GooseAttack {
         }
 
         info!(
-            "allocating GooseTasks to GooseUsers with {:?} scheduler",
+            "allocating tasks and task sets with {:?} scheduler",
             self.scheduler
         );
 
@@ -4028,7 +4028,7 @@ fn allocate_tasks(
     task_set: &GooseTaskSet,
     scheduler: &GooseScheduler,
 ) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
-    info!(
+    debug!(
         "allocating GooseTasks on GooseUsers with {:?} scheduler",
         scheduler
     );
@@ -4196,7 +4196,7 @@ fn weight_sequenced_tasks(
     // Build a sequenced BTreeMap containing weighted vectors of GooseTasks.
     let mut available_sequenced_tasks = BTreeMap::new();
     // Step through sequences, each containing a bucket of all GooseTasks with the same
-    // sequence value, allowing actual waiting to be done by weight_unsequenced_tasks().
+    // sequence value, allowing actual weighting to be done by weight_unsequenced_tasks().
     for (sequence, unsequenced_tasks) in sequenced_tasks.iter() {
         let (weighted_tasks, _total_weighted_tasks) =
             weight_unsequenced_tasks(&unsequenced_tasks, u);
