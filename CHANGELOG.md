@@ -6,6 +6,7 @@
  - update `nng` dependency for optional `gaggle` feature
  - simplify `examples/umami` regex when parsing form
  - allow configuration of algorithm for allocating `GooseTask`s the same as `GooseTaskSet`s; `GooseTaskSetScheduler` becomes more generically `GooseScheduler`
+ - specify (and detect) minimum `rustc` requirement of `1.49.0`, due to `flume` dependency which in turn depends on `spinning_top` which uses `hint::spin_loop` which stabilized in `rustc` version `1.49.0
 
 ## 0.11.0 April 9, 2021
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
