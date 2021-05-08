@@ -2,6 +2,7 @@
 
 ## 0.11.1-dev
  - update `rand` dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
+ - update dependencies: `itertools` to `0.10`, `simplelog` to `0.10`, `url` to `2`
 
 ## 0.11.0 April 9, 2021
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
