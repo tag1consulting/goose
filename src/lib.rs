@@ -2,7 +2,7 @@
 //!
 //! Have you ever been attacked by a goose?
 //!
-//! Goose is a load testing tool inspired by [Locust](https://locust.io/).
+//! Goose is a load testing framework inspired by [Locust](https://locust.io/).
 //! User behavior is defined with standard Rust code.
 //!
 //! Goose load tests, called Goose Attacks, are built by creating an application
@@ -63,8 +63,8 @@
 //! Below your `main` function (which currently is the default `Hello, world!`), add
 //! one or more load test functions. The names of these functions are arbitrary, but it is
 //! recommended you use self-documenting names. Load test functions must be async. Each load
-//! test function must accept a reference to a `GooseUser` object and return a
-//! `GooseTaskResult`. For example:
+//! test function must accept a reference to a [`GooseUser`](./goose/struct.GooseUser.html) object
+//! and return a [`GooseTaskResult`](./goose/type.GooseTaskResult.html). For example:
 //!
 //! ```rust
 //! use goose::prelude::*;
@@ -76,11 +76,14 @@
 //! }   
 //! ```
 //!
-//! In the above example, we're using the GooseUser helper method `get` to load a path
-//! on the website we are load testing. This helper creates a Reqwest request builder, and
-//! uses it to build and execute a request for the above path. If you want access to the
-//! request builder object, you can instead use the `goose_get` helper, for example to
-//! set a timeout on this specific request:
+//! In the above example, we're using the [`GooseUser`](./goose/struct.GooseUser.html) helper
+//! [`get`](./goose/struct.GooseUser.html#method.get) to load a path on the website we are load
+//! testing. This helper creates a
+//! [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+//! object and uses it to build and execute a request for the above path. If you want access
+//! to the [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+//! object, you can instead use the [`goose_get`](./goose/struct.GooseUser.html#method.goose_get)
+//! helper, for example to set a timeout on this specific request:
 //!
 //! ```rust
 //! use std::time;
@@ -95,15 +98,17 @@
 //! }   
 //! ```
 //!
-//! We pass the `request_builder` object to `goose_send` which builds and executes it, also
-//! collecting useful metrics. The `.await` at the end is necessary as `goose_send` is an
-//! async function.
+//! We pass the [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+//! object to [`goose_send`](./goose/struct.GooseUser.html#method.goose_send) which builds and
+//! executes it, also collecting useful metrics. The
+//! [`.await`](https://doc.rust-lang.org/std/keyword.await.html) at the end is necessary as
+//! [`goose_send`](./goose/struct.GooseUser.html#method.goose_send) is an async function.
 //!
 //! Once all our tasks are created, we edit the main function to initialize goose and register
 //! the tasks. In this very simple example we only have two tasks to register, while in a real
 //! load test you can have any number of task sets with any number of individual tasks.
 //!
-//! ```rust,no_run
+//! ```rust
 //! use goose::prelude::*;
 //!
 //! fn main() -> Result<(), GooseError> {
@@ -117,7 +122,9 @@
 //!             .register_task(task!(loadtest_bar).set_name("bar").set_weight(2)?)
 //!         )
 //!         // You could also set a default host here, for example:
-//!         //.set_default(GooseDefault::Host, "http://dev.local/")?
+//!         .set_default(GooseDefault::Host, "http://dev.local/")?
+//!         // We set a default run time so this test runs to completion.
+//!         .set_default(GooseDefault::RunTime, 1)?
 //!         .execute()?;
 //!
 //!     Ok(())
@@ -139,9 +146,9 @@
 //! ```
 //!
 //! Goose now spins up a configurable number of users, each simulating a user on your
-//! website. Thanks to Reqwest, each user maintains its own web client state, handling
-//! cookies and more so your "users" can log in, fill out forms, and more, as real users
-//! on your sites would do.
+//! website. Thanks to [`reqwest`](https://docs.rs/reqwest/), each user maintains its own
+//! web client state, handling cookies and more so your "users" can log in, fill out forms,
+//! and more, as real users on your sites would do.
 //!
 //! ### Running the Goose load test
 //!
@@ -255,11 +262,13 @@
 //! All 8 users hatched, resetting metrics (disable with --no-reset-metrics).
 //! ```
 //!
-//! When printing metrics, by default Goose will display running values approximately
-//! every 15 seconds. Running metrics are broken into several tables. First are the
-//! per-task metrics which are further split into two sections. The first section shows
-//! how many requests have been made, how many of them failed (non-2xx response), and
-//! the corresponding per-second rates.
+//! Goose can optionally display running metrics if started with `--running-metrics INT`
+//! where INT is an integer value in seconds. For example, if Goose is started with
+//! `--running-metrics 15` it will display running values approximately every 15 seconds.
+//! Running metrics are broken into several tables. First are the per-task metrics which
+//! are further split into two sections. The first section shows how many requests have
+//! been made, how many of them failed (non-2xx response), and the corresponding per-second
+//! rates.
 //!
 //! This table shows details for all Task Sets and all Tasks defined by your load test,
 //! regardless of if they actually run. This can be useful to ensure that you have set
@@ -289,8 +298,8 @@
 //!  Aggregated               |       21.24 |          8 |         156 |         19
 //! ```
 //!
-//! The second table breaks down the same metrics by Request instead of by Task. For
-//! our simple load test, each Task only makes a single Request, so the metrics are
+//! The second table breaks down the same metrics by request instead of by Task. For
+//! our simple load test, each Task only makes a single request, so the metrics are
 //! the same. There are two main differences. First, metrics are listed by request
 //! type and path or name. The first request shows up as `GET /path/to/foo` as the
 //! request was not named. The second request shows up as `GET bar` as the request
@@ -315,8 +324,8 @@
 //!  Aggregated               |       21.20 |          8 |         156 |         19
 //! ```
 //!
-//! Note that Goose respected the per-task weights we set, and `foo` (with a weight of
-//! 10) is being loaded five times as often as `bar` (with a weight of 2). On average
+//! Note that Goose respected the per-task weights we set, and `foo` (with a weight of 10)
+//! is being loaded five times as often as `bar` (with a weight of 2). On average
 //! each page is returning within `21.2` milliseconds. The quickest page response was
 //! for `foo` in `8` milliseconds. The slowest page response was for `bar` in `156`
 //! milliseconds.
@@ -398,13 +407,13 @@
 //!
 //! ## License
 //!
-//! Copyright 2020 Jeremy Andrews
+//! Copyright 2020-21 Jeremy Andrews
 //!
 //! Licensed under the Apache License, Version 2.0 (the "License");
 //! you may not use this file except in compliance with the License.
 //! You may obtain a copy of the License at
 //!
-//! http://www.apache.org/licenses/LICENSE-2.0
+//! [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0)
 //!
 //! Unless required by applicable law or agreed to in writing, software
 //! distributed under the License is distributed on an "AS IS" BASIS,
@@ -478,7 +487,9 @@ type UnsequencedGooseTasks = Vec<GooseTask>;
 /// Internal representation of sequenced tasks.
 type SequencedGooseTasks = BTreeMap<usize, Vec<GooseTask>>;
 
+/// Optional unbounded receiver for logger thread, if debug logger is enabled.
 type DebugLoggerHandle = Option<tokio::task::JoinHandle<()>>;
+/// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
 type DebugLoggerChannel = Option<flume::Sender<Option<GooseDebug>>>;
 
 /// Worker ID to aid in tracing logs when running a Gaggle.
@@ -488,50 +499,64 @@ pub fn get_worker_id() -> usize {
 
 #[cfg(not(feature = "gaggle"))]
 #[derive(Debug, Clone)]
-/// Socket used for coordinating a Gaggle, a distributed load test.
+/// Socket used for coordinating a Gaggle distributed load test.
 pub struct Socket {}
 
-/// Definition of all errors a GooseAttack can return.
+/// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
 #[derive(Debug)]
 pub enum GooseError {
-    /// Contains an io::Error.
+    /// Wraps a [`std::io::Error`](https://doc.rust-lang.org/std/io/struct.Error.html).
     Io(io::Error),
-    /// Contains a reqwest::Error.
+    /// Wraps a [`reqwest::Error`](https://docs.rs/reqwest/*/reqwest/struct.Error.html).
     Reqwest(reqwest::Error),
-    /// Failed attempt to use code that requires a compile-time feature be enabled. The missing
-    /// feature is named in `.feature`. An optional explanation may be found in `.detail`.
-    FeatureNotEnabled { feature: String, detail: String },
-    /// Failed to parse hostname. The invalid hostname that caused this error is found in
-    /// `.host`. An optional explanation may be found in `.detail`. The lower level
-    /// `url::ParseError` is contained in `.parse_error`.
-    InvalidHost {
-        host: String,
+    /// Failed attempt to use code that requires a compile-time feature be enabled.
+    FeatureNotEnabled {
+        /// The missing compile-time feature.
+        feature: String,
+        /// An optional explanation of the error.
         detail: String,
+    },
+    /// Failed to parse a hostname.
+    InvalidHost {
+        /// The invalid hostname that caused this error.
+        host: String,
+        /// An optional explanation of the error.
+        detail: String,
+        /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
         parse_error: url::ParseError,
     },
-    /// Invalid option or value specified, may only be invalid in context. The invalid option
-    /// is found in `.option`, while the invalid value is found in `.value`. An optional
-    /// explanation providing context may be found in `.detail`.
+    /// Invalid option or value specified, may only be invalid in context.
     InvalidOption {
+        /// The invalid option that caused this error, may be only invalid in context.
         option: String,
+        /// The invalid value that caused this error, may be only invalid in context.
         value: String,
+        /// An optional explanation of the error.
         detail: String,
     },
-    /// Invalid wait time specified. The minimum wait time and maximum wait time are found in
-    /// `.min_wait` and `.max_wait` respectively. An optional explanation providing context may
-    /// be found in `.detail`.
+    /// Invalid wait time specified.
     InvalidWaitTime {
+        // The specified minimum wait time.
         min_wait: usize,
+        // The specified maximum wait time.
         max_wait: usize,
+        /// An optional explanation of the error.
         detail: String,
     },
-    /// Invalid weight specified. The invalid weight value is found in `.weight`. An optional
-    // explanation providing context may be found in `.detail`.
-    InvalidWeight { weight: usize, detail: String },
-    /// `GooseAttack` has no `GooseTaskSet` defined. An optional explanation may be found in
-    /// `.detail`.
-    NoTaskSets { detail: String },
+    /// Invalid weight specified.
+    InvalidWeight {
+        // The specified weight.
+        weight: usize,
+        /// An optional explanation of the error.
+        detail: String,
+    },
+    /// [`GooseAttack`](./struct.GooseAttack.html) has no [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) defined.
+    NoTaskSets {
+        /// An optional explanation of the error.
+        detail: String,
+    },
 }
+/// Implement a helper to provide a text description of all possible types of errors.
 impl GooseError {
     fn describe(&self) -> &str {
         match *self {
@@ -547,8 +572,9 @@ impl GooseError {
     }
 }
 
-// Define how to display errors.
+/// Implement format trait to allow displaying errors.
 impl fmt::Display for GooseError {
+    // Implement display of error with `{}` marker.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             GooseError::Io(ref source) => write!(f, "GooseError: {} ({})", self.describe(), source),
@@ -592,9 +618,10 @@ impl From<io::Error> for GooseError {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// A GooseAttack load test can operate in only one mode.
+/// A [`GooseAttack`](./struct.GooseAttack.html) load test operates in one (and only one)
+/// of the following modes.
 pub enum AttackMode {
-    /// A mode has not yet been assigned.
+    /// During early startup before one of the following modes gets assigned.
     Undefined,
     /// A single standalone process performing a load test.
     StandAlone,
@@ -605,15 +632,17 @@ pub enum AttackMode {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// A GooseAttack load test can operate in only one mode.
+/// A [`GooseAttack`](./struct.GooseAttack.html) load test moves through each of the following
+/// phases during a complete load test.
 pub enum AttackPhase {
-    /// Memory is being allocated for the GooseAttack.
+    /// Memory is being allocated for the [`GooseAttack`](./struct.GooseAttack.html).
     Initializing,
-    /// GooseUsers are starting and beginning to generate load.
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s are starting and beginning to generate
+    /// load.
     Starting,
-    /// All GooseUsers are started and generating load.
+    /// All [`GooseUser`](./goose/struct.GooseUser.html)s have started and are generating load.
     Running,
-    /// GooseUsers are stopping.
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s are stopping.
     Stopping,
 }
 
@@ -755,26 +784,33 @@ pub enum GooseDefault {
 }
 
 /// Internal global run state for load test.
-pub struct GooseAttackRunState {
-    /// A timestamp tracking when the previous GooseUser was launched.
+struct GooseAttackRunState {
+    /// A timestamp tracking when the previous [`GooseUser`](./goose/struct.GooseUser.html)
+    /// was launched.
     spawn_user_timer: std::time::Instant,
-    /// How many milliseconds until the next user should be spawned.
+    /// How many milliseconds until the next [`GooseUser`](./goose/struct.GooseUser.html)
+    /// should be spawned.
     spawn_user_in_ms: usize,
-    /// A counter tracking which GooseUser is being spawned.
+    /// A counter tracking which [`GooseUser`](./goose/struct.GooseUser.html) is being
+    /// spawned.
     spawn_user_counter: usize,
     /// This variable accounts for time spent doing things which is then subtracted from
     /// the time sleeping to avoid an unintentional drift in events that are supposed to
     /// happen regularly.
     drift_timer: tokio::time::Instant,
-    /// Unbounded sender used by all GooseUser threads to send metrics to parent.
+    /// Unbounded sender used by all [`GooseUser`](./goose/struct.GooseUser.html)
+    /// threads to send metrics to parent.
     all_threads_metrics_tx: flume::Sender<GooseMetric>,
-    /// Unbounded receiver used by Goose parent to receive metrics from GooseUsers.
+    /// Unbounded receiver used by Goose parent to receive metrics from
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s.
     metrics_rx: flume::Receiver<GooseMetric>,
     /// Optional unbounded receiver for logger thread, if enabled.
     debug_logger: DebugLoggerHandle,
-    /// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
+    /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
+    /// to logger thread, if enabled.
     all_threads_debug_logger_tx: DebugLoggerChannel,
-    /// Optional receiver for all GooseUsers from throttle thread, if enabled.
+    /// Optional receiver for all [`GooseUser`](./goose/struct.GooseUser.html)s from
+    /// throttle thread, if enabled.
     throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
@@ -785,44 +821,48 @@ pub struct GooseAttackRunState {
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
-    /// Collection of all GooseUser threads so they can be stopped later.
+    /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
+    /// can be stopped later.
     users: Vec<tokio::task::JoinHandle<()>>,
-    /// All unbounded senders to allow communication with GooseUser threads.
+    /// All unbounded senders to allow communication with
+    /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
     /// Boolean flag indicating if running metrics should be displayed.
     display_running_metrics: bool,
-    /// Boolean flag indicating if all GooseUsers have been spawned.
+    /// Boolean flag indicating if all [`GooseUser`](./goose/struct.GooseUser.html)s
+    /// have been spawned.
     all_users_spawned: bool,
-    /// Thread-safe boolean flag indicating if the GooseAttack has been canceled.
+    /// Thread-safe boolean flag indicating if the [`GooseAttack`](./struct.GooseAttack.html)
+    /// has been canceled.
     canceled: Arc<AtomicBool>,
     /// Optional socket used to coordinate a distributed Gaggle.
     socket: Option<Socket>,
 }
 
-/// Internal global state for load test.
+/// Global internal state for the load test.
 #[derive(Clone)]
 pub struct GooseAttack {
-    /// An optional task to run one time before starting users and running task sets.
+    /// An optional task that is run one time before starting GooseUsers and running GooseTaskSets.
     test_start_task: Option<GooseTask>,
-    /// An optional task to run one time after users have finished running task sets.
+    /// An optional task that is run one time after all GooseUsers have finished.
     test_stop_task: Option<GooseTask>,
-    /// A vector containing one copy of each GooseTaskSet that will run during this load test.
+    /// A vector containing one copy of each GooseTaskSet defined by this load test.
     task_sets: Vec<GooseTaskSet>,
-    /// A weighted vector containing a GooseUser object for each user that will run during this load test.
+    /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
-    /// A weighted vector containing a lightweight GaggleUser object that will get sent to Workers.
+    /// A weighted vector containing a lightweight GaggleUser object that is sent to all Workers if running in Gaggle mode.
     weighted_gaggle_users: Vec<GaggleUser>,
-    /// An optional default host to run this load test against.
+    /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
-    /// Configuration object managed by StructOpt.
+    /// Configuration object holding options set when launching the load test.
     configuration: GooseConfiguration,
-    /// Track how long the load test should run.
+    /// How long (in seconds) the load test should run.
     run_time: usize,
-    /// Which mode this GooseAttack is operating in.
+    /// The load test operates in only one of the following modes: StandAlone, Manager, or Worker.
     attack_mode: AttackMode,
-    /// Which mode this GooseAttack is operating in.
+    /// Which phase the load test is currently operating in.
     attack_phase: AttackPhase,
     /// Defines the order GooseTaskSets and GooseTasks are allocated.
     scheduler: GooseScheduler,
@@ -833,13 +873,13 @@ pub struct GooseAttack {
 }
 /// Goose's internal global state.
 impl GooseAttack {
-    /// Load configuration from command line and initialize a GooseAttack.
+    /// Load configuration and initialize a [`GooseAttack`](./struct.GooseAttack.html).
     ///
     /// # Example
-    /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// ```rust
+    /// use goose::prelude::*;
     ///
-    ///     let mut goose_attack = GooseAttack::initialize();
+    /// let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> Result<GooseAttack, GooseError> {
         Ok(GooseAttack {
@@ -859,16 +899,16 @@ impl GooseAttack {
         })
     }
 
-    /// Initialize a GooseAttack with an already loaded configuration.
-    /// This should only be called by worker instances.
+    /// Initialize a [`GooseAttack`](./struct.GooseAttack.html) with an already loaded
+    /// configuration. This should only be called by Worker instances.
     ///
     /// # Example
-    /// ```rust,no_run
-    ///     use goose::{GooseAttack, GooseConfiguration};
-    ///     use gumdrop::Options;
+    /// ```rust
+    /// use goose::{GooseAttack, GooseConfiguration};
+    /// use gumdrop::Options;
     ///
-    ///     let configuration = GooseConfiguration::parse_args_default_or_exit();
-    ///     let mut goose_attack = GooseAttack::initialize_with_config(configuration);
+    /// let configuration = GooseConfiguration::parse_args_default_or_exit();
+    /// let mut goose_attack = GooseAttack::initialize_with_config(configuration);
     /// ```
     pub fn initialize_with_config(
         configuration: GooseConfiguration,
@@ -890,6 +930,11 @@ impl GooseAttack {
         })
     }
 
+    /// Optionally initialize the logger which writes to standard out and/or to
+    /// a configurable log file.
+    ///
+    /// This method is invoked by
+    /// [`GooseAttack.execute()`](./struct.GooseAttack.html#method.execute).
     pub fn initialize_logger(&self) {
         // Allow optionally controlling debug output level
         let debug_level;
@@ -957,12 +1002,14 @@ impl GooseAttack {
         info!("Logfile verbosity level: {}", log_level);
     }
 
-    /// Define the order `GooseTaskSet`s are allocated to new `GooseUser`s as they
-    /// are launched.
+    /// Define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are
+    /// allocated to new [`GooseUser`](./goose/struct.GooseUser.html)s as they are
+    /// launched.
     ///
-    /// By default, GooseTaskSets are allocated to new GooseUser's in a round robin
-    /// style. For example, if TaskSet A has a weight of 5, Task Set B has a weight
-    ///  of 3, and you launch 20 users, they will be launched in the following order:
+    /// By default, [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are allocated
+    /// to new [`GooseUser`](./goose/struct.GooseUser.html)s in a round robin style.
+    /// For example, if TaskSet A has a weight of 5, TaskSet B has a weight of 3, and
+    /// you launch 20 users, they will be launched in the following order:
     ///  A, B, A, B, A, B, A, A, A, B, A, B, A, B, A, A, A, B, A, B
     ///
     /// Note that the following pattern is repeated:
@@ -970,19 +1017,21 @@ impl GooseAttack {
     ///
     /// If reconfigured to schedule serially, then they will instead be allocated in
     /// the following order:
-    /// A, A, A, A, A, B, B, B, A, A, A, A, A, B, B, B, A, A, A, A
+    ///  A, A, A, A, A, B, B, B, A, A, A, A, A, B, B, B, A, A, A, A
     ///
     /// In the serial case, the following pattern is repeated:
-    /// A, A, A, A, A, B, B, B
+    ///  A, A, A, A, A, B, B, B
     ///
-    /// In the following example, GooseTaskSets are allocated to launching GooseUsers
-    /// in a random order. This means running the test multiple times can generate
+    /// In the following example, [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s
+    /// are allocated to launching [`GooseUser`](./goose/struct.GooseUser.html)s in a
+    /// random order. This means running the test multiple times can generate
     /// different amounts of load, as depending on your weighting rules you may
-    /// have a different number of GooseUsers running each GooseTaskSet each time.
+    /// have a different number of [`GooseUser`](./goose/struct.GooseUser.html)s
+    /// running each [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) each time.
     ///
     /// # Example
-    /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// ```rust
+    /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
@@ -1016,12 +1065,12 @@ impl GooseAttack {
         self
     }
 
-    /// A load test must contain one or more `GooseTaskSet`s. Each task set must
+    /// A load test must contain one or more [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s
     /// be registered into Goose's global state with this method for it to run.
     ///
     /// # Example
-    /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// ```rust
+    /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
@@ -1057,17 +1106,19 @@ impl GooseAttack {
     /// start running. This is would generally be used to set up anything required
     /// for the load test.
     ///
-    /// The GooseUser used to run the `test_start` tasks is not preserved and does not
-    /// otherwise affect the subsequent GooseUsers that run the rest of the load test.
-    /// For example, if the GooseUser logs in during `test_start`, subsequent GooseUsers
+    /// The [`GooseUser`](./goose/struct.GooseUser.html) used to run the `test_start`
+    /// tasks is not preserved and does not otherwise affect the subsequent
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s that run the rest of the load
+    /// test. For example, if the [`GooseUser`](./goose/struct.GooseUser.html)
+    /// logs in during `test_start`, subsequent [`GooseUser`](./goose/struct.GooseUser.html)
     /// do not retain this session and are therefor not already logged in.
     ///
     /// When running in a distributed Gaggle, this task is only run one time by the
     /// Manager.
     ///
     /// # Example
-    /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// ```rust
+    /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
@@ -1095,8 +1146,8 @@ impl GooseAttack {
     /// Manager.
     ///
     /// # Example
-    /// ```rust,no_run
-    ///     use goose::prelude::*;
+    /// ```rust
+    /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
@@ -1253,7 +1304,7 @@ impl GooseAttack {
         }
     }
 
-    /// Allocate a vector of weighted GaggleUser.
+    /// Allocate a vector of weighted [`GaggleUser`](./goose/struct.GaggleUser.html).
     fn prepare_worker_task_set_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
         trace!("prepare_worker_task_set_users");
 
@@ -1288,7 +1339,8 @@ impl GooseAttack {
         }
     }
 
-    // Configure which mode this GooseAttack will run in.
+    // Configure which mode this [`GooseAttack`](./struct.GooseAttack.html)
+    // will run in.
     fn set_attack_mode(&mut self) -> Result<(), GooseError> {
         // Determine if Manager is enabled by default.
         let manager_is_default = if let Some(value) = self.defaults.manager {
@@ -1396,7 +1448,7 @@ impl GooseAttack {
         self.attack_phase = phase;
     }
 
-    // Determine how many workers to expect.
+    // Determine how many Workers to expect.
     fn set_expect_workers(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.expect_workers";
@@ -1452,6 +1504,7 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Configure the host and port the Manager listens on.
     fn set_gaggle_host_and_port(&mut self) -> Result<(), GooseError> {
         // Configure manager_bind_host and manager_bind_port.
         if self.attack_mode == AttackMode::Manager {
@@ -1537,7 +1590,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Configure how many Goose Users to hatch.
+    // Configure how many [`GooseUser`](./goose/struct.GooseUser.html)s to hatch.
     fn set_users(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.users";
@@ -1640,7 +1693,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Configure how quickly to hatch Goose Users.
+    // Configure how quickly to hatch [`GooseUser`](./goose/struct.GooseUser.html)s.
     fn set_hatch_rate(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.hatch_rate";
@@ -1758,7 +1811,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if no_reset_statics is enabled.
+    // Determine if `no_reset_statics` is enabled.
     fn set_no_reset_metrics(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.no_reset_metrics";
@@ -1790,7 +1843,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if the status_codes flag is enabled.
+    // Determine if the `--status-codes` flag is enabled.
     fn set_status_codes(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.status_codes";
@@ -1822,7 +1875,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if the running_metrics flag is enabled.
+    // Determine if the `--running-metrics` flag is enabled.
     fn set_running_metrics(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.running_metrics";
@@ -1860,7 +1913,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if the no_task_metrics flag is enabled.
+    // Determine if the `--no-task-metrics` flag is enabled.
     fn set_no_task_metrics(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.no_task_metrics";
@@ -1892,7 +1945,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if the no_error_summary flag is enabled.
+    // Determine if the `--no-error-summary` flag is enabled.
     fn set_no_error_summary(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.no_error_summary";
@@ -1924,7 +1977,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if the no_metrics flag is enabled.
+    // Determine if the `--no-metrics` flag is enabled.
     fn set_no_metrics(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.no_metrics";
@@ -1994,7 +2047,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Determine if the sticky_follow flag is enabled.
+    // Determine if the `--sticky-follow` flag is enabled.
     fn set_sticky_follow(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.sticky_follow";
@@ -2026,7 +2079,7 @@ impl GooseAttack {
     }
 
     #[cfg(feature = "gaggle")]
-    // Determine if no_hash_check flag is enabled.
+    // Determine if `--no-hash-check` flag is enabled.
     fn set_no_hash_check(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.no_hash_check";
@@ -2229,10 +2282,10 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Execute the load test.
+    /// Execute the [`GooseAttack`](./struct.GooseAttack.html) load test.
     ///
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
@@ -2240,7 +2293,11 @@ impl GooseAttack {
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2)?)
     ///             .register_task(task!(another_example_task).set_weight(3)?)
+    ///             // Goose must run against a host, point to localhost so test starts.
+    ///             .set_host("http://localhost")
     ///         )
+    ///         // Exit after one second so test doesn't run forever.
+    ///         .set_default(GooseDefault::RunTime, 1)?
     ///         .execute()?;
     ///
     ///     Ok(())
@@ -2450,7 +2507,7 @@ impl GooseAttack {
         Ok(self.metrics)
     }
 
-    /// Helper to wrap configured host in Option<> if set.
+    /// Helper to wrap configured host in `Option<>` if set.
     fn get_configuration_host(&self) -> Option<String> {
         if self.configuration.host.is_empty() {
             None
@@ -2529,11 +2586,13 @@ impl GooseAttack {
         (Some(logger_thread), Some(all_threads_debug_logger))
     }
 
-    // Helper to spawn a throttle thread if configured.
+    // Helper to spawn a throttle thread if configured. The throttle thread opens
+    // a bounded channel to control how quickly [`GooseUser`](./goose/struct.GooseUser.html)
+    // threads can make requests.
     async fn setup_throttle(
         &self,
     ) -> (
-        // A channel used by GooseClients to throttle requests.
+        // A channel used by [`GooseUser`](./goose/struct.GooseUser.html)s to throttle requests.
         Option<flume::Sender<bool>>,
         // A channel used by parent to tell throttle the load test is complete.
         Option<flume::Sender<bool>>,
@@ -2544,7 +2603,7 @@ impl GooseAttack {
         }
 
         // Create a bounded channel allowing single-sender multi-receiver to throttle
-        // GooseUser threads.
+        // [`GooseUser`](./goose/struct.GooseUser.html) threads.
         let (all_threads_throttle, throttle_receiver): (
             flume::Sender<bool>,
             flume::Receiver<bool>,
@@ -2576,7 +2635,7 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
-    // Prepare an asynchronous file writer for report_file (if enabled).
+    // Prepare an asynchronous file writer for `report_file` (if enabled).
     async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
         if let Some(report_file_path) = self.get_report_file_path() {
             Ok(Some(File::create(&report_file_path).await?))
@@ -2585,7 +2644,7 @@ impl GooseAttack {
         }
     }
 
-    // Prepare an asynchronous buffered file writer for requests_file (if enabled).
+    // Prepare an asynchronous buffered file writer for `requests_file` (if enabled).
     async fn prepare_requests_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
         if let Some(requests_file_path) = self.get_requests_file_path() {
             Ok(Some(BufWriter::new(
@@ -2596,7 +2655,7 @@ impl GooseAttack {
         }
     }
 
-    // Invoke test_start tasks if existing.
+    // Invoke `test_start` tasks if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
         if self.attack_mode != AttackMode::Worker {
@@ -2622,7 +2681,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Invoke test_stop tasks if existing.
+    // Invoke `test_stop` tasks if existing.
     async fn run_test_stop(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
         if self.attack_mode != AttackMode::Worker {
@@ -2649,7 +2708,7 @@ impl GooseAttack {
     }
 
     // Create a GooseAttackRunState object and do all initialization required
-    // to start a GooseAttack.
+    // to start a [`GooseAttack`](./struct.GooseAttack.html).
     async fn initialize_attack(
         &mut self,
         socket: Option<Socket>,
@@ -2747,7 +2806,8 @@ impl GooseAttack {
         Ok(goose_attack_run_state)
     }
 
-    // Spawn GooseUsers to generate a GooseAttack.
+    // Spawn [`GooseUser`](./goose/struct.GooseUser.html) threads to generate a
+    // [`GooseAttack`](./struct.GooseAttack.html).
     async fn spawn_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -2914,8 +2974,8 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Let the GooseAttack run until the timer expires (or the test is canceled), and then
-    // trigger a shut down.
+    // Let the [`GooseAttack`](./struct.GooseAttack.html) run until the timer expires
+    // (or the test is canceled), and then trigger a shut down.
     async fn monitor_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3084,7 +3144,8 @@ impl GooseAttack {
         Ok(())
     }
 
-    // When the Goose Attack starts, optionally flush metrics.
+    // When the [`GooseAttack`](./struct.GooseAttack.html) goes from the `Starting`
+    // phase to the `Running` phase, optionally flush metrics.
     async fn reset_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3134,7 +3195,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Cleanly shut down the Goose Attack.
+    // Cleanly shut down the [`GooseAttack`](./struct.GooseAttack.html).
     async fn stop_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3160,6 +3221,7 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Write an HTML-formatted report, if enabled.
     async fn write_html_report(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3482,7 +3544,7 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Called internally in local-mode and gaggle-mode.
+    // Called internally in local-mode and gaggle-mode.
     async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
         trace!("start_attack: socket({:?})", socket);
 
@@ -3532,6 +3594,7 @@ impl GooseAttack {
         Ok(self)
     }
 
+    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads.
     async fn receive_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3665,17 +3728,18 @@ impl GooseAttack {
 
 /// All run-time options can optionally be configured with custom defaults. For
 /// example, you can optionally configure a default host for the load test. This is
-/// used if no per-GooseTaskSet host is defined, no `--host` CLI option is
-/// configured, and if the GooseTask itself doesn't hard-code the host in the base
-/// url of its request. In that case, this host is added to all requests.
+/// used if no per-[`GooseTaskSet`](./goose/struct.GooseTaskSet.html) host is defined,
+/// no `--host` CLI option is configured, and if the
+/// [`GooseTask`](./goose/struct.GooseTask.html) itself doesn't hard-code the host in
+/// the base url of its request. In that case, this host is added to all requests.
 ///
 /// For example, a load test could be configured to default to running against a local
 /// development container, and the `--host` option could be used to override the host
 /// value to run the load test against the production environment.
 ///
 /// # Example
-/// ```rust,no_run
-///     use goose::prelude::*;
+/// ```rust
+/// use goose::prelude::*;
 ///
 /// fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
@@ -3723,8 +3787,8 @@ impl GooseAttack {
 ///  - GooseDefault::Worker
 ///
 /// # Another Example
-/// ```rust,no_run
-///     use goose::prelude::*;
+/// ```rust
+/// use goose::prelude::*;
 ///
 /// fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
@@ -4271,6 +4335,7 @@ fn schedule_unsequenced_tasks(
     weighted_tasks
 }
 
+// Helper function to determine if a host can be parsed.
 fn is_valid_host(host: &str) -> Result<bool, GooseError> {
     Url::parse(host).map_err(|parse_error| GooseError::InvalidHost {
         host: host.to_string(),
