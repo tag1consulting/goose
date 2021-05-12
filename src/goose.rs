@@ -12,17 +12,18 @@
 //! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a `&str` name to the `new` function, for example:
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut loadtest_tasks = taskset!("LoadtestTasks");
+//! let mut loadtest_tasks = taskset!("LoadtestTasks");
 //! ```
 //!
 //! ### Task Set Weight
 //!
-//! A weight can be assigned to a task set, controlling how often it is assigned to user
-//! threads. The larger the value of weight, the more it will be assigned to users. In the
-//! following example, `FooTasks` will be assigned to users twice as often as `Bar` tasks.
-//! We could have just added a weight of `2` to `FooTasks` and left the default weight of `1`
+//! A weight can be applied to a task set, controlling how often it is assigned to
+//! [`GooseUser`](../goose/struct.GooseUser.html) threads. The larger the integer value
+//! of weight, the more the task set will be assigned to user threads. In the following
+//! example, `FooTasks` will be assigned to users twice as often as `Bar` tasks. We could
+//! have just added a weight of `2` to `FooTasks` and left the default weight of `1`
 //! assigned to `BarTasks` for the same weighting:
 //!
 //! ```rust
@@ -45,10 +46,10 @@
 //! hosts to different task sets if this is desirable:
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut foo_tasks = taskset!("FooTasks").set_host("http://www.local");
-//!     let mut bar_tasks = taskset!("BarTasks").set_host("http://www2.local");
+//! let mut foo_tasks = taskset!("FooTasks").set_host("http://www.local");
+//! let mut bar_tasks = taskset!("BarTasks").set_host("http://www2.local");
 //! ```
 //!
 //! ### Task Set Wait Time
@@ -60,10 +61,10 @@
 //! sleep 5 to 10 seconds after each task completes.
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut foo_tasks = taskset!("FooTasks").set_wait_time(0, 3).unwrap();
-//!     let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10).unwrap();
+//! let mut foo_tasks = taskset!("FooTasks").set_wait_time(0, 3).unwrap();
+//! let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10).unwrap();
 //! ```
 //! ## Creating Tasks
 //!
@@ -71,16 +72,16 @@
 //! will be executed each time the task is run.
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut a_task = task!(task_function);
+//! let mut a_task = task!(task_function);
 //!
-//!     /// A very simple task that loads the front page.
-//!     async fn task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/").await?;
+//! /// A very simple task that loads the front page.
+//! async fn task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ### Task Name
@@ -89,16 +90,16 @@
 //! made by the task.
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut a_task = task!(task_function).set_name("a");
+//! let mut a_task = task!(task_function).set_name("a");
 //!
-//!     /// A very simple task that loads the front page.
-//!     async fn task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/").await?;
+//! /// A very simple task that loads the front page.
+//! async fn task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ### Task Weight
@@ -143,32 +144,32 @@
 //! `a_task` runs before `b_task`, which runs before `c_task`:
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut a_task = task!(a_task_function).set_sequence(1);
-//!     let mut b_task = task!(b_task_function).set_sequence(2);
-//!     let mut c_task = task!(c_task_function);
+//! let mut a_task = task!(a_task_function).set_sequence(1);
+//! let mut b_task = task!(b_task_function).set_sequence(2);
+//! let mut c_task = task!(c_task_function);
 //!
-//!     /// A very simple task that loads the "a" page.
-//!     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/a/").await?;
+//! /// A very simple task that loads the "a" page.
+//! async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/a/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //!
-//!     /// Another very simple task that loads the "b" page.
-//!     async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/b/").await?;
+//! /// Another very simple task that loads the "b" page.
+//! async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/b/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //!
-//!     /// Another very simple task that loads the "c" page.
-//!     async fn c_task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/c/").await?;
+//! /// Another very simple task that loads the "c" page.
+//! async fn c_task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/c/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ### Task On Start
@@ -180,16 +181,16 @@
 //! and on stop.
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut a_task = task!(a_task_function).set_sequence(1).set_on_start();
+//! let mut a_task = task!(a_task_function).set_sequence(1).set_on_start();
 //!
-//!     /// A very simple task that loads the "a" page.
-//!     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/a/").await?;
+//! /// A very simple task that loads the "a" page.
+//! async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/a/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ### Task On Stop
@@ -201,16 +202,16 @@
 //! start and on stop.
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut b_task = task!(b_task_function).set_sequence(2).set_on_stop();
+//! let mut b_task = task!(b_task_function).set_sequence(2).set_on_stop();
 //!
-//!     /// Another very simple task that loads the "b" page.
-//!     async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/b/").await?;
+//! /// Another very simple task that loads the "b" page.
+//! async fn b_task_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/b/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Controlling User
@@ -219,7 +220,8 @@
 //! assigning a single [`GooseTaskSet`](./struct.GooseTaskSet.html) to each. This user is
 //! then used to generate load. Behind the scenes, Goose is leveraging the
 //! [`reqwest::client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html)
-//! to load web pages, and Goose can therefor do anything Reqwest can do.
+//! to load web pages, and Goose can therefor do anything [`reqwest`](https://docs.rs/reqwest/)
+//! can do.
 //!
 //! The most common request types are [`GET`](./struct.GooseUser.html#method.get) and
 //! [`POST`](./struct.GooseUser.html#method.post), but [`HEAD`](./struct.GooseUser.html#method.head),
@@ -231,16 +233,16 @@
 //! Automatically prepends the correct host.
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut task = task!(get_function);
+//! let mut task = task!(get_function);
 //!
-//!     /// A very simple task that makes a GET request.
-//!     async  fn get_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.get("/path/to/foo/").await?;
+//! /// A very simple task that makes a GET request.
+//! async fn get_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.get("/path/to/foo/").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! The returned response is a [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)
@@ -254,16 +256,16 @@
 //! [`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)
 //!
 //! ```rust
-//!     use goose::prelude::*;
+//! use goose::prelude::*;
 //!
-//!     let mut task = task!(post_function);
+//! let mut task = task!(post_function);
 //!
-//!     /// A very simple task that makes a POST request.
-//!     async fn post_function(user: &GooseUser) -> GooseTaskResult {
-//!       let _goose = user.post("/path/to/foo/", "string value to post").await?;
+//! /// A very simple task that makes a POST request.
+//! async fn post_function(user: &GooseUser) -> GooseTaskResult {
+//!     let _goose = user.post("/path/to/foo/", "string value to post").await?;
 //!
-//!       Ok(())
-//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## License
@@ -274,7 +276,7 @@
 //! you may not use this file except in compliance with the License.
 //! You may obtain a copy of the License at
 //!
-//! http://www.apache.org/licenses/LICENSE-2.0
+//! [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0)
 //!
 //! Unless required by applicable law or agreed to in writing, software
 //! distributed under the License is distributed on an "AS IS" BASIS,
@@ -299,9 +301,10 @@ use url::Url;
 use crate::metrics::GooseMetric;
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
+/// By default Goose sets the following User-Agent header when making requests.
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// task!(foo) expands to GooseTask::new(foo), but also does some boxing to work around a limitation in the compiler.
+/// `task!(foo)` expands to `GooseTask::new(foo)`, but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
 macro_rules! task {
     ($task_func:ident) => {
@@ -311,7 +314,7 @@ macro_rules! task {
     };
 }
 
-/// taskset!("foo") expands to GooseTaskSet::new("foo").
+/// `taskset!("foo")` expands to `GooseTaskSet::new("foo")`.
 #[macro_export]
 macro_rules! taskset {
     ($name:tt) => {
@@ -319,41 +322,48 @@ macro_rules! taskset {
     };
 }
 
-/// Goose tasks return a result, which is empty on success, or contains a GooseTaskError
-/// on error.
+/// Goose tasks return a result, which is empty on success, or contains a
+/// [`GooseTaskError`](./enum.GooseTaskError.html) on error.
 pub type GooseTaskResult = Result<(), GooseTaskError>;
 
-/// Definition of all errors Goose Tasks can return.
+/// An enumeration of all errors a [`GooseTask`](./struct.GooseTask.html) can return.
 #[derive(Debug)]
 pub enum GooseTaskError {
-    /// Contains a reqwest::Error.
+    /// Wraps a [`reqwest::Error`](https://docs.rs/reqwest/*/reqwest/struct.Error.html).
     Reqwest(reqwest::Error),
-    /// Contains a url::ParseError.
+    /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
     Url(url::ParseError),
-    /// The request failed. The `GooseRawRequest` that failed can be found in
-    /// `.raw_request`.
-    RequestFailed { raw_request: GooseRawRequest },
-    /// The request was canceled (this happens when the throttle is enabled and
-    /// the load test finished). A `GooseRawRequest` has not yet been constructed,
-    // so is not available in this error.
-    RequestCanceled { source: flume::SendError<bool> },
+    /// The request failed.
+    RequestFailed {
+        /// The [`GooseRawRequest`](./struct.GooseRawRequest.html) that failed.
+        raw_request: GooseRawRequest,
+    },
+    /// The request was canceled. This happens when the throttle is enabled and the load
+    /// test finishes.
+    RequestCanceled {
+        /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
+        /// a [`GooseRawRequest`](./struct.GooseRawRequest.html) has not yet been constructed.
+        source: flume::SendError<bool>,
+    },
     /// There was an error sending the metrics for a request to the parent thread.
-    /// The `GooseRawRequest` that was not recorded can be extracted from the error
-    /// chain, available inside `.source`.
     MetricsFailed {
+        /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
+        /// which contains the [`GooseMetric`](../metrics/enum.GooseMetric.html) that wasn't sent.
         source: flume::SendError<GooseMetric>,
     },
-    /// Attempt to send debug detail to logger failed.
-    /// There was an error sending debug information to the logger thread. The
-    /// `GooseDebug` that was not logged can be extracted from the error chain,
-    /// available inside `.source`.
+    /// There was an error sending debug information to the logger thread.
     LoggerFailed {
+        /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
+        /// which contains the [`GooseDebug`](./struct.GooseDebug.html) that wasn't sent.
         source: flume::SendError<Option<GooseDebug>>,
     },
-    /// Attempted an unrecognized HTTP request method. The unrecognized method
-    /// is available in `.method`.
-    InvalidMethod { method: Method },
+    /// Attempted an unrecognized HTTP request method.
+    InvalidMethod {
+        /// The unrecognized HTTP request method.
+        method: Method,
+    },
 }
+/// Implement a helper to provide a text description of all possible types of errors.
 impl GooseTaskError {
     fn describe(&self) -> &str {
         match *self {
@@ -370,8 +380,9 @@ impl GooseTaskError {
     }
 }
 
-// Define how to display errors.
+/// Implement format trait to allow displaying errors.
 impl fmt::Display for GooseTaskError {
+    // Implement display of error with `{}` marker.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             GooseTaskError::Reqwest(ref source) => {
@@ -423,8 +434,10 @@ impl From<url::ParseError> for GooseTaskError {
 }
 
 /// When the throttle is enabled and the load test ends, the throttle channel is
-/// shut down. This causes a SendError, which gets automatically converted to
-// `RequestCanceled`.
+/// shut down. This causes a
+/// [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
+/// which gets automatically converted to `RequestCanceled`.
+/// [`RequestCanceled`](./enum.GooseTaskError.html#variant.RequestCanceled)
 impl From<flume::SendError<bool>> for GooseTaskError {
     fn from(source: flume::SendError<bool>) -> GooseTaskError {
         GooseTaskError::RequestCanceled { source }
@@ -450,7 +463,8 @@ impl From<flume::SendError<Option<GooseDebug>>> for GooseTaskError {
 pub struct GooseTaskSet {
     /// The name of the task set.
     pub name: String,
-    /// An integer reflecting where this task set lives in the internal `GooseTest.task_sets` vector.
+    /// An integer reflecting where this task set lives in the internal
+    /// [`GooseAttack`](../struct.GooseAttack.html)`.task_sets` vector.
     pub task_sets_index: usize,
     /// An integer value that controls the frequency that this task set will be assigned to a user.
     pub weight: usize,
@@ -458,26 +472,32 @@ pub struct GooseTaskSet {
     pub min_wait: usize,
     /// An integer value indicating the maximum number of seconds a user will sleep after running a task.
     pub max_wait: usize,
-    /// A vector containing one copy of each GooseTask that will run by users running this task set.
+    /// A vector containing one copy of each [`GooseTask`](./struct.GooseTask.html) that will
+    /// run by users running this task set.
     pub tasks: Vec<GooseTask>,
-    /// A fully scheduled and weighted vector of integers (pointing to GooseTasks) and GooseTask names.
+    /// A fully scheduled and weighted vector of integers (pointing to
+    /// [`GooseTask`](./struct.GooseTask.html)s and [`GooseTask`](./struct.GooseTask.html) names.
     pub weighted_tasks: WeightedGooseTasks,
-    /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when the user first starts.
+    /// A vector of vectors of integers, controlling the sequence and order `on_start`
+    /// [`GooseTask`](./struct.GooseTask.html)s are run when the user first starts.
     pub weighted_on_start_tasks: WeightedGooseTasks,
-    /// A vector of vectors of integers, controlling the sequence and order on_stop GooseTasks are run when the user stops.
+    /// A vector of vectors of integers, controlling the sequence and order `on_stop`
+    /// [`GooseTask`](./struct.GooseTask.html)s are run when the user first starts.
     pub weighted_on_stop_tasks: WeightedGooseTasks,
-    /// An optional default host to run this TaskSet against.
+    /// An optional default host to run this `GooseTaskSet` against.
     pub host: Option<String>,
 }
 impl GooseTaskSet {
-    /// Creates a new GooseTaskSet. Once created, GooseTasks must be assigned to it, and finally it must be
-    /// registered with the GooseAttack object. The returned object must be stored in a mutable value.
+    /// Creates a new [`GooseTaskSet`](./struct.GooseTaskSet.html). Once created, a
+    /// [`GooseTask`](./struct.GooseTask.html) must be assigned to it, and finally it must
+    /// be registered with the [`GooseAttack`](../struct.GooseAttack.html) object. The
+    /// returned object must be stored in a mutable value.
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut example_tasks = taskset!("ExampleTasks");
+    /// let mut example_tasks = taskset!("ExampleTasks");
     /// ```
     pub fn new(name: &str) -> Self {
         trace!("new taskset: name: {}", &name);
@@ -495,22 +515,24 @@ impl GooseTaskSet {
         }
     }
 
-    /// Registers a GooseTask with a GooseTaskSet, where it is stored in the GooseTaskSet.tasks vector. The
-    /// function associated with the task will be run during the load test.
+    /// Registers a [`GooseTask`](./struct.GooseTask.html) with a
+    /// [`GooseTaskSet`](./struct.GooseTaskSet.html), where it is stored in the
+    /// [`GooseTaskSet`](./struct.GooseTaskSet.html)`.tasks` vector. The function
+    /// associated with the task will be run during the load test.
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut example_tasks = taskset!("ExampleTasks");
-    ///     example_tasks.register_task(task!(a_task_function));
+    /// let mut example_tasks = taskset!("ExampleTasks");
+    /// example_tasks.register_task(task!(a_task_function));
     ///
-    ///     /// A very simple task that loads the "a" page.
-    ///     async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/a/").await?;
+    /// /// A very simple task that loads the "a" page.
+    /// async fn a_task_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/a/").await?;
     ///
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     /// ```
     pub fn register_task(mut self, mut task: GooseTask) -> Self {
         trace!("{} register_task: {}", self.name, task.name);
@@ -554,9 +576,9 @@ impl GooseTaskSet {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut example_tasks = taskset!("ExampleTasks").set_host("http://10.1.1.42");
+    /// let mut example_tasks = taskset!("ExampleTasks").set_host("http://10.1.1.42");
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("{} set_host: {}", self.name, host);
@@ -602,7 +624,7 @@ impl GooseTaskSet {
     }
 }
 
-/// Commands sent between the parent and user threads, and between manager and
+/// Commands sent from the parent thread to the user threads, and from the manager to the
 /// worker processes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GooseUserCommand {
@@ -610,7 +632,7 @@ pub enum GooseUserCommand {
     Wait,
     /// Tell worker process to start load test.
     Run,
-    /// Tell user thread to exit.
+    /// Tell user thread or worker process to exit.
     Exit,
 }
 
@@ -626,6 +648,7 @@ pub enum GooseMethod {
 }
 /// Display method in upper case.
 impl fmt::Display for GooseMethod {
+    // Implement display of `GooseMethod` with `{}` marker.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             GooseMethod::Delete => write!(f, "DELETE"),
@@ -638,7 +661,9 @@ impl fmt::Display for GooseMethod {
     }
 }
 
-fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskError> {
+/// Convert [`http::method::Method`](https://docs.rs/http/0.2.4/http/method/struct.Method.html)
+/// to [`GooseMethod`](./enum.GooseMethod.html).
+pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskError> {
     Ok(match method {
         Method::DELETE => GooseMethod::Delete,
         Method::GET => GooseMethod::Get,
@@ -711,10 +736,12 @@ impl GooseRawRequest {
         }
     }
 
+    // Record how long the `response_time` took.
     fn set_response_time(&mut self, response_time: u128) {
         self.response_time = response_time as u64;
     }
 
+    // Record the returned `status_code`.
     fn set_status_code(&mut self, status_code: Option<StatusCode>) {
         self.status_code = match status_code {
             Some(status_code) => status_code.as_u16(),
@@ -844,11 +871,13 @@ impl GooseRequest {
         debug!("incremented {} counter: {}", status_code, counter);
     }
 }
+/// Implement ordering for GooseRequest.
 impl Ord for GooseRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         (&self.method, &self.path).cmp(&(&other.method, &other.path))
     }
 }
+/// Implement partial-ordering for GooseRequest.
 impl PartialOrd for GooseRequest {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -858,7 +887,9 @@ impl PartialOrd for GooseRequest {
 /// The response to a GooseRequest
 #[derive(Debug)]
 pub struct GooseResponse {
+    /// The request that this is a response to.
     pub request: GooseRawRequest,
+    /// The response.
     pub response: Result<Response, reqwest::Error>,
 }
 impl GooseResponse {
@@ -867,7 +898,8 @@ impl GooseResponse {
     }
 }
 
-/// Object created by log_debug() and written to log to assist in debugging.
+/// Object created by [`log_debug()`](struct.GooseUser.html#method.log_debug) and written
+/// to log to assist in debugging.
 #[derive(Debug, Serialize)]
 pub struct GooseDebug {
     /// String to identify the source of the log message.
@@ -902,7 +934,8 @@ impl GooseDebug {
 /// The elements needed to build an individual user state on a Gaggle Worker.
 #[derive(Debug, Clone)]
 pub struct GaggleUser {
-    /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
+    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`
+    /// vector, indicating which [`GooseTaskSet`](./struct.GooseTaskSet.html) is running.
     pub task_sets_index: usize,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
@@ -937,12 +970,14 @@ impl GaggleUser {
     }
 }
 
-/// An individual user state, repeatedly running all GooseTasks in a specific GooseTaskSet.
+/// An individual user state, repeatedly running all [`GooseTask`](./struct.GooseTask.html)s
+/// in a specific [`GooseTaskSet`](./struct.GooseTaskSet.html).
 #[derive(Debug, Clone)]
 pub struct GooseUser {
-    /// The Instant when this GooseUser client started.
+    /// The Instant when this `GooseUser` client started.
     pub started: Instant,
-    /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
+    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`
+    /// vector, indicating which [`GooseTaskSet`](./struct.GooseTaskSet.html) is running.
     pub task_sets_index: usize,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Arc<Mutex<Client>>,
@@ -954,7 +989,7 @@ pub struct GooseUser {
     pub min_wait: usize,
     /// Maximum amount of time to sleep after running a task.
     pub max_wait: usize,
-    /// A local copy of the global GooseConfiguration.
+    /// A local copy of the global [`GooseConfiguration`](../struct.GooseConfiguration.html).
     pub config: GooseConfiguration,
     /// Channel to logger.
     pub debug_logger: Option<flume::Sender<Option<GooseDebug>>>,
@@ -964,7 +999,8 @@ pub struct GooseUser {
     pub is_throttled: bool,
     /// Channel to parent.
     pub channel_to_parent: Option<flume::Sender<GooseMetric>>,
-    /// An index into the internal `GooseTest.weighted_users, indicating which weighted GooseTaskSet is running.
+    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.weighted_users`
+    /// vector, indicating which weighted `GooseUser` is running.
     pub weighted_users_index: usize,
     /// A weighted list of all tasks that run when the user first starts.
     pub weighted_on_start_tasks: WeightedGooseTasks,
@@ -1018,19 +1054,21 @@ impl GooseUser {
         let mut single_user = GooseUser::new(0, base_url, 0, 0, configuration, 0)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
-        // Do not throttle test_start (setup) and test_stop (teardown) tasks.
+        // Do not throttle `test_start` (setup) and `test_stop` (teardown) tasks.
         single_user.is_throttled = false;
 
         Ok(single_user)
     }
 
-    /// A helper that prepends a base_url to all relative paths.
+    /// A helper that prepends a `base_url` to all relative paths.
     ///
-    /// A base_url is determined per user thread, using the following order
+    /// A `base_url` is determined per user thread, using the following order
     /// of precedence:
     ///  1. `--host` (host specified on the command line when running load test)
-    ///  2. `GooseTaskSet.host` (default host defined for the current task set)
-    ///  3. `GooseAttack.host` (default host defined for the current load test)
+    ///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined for the
+    /// current task set)
+    ///  3. [`GooseDefault.Host`](../enum.GooseDefault.html#variant.Host) (default host
+    /// defined for the current load test)
     pub async fn build_url(&self, path: &str) -> Result<String, GooseTaskError> {
         // If URL includes a host, simply use it.
         if let Ok(parsed_path) = Url::parse(path) {
@@ -1039,7 +1077,7 @@ impl GooseUser {
             }
         }
 
-        // Otherwise use the base_url.
+        // Otherwise use the `base_url`.
         Ok(self.base_url.read().await.join(path)?.to_string())
     }
 
@@ -1048,13 +1086,15 @@ impl GooseUser {
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call `goose_get` which returns a RequestBuilder, then
-    /// call `goose_send` to invoke the request.)
+    /// object, you can instead call [`goose_get`](./struct.GooseUser.html#method.goose_get)
+    /// which returns a
+    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
+    /// then call
+    /// [`goose_send`](./struct.GooseUser.html#method.goose_send) to invoke the request.)
     ///
-    /// Calls to `user.get` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `get()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1079,10 +1119,9 @@ impl GooseUser {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// metrics.
     ///
-    /// Calls to `user.get_named` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `get_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1112,13 +1151,13 @@ impl GooseUser {
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call `goose_post` which returns a RequestBuilder, then
-    /// call `goose_send` to invoke the request.)
+    /// object, you can instead call `goose_post` which returns a
+    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
+    /// then call `goose_send` to invoke the request.)
     ///
-    /// Calls to `user.post` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `post()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1143,10 +1182,9 @@ impl GooseUser {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// metrics.
     ///
-    /// Calls to `user.post` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `post_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1177,13 +1215,13 @@ impl GooseUser {
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call `goose_head` which returns a RequestBuilder, then
-    /// call `goose_send` to invoke the request.)
+    /// object, you can instead call `goose_head` which returns a
+    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
+    /// then call `goose_send` to invoke the request.)
     ///
-    /// Calls to `user.head` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `head()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1208,10 +1246,9 @@ impl GooseUser {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// metrics.
     ///
-    /// Calls to `user.head` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `head_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1241,13 +1278,13 @@ impl GooseUser {
     ///
     /// (If you need to set headers, change timeouts, or otherwise make use of the
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call `goose_delete` which returns a RequestBuilder,
+    /// object, you can instead call `goose_delete` which returns a
+    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
     /// then call `goose_send` to invoke the request.)
     ///
-    /// Calls to `user.delete` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `delete()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1272,10 +1309,9 @@ impl GooseUser {
     /// Automatically prepends the correct host. Naming a request only affects collected
     /// metrics.
     ///
-    /// Calls to `user.delete` return a `GooseResponse` object which contains a copy of
-    /// the request you made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the response
-    /// ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `delete_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
@@ -1304,7 +1340,8 @@ impl GooseUser {
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `GET` request.
     ///
-    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
+    /// object to actually execute the request.)
     ///
     /// # Example
     /// ```rust
@@ -1331,7 +1368,8 @@ impl GooseUser {
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `POST` request.
     ///
-    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
+    /// object to actually execute the request.)
     ///
     /// # Example
     /// ```rust
@@ -1358,7 +1396,8 @@ impl GooseUser {
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `HEAD` request.
     ///
-    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
+    /// object to actually execute the request.)
     ///
     /// # Example
     /// ```rust
@@ -1385,7 +1424,8 @@ impl GooseUser {
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PUT` request.
     ///
-    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
+    /// object to actually execute the request.)
     ///
     /// # Example
     /// ```rust
@@ -1412,7 +1452,8 @@ impl GooseUser {
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `PATCH` request.
     ///
-    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
+    /// object to actually execute the request.)
     ///
     /// # Example
     /// ```rust
@@ -1439,7 +1480,8 @@ impl GooseUser {
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object for making a `DELETE` request.
     ///
-    /// (You must then call `goose_send` on this object to actually execute the request.)
+    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
+    /// object to actually execute the request.)
     ///
     /// # Example
     /// ```rust
@@ -1467,33 +1509,35 @@ impl GooseUser {
     /// object and then executes the response. If metrics are being displayed, it
     /// also captures request metrics.
     ///
-    /// It is possible to build and execute a `RequestBuilder` object directly with
-    /// Reqwest without using this helper function, but then Goose is unable to capture
-    /// metrics.
+    /// It is possible to build and execute a
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object directly with [`reqwest`](https://docs.rs/reqwest/) without using this helper
+    /// function, but then Goose is unable to capture metrics.
     ///
-    /// Calls to `user.goose_send()` returns a `Result` containing a `GooseResponse` on success,
-    /// and a `flume::SendError<bool>` on failure. Failure only happens when `--throttle-requests`
-    /// is enabled and the load test completes. The `GooseResponse` object contains a copy of the
-    /// request made
-    /// ([`goose.request`](https://docs.rs/goose/*/goose/goose/struct.GooseRawRequest)), and the
-    /// Reqwest response ([`goose.response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    /// Calls to `goose_send()` returns a `Result` containing a
+    /// [`GooseResponse`](./struct.GooseResponse.html) on success, and a
+    /// [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html)`<bool>`,
+    /// on failure. Failure only happens when `--throttle-requests` is enabled and the load test
+    /// completes. The [`GooseResponse`](./struct.GooseResponse.html) object contains a copy of
+    /// the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)), and the
+    /// response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(get_function);
+    /// let mut task = task!(get_function);
     ///
-    ///     /// A simple task that makes a GET request, exposing the Reqwest
-    ///     /// request builder.
-    ///     async fn get_function(user: &GooseUser) -> GooseTaskResult {
-    ///         let request_builder = user.goose_get("/path/to/foo").await?;
-    ///         let goose = user.goose_send(request_builder, None).await?;
+    /// /// A simple task that makes a GET request, exposing the Reqwest
+    /// /// request builder.
+    /// async fn get_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let request_builder = user.goose_get("/path/to/foo").await?;
+    ///     let goose = user.goose_send(request_builder, None).await?;
     ///
-    ///         // Do stuff with goose.request and/or goose.response here.
+    ///     // Do stuff with goose.request and/or goose.response here.
     ///
-    ///         Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn goose_send(
         &self,
@@ -1662,11 +1706,11 @@ impl GooseUser {
     ///
     /// Calls to `set_failure` must include four parameters. The first, `tag`, is an
     /// arbitrary string identifying the reason for the failure, used when logging. The
-    /// second, `request`, is a mutable reference to the `GooseRawRequest` object of the
-    /// request being identified as a failure (the contained `success` field will be set
-    /// to `false`, and the `update` field will be set to `true`). The last two
-    /// parameters, `header` and `body`, are optional and used to provide more detail in
-    /// logs.
+    /// second, `request`, is a mutable reference to the
+    /// ([`GooseRawRequest`](./struct.GooseRawRequest.html)) object of the request being
+    /// identified as a failure (the contained `success` field will be set to `false`,
+    /// and the `update` field will be set to `true`). The last two parameters, `header`
+    /// and `body`, are optional and used to provide more detail in logs.
     ///
     /// The value of `tag` will normally be collected into the errors summary table if
     /// metrics are being displayed. However, if `set_failure` is called multiple times,
@@ -1678,35 +1722,35 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(loadtest_index_page);
+    /// let mut task = task!(loadtest_index_page);
     ///
-    ///     async fn loadtest_index_page(user: &GooseUser) -> GooseTaskResult {
-    ///         let mut goose = user.get_named("/", "index").await?;
+    /// async fn loadtest_index_page(user: &GooseUser) -> GooseTaskResult {
+    ///     let mut goose = user.get_named("/", "index").await?;
     ///
-    ///         if let Ok(response) = goose.response {
-    ///             // We only need to check pages that returned a success status code.
-    ///             if response.status().is_success() {
-    ///                 match response.text().await {
-    ///                     Ok(text) => {
-    ///                         // If the expected string doesn't exist, this page load
-    ///                         // was a failure.
-    ///                         if !text.contains("this string must exist") {
-    ///                             // As this is a named request, pass in the name not the URL
-    ///                             return user.set_failure("string missing", &mut goose.request, None, None);
-    ///                         }
-    ///                     }
-    ///                     // Empty page, this is a failure.
-    ///                     Err(_) => {
-    ///                         return user.set_failure("empty page", &mut goose.request, None, None);
+    ///     if let Ok(response) = goose.response {
+    ///         // We only need to check pages that returned a success status code.
+    ///         if response.status().is_success() {
+    ///             match response.text().await {
+    ///                 Ok(text) => {
+    ///                     // If the expected string doesn't exist, this page load
+    ///                     // was a failure.
+    ///                     if !text.contains("this string must exist") {
+    ///                         // As this is a named request, pass in the name not the URL
+    ///                         return user.set_failure("string missing", &mut goose.request, None, None);
     ///                     }
     ///                 }
+    ///                 // Empty page, this is a failure.
+    ///                 Err(_) => {
+    ///                     return user.set_failure("empty page", &mut goose.request, None, None);
+    ///                 }
     ///             }
-    ///         };
+    ///         }
+    ///     };
     ///
-    ///         Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     /// ````
     pub fn set_failure(
         &self,
@@ -1733,7 +1777,8 @@ impl GooseUser {
         })
     }
 
-    /// Write to debug_file if enabled.
+    /// Write to [`debug_file`](../struct.GooseConfiguration.html#structfield.debug_file)
+    /// if enabled.
     ///
     /// This function provides a mechanism for optional debug logging when a load test
     /// is running. This can be especially helpful when writing a load test. Each entry
@@ -1742,13 +1787,13 @@ impl GooseUser {
     /// returned by the server, and the response body returned by the server,
     ///
     /// As the response body can be large, the `--no-debug-body` option (or
-    /// `GooseDefault::NoDebugBody` default) can be set to prevent the debug log from
-    /// including the response body. When this option is enabled, the body will always
-    /// show up as `null` in the debug log.
+    /// [`GooseDefault::NoDebugBody`](../enum.GooseDefault.html#variant.NoDebugBody) default)
+    /// can be set to prevent the debug log from including the response body. When this option
+    /// is enabled, the body will always show up as `null` in the debug log.
     ///
     /// Calls to
     /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
-    // automatically invoke `log_debug`.
+    /// automatically invoke `log_debug`.
     ///
     /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
     /// option set, where `foo` is either a relative or an absolute path of the log file
@@ -1758,54 +1803,54 @@ impl GooseUser {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let mut task = task!(loadtest_index_page);
+    /// let mut task = task!(loadtest_index_page);
     ///
-    ///     async fn loadtest_index_page(user: &GooseUser) -> GooseTaskResult {
-    ///         let mut goose = user.get("/").await?;
+    /// async fn loadtest_index_page(user: &GooseUser) -> GooseTaskResult {
+    ///     let mut goose = user.get("/").await?;
     ///
-    ///         match goose.response {
-    ///             Ok(response) => {
-    ///                 // Grab a copy of the headers so we can include them when logging errors.
-    ///                 let headers = &response.headers().clone();
-    ///                 // We only need to check pages that returned a success status code.
-    ///                 if !response.status().is_success() {
-    ///                     match response.text().await {
-    ///                         Ok(html) => {
-    ///                             // Server returned an error code, log everything.
-    ///                             user.log_debug(
-    ///                                 "error loading /",
-    ///                                 Some(&goose.request),
-    ///                                 Some(headers),
-    ///                                 Some(&html),
-    ///                             );
-    ///                         },
-    ///                         Err(e) => {
-    ///                             // No body was returned, log everything else.
-    ///                             user.log_debug(
-    ///                                 &format!("error loading /: {}", e),
-    ///                                 Some(&goose.request),
-    ///                                 Some(headers),
-    ///                                 None,
-    ///                             );
-    ///                         }
+    ///     match goose.response {
+    ///         Ok(response) => {
+    ///             // Grab a copy of the headers so we can include them when logging errors.
+    ///             let headers = &response.headers().clone();
+    ///             // We only need to check pages that returned a success status code.
+    ///             if !response.status().is_success() {
+    ///                 match response.text().await {
+    ///                     Ok(html) => {
+    ///                         // Server returned an error code, log everything.
+    ///                         user.log_debug(
+    ///                             "error loading /",
+    ///                             Some(&goose.request),
+    ///                             Some(headers),
+    ///                             Some(&html),
+    ///                         );
+    ///                     },
+    ///                     Err(e) => {
+    ///                         // No body was returned, log everything else.
+    ///                         user.log_debug(
+    ///                             &format!("error loading /: {}", e),
+    ///                             Some(&goose.request),
+    ///                             Some(headers),
+    ///                             None,
+    ///                         );
     ///                     }
     ///                 }
-    ///             },
-    ///             // No response from server.
-    ///             Err(e) => {
-    ///                 user.log_debug(
-    ///                     "no response from server when loading /",
-    ///                     Some(&goose.request),
-    ///                     None,
-    ///                     None,
-    ///                 );
     ///             }
+    ///         },
+    ///         // No response from server.
+    ///         Err(e) => {
+    ///             user.log_debug(
+    ///                 "no response from server when loading /",
+    ///                 Some(&goose.request),
+    ///                 None,
+    ///                 None,
+    ///             );
     ///         }
-    ///
-    ///         Ok(())
     ///     }
+    ///
+    ///     Ok(())
+    /// }
     /// ````
     pub fn log_debug(
         &self,
@@ -1829,12 +1874,17 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Manually build a Reqwest client.
+    /// Manually build a
+    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html).
     ///
-    /// By default, Goose configures two options when building a Reqwest client. The first
-    /// configures Goose to report itself as the user agent requesting web pages (ie
-    /// `goose/0.11.0`). The second option configures Reqwest to store cookies, which is
-    /// generally necessary if you aim to simulate logged in users.
+    /// By default, Goose configures two options when building a
+    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html). The first
+    /// configures Goose to report itself as the
+    /// [`user_agent`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.user_agent)
+    /// requesting web pages (ie `goose/0.11.0`). The second option configures
+    /// [`reqwest`](https://docs.rs/reqwest/) to
+    /// [store cookies](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store),
+    /// which is generally necessary if you aim to simulate logged in users.
     ///
     /// # Default configuration:
     ///
@@ -1848,12 +1898,15 @@ impl GooseUser {
     ///   .cookie_store(true);
     /// ```
     ///
-    /// Alternatively, you can use this function to manually build a Reqwest client with custom
-    /// configuration. Available options are found in the
-    /// [Reqwest `ClientBuilder`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html)
+    /// Alternatively, you can use this function to manually build a
+    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html).
+    /// with custom configuration. Available options are found in the
+    /// [`reqwest::ClientBuilder`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html)
     /// documentation.
     ///
-    /// When manually building a Reqwest client, there are a few things to be aware of:
+    /// When manually building a
+    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html),
+    /// there are a few things to be aware of:
     ///  - Manually building a client in `test_start` will only affect requests made during
     ///    test setup;
     ///  - Manually building a client in `test_stop` will only affect requests made during
@@ -1867,7 +1920,8 @@ impl GooseUser {
     ///    built client will be gone;
     ///  - You must include all desired configuration, as you are completely replacing Goose
     ///    defaults. For example, if you want Goose clients to store cookies, you will have to
-    ///    include `.cookie_store(true)`.
+    ///    include
+    ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store).
     ///
     /// In the following example, the Goose client is configured with a different user agent,
     /// sets a default header on every request, and stores cookies.
@@ -1903,41 +1957,46 @@ impl GooseUser {
 
     /// Some websites use multiple domains to serve traffic, redirecting depending on
     /// the user's roll. For this reason, Goose needs to respect a redirect of the
-    /// base_url and subsequent paths should be built from the redirect domain.
+    /// `base_url` and subsequent paths should be built from the redirect domain.
     ///
-    /// For example, if the base_url (ie --host) is set to foo.example.com and the
-    /// load test requests /login, thereby loading http://foo.example.com/login and
-    /// this request gets redirected by the server to http://foo-secure.example.com/,
+    /// For example, if the `base_url` (ie `--host`) is set to `foo.example.com` and the
+    /// load test requests `/login`, thereby loading `http://foo.example.com/login` and
+    /// this request gets redirected by the server to `http://foo-secure.example.com/`,
     /// subsequent requests made by this user need to be against the new
-    /// foo-secure.example.com domain. (Further, if the base_url is again redirected,
-    /// such as when loading http://foo-secure.example.com/logout, the user should
+    /// `foo-secure.example.com domain`. (Further, if the `base_url` is again redirected,
+    /// such as when loading `http://foo-secure.example.com/logout`, the user should
     /// again follow for subsequent requests, perhaps in this case back to
-    /// foo.example.com.)
+    /// `foo.example.com`.)
     ///
     /// Load tests can also request absolute URLs, and if these URLs are redirected
-    /// it does not affect the base_url of the load test. For example, if
-    /// foo.example.com is the base url, and the load test requests
-    /// http://bar.example.com (a different domain) and this request gets redirected
-    /// to http://other.example.com, subsequent relative requests would still be made
-    /// against foo.example.com.
+    /// it does not affect the `base_url` of the load test. For example, if
+    /// `foo.example.com` is the base url, and the load test requests
+    /// `http://bar.example.com` (a different domain) and this request gets redirected
+    /// to `http://other.example.com`, subsequent relative requests would still be made
+    /// against `foo.example.com`.
     ///
     /// This functionality is used internally by Goose to follow redirects of the
-    /// base_url when `--sticky-follow` is specified at run time, or
-    /// `set_default(GooseDefault::StickyFollow, true)` is enabled. It is also
+    /// `base_url` when `--sticky-follow` is specified at run time, or
+    /// [`set_default`](../struct.GooseAttack.html#method.set_default)
+    /// `(`[`GooseDefault::StickyFollow`](../enum.GooseDefault.html#variant.StickyFollow)
+    /// `, true)` is enabled. It is also
     /// available to be manually invoked from a load test such as in the following
     /// example.
     ///
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("LoadtestTasks").set_host("http//foo.example.com/")
+    ///         .register_taskset(taskset!("LoadtestTasks")
+    ///             .set_host("http://foo.example.com/")
     ///             .set_wait_time(0, 3)?
     ///             .register_task(task!(task_foo).set_weight(10)?)
     ///             .register_task(task!(task_bar))
     ///         )
+    ///         // Set a default run time so this test runs to completion.
+    ///         .set_default(GooseDefault::RunTime, 1)?
     ///         .execute()?;
     ///
     ///     Ok(())
@@ -1972,8 +2031,10 @@ impl GooseUser {
 ///
 /// The first of these defined will be returned as the prepended host:
 ///  1. `--host` (host specified on the command line when running load test)
-///  2. `GooseTaskSet.host` (default host defined for the current task set)
-///  3. `GooseAttack.host` (default host defined for the current load test)
+///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined
+///     for the current task set)
+///  3. [`GooseDefault.Host`](../enum.GooseDefault.html#variant.Host) (default
+///     host defined for the current load test)
 pub fn get_base_url(
     config_host: Option<String>,
     task_set_host: Option<String>,
@@ -2059,21 +2120,22 @@ impl GooseTask {
     /// Set an optional name for the task, used when displaying metrics about
     /// requests made by the task.
     ///
-    /// Individual requests can also be named withing your load test. See the
-    /// documentation for `GooseUser`.
-    /// [`set_request_name()`](./struct.GooseUser.html#method.set_request_name)
+    /// Individual requests can also be named withing your load test if you use the
+    /// `_named` version of each method, for example
+    /// [`get_named`](./struct.GooseUser.html#method.get_named) or
+    /// [`post_named`](./struct.GooseUser.html#method.post_named).
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     task!(my_task_function).set_name("foo");
+    /// task!(my_task_function).set_name("foo");
     ///
-    ///     async fn my_task_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/").await?;
+    /// async fn my_task_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
     ///
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
         trace!("[{}] set_name: {}", self.tasks_index, self.name);
@@ -2093,15 +2155,15 @@ impl GooseTask {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     task!(my_on_start_function).set_on_start();
+    /// task!(my_on_start_function).set_on_start();
     ///
-    ///     async fn my_on_start_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/").await?;
+    /// async fn my_on_start_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
     ///
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     /// ```
     pub fn set_on_start(mut self) -> Self {
         trace!("{} [{}] set_on_start task", self.name, self.tasks_index);
@@ -2121,15 +2183,15 @@ impl GooseTask {
     ///
     /// # Example
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     task!(my_on_stop_function).set_on_stop();
+    /// task!(my_on_stop_function).set_on_stop();
     ///
-    ///     async fn my_on_stop_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/").await?;
+    /// async fn my_on_stop_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/").await?;
     ///
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     /// ```
     pub fn set_on_stop(mut self) -> Self {
         trace!("{} [{}] set_on_stop task", self.name, self.tasks_index);
@@ -2186,29 +2248,29 @@ impl GooseTask {
     /// # Examples
     /// In this first example, the variable names indicate the order the tasks will be run in:
     /// ```rust
-    ///     use goose::prelude::*;
+    /// use goose::prelude::*;
     ///
-    ///     let runs_first = task!(first_task_function).set_sequence(3);
-    ///     let runs_second = task!(second_task_function).set_sequence(5835);
-    ///     let runs_last = task!(third_task_function);
+    /// let runs_first = task!(first_task_function).set_sequence(3);
+    /// let runs_second = task!(second_task_function).set_sequence(5835);
+    /// let runs_last = task!(third_task_function);
     ///
-    ///     async fn first_task_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/1").await?;
+    /// async fn first_task_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/1").await?;
     ///
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn second_task_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/2").await?;
+    /// async fn second_task_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/2").await?;
     ///
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     ///
-    ///     async fn third_task_function(user: &GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/3").await?;
+    /// async fn third_task_function(user: &GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get("/3").await?;
     ///
-    ///       Ok(())
-    ///     }
+    ///     Ok(())
+    /// }
     /// ```
     ///
     /// In the following example, the `runs_first` task runs two times, then one instance of `runs_second`
