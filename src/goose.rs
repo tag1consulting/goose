@@ -1067,7 +1067,7 @@ impl GooseUser {
     ///  1. `--host` (host specified on the command line when running load test)
     ///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined for the
     /// current task set)
-    ///  3. [`GooseDefault.Host`](../enum.GooseDefault.html#variant.Host) (default host
+    ///  3. [`GooseDefault::Host`](../enum.GooseDefault.html#variant.Host) (default host
     /// defined for the current load test)
     pub async fn build_url(&self, path: &str) -> Result<String, GooseTaskError> {
         // If URL includes a host, simply use it.
@@ -2033,7 +2033,7 @@ impl GooseUser {
 ///  1. `--host` (host specified on the command line when running load test)
 ///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined
 ///     for the current task set)
-///  3. [`GooseDefault.Host`](../enum.GooseDefault.html#variant.Host) (default
+///  3. [`GooseDefault::Host`](../enum.GooseDefault.html#variant.Host) (default
 ///     host defined for the current load test)
 pub fn get_base_url(
     config_host: Option<String>,
