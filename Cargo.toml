@@ -18,7 +18,7 @@ flume = "0.10"
 futures = "0.3"
 gumdrop = "0.8"
 http = "0.2"
-itertools = "0.9"
+itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
 num_cpus = "1.0"
@@ -29,9 +29,9 @@ reqwest = { version = "0.11",  default-features = false, features = ["cookies", 
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 serde_json = "1.0"
-simplelog = "0.8"
+simplelog = "0.10"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "time"] }
-url = "2.1"
+url = "2"
 
 # optional dependencies
 nng = { version = "1.0.0-rc", optional = true }
