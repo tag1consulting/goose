@@ -101,7 +101,7 @@ pub async fn user_main(
 
         // Prepare to sleep for a random value from min_wait to max_wait.
         let wait_time = if thread_user.max_wait > 0 {
-            rand::thread_rng().gen_range(thread_user.min_wait, thread_user.max_wait)
+            rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
         } else {
             0
         };

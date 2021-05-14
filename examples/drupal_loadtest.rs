@@ -134,7 +134,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
 
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
-    let nid = rand::thread_rng().gen_range(1, 10_000);
+    let nid = rand::thread_rng().gen_range(1..10_000);
     let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
 
     Ok(())
@@ -142,7 +142,7 @@ async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_loadtest_profile_page(user: &GooseUser) -> GooseTaskResult {
-    let uid = rand::thread_rng().gen_range(2, 5_001);
+    let uid = rand::thread_rng().gen_range(2..5_001);
     let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
 
     Ok(())
@@ -174,7 +174,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                     };
 
                     // Log the user in.
-                    let uid: usize = rand::thread_rng().gen_range(3, 5_002);
+                    let uid: usize = rand::thread_rng().gen_range(3..5_002);
                     let username = format!("user{}", uid);
                     let params = [
                         ("name", username.as_str()),
@@ -217,7 +217,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
 
 /// Post a comment.
 async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
-    let nid: i32 = rand::thread_rng().gen_range(1, 10_000);
+    let nid: i32 = rand::thread_rng().gen_range(1..10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
 
