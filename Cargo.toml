@@ -34,7 +34,7 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread
 url = "2"
 
 # optional dependencies
-nng = { version = "1.0.0-rc", optional = true }
+nng = { version = "1.0", optional = true }
 
 [features]
 default = ["reqwest/default-tls"]
