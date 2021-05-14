@@ -497,10 +497,7 @@ pub async fn validate_and_load_static_assets(
 /// Use regular expression to get the value of a named form element.
 pub fn get_form_value(html: &str, name: &str) -> Option<String> {
     let re = Regex::new(&format!(r#"name="{}" value=['"](.*?)['"]"#, name)).unwrap();
-    match re.captures(&html) {
-        Some(value) => Some(value[1].to_string()),
-        None => None,
-    }
+    re.captures(&html).map(|value| value[1].to_string())
 }
 
 /// Anonymously load the contact form and POST feedback. The english boolean flag indicates
