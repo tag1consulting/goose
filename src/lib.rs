@@ -54,7 +54,10 @@
 //!     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
 //! };
 //! use goose::metrics::GooseMetrics;
-//! use goose::{task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError};
+//! use goose::{
+//!     task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError, GooseScheduler,
+//! };
+
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
@@ -433,6 +436,7 @@ use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use rand::seq::SliceRandom;
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use simplelog::*;
@@ -467,7 +471,12 @@ lazy_static! {
 }
 
 /// Internal representation of a weighted task list.
-type WeightedGooseTasks = Vec<Vec<(usize, String)>>;
+type WeightedGooseTasks = Vec<(usize, String)>;
+
+/// Internal representation of unsequenced tasks.
+type UnsequencedGooseTasks = Vec<GooseTask>;
+/// Internal representation of sequenced tasks.
+type SequencedGooseTasks = BTreeMap<usize, Vec<GooseTask>>;
 
 type DebugLoggerHandle = Option<tokio::task::JoinHandle<()>>;
 type DebugLoggerChannel = Option<flume::Sender<Option<GooseDebug>>>;
@@ -609,13 +618,13 @@ pub enum AttackPhase {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
-pub enum GooseTaskSetScheduler {
-    /// Allocate one of each available type of GooseTaskSet at a time (default).
+/// Used to define the order GooseTasksSets and GooseTasks are allocated.
+pub enum GooseScheduler {
+    /// Allocate one of each available type at a time (default).
     RoundRobin,
-    /// Allocate GooseTaskSets in the order and weighting they are defined.
+    /// Allocate in the order and weighting defined.
     Serial,
-    /// Allocate GooseTaskSets in a random order.
+    /// Allocate in a random order.
     Random,
 }
 
@@ -815,8 +824,8 @@ pub struct GooseAttack {
     attack_mode: AttackMode,
     /// Which mode this GooseAttack is operating in.
     attack_phase: AttackPhase,
-    /// Defines the order GooseTaskSets are allocated to GooseUsers at startup time.
-    scheduler: GooseTaskSetScheduler,
+    /// Defines the order GooseTaskSets and GooseTasks are allocated.
+    scheduler: GooseScheduler,
     /// When the load test started.
     started: Option<time::Instant>,
     /// All metrics merged together.
@@ -844,7 +853,7 @@ impl GooseAttack {
             run_time: 0,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Initializing,
-            scheduler: GooseTaskSetScheduler::RoundRobin,
+            scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -875,7 +884,7 @@ impl GooseAttack {
             run_time: 0,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Initializing,
-            scheduler: GooseTaskSetScheduler::RoundRobin,
+            scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
         })
@@ -977,7 +986,7 @@ impl GooseAttack {
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
-    ///         .set_scheduler(GooseTaskSetScheduler::Random)
+    ///         .set_scheduler(GooseScheduler::Random)
     ///         .register_taskset(taskset!("A Tasks")
     ///             .set_weight(5)?
     ///             .register_task(task!(a_task_1))
@@ -1002,7 +1011,7 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_scheduler(mut self, scheduler: GooseTaskSetScheduler) -> Self {
+    pub fn set_scheduler(mut self, scheduler: GooseScheduler) -> Self {
         self.scheduler = scheduler;
         self
     }
@@ -1107,10 +1116,10 @@ impl GooseAttack {
         self
     }
 
-    /// Use configured GooseTaskSetScheduler to build out a properly
+    /// Use configured GooseScheduler to build out a properly
     /// weighted list of TaskSets to be assigned to GooseUsers.
-    fn allocate_tasks(&mut self) -> Vec<usize> {
-        trace!("allocate_tasks");
+    fn allocate_task_sets(&mut self) -> Vec<usize> {
+        trace!("allocate_task_sets");
 
         let mut u: usize = 0;
         let mut v: usize;
@@ -1146,14 +1155,14 @@ impl GooseAttack {
         }
 
         info!(
-            "allocating GooseTasks to GooseUsers with {:?} scheduler",
+            "allocating tasks and task sets with {:?} scheduler",
             self.scheduler
         );
 
         // Now build the weighted list with the appropriate scheduler.
         let mut weighted_task_sets = Vec::new();
         match self.scheduler {
-            GooseTaskSetScheduler::RoundRobin => {
+            GooseScheduler::RoundRobin => {
                 // Allocate task sets round robin.
                 let task_sets_len = available_task_sets.len();
                 loop {
@@ -1172,7 +1181,7 @@ impl GooseAttack {
                     }
                 }
             }
-            GooseTaskSetScheduler::Serial => {
+            GooseScheduler::Serial => {
                 // Allocate task sets serially in the weighted order defined.
                 for (task_set_index, task_sets) in available_task_sets.iter().enumerate() {
                     debug!(
@@ -1183,7 +1192,7 @@ impl GooseAttack {
                     weighted_task_sets.append(&mut task_sets.clone());
                 }
             }
-            GooseTaskSetScheduler::Random => {
+            GooseScheduler::Random => {
                 // Allocate task sets randomly.
                 loop {
                     let task_set = available_task_sets.choose_mut(&mut rand::thread_rng());
@@ -1208,7 +1217,7 @@ impl GooseAttack {
     fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
         trace!("weight_task_set_users");
 
-        let weighted_task_sets = self.allocate_tasks();
+        let weighted_task_sets = self.allocate_task_sets();
 
         // Allocate a state for each user that will be hatched.
         info!("initializing user states...");
@@ -1248,7 +1257,7 @@ impl GooseAttack {
     fn prepare_worker_task_set_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
         trace!("prepare_worker_task_set_users");
 
-        let weighted_task_sets = self.allocate_tasks();
+        let weighted_task_sets = self.allocate_task_sets();
 
         // Determine the users sent to each Worker.
         info!("preparing users for Workers...");
@@ -2367,7 +2376,7 @@ impl GooseAttack {
         // Apply weights to tasks in each task set.
         for task_set in &mut self.task_sets {
             let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) =
-                weight_tasks(&task_set);
+                allocate_tasks(&task_set, &self.scheduler);
             task_set.weighted_on_start_tasks = weighted_on_start_tasks;
             task_set.weighted_tasks = weighted_tasks;
             task_set.weighted_on_stop_tasks = weighted_on_stop_tasks;
@@ -4009,23 +4018,32 @@ pub struct GooseConfiguration {
     pub manager_port: u16,
 }
 
-/// Returns sequenced buckets of weighted usize pointers to and names of Goose Tasks
-fn weight_tasks(
+/// Use the configured GooseScheduler to allocate all GooseTasks within the
+/// GooseTaskSet in the appropriate order. Returns three set of ordered tasks:
+/// `on_start_tasks`, `tasks`, and `on_stop_tasks`. The `on_start_tasks` are
+/// only run once when the GooseAttack first starts. Normal `tasks` are then
+/// run for the duration of the GooseAttack. The `on_stop_tasks` finally are
+/// only run once when the GooseAttack stops.
+fn allocate_tasks(
     task_set: &GooseTaskSet,
+    scheduler: &GooseScheduler,
 ) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
-    trace!("weight_tasks for {}", task_set.name);
+    debug!(
+        "allocating GooseTasks on GooseUsers with {:?} scheduler",
+        scheduler
+    );
 
     // A BTreeMap of Vectors allows us to group and sort tasks per sequence value.
-    let mut sequenced_tasks: BTreeMap<usize, Vec<GooseTask>> = BTreeMap::new();
-    let mut sequenced_on_start_tasks: BTreeMap<usize, Vec<GooseTask>> = BTreeMap::new();
-    let mut sequenced_on_stop_tasks: BTreeMap<usize, Vec<GooseTask>> = BTreeMap::new();
-    let mut unsequenced_tasks: Vec<GooseTask> = Vec::new();
-    let mut unsequenced_on_start_tasks: Vec<GooseTask> = Vec::new();
-    let mut unsequenced_on_stop_tasks: Vec<GooseTask> = Vec::new();
+    let mut sequenced_tasks: SequencedGooseTasks = BTreeMap::new();
+    let mut sequenced_on_start_tasks: SequencedGooseTasks = BTreeMap::new();
+    let mut sequenced_on_stop_tasks: SequencedGooseTasks = BTreeMap::new();
+    let mut unsequenced_tasks: UnsequencedGooseTasks = Vec::new();
+    let mut unsequenced_on_start_tasks: UnsequencedGooseTasks = Vec::new();
+    let mut unsequenced_on_stop_tasks: UnsequencedGooseTasks = Vec::new();
     let mut u: usize = 0;
     let mut v: usize;
 
-    // Handle ordering of tasks.
+    // Find the greatest common divisor of all tasks in the task_set.
     for task in &task_set.tasks {
         if task.sequence > 0 {
             if task.on_start {
@@ -4080,140 +4098,177 @@ fn weight_tasks(
     // 'u' will always be the greatest common divisor
     debug!("gcd: {}", u);
 
-    // First apply weights to sequenced tasks.
-    let mut weighted_tasks: WeightedGooseTasks = Vec::new();
-    for (_sequence, tasks) in sequenced_tasks.iter() {
-        let mut sequence_weighted_tasks = Vec::new();
-        for task in tasks {
-            // divide by greatest common divisor so bucket is as small as possible
-            let weight = task.weight / u;
-            trace!(
-                "{}: {} has weight of {} (reduced with gcd to {})",
-                task.tasks_index,
-                task.name,
-                task.weight,
-                weight
-            );
-            // Weighted list of tuples holding the id and name of the task.
-            let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
-            sequence_weighted_tasks.append(&mut tasks);
-        }
-        // Add in vectors grouped by sequence value, ordered lowest to highest value.
-        weighted_tasks.push(sequence_weighted_tasks);
+    // Apply weights to sequenced tasks.
+    let weighted_sequenced_on_start_tasks = weight_sequenced_tasks(&sequenced_on_start_tasks, u);
+    let weighted_sequenced_tasks = weight_sequenced_tasks(&sequenced_tasks, u);
+    let weighted_sequenced_on_stop_tasks = weight_sequenced_tasks(&sequenced_on_stop_tasks, u);
+
+    // Apply weights to unsequenced tasks.
+    let (weighted_unsequenced_on_start_tasks, total_unsequenced_on_start_tasks) =
+        weight_unsequenced_tasks(&unsequenced_on_start_tasks, u);
+    let (weighted_unsequenced_tasks, total_unsequenced_tasks) =
+        weight_unsequenced_tasks(&unsequenced_tasks, u);
+    let (weighted_unsequenced_on_stop_tasks, total_unsequenced_on_stop_tasks) =
+        weight_unsequenced_tasks(&unsequenced_on_stop_tasks, u);
+
+    // Schedule sequenced tasks.
+    let scheduled_sequenced_on_start_tasks =
+        schedule_sequenced_tasks(&weighted_sequenced_on_start_tasks, scheduler);
+    let scheduled_sequenced_tasks = schedule_sequenced_tasks(&weighted_sequenced_tasks, scheduler);
+    let scheduled_sequenced_on_stop_tasks =
+        schedule_sequenced_tasks(&weighted_sequenced_on_stop_tasks, scheduler);
+
+    // Schedule unsequenced tasks.
+    let scheduled_unsequenced_on_start_tasks = schedule_unsequenced_tasks(
+        &weighted_unsequenced_on_start_tasks,
+        total_unsequenced_on_start_tasks,
+        scheduler,
+    );
+    let scheduled_unsequenced_tasks = schedule_unsequenced_tasks(
+        &weighted_unsequenced_tasks,
+        total_unsequenced_tasks,
+        scheduler,
+    );
+    let scheduled_unsequenced_on_stop_tasks = schedule_unsequenced_tasks(
+        &weighted_unsequenced_on_stop_tasks,
+        total_unsequenced_on_stop_tasks,
+        scheduler,
+    );
+
+    // Finally build a Vector of tuples: (task id, task name)
+    let mut on_start_tasks = Vec::new();
+    let mut tasks = Vec::new();
+    let mut on_stop_tasks = Vec::new();
+
+    // Sequenced tasks come first.
+    for task in scheduled_sequenced_on_start_tasks.iter() {
+        on_start_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+    }
+    for task in scheduled_sequenced_tasks.iter() {
+        tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+    }
+    for task in scheduled_sequenced_on_stop_tasks.iter() {
+        on_stop_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
     }
 
-    // Next apply weights to unsequenced tasks.
-    trace!("created weighted_tasks: {:?}", weighted_tasks);
-    let mut weighted_unsequenced_tasks = Vec::new();
-    for task in unsequenced_tasks {
-        // divide by greatest common divisor so bucket is as small as possible
-        let weight = task.weight / u;
-        trace!(
-            "{}: {} has weight of {} (reduced with gcd to {})",
-            task.tasks_index,
-            task.name,
-            task.weight,
-            weight
-        );
-        // Weighted list of tuples holding the id and name of the task.
-        let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
-        weighted_unsequenced_tasks.append(&mut tasks);
+    // Unsequenced tasks come last.
+    for task in scheduled_unsequenced_on_start_tasks.iter() {
+        on_start_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
     }
-    // Add final vector of unsequenced tasks last.
-    if !weighted_unsequenced_tasks.is_empty() {
-        weighted_tasks.push(weighted_unsequenced_tasks);
+    for task in scheduled_unsequenced_tasks.iter() {
+        tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
     }
-
-    // Next apply weights to on_start sequenced tasks.
-    let mut weighted_on_start_tasks: WeightedGooseTasks = Vec::new();
-    for (_sequence, tasks) in sequenced_on_start_tasks.iter() {
-        let mut sequence_on_start_weighted_tasks = Vec::new();
-        for task in tasks {
-            // divide by greatest common divisor so bucket is as small as possible
-            let weight = task.weight / u;
-            trace!(
-                "{}: {} has weight of {} (reduced with gcd to {})",
-                task.tasks_index,
-                task.name,
-                task.weight,
-                weight
-            );
-            // Weighted list of tuples holding the id and name of the task.
-            let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
-            sequence_on_start_weighted_tasks.append(&mut tasks);
-        }
-        // Add in vectors grouped by sequence value, ordered lowest to highest value.
-        weighted_on_start_tasks.push(sequence_on_start_weighted_tasks);
+    for task in scheduled_unsequenced_on_stop_tasks.iter() {
+        on_stop_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
     }
-
-    // Next apply weights to unsequenced on_start tasks.
-    trace!("created weighted_on_start_tasks: {:?}", weighted_tasks);
-    let mut weighted_on_start_unsequenced_tasks = Vec::new();
-    for task in unsequenced_on_start_tasks {
-        // divide by greatest common divisor so bucket is as small as possible
-        let weight = task.weight / u;
-        trace!(
-            "{}: {} has weight of {} (reduced with gcd to {})",
-            task.tasks_index,
-            task.name,
-            task.weight,
-            weight
-        );
-        // Weighted list of tuples holding the id and name of the task.
-        let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
-        weighted_on_start_unsequenced_tasks.append(&mut tasks);
-    }
-    // Add final vector of unsequenced on_start tasks last.
-    weighted_on_start_tasks.push(weighted_on_start_unsequenced_tasks);
-
-    // Apply weight to on_stop sequenced tasks.
-    let mut weighted_on_stop_tasks: WeightedGooseTasks = Vec::new();
-    for (_sequence, tasks) in sequenced_on_stop_tasks.iter() {
-        let mut sequence_on_stop_weighted_tasks = Vec::new();
-        for task in tasks {
-            // divide by greatest common divisor so bucket is as small as possible
-            let weight = task.weight / u;
-            trace!(
-                "{}: {} has weight of {} (reduced with gcd to {})",
-                task.tasks_index,
-                task.name,
-                task.weight,
-                weight
-            );
-            // Weighted list of tuples holding the id and name of the task.
-            let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
-            sequence_on_stop_weighted_tasks.append(&mut tasks);
-        }
-        // Add in vectors grouped by sequence value, ordered lowest to highest value.
-        weighted_on_stop_tasks.push(sequence_on_stop_weighted_tasks);
-    }
-
-    // Finally apply weight to unsequenced on_stop tasks.
-    trace!("created weighted_on_stop_tasks: {:?}", weighted_tasks);
-    let mut weighted_on_stop_unsequenced_tasks = Vec::new();
-    for task in unsequenced_on_stop_tasks {
-        // divide by greatest common divisor so bucket is as small as possible
-        let weight = task.weight / u;
-        trace!(
-            "{}: {} has weight of {} (reduced with gcd to {})",
-            task.tasks_index,
-            task.name,
-            task.weight,
-            weight
-        );
-        // Weighted list of tuples holding the id and name of the task.
-        let mut tasks = vec![(task.tasks_index, task.name.to_string()); weight];
-        weighted_on_stop_unsequenced_tasks.append(&mut tasks);
-    }
-    // Add final vector of unsequenced on_stop tasks last.
-    weighted_on_stop_tasks.push(weighted_on_stop_unsequenced_tasks);
 
     // Return sequenced buckets of weighted usize pointers to and names of Goose Tasks
-    (
-        weighted_on_start_tasks,
-        weighted_tasks,
-        weighted_on_stop_tasks,
-    )
+    (on_start_tasks, tasks, on_stop_tasks)
+}
+
+/// Build a weighted vector of vectors of unsequenced GooseTasks.
+fn weight_unsequenced_tasks(unsequenced_tasks: &[GooseTask], u: usize) -> (Vec<Vec<usize>>, usize) {
+    // Build a vector of vectors to be used to schedule users.
+    let mut available_unsequenced_tasks = Vec::with_capacity(unsequenced_tasks.len());
+    let mut total_tasks = 0;
+    for task in unsequenced_tasks.iter() {
+        // divide by greatest common divisor so vector is as short as possible
+        let weight = task.weight / u;
+        trace!(
+            "{}: {} has weight of {} (reduced with gcd to {})",
+            task.tasks_index,
+            task.name,
+            task.weight,
+            weight
+        );
+        let weighted_tasks = vec![task.tasks_index; weight];
+        available_unsequenced_tasks.push(weighted_tasks);
+        total_tasks += weight;
+    }
+    (available_unsequenced_tasks, total_tasks)
+}
+
+/// Build a weighted vector of vectors of sequenced GooseTasks.
+fn weight_sequenced_tasks(
+    sequenced_tasks: &SequencedGooseTasks,
+    u: usize,
+) -> BTreeMap<usize, Vec<Vec<usize>>> {
+    // Build a sequenced BTreeMap containing weighted vectors of GooseTasks.
+    let mut available_sequenced_tasks = BTreeMap::new();
+    // Step through sequences, each containing a bucket of all GooseTasks with the same
+    // sequence value, allowing actual weighting to be done by weight_unsequenced_tasks().
+    for (sequence, unsequenced_tasks) in sequenced_tasks.iter() {
+        let (weighted_tasks, _total_weighted_tasks) =
+            weight_unsequenced_tasks(&unsequenced_tasks, u);
+        available_sequenced_tasks.insert(*sequence, weighted_tasks);
+    }
+
+    available_sequenced_tasks
+}
+
+fn schedule_sequenced_tasks(
+    available_sequenced_tasks: &BTreeMap<usize, Vec<Vec<usize>>>,
+    scheduler: &GooseScheduler,
+) -> Vec<usize> {
+    let mut weighted_tasks: Vec<usize> = Vec::new();
+
+    for (_sequence, tasks) in available_sequenced_tasks.iter() {
+        let scheduled_tasks = schedule_unsequenced_tasks(tasks, tasks[0].len(), scheduler);
+        weighted_tasks.extend(scheduled_tasks);
+    }
+
+    weighted_tasks
+}
+
+// Return a list of tasks in the order to be run.
+fn schedule_unsequenced_tasks(
+    available_unsequenced_tasks: &[Vec<usize>],
+    total_tasks: usize,
+    scheduler: &GooseScheduler,
+) -> Vec<usize> {
+    // Now build the weighted list with the appropriate scheduler.
+    let mut weighted_tasks = Vec::new();
+
+    match scheduler {
+        GooseScheduler::RoundRobin => {
+            // Allocate task sets round robin.
+            let tasks_len = available_unsequenced_tasks.len();
+            let mut available_tasks = available_unsequenced_tasks.to_owned();
+            loop {
+                // Tasks are contained in a vector of vectors. The outer vectors each
+                // contain a different GooseTask, and the inner vectors contain each
+                // instance of that specific GooseTask.
+                for (task_index, tasks) in available_tasks.iter_mut().enumerate().take(tasks_len) {
+                    if let Some(task) = tasks.pop() {
+                        debug!("allocating task from Task {}", task_index);
+                        weighted_tasks.push(task);
+                    }
+                }
+                if weighted_tasks.len() >= total_tasks {
+                    break;
+                }
+            }
+        }
+        GooseScheduler::Serial | GooseScheduler::Random => {
+            // Allocate task sets serially in the weighted order defined. If the Random
+            // scheduler is being used, tasks will get shuffled later.
+            for (task_index, tasks) in available_unsequenced_tasks.iter().enumerate() {
+                debug!(
+                    "allocating all {} tasks from Task {}",
+                    tasks.len(),
+                    task_index
+                );
+
+                let mut tasks_clone = tasks.clone();
+                if scheduler == &GooseScheduler::Random {
+                    tasks_clone.shuffle(&mut thread_rng());
+                }
+                weighted_tasks.append(&mut tasks_clone);
+            }
+        }
+    }
+
+    weighted_tasks
 }
 
 fn is_valid_host(host: &str) -> Result<bool, GooseError> {

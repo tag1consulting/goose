@@ -460,7 +460,7 @@ pub struct GooseTaskSet {
     pub max_wait: usize,
     /// A vector containing one copy of each GooseTask that will run by users running this task set.
     pub tasks: Vec<GooseTask>,
-    /// A vector of vectors of integers, controlling the sequence and order GooseTasks are run.
+    /// A fully scheduled and weighted vector of integers (pointing to GooseTasks) and GooseTask names.
     pub weighted_tasks: WeightedGooseTasks,
     /// A vector of vectors of integers, controlling the sequence and order on_start GooseTasks are run when the user first starts.
     pub weighted_on_start_tasks: WeightedGooseTasks,
@@ -946,10 +946,8 @@ pub struct GooseUser {
     pub task_sets_index: usize,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Arc<Mutex<Client>>,
-    /// Integer value tracking the sequenced bucket user is running tasks from.
-    pub weighted_bucket: Arc<AtomicUsize>,
     /// Integer value tracking the current task user is running.
-    pub weighted_bucket_position: Arc<AtomicUsize>,
+    pub position: Arc<AtomicUsize>,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
     /// Minimum amount of time to sleep after running a task.
@@ -997,8 +995,7 @@ impl GooseUser {
             started: Instant::now(),
             task_sets_index,
             client: Arc::new(Mutex::new(client)),
-            weighted_bucket: Arc::new(AtomicUsize::new(0)),
-            weighted_bucket_position: Arc::new(AtomicUsize::new(0)),
+            position: Arc::new(AtomicUsize::new(0)),
             base_url: Arc::new(RwLock::new(base_url)),
             min_wait,
             max_wait,
@@ -1605,17 +1602,9 @@ impl GooseUser {
             None => {
                 // Otherwise determine if the current GooseTask is named, and if so return
                 // a copy of it.
-                let weighted_bucket = self.weighted_bucket.load(atomic::Ordering::SeqCst);
-                let weighted_bucket_position =
-                    self.weighted_bucket_position.load(atomic::Ordering::SeqCst);
-                if !self.weighted_tasks.is_empty()
-                    && !self.weighted_tasks[weighted_bucket][weighted_bucket_position]
-                        .1
-                        .is_empty()
-                {
-                    self.weighted_tasks[weighted_bucket][weighted_bucket_position]
-                        .1
-                        .clone()
+                let position = self.position.load(atomic::Ordering::SeqCst);
+                if !self.weighted_tasks.is_empty() && !self.weighted_tasks[position].1.is_empty() {
+                    self.weighted_tasks[position].1.clone()
                 } else {
                     // Otherwise return a copy of the the path.
                     path.to_string()
