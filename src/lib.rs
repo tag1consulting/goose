@@ -647,7 +647,8 @@ pub enum AttackPhase {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// Used to define the order GooseTasksSets and GooseTasks are allocated.
+/// Used to define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s and
+/// [`GooseTask`](./goose/struct.GooseTask.html)s are allocated.
 pub enum GooseScheduler {
     /// Allocate one of each available type at a time (default).
     RoundRobin,
@@ -864,7 +865,8 @@ pub struct GooseAttack {
     attack_mode: AttackMode,
     /// Which phase the load test is currently operating in.
     attack_phase: AttackPhase,
-    /// Defines the order GooseTaskSets and GooseTasks are allocated.
+    /// Defines the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s and
+    /// [`GooseTask`](./goose/struct.GooseTask.html)s are allocated.
     scheduler: GooseScheduler,
     /// When the load test started.
     started: Option<time::Instant>,
@@ -1167,8 +1169,9 @@ impl GooseAttack {
         self
     }
 
-    /// Use configured GooseScheduler to build out a properly
-    /// weighted list of TaskSets to be assigned to GooseUsers.
+    /// Use configured GooseScheduler to build out a properly weighted list of
+    /// [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s to be assigned to
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s
     fn allocate_task_sets(&mut self) -> Vec<usize> {
         trace!("allocate_task_sets");
 
@@ -1264,7 +1267,7 @@ impl GooseAttack {
         weighted_task_sets
     }
 
-    /// Allocate a vector of weighted GooseUser.
+    /// Allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
     fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
         trace!("weight_task_set_users");
 
@@ -4082,12 +4085,13 @@ pub struct GooseConfiguration {
     pub manager_port: u16,
 }
 
-/// Use the configured GooseScheduler to allocate all GooseTasks within the
-/// GooseTaskSet in the appropriate order. Returns three set of ordered tasks:
-/// `on_start_tasks`, `tasks`, and `on_stop_tasks`. The `on_start_tasks` are
-/// only run once when the GooseAttack first starts. Normal `tasks` are then
-/// run for the duration of the GooseAttack. The `on_stop_tasks` finally are
-/// only run once when the GooseAttack stops.
+/// Use the configured GooseScheduler to allocate all [`GooseTask`](./goose/struct.GooseTask.html)s
+/// within the [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) in the appropriate order. Returns
+/// three set of ordered tasks: /// `on_start_tasks`, `tasks`, and `on_stop_tasks`. The
+/// `on_start_tasks` are only run once when the [`GooseAttack`](./struct.GooseAttack.html) first
+/// starts. Normal `tasks` are then run for the duration of the
+/// [`GooseAttack`](./struct.GooseAttack.html). The `on_stop_tasks` finally are only run once when
+/// the [`GooseAttack`](./struct.GooseAttack.html) stops.
 fn allocate_tasks(
     task_set: &GooseTaskSet,
     scheduler: &GooseScheduler,

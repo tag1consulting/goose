@@ -176,9 +176,9 @@
 //!
 //! Tasks can be flagged to only run when a user first starts. This can be useful if you'd
 //! like your load test to use a logged-in user. It is possible to assign sequences and weights
-//! to `on_start` functions if you want to have multiple tasks run in a specific order at start
-//! time, and/or the tasks to run multiple times. A task can be flagged to run both on start
-//! and on stop.
+//! to [`on_start`](./struct.GooseTask.html#method.set_on_start) functions if you want to have
+//! multiple tasks run in a specific order at start time, and/or the tasks to run multiple times.
+//! A task can be flagged to run both on start and on stop.
 //!
 //! ```rust
 //! use goose::prelude::*;
@@ -197,9 +197,9 @@
 //!
 //! Tasks can be flagged to only run when a user stops. This can be useful if you'd like your
 //! load test to simulate a user logging out when it finishes. It is possible to assign sequences
-//! and weights to `on_stop` functions if you want to have multiple tasks run in a specific order
-//! at stop time, and/or the tasks to run multiple times. A task can be flagged to run both on
-//! start and on stop.
+//! and weights to [`on_stop`](./struct.GooseTask.html#method.set_on_stop) functions if you want to
+//! have multiple tasks run in a specific order at stop time, and/or the tasks to run multiple
+//! times. A task can be flagged to run both on start and on stop.
 //!
 //! ```rust
 //! use goose::prelude::*;
@@ -478,10 +478,12 @@ pub struct GooseTaskSet {
     /// A fully scheduled and weighted vector of integers (pointing to
     /// [`GooseTask`](./struct.GooseTask.html)s and [`GooseTask`](./struct.GooseTask.html) names.
     pub weighted_tasks: WeightedGooseTasks,
-    /// A vector of vectors of integers, controlling the sequence and order `on_start`
+    /// A vector of vectors of integers, controlling the sequence and order
+    /// [`on_start`](./struct.GooseTask.html#method.set_on_start)
     /// [`GooseTask`](./struct.GooseTask.html)s are run when the user first starts.
     pub weighted_on_start_tasks: WeightedGooseTasks,
-    /// A vector of vectors of integers, controlling the sequence and order `on_stop`
+    /// A vector of vectors of integers, controlling the sequence and order
+    /// [`on_stop`](./struct.GooseTask.html#method.set_on_stop)
     /// [`GooseTask`](./struct.GooseTask.html)s are run when the user first starts.
     pub weighted_on_stop_tasks: WeightedGooseTasks,
     /// An optional default host to run this `GooseTaskSet` against.
@@ -2085,16 +2087,18 @@ pub type GooseTaskFunction = Arc<
         + Sync,
 >;
 
-/// An individual task within a `GooseTaskSet`.
+/// An individual task within a [`GooseTaskSet`](./struct.GooseTaskSet.html).
 #[derive(Clone)]
 pub struct GooseTask {
-    /// An index into GooseTaskSet.task, indicating which task this is.
+    /// An index into [`GooseTaskSet`](./struct.GooseTaskSet.html)`.task`, indicating which
+    /// task this is.
     pub tasks_index: usize,
     /// An optional name for the task, used when displaying metrics about requests made.
     pub name: String,
     /// An integer value that controls the frequency that this task will be run.
     pub weight: usize,
-    /// An integer value that controls when this task runs compared to other tasks in the same GooseTaskSet.
+    /// An integer value that controls when this task runs compared to other tasks in the same
+    /// [`GooseTaskSet`](./struct.GooseTaskSet.html).
     pub sequence: usize,
     /// A flag indicating that this task runs when the user starts.
     pub on_start: bool,
