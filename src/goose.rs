@@ -997,7 +997,9 @@ pub struct GooseUser {
     pub debug_logger: Option<flume::Sender<Option<GooseDebug>>>,
     /// Channel to throttle.
     pub throttle: Option<flume::Sender<bool>>,
-    /// Normal tasks are optionally throttled, test_start and test_stop tasks are not.
+    /// Normal tasks are optionally throttled,
+    /// [`test_start`](../struct.GooseAttack.html#method.test_start) and
+    /// [`test_stop`](../struct.GooseAttack.html#method.test_stop) tasks are not.
     pub is_throttled: bool,
     /// Channel to parent.
     pub channel_to_parent: Option<flume::Sender<GooseMetric>>,
@@ -1056,7 +1058,8 @@ impl GooseUser {
         let mut single_user = GooseUser::new(0, base_url, 0, 0, configuration, 0)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
-        // Do not throttle `test_start` (setup) and `test_stop` (teardown) tasks.
+        // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
+        // [`test_stop`](../struct.GooseAttack.html#method.test_stop) (teardown) tasks.
         single_user.is_throttled = false;
 
         Ok(single_user)
@@ -1630,8 +1633,9 @@ impl GooseUser {
     }
 
     fn send_to_parent(&self, metric: GooseMetric) -> GooseTaskResult {
-        // Parent is not defined when running test_start_task, test_stop_task,
-        // and during testing.
+        // Parent is not defined when running
+        // [`test_start`](../struct.GooseAttack.html#method.test_start),
+        // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
         if let Some(parent) = self.channel_to_parent.clone() {
             parent.send(metric)?;
         }
@@ -1862,8 +1866,9 @@ impl GooseUser {
         body: Option<&str>,
     ) -> GooseTaskResult {
         if !self.config.debug_file.is_empty() {
-            // Logger is not defined when running test_start_task, test_stop_task,
-            // and during testing.
+            // Logger is not defined when running
+            // [`test_start`](../struct.GooseAttack.html#method.test_start),
+            // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
             if let Some(debug_logger) = self.debug_logger.clone() {
                 if self.config.no_debug_body {
                     debug_logger.send(Some(GooseDebug::new(tag, request, headers, None)))?;
@@ -1909,10 +1914,10 @@ impl GooseUser {
     /// When manually building a
     /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html),
     /// there are a few things to be aware of:
-    ///  - Manually building a client in `test_start` will only affect requests made during
-    ///    test setup;
-    ///  - Manually building a client in `test_stop` will only affect requests made during
-    ///    test teardown;
+    ///  - Manually building a client in [`test_start`](../struct.GooseAttack.html#method.test_start)
+    ///    will only affect requests made during test setup;
+    ///  - Manually building a client in [`test_stop`](../struct.GooseAttack.html#method.test_stop)
+    ///    will only affect requests made during test teardown;
     ///  - A manually built client is specific to a single Goose thread -- if you are
     ///    generating a large load test with many users, each will need to manually build their
     ///    own client (typically you'd do this in a Task that is registered with `set_on_start()`
