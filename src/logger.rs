@@ -1,18 +1,21 @@
 //! Optional debug logger thread.
 //!
 //! The Goose debug logger is enabled with the `--debug-file` command-line option, or the
-//! `GooseDefault::DebugFile` default configuration option. When enabled, this thread is
-//! launched and a channel is provided from all `GooseUser` threads to send debug information
-//! for efficient logging to file. The debug logger thread uses Tokio's asynchronous BufWriter.
+//! [`GooseDefault::DebugFile`](../enum.GooseDefault.html#variant.DebugFile) default
+//! configuration option. When enabled, this thread is launched and a channel is provided
+//! from all [`GooseUser`](../goose/struct.GooseUser.html) threads to send debug information
+//! for efficient logging to file. The debug logger thread uses Tokio's asynchronous
+//! [`BufWriter`](https://docs.rs/tokio/*/tokio/io/struct.BufWriter.html).
 //!
 //! ## Writing Debug Logs
 //! Logs can be sent to the logger thread by invoking
-//! [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug)
+//! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug)
 //! from load test task functions.
 //!
 //! Calls to
-//! [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
-//! automatically invoke `log_debug`.
+//! [`set_failure`](../goose/struct.GooseUser.html#method.set_failure)
+//! automatically invoke
+//! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug).
 //!
 //! Most of the included examples showing how to use the debug logger include a copy of the
 //! request made, the response headers returned by the server, and the response body. It can
@@ -56,31 +59,37 @@
 //! }
 //! ```
 //!
-//! The first call to `log_debug` results in a debug log message similar to:
+//! The first call to
+//! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug)
+//! results in a debug log message similar to:
 //! ```json
 //! {"body":null,"header":null,"request":null,"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
 //! ```
 //!
-//! The second call to `log_debug` results in a debug log message similar to:
+//! The second call to
+//! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug)
+//! results in a debug log message similar to:
 //! ```json
 //! {"body":null,"header":null,"request":{"elapsed":1,"final_url":"http://local.dev/path/to/form","method":"POST","name":"(Anon) post to form","redirected":false,"response_time":22,"status_code":404,"success":false,"update":false,"url":"http://local.dev/path/to/form","user":0},"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
 //! ```
 //!
 //! For a more complex debug logging example, refer to the
-//! [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug)
-//! documentation.
+//! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug) documentation.
 //!
 //! ## Reducing File And Memory Usage
 //!
 //! The debug logger can result in a very large debug file, as by default it includes the
 //! entire body of any pages returned that result in an error. This also requires allocating
-//! a bigger BufWriter, and can generate a lot of disk io.
+//! a bigger [`BufWriter`](https://docs.rs/tokio/*/tokio/io/struct.BufWriter.html), and can
+//! generate a lot of disk io.
 //!
 //! If you don't need to log response bodies, you can disable this functionality (and reduce
-//! the amount of RAM required by the BufWriter) by setting the `--no-debug-body` command-line
-//! option, or the `GooseDefault::NoDebugBody` default configuration option. The debug logger
-//! will still record any custom messages, details about the request (when available), and all
-//! server response headers (when available).
+//! the amount of RAM required by the
+//! [`BufWriter`](https://docs.rs/tokio/*/tokio/io/struct.BufWriter.html) by setting the
+//! `--no-debug-body` command-line option, or the
+//! [`GooseDefault::NoDebugBody`](../enum.GooseDefault.html#variant.NoDebugBody) default
+//! configuration option. The debug logger will still record any custom messages, details
+//! about the request (when available), and all server response headers (when available).
 
 use serde_json::json;
 use tokio::fs::File;
@@ -91,7 +100,8 @@ use crate::goose::GooseDebug;
 use crate::GooseConfiguration;
 
 /// Logger thread, opens a log file (if configured) and waits for messages from
-/// GooseUser threads. This function is not intended to be invoked manually.
+/// [`GooseUser`](../goose/struct.GooseUser.html) threads. This function is not intended
+/// to be invoked manually.
 pub async fn logger_main(
     configuration: GooseConfiguration,
     log_receiver: flume::Receiver<Option<GooseDebug>>,

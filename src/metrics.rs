@@ -14,7 +14,8 @@ use crate::goose::{GooseMethod, GooseRawRequest, GooseRequest, GooseTaskSet};
 use crate::util;
 use crate::GooseConfiguration;
 
-/// Each GooseUser thread pushes these metrics to the parent for aggregation.
+/// Each [`GooseUser`](../goose/struct.GooseUser.html) thread pushes these metrics to
+/// the parent for aggregation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
     Request(GooseRawRequest),
@@ -79,11 +80,13 @@ impl GooseRawTask {
 /// Aggregated per-task metrics updated each time a task is invoked.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseTaskMetric {
-    /// An index into GooseAttack.task_sets, indicating which task set this is.
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`,
+    /// indicating which task set this is.
     pub taskset_index: usize,
     /// The task set name.
     pub taskset_name: String,
-    /// An index into GooseTaskSet.task, indicating which task this is.
+    /// An index into [`GooseTaskSet`](../goose/struct.GooseTaskSet.html)`.task`,
+    /// indicating which task this is.
     pub task_index: usize,
     /// An optional name for the task.
     pub task_name: String,
@@ -125,7 +128,7 @@ impl GooseTaskMetric {
         }
     }
 
-    /// Track task function elapsed time.
+    /// Track task function elapsed time in milliseconds.
     pub fn set_time(&mut self, time: u64, success: bool) {
         // Perform this conversion only once, then re-use throughout this function.
         let time_usize = time as usize;
@@ -179,7 +182,7 @@ impl GooseTaskMetric {
 /// Metrics collected during a Goose load test.
 ///
 /// # Example
-/// ```rust,no_run
+/// ```rust
 /// use goose::prelude::*;
 ///
 /// fn main() -> Result<(), GooseError> {
@@ -187,6 +190,10 @@ impl GooseTaskMetric {
 ///         .register_taskset(taskset!("ExampleUsers")
 ///             .register_task(task!(example_task))
 ///         )
+///         // Set a default host so the load test will start.
+///         .set_default(GooseDefault::Host, "http://localhost/")?
+///         // Set a default run time so this test runs to completion.
+///         .set_default(GooseDefault::RunTime, 1)?
 ///         .execute()?;
 ///
 ///     // It is now possible to do something with the metrics collected by Goose.
@@ -209,7 +216,7 @@ pub struct GooseMetrics {
     pub hash: u64,
     /// The system timestamp of when the load test started.
     pub started: Option<DateTime<Local>>,
-    /// How many seconds the load test ran.
+    /// Total number of seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
     pub users: usize,
@@ -256,7 +263,7 @@ impl GooseMetrics {
     /// Consumes and display all metrics from a completed load test.
     ///
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// use goose::prelude::*;
     ///
     /// fn main() -> Result<(), GooseError> {
@@ -264,6 +271,10 @@ impl GooseMetrics {
     ///         .register_taskset(taskset!("ExampleUsers")
     ///             .register_task(task!(example_task))
     ///         )
+    ///         // Set a default host so the load test will start.
+    ///         .set_default(GooseDefault::Host, "http://localhost/")?
+    ///         // Set a default run time so this test runs to completion.
+    ///         .set_default(GooseDefault::RunTime, 1)?
     ///         .execute()?
     ///         .print();
     ///
@@ -1019,7 +1030,9 @@ impl GooseMetrics {
     }
 }
 
+/// Implement format trait to allow displaying metrics.
 impl fmt::Display for GooseMetrics {
+    // Implement display of metrics with `{}` marker.
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         // Formats from zero to six tables of data, depending on what data is contained
         // and which contained flags are set.
