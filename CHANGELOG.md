@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.11.1-dev
+## 0.11.1 May 16, 2021
  - update `rand` dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
  - update dependencies: `itertools` to `0.10`, `simplelog` to `0.10`, `url` to `2`
  - update `nng` dependency for optional `gaggle` feature
