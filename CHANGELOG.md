@@ -1,12 +1,13 @@
 # Changelog
 
 ## 0.11.1 May 16, 2021
- - update `rand` dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
- - update dependencies: `itertools` to `0.10`, `simplelog` to `0.10`, `url` to `2`
- - update `nng` dependency for optional `gaggle` feature
- - simplify `examples/umami` regex when parsing form
+ - update [`rand`](https://docs.rs/rand) dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
+ - update dependencies: [`itertools`](https://docs.rs/itertools) to `0.10`, [`simplelog`](https://docs.rs/simplelog) to `0.10`, [`url`](https://docs.rs/url) to `2`
+ - update [`nng`](https://docs.rs/nng) dependency for optional `gaggle` feature
+ - simplify [`examples/umami`](https://github.com/tag1consulting/goose/tree/main/examples/umami) regex when parsing form
  - allow configuration of algorithm for allocating `GooseTask`s the same as `GooseTaskSet`s; `GooseTaskSetScheduler` becomes more generically `GooseScheduler`
- - specify (and detect) minimum `rustc` requirement of `1.49.0`, due to `flume` dependency which in turn depends on `spinning_top` which uses `hint::spin_loop` which stabilized in `rustc` version `1.49.0
+ - specify (and detect) minimum `rustc` requirement of `1.49.0`, due to [`flume`](https://docs.rs/flume) dependency which in turn depends on [`spinning_top`](https://docs.rs/spinning_top) which uses [`hint::spin_loop`](https://doc.rust-lang.org/std/hint/fn.spin_loop.html) which stabilized in `rustc` version `1.49.0
+ - standardize links in documentation; general documentation cleanups
 
 ## 0.11.0 April 9, 2021
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
