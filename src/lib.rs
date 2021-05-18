@@ -816,6 +816,9 @@ struct GooseAttackRunState {
     throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
+    /// Optional channel with controller thread, if not disabled.
+    /// @TODO: Pass a useful enum.
+    controller_channel: Option<flume::Receiver<bool>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
@@ -2639,6 +2642,35 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
+    // Helper to spawn a controller thread. The controller thread opens an unbounded channel
+    // to allow the controller to modify the running load test, and to report back.
+    async fn setup_controller(&self) -> Option<flume::Receiver<bool>> {
+        /*
+         * @TODO: add run-time option to disable the controller thread.
+        // If the controller is disabled, return immediately.
+        if self.configuration.no_controller {
+            return None;
+        }
+        */
+
+        // Create an unbounded channel between controller threads and the parent process,
+        // allowing controllers to control the load test and request information.
+        let (all_threads_controller, controller_receiver): (
+            flume::Sender<bool>,
+            flume::Receiver<bool>,
+        ) = flume::unbounded();
+
+        // Spawn the innitial controller thread to allow real-time control of the load test.
+        // There is no need to rejoin it when the load test ends.
+        let _ = Some(tokio::spawn(control::controller_main(
+            self.configuration.clone(),
+            all_threads_controller,
+        )));
+
+        // Return the parent end of the channel, if created.
+        Some(controller_receiver)
+    }
+
     // Prepare an asynchronous file writer for `report_file` (if enabled).
     async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
         if let Some(report_file_path) = self.get_report_file_path() {
@@ -2738,7 +2770,8 @@ impl GooseAttack {
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
-        let control_thread = tokio::spawn(control::control_main(self.configuration.clone()));
+        // Spawn a controller thread.
+        let controller_channel = self.setup_controller().await;
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
@@ -2779,6 +2812,7 @@ impl GooseAttack {
             all_threads_debug_logger_tx,
             throttle_threads_tx,
             parent_to_throttle_tx,
+            controller_channel,
             report_file,
             requests_file,
             metrics_header_displayed: false,
@@ -3595,6 +3629,24 @@ impl GooseAttack {
                 self.sync_metrics(&mut goose_attack_run_state).await?;
                 sync_metrics_timer = std::time::Instant::now();
             }
+
+            // If the controller is enabled, check if we've received any
+            // messages.
+            if let Some(c) = goose_attack_run_state.controller_channel.as_ref() {
+                match c.try_recv() {
+                    Ok(message) => {
+                        // Proof of concept. @TODO: introduce an enum allowing us to do other
+                        // things such as pausing, changing the number of users, or changing
+                        // the hatch_rate.
+                        info!("message received: {}", message);
+                        self.attack_phase = AttackPhase::Stopping;
+                    }
+                    Err(e) => {
+                        // Errors can be ignored, they happen any time there are no messages.
+                        debug!("error receiving message: {}", e);
+                    }
+                }
+            };
         }
 
         Ok(self)
