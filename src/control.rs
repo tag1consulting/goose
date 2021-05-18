@@ -20,7 +20,7 @@ pub async fn controller_main(
     communication_channel: flume::Sender<bool>,
 ) -> io::Result<()> {
     // @TODO: make this configurable
-    let addr = "127.0.0.1:5115";
+    let addr = "127.0.0.1:5116";
     let listener = TcpListener::bind(&addr).await?;
     info!("controller listening on: {}", addr);
 
