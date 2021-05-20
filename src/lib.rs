@@ -464,6 +464,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use url::Url;
 
+use crate::control::GooseControl;
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
@@ -818,7 +819,7 @@ struct GooseAttackRunState {
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
     /// Optional channel with controller thread, if not disabled.
     /// @TODO: Pass a useful enum.
-    controller_channel: Option<flume::Receiver<bool>>,
+    controller_channel: Option<flume::Receiver<GooseControl>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
@@ -2644,7 +2645,7 @@ impl GooseAttack {
 
     // Helper to spawn a controller thread. The controller thread opens an unbounded channel
     // to allow the controller to modify the running load test, and to report back.
-    async fn setup_controller(&self) -> Option<flume::Receiver<bool>> {
+    async fn setup_controller(&self) -> Option<flume::Receiver<GooseControl>> {
         /*
          * @TODO: add run-time option to disable the controller thread.
         // If the controller is disabled, return immediately.
@@ -2656,8 +2657,8 @@ impl GooseAttack {
         // Create an unbounded channel between controller threads and the parent process,
         // allowing controllers to control the load test and request information.
         let (all_threads_controller, controller_receiver): (
-            flume::Sender<bool>,
-            flume::Receiver<bool>,
+            flume::Sender<GooseControl>,
+            flume::Receiver<GooseControl>,
         ) = flume::unbounded();
 
         // Spawn the innitial controller thread to allow real-time control of the load test.
@@ -3633,13 +3634,23 @@ impl GooseAttack {
             // If the controller is enabled, check if we've received any
             // messages.
             if let Some(c) = goose_attack_run_state.controller_channel.as_ref() {
+                // @TODO: move this into a function
                 match c.try_recv() {
                     Ok(message) => {
-                        // Proof of concept. @TODO: introduce an enum allowing us to do other
-                        // things such as pausing, changing the number of users, or changing
-                        // the hatch_rate.
-                        info!("message received: {}", message);
-                        self.attack_phase = AttackPhase::Stopping;
+                        info!("message received: {:?}", message);
+                        // Proof of concept. @TODO: improve handling of enum, and properly handle
+                        // changing the number of users, or changing the hatch_rate.
+                        match message {
+                            GooseControl::GooseControllerCommand(_command) => {
+                                self.attack_phase = AttackPhase::Stopping;
+                            }
+                            GooseControl::GooseControllerCommandAndValue(command_and_value) => {
+                                info!(
+                                    "@TODO: change number of users to {}",
+                                    command_and_value.value
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
                         // Errors can be ignored, they happen any time there are no messages.

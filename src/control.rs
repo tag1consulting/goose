@@ -1,10 +1,31 @@
 use crate::GooseConfiguration;
 
+use regex::{Regex, RegexSet};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use std::io;
 use std::str;
+
+#[derive(Debug)]
+pub enum GooseControllerCommand {
+    Stop,
+    Users,
+}
+
+#[derive(Debug)]
+pub struct GooseControllerCommandAndValue {
+    pub command: GooseControllerCommand,
+    pub value: String,
+}
+
+/// An enumeration of all messages that can be exchanged between the Goose parent process and
+/// the controller thread.
+#[derive(Debug)]
+pub enum GooseControl {
+    GooseControllerCommand(GooseControllerCommand),
+    GooseControllerCommandAndValue(GooseControllerCommandAndValue),
+}
 
 /// The control loop listens for connection on the configured TCP port. Each connection
 /// spawns a new thread so multiple clients can connect.
@@ -17,7 +38,7 @@ pub async fn controller_main(
     _configuration: GooseConfiguration,
     // A communication channel with the parent.
     // @TODO: pass a useful enum.
-    communication_channel: flume::Sender<bool>,
+    communication_channel: flume::Sender<GooseControl>,
 ) -> io::Result<()> {
     // @TODO: make this configurable
     let addr = "127.0.0.1:5116";
@@ -64,30 +85,55 @@ pub async fn controller_main(
                     Err(_) => continue,
                 };
 
-                match message.to_lowercase().as_str() {
-                    // Allow the client to exit/quit the connection.
-                    "exit" | "quit" => {
-                        write_to_socket(&mut socket, "goodbye!\n").await;
-                        match socket.peer_addr() {
-                            Ok(p) => info!("client disconnected from {}", p),
-                            Err(e) => info!("client disconnected from UNKNOWN ADDRESS [{}]", e),
-                        };
-                        return;
-                    }
-                    // Allows client to confirm the server is still connected and alive.
-                    "echo" => {
-                        write_to_socket(&mut socket, "echo\n").await;
-                    }
-                    // Stop the load test.
-                    "stop" => {
-                        write_to_socket(&mut socket, "stopping load test\n").await;
-                        // @TODO: handle a possible error sending.
-                        let _ = channel.try_send(true);
-                    }
-                    // Unrecognized command.
-                    _ => {
-                        write_to_socket(&mut socket, "unrecognized command\n").await;
-                    }
+                // @TODO: Try and capture all of these in an Enum or other structure, to simplify
+                // re-use and proper mapping between the RegexSet and matches().
+                // @TODO: Compile this one time, not inside a loop.
+                let commands = RegexSet::new(&[
+                    // Exit/quit the controller connection, does not affect load test.
+                    r"(?i)^exit|quit$",
+                    // Confirm the server is still connected and alive.
+                    r"(?i)^echo$",
+                    // Stop the load test (which will cause the controller connection to quit).
+                    r"(?i)^stop$",
+                    // Modify how many users the load test simulates.
+                    r"(?i)^users \d+$",
+                    // Modify how fast users start or stop.
+                    //r"(?i)^hatchrate (?=.)([+-]?([0-9]*)(\.([0-9]+))?)$",
+                ])
+                .unwrap();
+
+                let matches = commands.matches(message);
+                if matches.matched(0) {
+                    write_to_socket(&mut socket, "goodbye!\n").await;
+                    match socket.peer_addr() {
+                        Ok(p) => info!("client disconnected from {}", p),
+                        Err(e) => info!("client disconnected from UNKNOWN ADDRESS [{}]", e),
+                    };
+                    return;
+                } else if matches.matched(1) {
+                    write_to_socket(&mut socket, "echo\n").await;
+                } else if matches.matched(2) {
+                    write_to_socket(&mut socket, "stopping load test\n").await;
+                    // @TODO: handle a possible error when sending.
+                    let _ = channel.try_send(GooseControl::GooseControllerCommand(
+                        GooseControllerCommand::Stop,
+                    ));
+                } else if matches.matched(3) {
+                    // This requires a second lookup to capture the integer, as documented at:
+                    // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
+                    // @TODO: Compile this one time, not inside a loop.
+                    let re = Regex::new(r"(?i)^users \d+$").unwrap();
+                    let caps = re.captures(message).unwrap();
+                    let users = caps.get(0).map_or("", |m| m.as_str());
+                    let _ = channel.try_send(GooseControl::GooseControllerCommandAndValue(
+                        GooseControllerCommandAndValue {
+                            command: GooseControllerCommand::Users,
+                            value: users.to_string(),
+                        },
+                    ));
+                    write_to_socket(&mut socket, &format!("reconfigured users: {}\n", users)).await;
+                } else {
+                    write_to_socket(&mut socket, "unrecognized command\n").await;
                 }
             }
         });
