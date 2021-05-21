@@ -1,3 +1,4 @@
+//use crate::metrics::GooseMetrics;
 use crate::GooseConfiguration;
 
 use regex::{Regex, RegexSet};
@@ -9,9 +10,10 @@ use std::str;
 
 #[derive(Debug)]
 pub enum GooseControllerCommand {
+    Config,
+    HatchRate,
     Stop,
     Users,
-    HatchRate,
 }
 
 #[derive(Debug)]
@@ -20,12 +22,17 @@ pub struct GooseControllerCommandAndValue {
     pub value: String,
 }
 
-/// An enumeration of all messages that can be exchanged between the Goose parent process and
-/// the controller thread.
+/// An enumeration of all messages that the controller can send to the parent thread.
 #[derive(Debug)]
 pub enum GooseControl {
-    GooseControllerCommand(GooseControllerCommand),
-    GooseControllerCommandAndValue(GooseControllerCommandAndValue),
+    Command(GooseControllerCommand),
+    CommandAndValue(GooseControllerCommandAndValue),
+}
+
+/// An enumeration of all messages the parent thread reply back to the controller thread.
+pub enum GooseControlReply {
+    GooseConfiguration,
+    //GooseMetrics,
 }
 
 /// The control loop listens for connection on the configured TCP port. Each connection
@@ -36,9 +43,8 @@ pub enum GooseControl {
 pub async fn controller_main(
     // Expose load test configuration to controller thread.
     // @TODO: use this to configure the listening ip and port.
-    _configuration: GooseConfiguration,
+    configuration: GooseConfiguration,
     // A communication channel with the parent.
-    // @TODO: pass a useful enum.
     communication_channel: flume::Sender<GooseControl>,
 ) -> io::Result<()> {
     // @TODO: make this configurable
@@ -53,6 +59,9 @@ pub async fn controller_main(
         // Make a clone of the communication channel to hand to the next thread.
         let channel = communication_channel.clone();
 
+        // Give each controller an initial copy of the Goose onfiguration.
+        let controller_thread_config = configuration.clone();
+
         // Handle the client in a thread, allowing multiple clients to be processed
         // concurrently.
         tokio::spawn(async move {
@@ -60,6 +69,12 @@ pub async fn controller_main(
                 Ok(p) => info!("client connected from {}", p),
                 Err(e) => info!("client connected from UNKNOWN ADDRESS [{}]", e),
             };
+
+            // Display initial goose> prompt.
+            socket
+                .write_all("goose> ".as_bytes())
+                .await
+                .expect("failed to write data to socket");
 
             // @TODO: What happens if a larger command is entered?
             let mut buf = [0; 1024];
@@ -85,6 +100,8 @@ pub async fn controller_main(
                 users_regex,
                 // Modify how quickly users hatch (or exit if users are reduced).
                 hatchrate_regex,
+                // Dispaly the current load test configuration.
+                r"(?i)^config$",
             ])
             .unwrap();
 
@@ -117,60 +134,98 @@ pub async fn controller_main(
 
                 let matches = commands.matches(message);
                 if matches.matched(0) {
-                    write_to_socket(&mut socket, "goodbye!\n").await;
+                    write_to_socket(&mut socket, "goodbye!").await;
                     match socket.peer_addr() {
                         Ok(p) => info!("client disconnected from {}", p),
                         Err(e) => info!("client disconnected from UNKNOWN ADDRESS [{}]", e),
                     };
                     return;
                 } else if matches.matched(1) {
-                    write_to_socket(&mut socket, "echo\n").await;
+                    write_to_socket(&mut socket, "echo").await;
                 } else if matches.matched(2) {
-                    write_to_socket(&mut socket, "stopping load test\n").await;
-                    // @TODO: handle a possible error when sending.
-                    let _ = channel.try_send(GooseControl::GooseControllerCommand(
-                        GooseControllerCommand::Stop,
-                    ));
+                    send_to_parent(&channel, GooseControllerCommand::Stop, None).await;
+                    write_to_socket(&mut socket, "stopping load test...").await;
                 } else if matches.matched(3) {
                     // This requires a second lookup to capture the integer, as documented at:
                     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
                     let caps = re_users.captures(message).unwrap();
                     let users = caps.get(1).map_or("", |m| m.as_str());
-                    let _ = channel.try_send(GooseControl::GooseControllerCommandAndValue(
-                        GooseControllerCommandAndValue {
-                            command: GooseControllerCommand::Users,
-                            value: users.to_string(),
-                        },
-                    ));
-                    write_to_socket(&mut socket, &format!("reconfigured users: {}\n", users)).await;
+                    send_to_parent(
+                        &channel,
+                        GooseControllerCommand::Users,
+                        Some(users.to_string()),
+                    )
+                    .await;
+                    write_to_socket(&mut socket, &format!("reconfigured users: {}", users)).await;
                 } else if matches.matched(4) {
                     // This requires a second lookup to capture the integer, as documented at:
                     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
                     let caps = re_hatchrate.captures(message).unwrap();
                     let hatch_rate = caps.get(1).map_or("", |m| m.as_str());
-                    let _ = channel.try_send(GooseControl::GooseControllerCommandAndValue(
-                        GooseControllerCommandAndValue {
-                            command: GooseControllerCommand::HatchRate,
-                            value: hatch_rate.to_string(),
-                        },
-                    ));
-                    write_to_socket(
-                        &mut socket,
-                        &format!("reconfigured hatch_rate: {}\n", hatch_rate),
+                    send_to_parent(
+                        &channel,
+                        GooseControllerCommand::HatchRate,
+                        Some(hatch_rate.to_string()),
                     )
                     .await;
+                    write_to_socket(
+                        &mut socket,
+                        &format!("reconfigured hatch_rate: {}", hatch_rate),
+                    )
+                    .await;
+                } else if matches.matched(5) {
+                    // @TODO: Get an up-to-date copy of the configuration from the parent thread,
+                    // as this and other controller-threads can modify it.
+                    send_to_parent_and_get_reply(&channel, GooseControllerCommand::Config, None)
+                        .await;
+
+                    // Convert the configuration object to a JSON string.
+                    let config_json: String = serde_json::to_string(&controller_thread_config)
+                        .expect("unexpected failure");
+                    write_to_socket(&mut socket, &config_json).await;
                 } else {
-                    write_to_socket(&mut socket, "unrecognized command\n").await;
+                    write_to_socket(&mut socket, "unrecognized command").await;
                 }
             }
         });
     }
 }
 
-/// Simple helper to send a message to a client TcpStream.
+/// Send a message to the client TcpStream.
 async fn write_to_socket(socket: &mut tokio::net::TcpStream, message: &str) {
     socket
-        .write_all(message.as_bytes())
+        // Add a linefeed to the end of the message.
+        .write_all([message, "\ngoose> "].concat().as_bytes())
         .await
         .expect("failed to write data to socket");
+}
+
+/// Send a message to parent thread, with or without an optional value.
+async fn send_to_parent(
+    channel: &flume::Sender<GooseControl>,
+    command: GooseControllerCommand,
+    optional_value: Option<String>,
+) {
+    if let Some(value) = optional_value {
+        // @TODO: handle a possible error when sending.
+        let _ = channel.try_send(GooseControl::CommandAndValue(
+            GooseControllerCommandAndValue { command, value },
+        ));
+    } else {
+        // @TODO: handle a possible error when sending.
+        let _ = channel.try_send(GooseControl::Command(command));
+    }
+}
+
+/// Send a message to parent thread, with or without an optional value, and wait for
+/// a reply.
+async fn send_to_parent_and_get_reply(
+    channel: &flume::Sender<GooseControl>,
+    command: GooseControllerCommand,
+    value: Option<String>,
+) {
+    // @TODO error handling
+    send_to_parent(channel, command, value).await;
+
+    // @TODO: receive data from the parent.
 }

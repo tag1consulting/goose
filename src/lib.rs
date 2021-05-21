@@ -3634,17 +3634,24 @@ impl GooseAttack {
             // If the controller is enabled, check if we've received any
             // messages.
             if let Some(c) = goose_attack_run_state.controller_channel.as_ref() {
-                // @TODO: move this into a function
                 match c.try_recv() {
                     Ok(message) => {
                         info!("message received: {:?}", message);
-                        // Proof of concept. @TODO: improve handling of enum, and properly handle
-                        // changing the number of users, or changing the hatch_rate.
                         match message {
-                            GooseControl::GooseControllerCommand(_command) => {
-                                self.attack_phase = AttackPhase::Stopping;
+                            GooseControl::Command(command) => {
+                                match command {
+                                    GooseControllerCommand::Config => {
+                                        // @TODO: we need a Sender.
+                                    }
+                                    GooseControllerCommand::Stop => {
+                                        self.attack_phase = AttackPhase::Stopping;
+                                    }
+                                    _ => {
+                                        warn!("Unexpected command: {:?}", command);
+                                    }
+                                }
                             }
-                            GooseControl::GooseControllerCommandAndValue(command_and_value) => {
+                            GooseControl::CommandAndValue(command_and_value) => {
                                 match command_and_value.command {
                                     GooseControllerCommand::Users => {
                                         info!(
