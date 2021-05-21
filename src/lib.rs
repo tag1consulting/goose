@@ -464,7 +464,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use url::Url;
 
-use crate::control::GooseControl;
+use crate::control::{GooseControl, GooseControllerCommand};
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
@@ -3645,10 +3645,23 @@ impl GooseAttack {
                                 self.attack_phase = AttackPhase::Stopping;
                             }
                             GooseControl::GooseControllerCommandAndValue(command_and_value) => {
-                                info!(
-                                    "@TODO: change number of users to {}",
-                                    command_and_value.value
-                                );
+                                match command_and_value.command {
+                                    GooseControllerCommand::Users => {
+                                        info!(
+                                            "@TODO: change number of users to {}",
+                                            command_and_value.value
+                                        );
+                                    }
+                                    GooseControllerCommand::HatchRate => {
+                                        info!(
+                                            "@TODO: change hatch_rate to {}",
+                                            command_and_value.value
+                                        );
+                                    }
+                                    _ => {
+                                        warn!("Unexpected command: {:?}", command_and_value)
+                                    }
+                                }
                             }
                         }
                     }

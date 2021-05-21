@@ -11,6 +11,7 @@ use std::str;
 pub enum GooseControllerCommand {
     Stop,
     Users,
+    HatchRate,
 }
 
 #[derive(Debug)]
@@ -63,8 +64,16 @@ pub async fn controller_main(
             // @TODO: What happens if a larger command is entered?
             let mut buf = [0; 1024];
 
-            // @TODO: Try and capture all of these in an Enum or other structure, to simplify
-            // re-use and proper mapping between the RegexSet and matches().
+            // The following regular expressions get compiled a second time if matched by the
+            // RegexSet in order to capture the matched value.
+            let users_regex = r"(?i)^users (\d+)$";
+            let hatchrate_regex = r"(?i)^hatchrate ([0-9]*(\.[0-9]*)?){1}$";
+
+            // Compile regular expression set once to use for for matching all commands
+            // received through the controller port.
+            // @TODO: Figure out a clean way to map the location in the RegexSet here when
+            // performing the matches.matched() tests below. The current implementation is
+            // fragile to programmer mistakes if a command is inserted or moved.
             let commands = RegexSet::new(&[
                 // Exit/quit the controller connection, does not affect load test.
                 r"(?i)^exit|quit$",
@@ -72,14 +81,17 @@ pub async fn controller_main(
                 r"(?i)^echo$",
                 // Stop the load test (which will cause the controller connection to quit).
                 r"(?i)^stop$",
-                // Modify how many users the load test simulates.
-                r"(?i)^users (\d+)$",
-                // Modify how fast users start or stop.
-                //r"(?i)^hatchrate (?=.)([+-]?([0-9]*)(\.([0-9]+))?)$",
+                // Modify number of users simulated.
+                users_regex,
+                // Modify how quickly users hatch (or exit if users are reduced).
+                hatchrate_regex,
             ])
             .unwrap();
 
-            let re_users = Regex::new(r"(?i)^users (\d+)$").unwrap();
+            // Also compile the following regular expressions once to use for when
+            // the RegexSet matches these commands, to then capture the matched value.
+            let re_users = Regex::new(users_regex).unwrap();
+            let re_hatchrate = Regex::new(hatchrate_regex).unwrap();
 
             // Process data received from the client in a loop.
             loop {
@@ -131,6 +143,22 @@ pub async fn controller_main(
                         },
                     ));
                     write_to_socket(&mut socket, &format!("reconfigured users: {}\n", users)).await;
+                } else if matches.matched(4) {
+                    // This requires a second lookup to capture the integer, as documented at:
+                    // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
+                    let caps = re_hatchrate.captures(message).unwrap();
+                    let hatch_rate = caps.get(1).map_or("", |m| m.as_str());
+                    let _ = channel.try_send(GooseControl::GooseControllerCommandAndValue(
+                        GooseControllerCommandAndValue {
+                            command: GooseControllerCommand::HatchRate,
+                            value: hatch_rate.to_string(),
+                        },
+                    ));
+                    write_to_socket(
+                        &mut socket,
+                        &format!("reconfigured hatch_rate: {}\n", hatch_rate),
+                    )
+                    .await;
                 } else {
                     write_to_socket(&mut socket, "unrecognized command\n").await;
                 }
