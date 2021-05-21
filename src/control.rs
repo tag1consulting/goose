@@ -63,6 +63,24 @@ pub async fn controller_main(
             // @TODO: What happens if a larger command is entered?
             let mut buf = [0; 1024];
 
+            // @TODO: Try and capture all of these in an Enum or other structure, to simplify
+            // re-use and proper mapping between the RegexSet and matches().
+            let commands = RegexSet::new(&[
+                // Exit/quit the controller connection, does not affect load test.
+                r"(?i)^exit|quit$",
+                // Confirm the server is still connected and alive.
+                r"(?i)^echo$",
+                // Stop the load test (which will cause the controller connection to quit).
+                r"(?i)^stop$",
+                // Modify how many users the load test simulates.
+                r"(?i)^users (\d+)$",
+                // Modify how fast users start or stop.
+                //r"(?i)^hatchrate (?=.)([+-]?([0-9]*)(\.([0-9]+))?)$",
+            ])
+            .unwrap();
+
+            let re_users = Regex::new(r"(?i)^users (\d+)$").unwrap();
+
             // Process data received from the client in a loop.
             loop {
                 let n = socket
@@ -85,23 +103,6 @@ pub async fn controller_main(
                     Err(_) => continue,
                 };
 
-                // @TODO: Try and capture all of these in an Enum or other structure, to simplify
-                // re-use and proper mapping between the RegexSet and matches().
-                // @TODO: Compile this one time, not inside a loop.
-                let commands = RegexSet::new(&[
-                    // Exit/quit the controller connection, does not affect load test.
-                    r"(?i)^exit|quit$",
-                    // Confirm the server is still connected and alive.
-                    r"(?i)^echo$",
-                    // Stop the load test (which will cause the controller connection to quit).
-                    r"(?i)^stop$",
-                    // Modify how many users the load test simulates.
-                    r"(?i)^users \d+$",
-                    // Modify how fast users start or stop.
-                    //r"(?i)^hatchrate (?=.)([+-]?([0-9]*)(\.([0-9]+))?)$",
-                ])
-                .unwrap();
-
                 let matches = commands.matches(message);
                 if matches.matched(0) {
                     write_to_socket(&mut socket, "goodbye!\n").await;
@@ -121,10 +122,8 @@ pub async fn controller_main(
                 } else if matches.matched(3) {
                     // This requires a second lookup to capture the integer, as documented at:
                     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
-                    // @TODO: Compile this one time, not inside a loop.
-                    let re = Regex::new(r"(?i)^users \d+$").unwrap();
-                    let caps = re.captures(message).unwrap();
-                    let users = caps.get(0).map_or("", |m| m.as_str());
+                    let caps = re_users.captures(message).unwrap();
+                    let users = caps.get(1).map_or("", |m| m.as_str());
                     let _ = channel.try_send(GooseControl::GooseControllerCommandAndValue(
                         GooseControllerCommandAndValue {
                             command: GooseControllerCommand::Users,
