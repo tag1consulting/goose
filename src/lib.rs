@@ -464,7 +464,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use url::Url;
 
-use crate::controller::{GooseControl, GooseControllerCommand};
+use crate::controller::{GooseController, GooseControllerCommand, GooseControllerRequest};
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
@@ -818,8 +818,7 @@ struct GooseAttackRunState {
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
     /// Optional channel with controller thread, if not disabled.
-    /// @TODO: Pass a useful enum.
-    controller_channel: Option<flume::Receiver<GooseControl>>,
+    controller_channel: Option<flume::Receiver<GooseControllerRequest>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
@@ -2645,7 +2644,7 @@ impl GooseAttack {
 
     // Helper to spawn a controller thread. The controller thread opens an unbounded channel
     // to allow the controller to modify the running load test, and to report back.
-    async fn setup_controller(&self) -> Option<flume::Receiver<GooseControl>> {
+    async fn setup_controller(&self) -> Option<flume::Receiver<GooseControllerRequest>> {
         /*
          * @TODO: add run-time option to disable the controller thread.
         // If the controller is disabled, return immediately.
@@ -2657,8 +2656,8 @@ impl GooseAttack {
         // Create an unbounded channel between controller threads and the parent process,
         // allowing controllers to control the load test and request information.
         let (all_threads_controller, controller_receiver): (
-            flume::Sender<GooseControl>,
-            flume::Receiver<GooseControl>,
+            flume::Sender<GooseControllerRequest>,
+            flume::Receiver<GooseControllerRequest>,
         ) = flume::unbounded();
 
         // Spawn the innitial controller thread to allow real-time control of the load test.
@@ -3636,9 +3635,12 @@ impl GooseAttack {
             if let Some(c) = goose_attack_run_state.controller_channel.as_ref() {
                 match c.try_recv() {
                     Ok(message) => {
-                        info!("message received: {:?}", message);
-                        match message {
-                            GooseControl::Command(command) => {
+                        info!(
+                            "request from controller client {}: {:?}",
+                            message.client_id, message.request
+                        );
+                        match message.request {
+                            GooseController::Command(command) => {
                                 match command {
                                     GooseControllerCommand::Config => {
                                         // @TODO: we need a Sender.
@@ -3651,7 +3653,7 @@ impl GooseAttack {
                                     }
                                 }
                             }
-                            GooseControl::CommandAndValue(command_and_value) => {
+                            GooseController::CommandAndValue(command_and_value) => {
                                 match command_and_value.command {
                                     GooseControllerCommand::Users => {
                                         info!(
