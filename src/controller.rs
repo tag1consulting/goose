@@ -83,7 +83,7 @@ pub async fn controller_main(
         let channel_tx = communication_channel_tx.clone();
 
         // Give each controller an initial copy of the Goose onfiguration.
-        let mut controller_thread_config = configuration.clone();
+        let _controller_thread_config = configuration.clone();
 
         // Increment counter each time a new thread launches, and pass id into thread.
         threads += 1;
@@ -113,6 +113,8 @@ pub async fn controller_main(
             // RegexSet in order to capture the matched value.
             let users_regex = r"(?i)^users (\d+)$";
             let hatchrate_regex = r"(?i)^(hatchrate|hatch_rate) ([0-9]*(\.[0-9]*)?){1}$";
+            let config_regex = r"(?i)^(config|config-json)$";
+            let metrics_regex = r"(?i)^(metrics|stats|metrics-json|stats-json)$";
 
             // Compile regular expression set once to use for for matching all commands
             // received through the controller port.
@@ -131,9 +133,9 @@ pub async fn controller_main(
                 // Modify how quickly users hatch (or exit if users are reduced).
                 hatchrate_regex,
                 // Display the current load test configuration.
-                r"(?i)^config$",
+                config_regex,
                 // Display running metrics for the currently active load test.
-                r"(?i)^(metrics|stats)$",
+                metrics_regex,
             ])
             .unwrap();
 
@@ -141,6 +143,8 @@ pub async fn controller_main(
             // the RegexSet matches these commands, to then capture the matched value.
             let re_users = Regex::new(users_regex).unwrap();
             let re_hatchrate = Regex::new(hatchrate_regex).unwrap();
+            let re_config = Regex::new(config_regex).unwrap();
+            let re_metrics = Regex::new(metrics_regex).unwrap();
 
             // Process data received from the client in a loop.
             loop {
@@ -220,6 +224,8 @@ pub async fn controller_main(
                     )
                     .await;
                 } else if matches.matched(5) {
+                    let caps = re_config.captures(message).unwrap();
+                    let config_format = caps.get(1).map_or("", |m| m.as_str());
                     // Get an up-to-date copy of the configuration, as it may have changed since
                     // the version that was initially passed in.
                     if let Ok(value) = send_to_parent_and_get_reply(
@@ -232,17 +238,25 @@ pub async fn controller_main(
                     {
                         match value {
                             GooseControllerResponseMessage::Config(config) => {
-                                controller_thread_config = config;
+                                match config_format {
+                                    "config" => {
+                                        write_to_socket(&mut socket, &format!("{:#?}", config)).await;
+                                    },
+                                    "config-json" => {
+                                        // Convert the configuration object to a JSON string.
+                                        let config_json: String = serde_json::to_string(&config)
+                                            .expect("unexpected failure");
+                                        write_to_socket(&mut socket, &config_json).await;
+                                    }
+                                    _ => (),
+                                }
                             },
                             _ => warn!("parent process sent an unexpected reply, unable to update configuration"),
                         }
                     }
-
-                    // Convert the configuration object to a JSON string.
-                    let config_json: String = serde_json::to_string(&controller_thread_config)
-                        .expect("unexpected failure");
-                    write_to_socket(&mut socket, &config_json).await;
                 } else if matches.matched(6) {
+                    let caps = re_metrics.captures(message).unwrap();
+                    let metrics_format = caps.get(1).map_or("", |m| m.as_str());
                     // Get a copy of the current running metrics.
                     if let Ok(value) = send_to_parent_and_get_reply(
                         controller_thread_id,
@@ -254,10 +268,18 @@ pub async fn controller_main(
                     {
                         match value {
                             GooseControllerResponseMessage::Metrics(metrics) => {
-                                // Convert the configuration object to a JSON string.
-                                let metrics_json: String = serde_json::to_string(&metrics)
-                                    .expect("unexpected failure");
-                                write_to_socket(&mut socket, &metrics_json).await;
+                                match metrics_format {
+                                    "stats" | "metrics" => {
+                                        write_to_socket(&mut socket, &format!("{}", metrics)).await;
+                                    },
+                                    "stats-json" | "metrics-json" => {
+                                        // Convert the configuration object to a JSON string.
+                                        let metrics_json: String = serde_json::to_string(&metrics)
+                                            .expect("unexpected failure");
+                                        write_to_socket(&mut socket, &metrics_json).await;
+                                    },
+                                    _ => (),
+                                }
                             },
                             _ => warn!("parent process sent an unexpected reply, unable to display metrics"),
                         }
