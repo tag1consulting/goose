@@ -424,7 +424,7 @@
 #[macro_use]
 extern crate log;
 
-pub mod control;
+pub mod controller;
 pub mod goose;
 pub mod logger;
 #[cfg(feature = "gaggle")]
@@ -464,7 +464,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use url::Url;
 
-use crate::control::{GooseControl, GooseControllerCommand};
+use crate::controller::{GooseControl, GooseControllerCommand};
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
@@ -2663,7 +2663,7 @@ impl GooseAttack {
 
         // Spawn the innitial controller thread to allow real-time control of the load test.
         // There is no need to rejoin it when the load test ends.
-        let _ = Some(tokio::spawn(control::controller_main(
+        let _ = Some(tokio::spawn(controller::controller_main(
             self.configuration.clone(),
             all_threads_controller,
         )));
