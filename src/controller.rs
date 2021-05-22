@@ -24,22 +24,34 @@ pub struct GooseControllerCommandAndValue {
 
 /// An enumeration of all messages that the controller can send to the parent thread.
 #[derive(Debug)]
-pub enum GooseController {
+pub enum GooseControllerRequestMessage {
     Command(GooseControllerCommand),
     CommandAndValue(GooseControllerCommandAndValue),
+}
+
+/// An enumeration of all messages the parent can reply back to the controller thread.
+#[derive(Debug)]
+pub enum GooseControllerResponseMessage {
+    Config(GooseConfiguration),
+    //Metrics(GooseMetrics),
 }
 
 /// The actual request that's passed from the controller to the parent thread.
 #[derive(Debug)]
 pub struct GooseControllerRequest {
+    /// Optional one-shot channel if a reply is required.
+    pub response_channel: Option<tokio::sync::oneshot::Sender<GooseControllerResponse>>,
+    /// An integer identifying which controller client is making the request.
     pub client_id: u32,
-    pub request: GooseController,
+    /// The actual reqeuest message.
+    pub request: GooseControllerRequestMessage,
 }
 
-/// An enumeration of all messages the parent thread reply back to the controller thread.
-pub enum GooseControlReply {
-    GooseConfiguration,
-    //GooseMetrics,
+/// The actual request that's passed from the controller to the parent thread.
+#[derive(Debug)]
+pub struct GooseControllerResponse {
+    pub client_id: u32,
+    pub response: GooseControllerResponseMessage,
 }
 
 /// The control loop listens for connection on the configured TCP port. Each connection
@@ -51,8 +63,8 @@ pub async fn controller_main(
     // Expose load test configuration to controller thread.
     // @TODO: use this to configure the listening ip and port.
     configuration: GooseConfiguration,
-    // A communication channel with the parent.
-    communication_channel: flume::Sender<GooseControllerRequest>,
+    // For sending requests to the parent process.
+    communication_channel_tx: flume::Sender<GooseControllerRequest>,
 ) -> io::Result<()> {
     // @TODO: make this configurable
     let addr = "127.0.0.1:5116";
@@ -66,11 +78,11 @@ pub async fn controller_main(
         // Asynchronously wait for an inbound socket.
         let (mut socket, _) = listener.accept().await?;
 
-        // Make a clone of the communication channel to hand to the next thread.
-        let channel = communication_channel.clone();
+        // Clone the communication channel to hand to the next thread.
+        let channel_tx = communication_channel_tx.clone();
 
         // Give each controller an initial copy of the Goose onfiguration.
-        let controller_thread_config = configuration.clone();
+        let mut controller_thread_config = configuration.clone();
 
         // Increment counter each time a new thread launches, and pass id into thread.
         threads += 1;
@@ -164,8 +176,9 @@ pub async fn controller_main(
                     write_to_socket(&mut socket, "echo").await;
                 } else if matches.matched(2) {
                     send_to_parent(
-                        &channel,
                         controller_thread_id,
+                        &channel_tx,
+                        None,
                         GooseControllerCommand::Stop,
                         None,
                     )
@@ -177,8 +190,9 @@ pub async fn controller_main(
                     let caps = re_users.captures(message).unwrap();
                     let users = caps.get(1).map_or("", |m| m.as_str());
                     send_to_parent(
-                        &channel,
                         controller_thread_id,
+                        &channel_tx,
+                        None,
                         GooseControllerCommand::Users,
                         Some(users.to_string()),
                     )
@@ -190,8 +204,9 @@ pub async fn controller_main(
                     let caps = re_hatchrate.captures(message).unwrap();
                     let hatch_rate = caps.get(2).map_or("", |m| m.as_str());
                     send_to_parent(
-                        &channel,
                         controller_thread_id,
+                        &channel_tx,
+                        None,
                         GooseControllerCommand::HatchRate,
                         Some(hatch_rate.to_string()),
                     )
@@ -204,13 +219,20 @@ pub async fn controller_main(
                 } else if matches.matched(5) {
                     // @TODO: Get an up-to-date copy of the configuration from the parent thread,
                     // as this and other controller-threads can modify it.
-                    send_to_parent_and_get_reply(
-                        &channel,
+                    if let Ok(value) = send_to_parent_and_get_reply(
                         controller_thread_id,
+                        &channel_tx,
                         GooseControllerCommand::Config,
                         None,
                     )
-                    .await;
+                    .await
+                    {
+                        match value {
+                            GooseControllerResponseMessage::Config(config) => {
+                                controller_thread_config = config;
+                            }
+                        }
+                    }
 
                     // Convert the configuration object to a JSON string.
                     let config_json: String = serde_json::to_string(&controller_thread_config)
@@ -235,25 +257,27 @@ async fn write_to_socket(socket: &mut tokio::net::TcpStream, message: &str) {
 
 /// Send a message to parent thread, with or without an optional value.
 async fn send_to_parent(
-    channel: &flume::Sender<GooseControllerRequest>,
     client_id: u32,
+    channel: &flume::Sender<GooseControllerRequest>,
+    response_channel: Option<tokio::sync::oneshot::Sender<GooseControllerResponse>>,
     command: GooseControllerCommand,
     optional_value: Option<String>,
 ) {
     if let Some(value) = optional_value {
         // @TODO: handle a possible error when sending.
         let _ = channel.try_send(GooseControllerRequest {
+            response_channel,
             client_id,
-            request: GooseController::CommandAndValue(GooseControllerCommandAndValue {
-                command,
-                value,
-            }),
+            request: GooseControllerRequestMessage::CommandAndValue(
+                GooseControllerCommandAndValue { command, value },
+            ),
         });
     } else {
         // @TODO: handle a possible error when sending.
         let _ = channel.try_send(GooseControllerRequest {
+            response_channel,
             client_id,
-            request: GooseController::Command(command),
+            request: GooseControllerRequestMessage::Command(command),
         });
     }
 }
@@ -261,13 +285,24 @@ async fn send_to_parent(
 /// Send a message to parent thread, with or without an optional value, and wait for
 /// a reply.
 async fn send_to_parent_and_get_reply(
-    channel: &flume::Sender<GooseControllerRequest>,
     client_id: u32,
+    channel_tx: &flume::Sender<GooseControllerRequest>,
     command: GooseControllerCommand,
     value: Option<String>,
-) {
-    // @TODO error handling
-    send_to_parent(channel, client_id, command, value).await;
+) -> Result<GooseControllerResponseMessage, String> {
+    // Create a one-shot channel to allow the parent to reply to our request. As flume
+    // doesn't implement a one-shot channel, we use tokio for this temporary channel.
+    let (response_tx, response_rx): (
+        tokio::sync::oneshot::Sender<GooseControllerResponse>,
+        tokio::sync::oneshot::Receiver<GooseControllerResponse>,
+    ) = tokio::sync::oneshot::channel();
 
-    // @TODO: receive data from the parent.
+    // Send request to parent.
+    send_to_parent(client_id, channel_tx, Some(response_tx), command, value).await;
+
+    // Await resposne from parent.
+    match response_rx.await {
+        Ok(value) => Ok(value.response),
+        Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
+    }
 }

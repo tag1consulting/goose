@@ -464,7 +464,10 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use url::Url;
 
-use crate::controller::{GooseController, GooseControllerCommand, GooseControllerRequest};
+use crate::controller::{
+    GooseControllerCommand, GooseControllerRequest, GooseControllerRequestMessage,
+    GooseControllerResponse, GooseControllerResponseMessage,
+};
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
@@ -817,8 +820,8 @@ struct GooseAttackRunState {
     throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
-    /// Optional channel with controller thread, if not disabled.
-    controller_channel: Option<flume::Receiver<GooseControllerRequest>>,
+    /// Optional channel allowing controller thread to make requests, if not disabled.
+    controller_channel_rx: Option<flume::Receiver<GooseControllerRequest>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
@@ -2642,8 +2645,9 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
-    // Helper to spawn a controller thread. The controller thread opens an unbounded channel
-    // to allow the controller to modify the running load test, and to report back.
+    // Helper to spawn a controller thread. The controller thread uses one channel to send
+    // requests to the parent thread. The parent uses the other channel to send responses
+    // back to the controller thread.
     async fn setup_controller(&self) -> Option<flume::Receiver<GooseControllerRequest>> {
         /*
          * @TODO: add run-time option to disable the controller thread.
@@ -2653,22 +2657,22 @@ impl GooseAttack {
         }
         */
 
-        // Create an unbounded channel between controller threads and the parent process,
-        // allowing controllers to control the load test and request information.
-        let (all_threads_controller, controller_receiver): (
+        // Create an unbounded channel for controller threads to send requests to the parent
+        // process.
+        let (all_threads_controller_request_tx, controller_request_rx): (
             flume::Sender<GooseControllerRequest>,
             flume::Receiver<GooseControllerRequest>,
         ) = flume::unbounded();
 
-        // Spawn the innitial controller thread to allow real-time control of the load test.
-        // There is no need to rejoin it when the load test ends.
+        // Spawn the initial controller thread to allow real-time control of the load test.
+        // There is no need to rejoin this thread when the load test ends.
         let _ = Some(tokio::spawn(controller::controller_main(
             self.configuration.clone(),
-            all_threads_controller,
+            all_threads_controller_request_tx,
         )));
 
         // Return the parent end of the channel, if created.
-        Some(controller_receiver)
+        Some(controller_request_rx)
     }
 
     // Prepare an asynchronous file writer for `report_file` (if enabled).
@@ -2771,7 +2775,7 @@ impl GooseAttack {
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
         // Spawn a controller thread.
-        let controller_channel = self.setup_controller().await;
+        let controller_channel_rx = self.setup_controller().await;
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
@@ -2812,7 +2816,7 @@ impl GooseAttack {
             all_threads_debug_logger_tx,
             throttle_threads_tx,
             parent_to_throttle_tx,
-            controller_channel,
+            controller_channel_rx,
             report_file,
             requests_file,
             metrics_header_displayed: false,
@@ -3632,7 +3636,7 @@ impl GooseAttack {
 
             // If the controller is enabled, check if we've received any
             // messages.
-            if let Some(c) = goose_attack_run_state.controller_channel.as_ref() {
+            if let Some(c) = goose_attack_run_state.controller_channel_rx.as_ref() {
                 match c.try_recv() {
                     Ok(message) => {
                         info!(
@@ -3640,10 +3644,21 @@ impl GooseAttack {
                             message.client_id, message.request
                         );
                         match message.request {
-                            GooseController::Command(command) => {
+                            GooseControllerRequestMessage::Command(command) => {
                                 match command {
                                     GooseControllerCommand::Config => {
-                                        // @TODO: we need a Sender.
+                                        if let Some(oneshot_tx) = message.response_channel {
+                                            // @TODO: handle an error sending the message.
+                                            let _ = oneshot_tx.send(GooseControllerResponse {
+                                                client_id: message.client_id,
+                                                response: GooseControllerResponseMessage::Config(
+                                                    self.configuration.clone(),
+                                                ),
+                                            });
+                                        } else {
+                                            // @TODO: the client request information but didn't
+                                            // provide us with a response channel.
+                                        }
                                     }
                                     GooseControllerCommand::Stop => {
                                         self.attack_phase = AttackPhase::Stopping;
@@ -3653,7 +3668,7 @@ impl GooseAttack {
                                     }
                                 }
                             }
-                            GooseController::CommandAndValue(command_and_value) => {
+                            GooseControllerRequestMessage::CommandAndValue(command_and_value) => {
                                 match command_and_value.command {
                                     GooseControllerCommand::Users => {
                                         info!(
