@@ -6,7 +6,8 @@
 use chrono::prelude::*;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};
 use std::{f32, fmt};
 
@@ -1027,6 +1028,33 @@ impl GooseMetrics {
         )?;
 
         Ok(())
+    }
+}
+impl Serialize for GooseMetrics {
+    // GooseMetrics serialization can't be derived because of the started field.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("GooseMetrics", 10)?;
+        s.serialize_field("hash", &self.hash)?;
+        // Convert started field to a unix timestamp.
+        let timestamp;
+        if let Some(started) = self.started {
+            timestamp = started.timestamp();
+        } else {
+            timestamp = 0;
+        }
+        s.serialize_field("started", &timestamp)?;
+        s.serialize_field("duration", &self.duration)?;
+        s.serialize_field("users", &self.users)?;
+        s.serialize_field("requests", &self.requests)?;
+        s.serialize_field("tasks", &self.tasks)?;
+        s.serialize_field("errors", &self.errors)?;
+        s.serialize_field("final_metrics", &self.final_metrics)?;
+        s.serialize_field("display_status_codes", &self.display_status_codes)?;
+        s.serialize_field("display_mertrics", &self.display_metrics)?;
+        s.end()
     }
 }
 

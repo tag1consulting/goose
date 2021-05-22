@@ -1,4 +1,4 @@
-//use crate::metrics::GooseMetrics;
+use crate::metrics::GooseMetrics;
 use crate::GooseConfiguration;
 
 use regex::{Regex, RegexSet};
@@ -12,6 +12,7 @@ use std::str;
 pub enum GooseControllerCommand {
     Config,
     HatchRate,
+    Metrics,
     Stop,
     Users,
 }
@@ -33,7 +34,7 @@ pub enum GooseControllerRequestMessage {
 #[derive(Debug)]
 pub enum GooseControllerResponseMessage {
     Config(GooseConfiguration),
-    //Metrics(GooseMetrics),
+    Metrics(GooseMetrics),
 }
 
 /// The actual request that's passed from the controller to the parent thread.
@@ -129,8 +130,10 @@ pub async fn controller_main(
                 users_regex,
                 // Modify how quickly users hatch (or exit if users are reduced).
                 hatchrate_regex,
-                // Dispaly the current load test configuration.
+                // Display the current load test configuration.
                 r"(?i)^config$",
+                // Display running metrics for the currently active load test.
+                r"(?i)^(metrics|stats)$",
             ])
             .unwrap();
 
@@ -217,8 +220,8 @@ pub async fn controller_main(
                     )
                     .await;
                 } else if matches.matched(5) {
-                    // @TODO: Get an up-to-date copy of the configuration from the parent thread,
-                    // as this and other controller-threads can modify it.
+                    // Get an up-to-date copy of the configuration, as it may have changed since
+                    // the version that was initially passed in.
                     if let Ok(value) = send_to_parent_and_get_reply(
                         controller_thread_id,
                         &channel_tx,
@@ -230,7 +233,8 @@ pub async fn controller_main(
                         match value {
                             GooseControllerResponseMessage::Config(config) => {
                                 controller_thread_config = config;
-                            }
+                            },
+                            _ => warn!("parent process sent an unexpected reply, unable to update configuration"),
                         }
                     }
 
@@ -238,6 +242,26 @@ pub async fn controller_main(
                     let config_json: String = serde_json::to_string(&controller_thread_config)
                         .expect("unexpected failure");
                     write_to_socket(&mut socket, &config_json).await;
+                } else if matches.matched(6) {
+                    // Get a copy of the current running metrics.
+                    if let Ok(value) = send_to_parent_and_get_reply(
+                        controller_thread_id,
+                        &channel_tx,
+                        GooseControllerCommand::Metrics,
+                        None,
+                    )
+                    .await
+                    {
+                        match value {
+                            GooseControllerResponseMessage::Metrics(metrics) => {
+                                // Convert the configuration object to a JSON string.
+                                let metrics_json: String = serde_json::to_string(&metrics)
+                                    .expect("unexpected failure");
+                                write_to_socket(&mut socket, &metrics_json).await;
+                            },
+                            _ => warn!("parent process sent an unexpected reply, unable to display metrics"),
+                        }
+                    }
                 } else {
                     write_to_socket(&mut socket, "unrecognized command").await;
                 }

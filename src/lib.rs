@@ -3655,9 +3655,17 @@ impl GooseAttack {
                                                     self.configuration.clone(),
                                                 ),
                                             });
-                                        } else {
-                                            // @TODO: the client request information but didn't
-                                            // provide us with a response channel.
+                                        }
+                                    }
+                                    GooseControllerCommand::Metrics => {
+                                        if let Some(oneshot_tx) = message.response_channel {
+                                            // @TODO: handle an error sending the message.
+                                            let _ = oneshot_tx.send(GooseControllerResponse {
+                                                client_id: message.client_id,
+                                                response: GooseControllerResponseMessage::Metrics(
+                                                    self.metrics.clone(),
+                                                ),
+                                            });
                                         }
                                     }
                                     GooseControllerCommand::Stop => {
