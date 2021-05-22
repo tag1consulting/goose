@@ -3685,10 +3685,11 @@ impl GooseAttack {
                                         );
                                     }
                                     GooseControllerCommand::HatchRate => {
-                                        info!(
-                                            "@TODO: change hatch_rate to {}",
-                                            command_and_value.value
-                                        );
+                                        // The controller uses a regular expression to validate that
+                                        // this is a valid float, so simply use it with further
+                                        // validation.
+                                        self.configuration.hatch_rate =
+                                            Some(command_and_value.value);
                                     }
                                     _ => {
                                         warn!("Unexpected command: {:?}", command_and_value)
