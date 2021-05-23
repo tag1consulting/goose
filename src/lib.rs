@@ -3680,14 +3680,20 @@ impl GooseAttack {
                                 match command_and_value.command {
                                     GooseControllerCommand::Users => {
                                         info!(
-                                            "@TODO: change number of users to {}",
-                                            command_and_value.value
+                                            "changing users from {:?} to {}",
+                                            self.configuration.users, command_and_value.value
                                         );
+                                        self.configuration.users =
+                                            Some(command_and_value.value.parse().unwrap());
                                     }
                                     GooseControllerCommand::HatchRate => {
                                         // The controller uses a regular expression to validate that
                                         // this is a valid float, so simply use it with further
                                         // validation.
+                                        info!(
+                                            "changing hatch_rate from {:?} to {}",
+                                            self.configuration.hatch_rate, command_and_value.value
+                                        );
                                         self.configuration.hatch_rate =
                                             Some(command_and_value.value);
                                     }

@@ -106,7 +106,8 @@ pub async fn controller_main(
                 .await
                 .expect("failed to write data to socket");
 
-            // @TODO: What happens if a larger command is entered?
+            // @TODO: controller output gets message up if a larger command is entered, reset
+            // the connection.
             let mut buf = [0; 1024];
 
             // The following regular expressions get compiled a second time if matched by the
@@ -122,8 +123,10 @@ pub async fn controller_main(
             // performing the matches.matched() tests below. The current implementation is
             // fragile to programmer mistakes if a command is inserted or moved.
             let commands = RegexSet::new(&[
+                // Provide a list of possible commands.
+                r"(?i)^(help|\?)$",
                 // Exit/quit the controller connection, does not affect load test.
-                r"(?i)^exit|quit$",
+                r"(?i)^(exit|quit)$",
                 // Confirm the server is still connected and alive.
                 r"(?i)^echo$",
                 // Stop the load test (which will cause the controller connection to quit).
@@ -157,8 +160,6 @@ pub async fn controller_main(
                     return;
                 }
 
-                // @TODO: why doesn't trim() work?
-                //let message = str::from_utf8(&buf).unwrap().trim();
                 let message = match str::from_utf8(&buf) {
                     Ok(m) => {
                         let mut messages = m.lines();
@@ -169,7 +170,11 @@ pub async fn controller_main(
                 };
 
                 let matches = commands.matches(message);
+                // Help
                 if matches.matched(0) {
+                    write_to_socket(&mut socket, &display_help()).await;
+                // Exit
+                } else if matches.matched(1) {
                     write_to_socket(&mut socket, "goodbye!").await;
                     match socket.peer_addr() {
                         Ok(p) => info!("client [{}] disconnected from {}", controller_thread_id, p),
@@ -179,9 +184,11 @@ pub async fn controller_main(
                         ),
                     };
                     return;
-                } else if matches.matched(1) {
-                    write_to_socket(&mut socket, "echo").await;
+                // Echo
                 } else if matches.matched(2) {
+                    write_to_socket(&mut socket, "echo").await;
+                // Stop
+                } else if matches.matched(3) {
                     send_to_parent(
                         controller_thread_id,
                         &channel_tx,
@@ -191,7 +198,8 @@ pub async fn controller_main(
                     )
                     .await;
                     write_to_socket(&mut socket, "stopping load test...").await;
-                } else if matches.matched(3) {
+                // Users
+                } else if matches.matched(4) {
                     // This requires a second lookup to capture the integer, as documented at:
                     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
                     let caps = re_users.captures(message).unwrap();
@@ -205,7 +213,8 @@ pub async fn controller_main(
                     )
                     .await;
                     write_to_socket(&mut socket, &format!("reconfigured users: {}", users)).await;
-                } else if matches.matched(4) {
+                // Hatch rate
+                } else if matches.matched(5) {
                     // This requires a second lookup to capture the integer, as documented at:
                     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
                     let caps = re_hatchrate.captures(message).unwrap();
@@ -223,7 +232,8 @@ pub async fn controller_main(
                         &format!("reconfigured hatch_rate: {}", hatch_rate),
                     )
                     .await;
-                } else if matches.matched(5) {
+                // Config
+                } else if matches.matched(6) {
                     let caps = re_config.captures(message).unwrap();
                     let config_format = caps.get(1).map_or("", |m| m.as_str());
                     // Get an up-to-date copy of the configuration, as it may have changed since
@@ -254,7 +264,8 @@ pub async fn controller_main(
                             _ => warn!("parent process sent an unexpected reply, unable to update configuration"),
                         }
                     }
-                } else if matches.matched(6) {
+                // Metrics
+                } else if matches.matched(7) {
                     let caps = re_metrics.captures(message).unwrap();
                     let metrics_format = caps.get(1).map_or("", |m| m.as_str());
                     // Get a copy of the current running metrics.
@@ -351,4 +362,23 @@ async fn send_to_parent_and_get_reply(
         Ok(value) => Ok(value.response),
         Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
     }
+}
+
+// A controller help screen.
+fn display_help() -> String {
+    format!(
+        r"{} {} controller commands:
+ help (?)           this help
+ exit (quit)        exit controller
+ echo               confirm controller is working
+ stop               stop running load test (and exit controller)
+ users INT          set number of simulated users
+ hatchrate FLOAT    set per-second rate users hatch
+ config             display load test configuration
+ config-json        display load test configuration in json format
+ metrics            display metrics for current load test
+ metrics-json       display metrics for current load test in json format",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    )
 }
