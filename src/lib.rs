@@ -3670,6 +3670,15 @@ impl GooseAttack {
                                     }
                                     GooseControllerCommand::Stop => {
                                         self.attack_phase = AttackPhase::Stopping;
+                                        if let Some(oneshot_tx) = message.response_channel {
+                                            // @TODO: handle an error sending the message.
+                                            let _ = oneshot_tx.send(GooseControllerResponse {
+                                                client_id: message.client_id,
+                                                response: GooseControllerResponseMessage::Bool(
+                                                    true,
+                                                ),
+                                            });
+                                        }
                                     }
                                     _ => {
                                         warn!("Unexpected command: {:?}", command);

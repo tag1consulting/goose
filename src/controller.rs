@@ -33,6 +33,7 @@ pub enum GooseControllerRequestMessage {
 /// An enumeration of all messages the parent can reply back to the controller thread.
 #[derive(Debug)]
 pub enum GooseControllerResponseMessage {
+    Bool(bool),
     Config(GooseConfiguration),
     Metrics(GooseMetrics),
 }
@@ -101,10 +102,7 @@ pub async fn controller_main(
             };
 
             // Display initial goose> prompt.
-            socket
-                .write_all("goose> ".as_bytes())
-                .await
-                .expect("failed to write data to socket");
+            write_to_socket_raw(&mut socket, "goose> ").await;
 
             // @TODO: controller output gets message up if a larger command is entered, reset
             // the connection.
@@ -189,15 +187,18 @@ pub async fn controller_main(
                     write_to_socket(&mut socket, "echo").await;
                 // Stop
                 } else if matches.matched(3) {
-                    send_to_parent(
+                    write_to_socket_raw(&mut socket, "stopping load test ...\n").await;
+                    if let Err(e) = send_to_parent_and_get_reply(
                         controller_thread_id,
                         &channel_tx,
-                        None,
                         GooseControllerCommand::Stop,
                         None,
                     )
-                    .await;
-                    write_to_socket(&mut socket, "stopping load test...").await;
+                    .await
+                    {
+                        write_to_socket(&mut socket, &format!("failed to stop load test [{}]", e))
+                            .await;
+                    }
                 // Users
                 } else if matches.matched(4) {
                     // This requires a second lookup to capture the integer, as documented at:
@@ -301,6 +302,15 @@ pub async fn controller_main(
             }
         });
     }
+}
+
+/// Send a message to the client TcpStream, no prompt or line feed.
+async fn write_to_socket_raw(socket: &mut tokio::net::TcpStream, message: &str) {
+    socket
+        // Add a linefeed to the end of the message.
+        .write_all(message.as_bytes())
+        .await
+        .expect("failed to write data to socket");
 }
 
 /// Send a message to the client TcpStream.
