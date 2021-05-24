@@ -3643,48 +3643,45 @@ impl GooseAttack {
                             "request from controller client {}: {:?}",
                             message.client_id, message.request
                         );
-                        match message.request {
-                            GooseControllerRequestMessage::Command(command) => {
-                                match command {
-                                    GooseControllerCommand::Config => {
-                                        if let Some(oneshot_tx) = message.response_channel {
-                                            // @TODO: handle an error sending the message.
-                                            let _ = oneshot_tx.send(GooseControllerResponse {
-                                                client_id: message.client_id,
-                                                response: GooseControllerResponseMessage::Config(
-                                                    self.configuration.clone(),
-                                                ),
-                                            });
-                                        }
-                                    }
-                                    GooseControllerCommand::Metrics => {
-                                        if let Some(oneshot_tx) = message.response_channel {
-                                            // @TODO: handle an error sending the message.
-                                            let _ = oneshot_tx.send(GooseControllerResponse {
-                                                client_id: message.client_id,
-                                                response: GooseControllerResponseMessage::Metrics(
-                                                    self.metrics.clone(),
-                                                ),
-                                            });
-                                        }
-                                    }
-                                    GooseControllerCommand::Stop => {
-                                        self.attack_phase = AttackPhase::Stopping;
-                                        if let Some(oneshot_tx) = message.response_channel {
-                                            // @TODO: handle an error sending the message.
-                                            let _ = oneshot_tx.send(GooseControllerResponse {
-                                                client_id: message.client_id,
-                                                response: GooseControllerResponseMessage::Bool(
-                                                    true,
-                                                ),
-                                            });
-                                        }
-                                    }
-                                    _ => {
-                                        warn!("Unexpected command: {:?}", command);
-                                    }
+                        match &message.request {
+                            GooseControllerRequestMessage::Command(command) => match command {
+                                // Send back a copy of the running configuration.
+                                GooseControllerCommand::Config => {
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Config(Box::new(
+                                            self.configuration.clone(),
+                                        )),
+                                    );
                                 }
-                            }
+                                // Acknowledge that an echo.
+                                GooseControllerCommand::Echo => {
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                }
+                                // Send back a copy of the running metrics.
+                                GooseControllerCommand::Metrics => {
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Metrics(Box::new(
+                                            self.metrics.clone(),
+                                        )),
+                                    );
+                                }
+                                // Stop the load test, and acknowledge request.
+                                GooseControllerCommand::Stop => {
+                                    self.attack_phase = AttackPhase::Stopping;
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                }
+                                _ => {
+                                    warn!("Unexpected command: {:?}", command);
+                                }
+                            },
                             GooseControllerRequestMessage::CommandAndValue(command_and_value) => {
                                 match command_and_value.command {
                                     GooseControllerCommand::Users => {
@@ -3704,7 +3701,7 @@ impl GooseAttack {
                                             self.configuration.hatch_rate, command_and_value.value
                                         );
                                         self.configuration.hatch_rate =
-                                            Some(command_and_value.value);
+                                            Some(command_and_value.value.clone());
                                     }
                                     _ => {
                                         warn!("Unexpected command: {:?}", command_and_value)
@@ -3722,6 +3719,21 @@ impl GooseAttack {
         }
 
         Ok(self)
+    }
+
+    // Use the provided oneshot channel to reply to a controller client request.
+    fn reply_to_controller(
+        &mut self,
+        request: GooseControllerRequest,
+        response: GooseControllerResponseMessage,
+    ) {
+        if let Some(oneshot_tx) = request.response_channel {
+            // @TODO: handle an error sending the message.
+            let _ = oneshot_tx.send(GooseControllerResponse {
+                client_id: request.client_id,
+                response,
+            });
+        }
     }
 
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads.

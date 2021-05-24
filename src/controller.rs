@@ -11,6 +11,7 @@ use std::str;
 #[derive(Debug)]
 pub enum GooseControllerCommand {
     Config,
+    Echo,
     HatchRate,
     Metrics,
     Stop,
@@ -34,8 +35,8 @@ pub enum GooseControllerRequestMessage {
 #[derive(Debug)]
 pub enum GooseControllerResponseMessage {
     Bool(bool),
-    Config(GooseConfiguration),
-    Metrics(GooseMetrics),
+    Config(Box<GooseConfiguration>),
+    Metrics(Box<GooseMetrics>),
 }
 
 /// The actual request that's passed from the controller to the parent thread.
@@ -184,7 +185,19 @@ pub async fn controller_main(
                     return;
                 // Echo
                 } else if matches.matched(2) {
-                    write_to_socket(&mut socket, "echo").await;
+                    match send_to_parent_and_get_reply(
+                        controller_thread_id,
+                        &channel_tx,
+                        GooseControllerCommand::Echo,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(_) => write_to_socket(&mut socket, "echo").await,
+                        Err(e) => {
+                            write_to_socket(&mut socket, &format!("echo failed: [{}]", e)).await
+                        }
+                    }
                 // Stop
                 } else if matches.matched(3) {
                     write_to_socket_raw(&mut socket, "stopping load test ...\n").await;
