@@ -424,6 +424,7 @@
 #[macro_use]
 extern crate log;
 
+pub mod controller;
 pub mod goose;
 pub mod logger;
 #[cfg(feature = "gaggle")]
@@ -463,6 +464,10 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use url::Url;
 
+use crate::controller::{
+    GooseControllerCommand, GooseControllerRequest, GooseControllerRequestMessage,
+    GooseControllerResponse, GooseControllerResponseMessage,
+};
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
@@ -473,6 +478,9 @@ use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
 /// Constant defining Goose's default port when running a Gaggle.
 const DEFAULT_PORT: &str = "5115";
+
+/// Constant defining Goose's default Controller port.
+const DEFAULT_CONTROLLER_PORT: &str = "5116";
 
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
@@ -690,13 +698,15 @@ pub struct GooseDefaults {
     /// An optional default for the requests log file name.
     requests_file: Option<String>,
     /// An optional default for the requests log file format.
-    metrics_format: Option<String>,
+    requests_format: Option<String>,
     /// An optional default for the debug log file name.
     debug_file: Option<String>,
     /// An optional default for the debug log format.
     debug_format: Option<String>,
     /// An optional default for not logging response body in debug log.
     no_debug_body: Option<bool>,
+    /// An optional default for not enabling telnet Controller thread.
+    no_controller: Option<bool>,
     /// An optional default to track additional status code metrics.
     status_codes: Option<bool>,
     /// An optional default maximum requests per second.
@@ -709,6 +719,10 @@ pub struct GooseDefaults {
     expect_workers: Option<u16>,
     /// An optional default for Manager to ignore load test checksum.
     no_hash_check: Option<bool>,
+    /// An optional default for host Controller listens on.
+    controller_host: Option<String>,
+    /// An optional default for port Controller listens on.
+    controller_port: Option<u16>,
     /// An optional default for host Manager listens on.
     manager_bind_host: Option<String>,
     /// An optional default for port Manager listens on.
@@ -760,6 +774,8 @@ pub enum GooseDefault {
     DebugFormat,
     /// An optional default for not logging the response body in the debug log.
     NoDebugBody,
+    /// An optional default for not enabling telnet Controller thread.
+    NoController,
     /// An optional default to track additional status code metrics.
     StatusCodes,
     /// An optional default maximum requests per second.
@@ -772,6 +788,10 @@ pub enum GooseDefault {
     ExpectWorkers,
     /// An optional default for Manager to ignore load test checksum.
     NoHashCheck,
+    /// An optional default for host Controller listens on.
+    ControllerHost,
+    /// An optional default for port Controller listens on.
+    ControllerPort,
     /// An optional default for host Manager listens on.
     ManagerBindHost,
     /// An optional default for port Manager listens on.
@@ -815,6 +835,8 @@ struct GooseAttackRunState {
     throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
+    /// Optional channel allowing controller thread to make requests, if not disabled.
+    controller_channel_rx: Option<flume::Receiver<GooseControllerRequest>>,
     /// Optional buffered writer for requests log file, if enabled.
     requests_file: Option<BufWriter<File>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
@@ -2159,11 +2181,11 @@ impl GooseAttack {
 
     // Configure requests log format.
     fn set_requests_format(&mut self) -> Result<(), GooseError> {
-        if self.configuration.metrics_format.is_empty() {
-            if let Some(default_metrics_format) = &self.defaults.metrics_format {
-                self.configuration.metrics_format = default_metrics_format.to_string();
+        if self.configuration.requests_format.is_empty() {
+            if let Some(default_requests_format) = &self.defaults.requests_format {
+                self.configuration.requests_format = default_requests_format.to_string();
             } else {
-                self.configuration.metrics_format = "json".to_string();
+                self.configuration.requests_format = "json".to_string();
             }
         } else {
             // Log format isn't relevant if metrics aren't enabled.
@@ -2178,17 +2200,17 @@ impl GooseAttack {
             else if self.get_requests_file_path().is_none() {
                 return Err(GooseError::InvalidOption {
                     option: "--requests-format".to_string(),
-                    value: self.configuration.metrics_format.clone(),
+                    value: self.configuration.requests_format.clone(),
                     detail: "The --requests-file option must be set together with the --requests-format option.".to_string(),
                 });
             }
         }
 
         let options = vec!["json", "csv", "raw"];
-        if !options.contains(&self.configuration.metrics_format.as_str()) {
+        if !options.contains(&self.configuration.requests_format.as_str()) {
             return Err(GooseError::InvalidOption {
                 option: "--requests-format".to_string(),
-                value: self.configuration.metrics_format.clone(),
+                value: self.configuration.requests_format.clone(),
                 detail: format!(
                     "The --requests-format option must be set to one of: {}.",
                     options.join(", ")
@@ -2233,7 +2255,7 @@ impl GooseAttack {
             if self.configuration.debug_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-format".to_string(),
-                    value: self.configuration.metrics_format.clone(),
+                    value: self.configuration.requests_format.clone(),
                     detail: "The --debug-file option must be set together with the --debug-format option.".to_string(),
                 });
             }
@@ -2638,6 +2660,52 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
+    // Helper to spawn a controller thread. The controller thread uses one channel to send
+    // requests to the parent thread. The parent uses the other channel to send responses
+    // back to the controller thread.
+    async fn setup_controller(&mut self) -> Option<flume::Receiver<GooseControllerRequest>> {
+        // If the controller is disabled, return immediately.
+        if self.configuration.no_controller {
+            return None;
+        }
+
+        // Configure controller_host, using default if run-time option is not set.
+        if self.configuration.controller_host.is_empty() {
+            self.configuration.controller_host =
+                if let Some(host) = self.defaults.controller_host.clone() {
+                    host
+                } else {
+                    "0.0.0.0".to_string()
+                }
+        }
+
+        // Then configure controller_port, using default if run-time option is not set.
+        if self.configuration.controller_port == 0 {
+            self.configuration.controller_port = if let Some(port) = self.defaults.controller_port {
+                port
+            } else {
+                DEFAULT_CONTROLLER_PORT.to_string().parse().unwrap()
+            };
+        }
+
+        // Create an unbounded channel for controller threads to send requests to the parent
+        // process.
+        let (all_threads_controller_request_tx, controller_request_rx): (
+            flume::Sender<GooseControllerRequest>,
+            flume::Receiver<GooseControllerRequest>,
+        ) = flume::unbounded();
+
+        // Spawn the initial controller thread to allow real-time control of the load test.
+        // There is no need to rejoin this thread when the load test ends.
+        let _ = Some(tokio::spawn(controller::controller_main(
+            self.configuration.clone(),
+            all_threads_controller_request_tx,
+        )));
+
+        // Return the parent end of the channel, if created.
+        Some(controller_request_rx)
+    }
+
     // Prepare an asynchronous file writer for `report_file` (if enabled).
     async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
         if let Some(report_file_path) = self.get_report_file_path() {
@@ -2737,6 +2805,9 @@ impl GooseAttack {
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
+        // Spawn a controller thread.
+        let controller_channel_rx = self.setup_controller().await;
+
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
         let std_now = std::time::Instant::now();
@@ -2776,6 +2847,7 @@ impl GooseAttack {
             all_threads_debug_logger_tx,
             throttle_threads_tx,
             parent_to_throttle_tx,
+            controller_channel_rx,
             report_file,
             requests_file,
             metrics_header_displayed: false,
@@ -3592,9 +3664,107 @@ impl GooseAttack {
                 self.sync_metrics(&mut goose_attack_run_state).await?;
                 sync_metrics_timer = std::time::Instant::now();
             }
+
+            // If the controller is enabled, check if we've received any
+            // messages.
+            if let Some(c) = goose_attack_run_state.controller_channel_rx.as_ref() {
+                match c.try_recv() {
+                    Ok(message) => {
+                        info!(
+                            "request from controller client {}: {:?}",
+                            message.client_id, message.request
+                        );
+                        match &message.request {
+                            GooseControllerRequestMessage::Command(command) => match command {
+                                // Send back a copy of the running configuration.
+                                GooseControllerCommand::Config => {
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Config(Box::new(
+                                            self.configuration.clone(),
+                                        )),
+                                    );
+                                }
+                                // Acknowledge that an echo.
+                                GooseControllerCommand::Echo => {
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                }
+                                // Send back a copy of the running metrics.
+                                GooseControllerCommand::Metrics => {
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Metrics(Box::new(
+                                            self.metrics.clone(),
+                                        )),
+                                    );
+                                }
+                                // Stop the load test, and acknowledge request.
+                                GooseControllerCommand::Stop => {
+                                    self.attack_phase = AttackPhase::Stopping;
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                }
+                                _ => {
+                                    warn!("Unexpected command: {:?}", command);
+                                }
+                            },
+                            GooseControllerRequestMessage::CommandAndValue(command_and_value) => {
+                                match command_and_value.command {
+                                    GooseControllerCommand::Users => {
+                                        info!(
+                                            "changing users from {:?} to {}",
+                                            self.configuration.users, command_and_value.value
+                                        );
+                                        self.configuration.users =
+                                            Some(command_and_value.value.parse().unwrap());
+                                    }
+                                    GooseControllerCommand::HatchRate => {
+                                        // The controller uses a regular expression to validate that
+                                        // this is a valid float, so simply use it with further
+                                        // validation.
+                                        info!(
+                                            "changing hatch_rate from {:?} to {}",
+                                            self.configuration.hatch_rate, command_and_value.value
+                                        );
+                                        self.configuration.hatch_rate =
+                                            Some(command_and_value.value.clone());
+                                    }
+                                    _ => {
+                                        warn!("Unexpected command: {:?}", command_and_value)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Errors can be ignored, they happen any time there are no messages.
+                        debug!("error receiving message: {}", e);
+                    }
+                }
+            };
         }
 
         Ok(self)
+    }
+
+    // Use the provided oneshot channel to reply to a controller client request.
+    fn reply_to_controller(
+        &mut self,
+        request: GooseControllerRequest,
+        response: GooseControllerResponseMessage,
+    ) {
+        if let Some(oneshot_tx) = request.response_channel {
+            // @TODO: handle an error sending the message.
+            let _ = oneshot_tx.send(GooseControllerResponse {
+                client_id: request.client_id,
+                response,
+            });
+        }
     }
 
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads.
@@ -3610,7 +3780,7 @@ impl GooseAttack {
             match message.unwrap() {
                 GooseMetric::Request(raw_request) => {
                     // Options should appear above, search for formatted_log.
-                    let formatted_log = match self.configuration.metrics_format.as_str() {
+                    let formatted_log = match self.configuration.requests_format.as_str() {
                         // Use serde_json to create JSON.
                         "json" => json!(raw_request).to_string(),
                         // Manually create CSV, library doesn't support single-row string conversion.
@@ -3760,6 +3930,7 @@ impl GooseAttack {
 ///  - GooseDefault::RequestsFormat
 ///  - GooseDefault::DebugFile
 ///  - GooseDefault::DebugFormat
+///  - GooseDefault::ControllerHost
 ///  - GooseDefault::ManagerBindHost
 ///  - GooseDefault::ManagerHost
 ///
@@ -3773,6 +3944,7 @@ impl GooseAttack {
 ///  - GooseDefault::Verbose
 ///  - GooseDefault::ThrottleRequests
 ///  - GooseDefault::ExpectWorkers
+///  - GooseDefault::ControllerPort
 ///  - GooseDefault::ManagerBindPort
 ///  - GooseDefault::ManagerPort
 ///
@@ -3783,6 +3955,7 @@ impl GooseAttack {
 ///  - GooseDefault::NoTaskMetrics
 ///  - GooseDefault::NoErrorSummary
 ///  - GooseDefault::NoDebugBody
+///  - GooseDefault::NoController
 ///  - GooseDefault::StatusCodes
 ///  - GooseDefault::StickyFollow
 ///  - GooseDefault::Manager
@@ -3814,9 +3987,10 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestsFile => self.defaults.requests_file = Some(value.to_string()),
-            GooseDefault::RequestsFormat => self.defaults.metrics_format = Some(value.to_string()),
+            GooseDefault::RequestsFormat => self.defaults.requests_format = Some(value.to_string()),
             GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value.to_string()),
+            GooseDefault::ControllerHost => self.defaults.controller_host = Some(value.to_string()),
             GooseDefault::ManagerBindHost => {
                 self.defaults.manager_bind_host = Some(value.to_string())
             }
@@ -3828,6 +4002,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
+            | GooseDefault::ControllerPort
             | GooseDefault::ManagerBindPort
             | GooseDefault::ManagerPort => {
                 return Err(GooseError::InvalidOption {
@@ -3845,6 +4020,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoTaskMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
+            | GooseDefault::NoController
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -3873,6 +4049,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
             GooseDefault::ExpectWorkers => self.defaults.expect_workers = Some(value as u16),
+            GooseDefault::ControllerPort => self.defaults.controller_port = Some(value as u16),
             GooseDefault::ManagerBindPort => self.defaults.manager_bind_port = Some(value as u16),
             GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
@@ -3884,6 +4061,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::RequestsFormat
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
+            | GooseDefault::ControllerHost
             | GooseDefault::ManagerBindHost
             | GooseDefault::ManagerHost => {
                 return Err(GooseError::InvalidOption {
@@ -3900,6 +4078,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoTaskMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
+            | GooseDefault::NoController
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -3926,6 +4105,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
+            GooseDefault::NoController => self.defaults.no_controller = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
@@ -3940,6 +4120,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::RunningMetrics
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
+            | GooseDefault::ControllerHost
             | GooseDefault::ManagerBindHost
             | GooseDefault::ManagerHost => {
                 return Err(GooseError::InvalidOption {
@@ -3958,6 +4139,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
+            | GooseDefault::ControllerPort
             | GooseDefault::ManagerBindPort
             | GooseDefault::ManagerPort => {
                 return Err(GooseError::InvalidOption {
@@ -4036,7 +4218,7 @@ pub struct GooseConfiguration {
     pub requests_file: String,
     /// Sets requests log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
-    pub metrics_format: String,
+    pub requests_format: String,
     /// Sets debug log file name
     #[options(short = "d", meta = "NAME")]
     pub debug_file: String,
@@ -4050,6 +4232,15 @@ pub struct GooseConfiguration {
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
 
+    /// Doesn't enable Controller TCP port
+    #[options(no_short)]
+    pub no_controller: bool,
+    /// Sets host Controller listens on (default: 0.0.0.0)
+    #[options(no_short, meta = "HOST")]
+    pub controller_host: String,
+    /// Sets port Controller listens on (default: 5116)
+    #[options(no_short, meta = "PORT")]
+    pub controller_port: u16,
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
@@ -4387,7 +4578,7 @@ mod test {
         let verbose: usize = 0;
         let report_file = "custom-goose-report.html".to_string();
         let requests_file = "custom-goose-metrics.log".to_string();
-        let metrics_format = "raw".to_string();
+        let requests_format = "raw".to_string();
         let debug_file = "custom-goose-debug.log".to_string();
         let debug_format = "raw".to_string();
         let throttle_requests: usize = 25;
@@ -4423,11 +4614,13 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoErrorSummary, true)
             .unwrap()
+            .set_default(GooseDefault::NoController, true)
+            .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
             .unwrap()
-            .set_default(GooseDefault::RequestsFormat, metrics_format.as_str())
+            .set_default(GooseDefault::RequestsFormat, requests_format.as_str())
             .unwrap()
             .set_default(GooseDefault::DebugFile, debug_file.as_str())
             .unwrap()
@@ -4471,9 +4664,10 @@ mod test {
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
         assert!(goose_attack.defaults.no_error_summary == Some(true));
+        assert!(goose_attack.defaults.no_controller == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
-        assert!(goose_attack.defaults.metrics_format == Some(metrics_format));
+        assert!(goose_attack.defaults.requests_format == Some(requests_format));
         assert!(goose_attack.defaults.debug_file == Some(debug_file));
         assert!(goose_attack.defaults.debug_format == Some(debug_format));
         assert!(goose_attack.defaults.status_codes == Some(true));

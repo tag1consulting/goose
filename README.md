@@ -222,6 +222,7 @@ Metrics:
   --no-reset-metrics         Doesn't reset metrics after all users have started
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
+  --no-error-summary         Doesn't display an error summary
   -R, --report-file NAME     Create an html-formatted report
   -m, --requests-file NAME   Sets requests log file name
   --requests-format FORMAT   Sets requests log format (csv, json, raw)
@@ -231,6 +232,9 @@ Metrics:
   --status-codes             Tracks additional status code metrics
 
 Advanced:
+  --no-controller            Doesn't enable Controller TCP port
+  --controller-host HOST     Sets host Controller listens on (default: 0.0.0.0)
+  --controller-port PORT     Sets port Controller listens on (default: 5116)
   --throttle-requests VALUE  Sets maximum requests per second
   --sticky-follow            Follows base_url redirect with subsequent requests
 
@@ -450,6 +454,7 @@ The following defaults can be configured with a `&str`:
  - requests log file format: `GooseDefault::RequestsFormat`
  - debug log file name: `GooseDefault::DebugFile`
  - debug log file format: `GooseDefault::DebugFormat`
+ - host to bind telnet Controller to: `GooseDefault::ControllerHost`
  - host to bind Manager to: `GooseDefault::ManagerBindHost`
  - host for Worker to connect to: `GooseDefault::ManagerHost`
 
@@ -462,6 +467,7 @@ The following defaults can be configured with a `usize` integer:
  - verbosity: `GooseDefault::Verbose`
  - maximum requests per second: `GooseDefault::ThrottleRequests`
  - number of Workers to expect: `GooseDefault::ExpectWorkers`
+ - port to bind telnet Controller to: `GooseDefault::ControllerPort`
  - port to bind Manager to: `GooseDefault::ManagerBindPort`
  - port for Worker to connect to: `GooseDefault::ManagerPort`
 
@@ -469,6 +475,7 @@ The following defaults can be configured with a `bool`:
  - do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
  - do not track metrics: `GooseDefault::NoMetrics`
  - do not track task metrics: `GooseDefault::NoTaskMetrics`
+ - do not start telnet Controller thread: `GooseDefault::NoController`
  - track status codes: `GooseDefault::StatusCodes`
  - follow redirect of base_url: `GooseDefault::StickyFollow`
  - enable Manager mode: `GooseDefault::Manager`
@@ -494,6 +501,30 @@ For example, without any run-time options the following load test would automati
         .print();
     
     Ok(())
+```
+
+## Controlling Running Goose Load Test
+
+By default, Goose will launch a telnet Controller thread that listens on `0.0.0.0:5116` and allows real-time control of a running load test. The host and port can be configured at start time with the `--controller-host` and `--controller-port` command line options. The defaults can be changed with `GooseDefault::ControllerHost` and `GooseDefault::ControllerPost`. To completely disable the telnet Controller thread, launch Goose with the `--no-controller` command line option.
+
+To learn about all available commands, telnet into the Controller thread and enter `help` (or `?`), for example:
+```
+% telnet localhost 5116
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+goose> ?  
+goose 0.11.2 controller commands:
+ help (?)           this help
+ exit (quit)        exit controller
+ echo               confirm controller is working
+ stop               stop running load test (and exit controller)
+ hatchrate FLOAT    set per-second rate users hatch
+ config             display load test configuration
+ config-json        display load test configuration in json format
+ metrics            display metrics for current load test
+ metrics-json       display metrics for current load test in json format
+goose> 
 ```
 
 ## Throttling Requests
