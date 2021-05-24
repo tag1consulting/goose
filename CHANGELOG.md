@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.2-dev
+ - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-controller`, supports the following commands:
+    o `help` (and `?`) display help
+    o `exit` (and `quit`) exit the telnet Controller
+    o `echo` pings the parent process and confirms the controller is working
+    o `stop` stops the running load test (and exits the controller)
+    o `hatchrate` (and `hatch_rate`) FLOAT sets per-second rate users hatch
+    o `config` displays the current load test configuration
+    o `config-json` displays the current load test configuration in json format
+    o `metrics` (and `stats`) displays metrics for the current load test
+    o `metrics-json` (and `stats-json`) displays metrics for the current load test in json format
+ - telnet Controller bind host defaults to `0.0.0.0`, can be configured with `--controller-host`
+ - telnet Controller bind port defaults to `5116`, can be configured with `--controller-port`
+ - telnet Controller defaults can be changed:
+    o default to not enabling telnet Controller: `GooseDefault::NoController` (bool)
+    o default host to bind telnet Controller to: `GooseDefault::ControllerHost` (&str)
+    o default port to bind telnet Controller to: `GooseDefault::ControllerPort` (usize)
+
 ## 0.11.1 May 16, 2021
  - update [`rand`](https://docs.rs/rand) dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
  - update dependencies: [`itertools`](https://docs.rs/itertools) to `0.10`, [`simplelog`](https://docs.rs/simplelog) to `0.10`, [`url`](https://docs.rs/url) to `2`
