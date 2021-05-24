@@ -50,7 +50,7 @@ pub struct GooseControllerRequest {
     pub request: GooseControllerRequestMessage,
 }
 
-/// The actual request that's passed from the controller to the parent thread.
+/// The actual response that's passed from the parent to the controller.
 #[derive(Debug)]
 pub struct GooseControllerResponse {
     pub client_id: u32,
@@ -386,7 +386,7 @@ async fn send_to_parent_and_get_reply(
     // Send request to parent.
     send_to_parent(client_id, channel_tx, Some(response_tx), command, value).await;
 
-    // Await resposne from parent.
+    // Await response from parent.
     match response_rx.await {
         Ok(value) => Ok(value.response),
         Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
