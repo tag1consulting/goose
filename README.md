@@ -222,6 +222,7 @@ Metrics:
   --no-reset-metrics         Doesn't reset metrics after all users have started
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
+  --no-error-summary         Doesn't display an error summary
   -R, --report-file NAME     Create an html-formatted report
   -m, --requests-file NAME   Sets requests log file name
   --requests-format FORMAT   Sets requests log format (csv, json, raw)
@@ -231,6 +232,9 @@ Metrics:
   --status-codes             Tracks additional status code metrics
 
 Advanced:
+  --no-controller            Doesn't enable Controller TCP port
+  --controller-host HOST     Sets host Controller listens on (default: 0.0.0.0)
+  --controller-port PORT     Sets port Controller listens on (default: 5116)
   --throttle-requests VALUE  Sets maximum requests per second
   --sticky-follow            Follows base_url redirect with subsequent requests
 

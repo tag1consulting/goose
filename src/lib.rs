@@ -698,7 +698,7 @@ pub struct GooseDefaults {
     /// An optional default for the requests log file name.
     requests_file: Option<String>,
     /// An optional default for the requests log file format.
-    metrics_format: Option<String>,
+    requests_format: Option<String>,
     /// An optional default for the debug log file name.
     debug_file: Option<String>,
     /// An optional default for the debug log format.
@@ -2181,11 +2181,11 @@ impl GooseAttack {
 
     // Configure requests log format.
     fn set_requests_format(&mut self) -> Result<(), GooseError> {
-        if self.configuration.metrics_format.is_empty() {
-            if let Some(default_metrics_format) = &self.defaults.metrics_format {
-                self.configuration.metrics_format = default_metrics_format.to_string();
+        if self.configuration.requests_format.is_empty() {
+            if let Some(default_requests_format) = &self.defaults.requests_format {
+                self.configuration.requests_format = default_requests_format.to_string();
             } else {
-                self.configuration.metrics_format = "json".to_string();
+                self.configuration.requests_format = "json".to_string();
             }
         } else {
             // Log format isn't relevant if metrics aren't enabled.
@@ -2200,17 +2200,17 @@ impl GooseAttack {
             else if self.get_requests_file_path().is_none() {
                 return Err(GooseError::InvalidOption {
                     option: "--requests-format".to_string(),
-                    value: self.configuration.metrics_format.clone(),
+                    value: self.configuration.requests_format.clone(),
                     detail: "The --requests-file option must be set together with the --requests-format option.".to_string(),
                 });
             }
         }
 
         let options = vec!["json", "csv", "raw"];
-        if !options.contains(&self.configuration.metrics_format.as_str()) {
+        if !options.contains(&self.configuration.requests_format.as_str()) {
             return Err(GooseError::InvalidOption {
                 option: "--requests-format".to_string(),
-                value: self.configuration.metrics_format.clone(),
+                value: self.configuration.requests_format.clone(),
                 detail: format!(
                     "The --requests-format option must be set to one of: {}.",
                     options.join(", ")
@@ -2255,7 +2255,7 @@ impl GooseAttack {
             if self.configuration.debug_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-format".to_string(),
-                    value: self.configuration.metrics_format.clone(),
+                    value: self.configuration.requests_format.clone(),
                     detail: "The --debug-file option must be set together with the --debug-format option.".to_string(),
                 });
             }
@@ -3780,7 +3780,7 @@ impl GooseAttack {
             match message.unwrap() {
                 GooseMetric::Request(raw_request) => {
                     // Options should appear above, search for formatted_log.
-                    let formatted_log = match self.configuration.metrics_format.as_str() {
+                    let formatted_log = match self.configuration.requests_format.as_str() {
                         // Use serde_json to create JSON.
                         "json" => json!(raw_request).to_string(),
                         // Manually create CSV, library doesn't support single-row string conversion.
@@ -3987,7 +3987,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::LogFile => self.defaults.log_file = Some(value.to_string()),
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestsFile => self.defaults.requests_file = Some(value.to_string()),
-            GooseDefault::RequestsFormat => self.defaults.metrics_format = Some(value.to_string()),
+            GooseDefault::RequestsFormat => self.defaults.requests_format = Some(value.to_string()),
             GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value.to_string()),
             GooseDefault::ControllerHost => self.defaults.controller_host = Some(value.to_string()),
@@ -4218,7 +4218,7 @@ pub struct GooseConfiguration {
     pub requests_file: String,
     /// Sets requests log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
-    pub metrics_format: String,
+    pub requests_format: String,
     /// Sets debug log file name
     #[options(short = "d", meta = "NAME")]
     pub debug_file: String,
@@ -4578,7 +4578,7 @@ mod test {
         let verbose: usize = 0;
         let report_file = "custom-goose-report.html".to_string();
         let requests_file = "custom-goose-metrics.log".to_string();
-        let metrics_format = "raw".to_string();
+        let requests_format = "raw".to_string();
         let debug_file = "custom-goose-debug.log".to_string();
         let debug_format = "raw".to_string();
         let throttle_requests: usize = 25;
@@ -4620,7 +4620,7 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
             .unwrap()
-            .set_default(GooseDefault::RequestsFormat, metrics_format.as_str())
+            .set_default(GooseDefault::RequestsFormat, requests_format.as_str())
             .unwrap()
             .set_default(GooseDefault::DebugFile, debug_file.as_str())
             .unwrap()
@@ -4667,7 +4667,7 @@ mod test {
         assert!(goose_attack.defaults.no_controller == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
-        assert!(goose_attack.defaults.metrics_format == Some(metrics_format));
+        assert!(goose_attack.defaults.requests_format == Some(requests_format));
         assert!(goose_attack.defaults.debug_file == Some(debug_file));
         assert!(goose_attack.defaults.debug_format == Some(debug_format));
         assert!(goose_attack.defaults.status_codes == Some(true));
