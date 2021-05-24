@@ -64,15 +64,18 @@ pub struct GooseControllerResponse {
 /// @TODO: ssl
 pub async fn controller_main(
     // Expose load test configuration to controller thread.
-    // @TODO: use this to configure the listening ip and port.
     configuration: GooseConfiguration,
     // For sending requests to the parent process.
     communication_channel_tx: flume::Sender<GooseControllerRequest>,
 ) -> io::Result<()> {
-    // @TODO: make this configurable
-    let addr = "127.0.0.1:5116";
-    let listener = TcpListener::bind(&addr).await?;
-    info!("controller listening on: {}", addr);
+    // Listen on configured TCP port.
+    let address = format!(
+        "{}:{}",
+        configuration.controller_host, configuration.controller_port
+    );
+    debug!("preparing to bind controller to: {}", &address);
+    let listener = TcpListener::bind(&address).await?;
+    info!("controller listening on: {}", address);
 
     // Simple incrementing counter each time a controller thread launches.
     let mut threads: u32 = 0;
@@ -83,9 +86,6 @@ pub async fn controller_main(
 
         // Clone the communication channel to hand to the next thread.
         let channel_tx = communication_channel_tx.clone();
-
-        // Give each controller an initial copy of the Goose onfiguration.
-        let _controller_thread_config = configuration.clone();
 
         // Increment counter each time a new thread launches, and pass id into thread.
         threads += 1;
