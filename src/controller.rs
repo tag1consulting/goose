@@ -111,10 +111,11 @@ pub async fn controller_main(
 
             // The following regular expressions get compiled a second time if matched by the
             // RegexSet in order to capture the matched value.
-            let users_regex = r"(?i)^users (\d+)$";
             let hatchrate_regex = r"(?i)^(hatchrate|hatch_rate) ([0-9]*(\.[0-9]*)?){1}$";
             let config_regex = r"(?i)^(config|config-json)$";
             let metrics_regex = r"(?i)^(metrics|stats|metrics-json|stats-json)$";
+            // @TODO: enable when the parent process processes it properly.
+            //let users_regex = r"(?i)^users (\d+)$";
 
             // Compile regular expression set once to use for for matching all commands
             // received through the controller port.
@@ -130,23 +131,25 @@ pub async fn controller_main(
                 r"(?i)^echo$",
                 // Stop the load test (which will cause the controller connection to quit).
                 r"(?i)^stop$",
-                // Modify number of users simulated.
-                users_regex,
                 // Modify how quickly users hatch (or exit if users are reduced).
                 hatchrate_regex,
                 // Display the current load test configuration.
                 config_regex,
                 // Display running metrics for the currently active load test.
                 metrics_regex,
+                // Modify number of users simulated.
+                // @TODO: enable when the parent process processes it properly.
+                //users_regex,
             ])
             .unwrap();
 
             // Also compile the following regular expressions once to use for when
             // the RegexSet matches these commands, to then capture the matched value.
-            let re_users = Regex::new(users_regex).unwrap();
             let re_hatchrate = Regex::new(hatchrate_regex).unwrap();
             let re_config = Regex::new(config_regex).unwrap();
             let re_metrics = Regex::new(metrics_regex).unwrap();
+            // @TODO: enable when the parent process processes it properly.
+            //let re_users = Regex::new(users_regex).unwrap();
 
             // Process data received from the client in a loop.
             loop {
@@ -212,23 +215,8 @@ pub async fn controller_main(
                         write_to_socket(&mut socket, &format!("failed to stop load test [{}]", e))
                             .await;
                     }
-                // Users
-                } else if matches.matched(4) {
-                    // This requires a second lookup to capture the integer, as documented at:
-                    // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
-                    let caps = re_users.captures(message).unwrap();
-                    let users = caps.get(1).map_or("", |m| m.as_str());
-                    send_to_parent(
-                        controller_thread_id,
-                        &channel_tx,
-                        None,
-                        GooseControllerCommand::Users,
-                        Some(users.to_string()),
-                    )
-                    .await;
-                    write_to_socket(&mut socket, &format!("reconfigured users: {}", users)).await;
                 // Hatch rate
-                } else if matches.matched(5) {
+                } else if matches.matched(4) {
                     // This requires a second lookup to capture the integer, as documented at:
                     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
                     let caps = re_hatchrate.captures(message).unwrap();
@@ -247,7 +235,7 @@ pub async fn controller_main(
                     )
                     .await;
                 // Config
-                } else if matches.matched(6) {
+                } else if matches.matched(5) {
                     let caps = re_config.captures(message).unwrap();
                     let config_format = caps.get(1).map_or("", |m| m.as_str());
                     // Get an up-to-date copy of the configuration, as it may have changed since
@@ -279,7 +267,7 @@ pub async fn controller_main(
                         }
                     }
                 // Metrics
-                } else if matches.matched(7) {
+                } else if matches.matched(6) {
                     let caps = re_metrics.captures(message).unwrap();
                     let metrics_format = caps.get(1).map_or("", |m| m.as_str());
                     // Get a copy of the current running metrics.
@@ -309,6 +297,24 @@ pub async fn controller_main(
                             _ => warn!("parent process sent an unexpected reply, unable to display metrics"),
                         }
                     }
+                // Users
+                /*
+                 * @TODO: enable when the parent process processes it properly.
+                } else if matches.matched(7) {
+                    // This requires a second lookup to capture the integer, as documented at:
+                    // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
+                    let caps = re_users.captures(message).unwrap();
+                    let users = caps.get(1).map_or("", |m| m.as_str());
+                    send_to_parent(
+                        controller_thread_id,
+                        &channel_tx,
+                        None,
+                        GooseControllerCommand::Users,
+                        Some(users.to_string()),
+                    )
+                    .await;
+                    write_to_socket(&mut socket, &format!("reconfigured users: {}", users)).await;
+                */
                 } else {
                     write_to_socket(&mut socket, "unrecognized command").await;
                 }
@@ -388,6 +394,8 @@ async fn send_to_parent_and_get_reply(
 }
 
 // A controller help screen.
+// @TODO: document `users` when enabled:
+// users INT          set number of simulated users
 fn display_help() -> String {
     format!(
         r"{} {} controller commands:
@@ -395,7 +403,6 @@ fn display_help() -> String {
  exit (quit)        exit controller
  echo               confirm controller is working
  stop               stop running load test (and exit controller)
- users INT          set number of simulated users
  hatchrate FLOAT    set per-second rate users hatch
  config             display load test configuration
  config-json        display load test configuration in json format
