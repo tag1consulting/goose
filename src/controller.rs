@@ -1,3 +1,8 @@
+//! Optionally launches telnet and WebSocket Controllers.
+//!
+//! By default, Goose launches both a telnet Controller and a WebSocket Controller, allowing
+//! real-time control of the running load test.
+
 use crate::metrics::GooseMetrics;
 use crate::GooseConfiguration;
 
@@ -11,46 +16,66 @@ use tungstenite::Message;
 use std::io;
 use std::str;
 
-/// Goose currently supports two different Controller protocols: Telnet, and WebSocket.
+/// Goose currently supports two different Controller protocols: telnet and WebSocket.
 #[derive(Debug)]
 pub enum GooseControllerProtocol {
     /// Allows control of Goose via telnet.
     Telnet,
-    /// Allows control of Goose via a websocket.
+    /// Allows control of Goose via a WebSocket.
     WebSocket,
 }
 
 /// All commands recognized by the Goose Controllers.
+///
+/// Developer note: The order commands are defined here must match the order in which
+/// the commands are defined in the
+/// [`regex::RegexSet`](https://docs.rs/regex/*/regex/struct.RegexSet.html) in
+/// [`controller_main()`](./fn.controller_main.html) as it is used to determine which
+/// regex matched, if any.
 #[derive(Debug)]
 pub enum GooseControllerCommand {
+    /// Change how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
     HatchRate,
+    /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s
     Config,
+    /// Display the current [`GooseMetric`](../metrics/struct.GooseMetrics.html)s.
     Metrics,
+    /// Displays a list of all supported commands.
     Help,
+    /// Disconnect from the controller.
     Exit,
+    /// Verify that the controller can talk to the parent process.
     Echo,
+    /// Tell the load test to stop (which will disconnect the controller).
     Stop,
 }
 
 /// This structure is used to send commands and values to the parent process.
 #[derive(Debug)]
 pub struct GooseControllerCommandAndValue {
+    /// The command that is being sent to the parent.
     pub command: GooseControllerCommand,
+    /// The value that is being sent to the parent.
     pub value: String,
 }
 
 /// An enumeration of all messages that the controller can send to the parent thread.
 #[derive(Debug)]
 pub enum GooseControllerRequestMessage {
+    /// A command alone.
     Command(GooseControllerCommand),
+    /// A command and a value together.
     CommandAndValue(GooseControllerCommandAndValue),
 }
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
 #[derive(Debug)]
 pub enum GooseControllerResponseMessage {
+    /// A response containing a boolean value.
     Bool(bool),
+    /// A response containing the load test configuration.
     Config(Box<GooseConfiguration>),
+    /// A response containing current load test metrics.
     Metrics(Box<GooseMetrics>),
 }
 
@@ -61,14 +86,16 @@ pub struct GooseControllerRequest {
     pub response_channel: Option<tokio::sync::oneshot::Sender<GooseControllerResponse>>,
     /// An integer identifying which controller client is making the request.
     pub client_id: u32,
-    /// The actual reqeuest message.
+    /// The actual request message.
     pub request: GooseControllerRequestMessage,
 }
 
 /// The actual response that's passed from the parent to the controller.
 #[derive(Debug)]
 pub struct GooseControllerResponse {
+    /// An integer identifying which controller the parent is responding to.
     pub client_id: u32,
+    /// The actual response message.
     pub response: GooseControllerResponseMessage,
 }
 
@@ -120,6 +147,9 @@ pub async fn controller_main(
     //let users_regex = r"(?i)^users (\d+)$";
 
     // The following RegexSet is matched against all commands received through the controller.
+    // Developer note: The order commands are defined here must match the order in which
+    // the commands are defined in the GooseControllerCommand enum, as it is used to determine
+    // which expression matched, if any.
     let commands = RegexSet::new(&[
         // Modify how quickly users hatch (or exit if users are reduced).
         hatchrate_regex,

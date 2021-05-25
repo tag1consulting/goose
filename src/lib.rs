@@ -710,7 +710,7 @@ pub struct GooseDefaults {
     no_debug_body: Option<bool>,
     /// An optional default for not enabling telnet Controller thread.
     no_telnet: Option<bool>,
-    /// An optional default for not enabling websocket Controller thread.
+    /// An optional default for not enabling WebSocket Controller thread.
     no_websocket: Option<bool>,
     /// An optional default to track additional status code metrics.
     status_codes: Option<bool>,
@@ -2692,6 +2692,7 @@ impl GooseAttack {
             flume::Receiver<GooseControllerRequest>,
         ) = flume::unbounded();
 
+        // Configured telnet Controller if not disabled.
         if !self.configuration.no_telnet {
             // Configure telnet_host, using default if run-time option is not set.
             if self.configuration.telnet_host.is_empty() {
@@ -2721,6 +2722,7 @@ impl GooseAttack {
             )));
         }
 
+        // Configured WebSocket Controller if not disabled.
         if !self.configuration.no_websocket {
             // Configure websocket_host, using default if run-time option is not set.
             if self.configuration.websocket_host.is_empty() {
@@ -2751,7 +2753,7 @@ impl GooseAttack {
             )));
         }
 
-        // Return the parent end of the channel, if created.
+        // Return the parent end of the Controller channel.
         Some(controller_request_rx)
     }
 
@@ -4295,22 +4297,22 @@ pub struct GooseConfiguration {
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
 
-    /// Doesn't enable telnet Controller TCP port
+    /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
-    /// Sets host telnet Controller listens on (default: 0.0.0.0)
+    /// Sets telnet Controller host (default: 0.0.0.0)
     #[options(no_short, meta = "HOST")]
     pub telnet_host: String,
-    /// Sets port telnet Controller listens on (default: 5116)
+    /// Sets telnet Controller TCP port (default: 5116)
     #[options(no_short, meta = "PORT")]
     pub telnet_port: u16,
-    /// Doesn't enable WebSocket Controller TCP port
+    /// Doesn't enable WebSocket Controller
     #[options(no_short)]
     pub no_websocket: bool,
-    /// Sets host WebSocket Controller listens on (default: 0.0.0.0)
+    /// Sets WebSocket Controller host (default: 0.0.0.0)
     #[options(no_short, meta = "HOST")]
     pub websocket_host: String,
-    /// Sets port WebSocket Controller listens on (default: 5117)
+    /// Sets WebSocket Controller TCP port (default: 5117)
     #[options(no_short, meta = "PORT")]
     pub websocket_port: u16,
     /// Sets maximum requests per second

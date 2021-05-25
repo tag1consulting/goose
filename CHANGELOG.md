@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.11.2-dev
- - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-controller`, supports the following commands:
+ - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:
     o `help` (and `?`) display help
     o `exit` (and `quit`) exit the telnet Controller
     o `echo` pings the parent process and confirms the controller is working
@@ -11,13 +11,24 @@
     o `config-json` displays the current load test configuration in json format
     o `metrics` (and `stats`) displays metrics for the current load test
     o `metrics-json` (and `stats-json`) displays metrics for the current load test in json format
- - telnet Controller bind host defaults to `0.0.0.0`, can be configured with `--controller-host`
- - telnet Controller bind port defaults to `5116`, can be configured with `--controller-port`
+ - telnet Controller bind host defaults to `0.0.0.0`, can be configured with `--telnet-host`
+ - telnet Controller bind port defaults to `5116`, can be configured with `--telnet-port`
  - telnet Controller defaults can be changed:
-    o default to not enabling telnet Controller: `GooseDefault::NoController` (bool)
-    o default host to bind telnet Controller to: `GooseDefault::ControllerHost` (&str)
-    o default port to bind telnet Controller to: `GooseDefault::ControllerPort` (usize)
- - introduce websocket Controller
+    o default to not enabling telnet Controller: `GooseDefault::NoTelnet` (bool)
+    o default host to bind telnet Controller to: `GooseDefault::TelnetHost` (&str)
+    o default port to bind telnet Controller to: `GooseDefault::TelnetPort` (usize)
+ - introduce WebSocket Controller allowing real-time control of load test, optionally disable with `--no-websocket`, supports the following commands:
+    o `exit` (and `quit`) exit the WebSocket Controller
+    o `stop` stops the running load test (and exits the controller)
+    o `hatchrate` (and `hatch_rate`) FLOAT sets per-second rate users hatch
+    o `config` returns the current load test configuration in json format
+    o `metrics` (and `stats`) returns metrics for the current load test in json format
+ - WebSocket Controller bind host defaults to `0.0.0.0`, can be configured with `--websocket-host`
+ - WebSocket Controller bind port defaults to `5117`, can be configured with `--websocket-port`
+ - WebSocket Controller defaults can be changed:
+    o default to not enabling WebSocket Controller: `GooseDefault::NoWebSocket` (bool)
+    o default host to bind WebSocket Controller to: `GooseDefault::WebSocketHost` (&str)
+    o default port to bind WebSocket Controller to: `GooseDefault::WebSocketPort` (usize)
 
 ## 0.11.1 May 16, 2021
  - update [`rand`](https://docs.rs/rand) dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
