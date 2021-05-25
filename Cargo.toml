@@ -44,6 +44,8 @@ tokio = { version = "1", features = [
     "time",
     "sync",
 ] }
+tokio-tungstenite = "0.14"
+tungstenite = "0.13"
 url = "2"
 
 # optional dependencies

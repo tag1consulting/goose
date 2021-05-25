@@ -17,6 +17,7 @@
     o default to not enabling telnet Controller: `GooseDefault::NoController` (bool)
     o default host to bind telnet Controller to: `GooseDefault::ControllerHost` (&str)
     o default port to bind telnet Controller to: `GooseDefault::ControllerPort` (usize)
+ - introduce websocket Controller
 
 ## 0.11.1 May 16, 2021
  - update [`rand`](https://docs.rs/rand) dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
