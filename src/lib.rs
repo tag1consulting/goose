@@ -57,7 +57,6 @@
 //! use goose::{
 //!     task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError, GooseScheduler,
 //! };
-
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add

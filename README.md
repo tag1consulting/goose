@@ -515,7 +515,7 @@ By default, Goose will launch a telnet Controller thread that listens on `0.0.0.
 
 ### Telnet Controller
 
-The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with, changed with `GooseDefault::TelnetHost`,`GooseDefault::TelnetPort`, and `GooseDefault::NoTelnet`.
+The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with `GooseDefault::TelnetHost`,`GooseDefault::TelnetPort`, and `GooseDefault::NoTelnet`.
 
 To learn about all available commands, telnet into the Controller thread and enter `help` (or `?`), for example:
 ```
@@ -539,7 +539,7 @@ goose>
 
 ### WebSocket Controller
 
-The host and port that the WebSocket Controller listens on can be configured at start time with `--websocket-host` and `--websocket-port`. The WebSocket Controller can be completely disabled with the `--no-websocket` command line option. The defaults can be changed with, changed with `GooseDefault::WebSocketHost`,`GooseDefault::WebSocketPort`, and `GooseDefault::NoWebSocket`.
+The host and port that the WebSocket Controller listens on can be configured at start time with `--websocket-host` and `--websocket-port`. The WebSocket Controller can be completely disabled with the `--no-websocket` command line option. The defaults can be changed with `GooseDefault::WebSocketHost`,`GooseDefault::WebSocketPort`, and `GooseDefault::NoWebSocket`.
 
 The WebSocket Controller supports a subset of the above commands, including `exit`, `stop`, `hatchrate FLOAT`, `config` and `metrics`. All commands that return results do so in json format.
 

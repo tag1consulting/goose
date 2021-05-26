@@ -112,21 +112,17 @@ pub async fn controller_main(
     // Which type of controller to launch.
     protocol: GooseControllerProtocol,
 ) -> io::Result<()> {
-    let address;
-    match &protocol {
-        GooseControllerProtocol::Telnet => {
-            address = format!(
-                "{}:{}",
-                configuration.telnet_host, configuration.telnet_port
-            );
-        }
-        GooseControllerProtocol::WebSocket => {
-            address = format!(
-                "{}:{}",
-                configuration.websocket_host, configuration.websocket_port
-            );
-        }
-    }
+    // Build protocol-appropriate address.
+    let address = match &protocol {
+        GooseControllerProtocol::Telnet => format!(
+            "{}:{}",
+            configuration.telnet_host, configuration.telnet_port
+        ),
+        GooseControllerProtocol::WebSocket => format!(
+            "{}:{}",
+            configuration.websocket_host, configuration.websocket_port
+        ),
+    };
 
     // All controllers use a TcpListener port.
     debug!(
@@ -179,34 +175,31 @@ pub async fn controller_main(
         Regex::new(metrics_regex).unwrap(),
     ];
     // @TODO: enable when the parent process processes it properly.
-    //compiled_expressions.push(Regex::new(users_regex).unwrap());
+    //Regex::new(users_regex).unwrap();
 
-    // Simple counter that increments each time a controller client of this type connects.
+    // Counter increments each time a controller client connects with this protocol.
     let mut thread_id: u32 = 0;
 
     // Wait for a connection.
     while let Ok((stream, _)) = listener.accept().await {
         thread_id += 1;
-        match &protocol {
-            GooseControllerProtocol::Telnet => {
-                let _ = tokio::spawn(accept_telnet_connection(
-                    thread_id,
-                    channel_tx.clone(),
-                    stream,
-                    commands.clone(),
-                    captures.clone(),
-                ));
-            }
-            GooseControllerProtocol::WebSocket => {
-                let _ = tokio::spawn(accept_websocket_connection(
-                    thread_id,
-                    channel_tx.clone(),
-                    stream,
-                    commands.clone(),
-                    captures.clone(),
-                ));
-            }
-        }
+        // Spawn a new thread to communicate with client, igoring the returned JoinHandle.
+        let _ = match &protocol {
+            GooseControllerProtocol::Telnet => tokio::spawn(accept_telnet_connection(
+                thread_id,
+                channel_tx.clone(),
+                stream,
+                commands.clone(),
+                captures.clone(),
+            )),
+            GooseControllerProtocol::WebSocket => tokio::spawn(accept_websocket_connection(
+                thread_id,
+                channel_tx.clone(),
+                stream,
+                commands.clone(),
+                captures.clone(),
+            )),
+        };
     }
 
     Ok(())
@@ -336,9 +329,11 @@ async fn accept_telnet_connection(
                 match value {
                     GooseControllerResponseMessage::Config(config) => {
                         match config_format {
+                            // Display human-readable configuration.
                             "config" => {
                                 write_to_socket(&mut socket, &format!("{:#?}", config)).await;
                             }
+                            // Display json-formatted configuration.
                             "config-json" => {
                                 // Convert the configuration object to a JSON string.
                                 let config_json: String =
@@ -372,9 +367,11 @@ async fn accept_telnet_connection(
                 match value {
                     GooseControllerResponseMessage::Metrics(metrics) => {
                         match metrics_format {
+                            // Display human-readable metrics.
                             "stats" | "metrics" => {
                                 write_to_socket(&mut socket, &format!("{}", metrics)).await;
                             }
+                            // Display raw json-formatted metrics.
                             "stats-json" | "metrics-json" => {
                                 // Convert the configuration object to a JSON string.
                                 let metrics_json: String =
