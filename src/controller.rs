@@ -8,7 +8,7 @@ use crate::GooseConfiguration;
 
 use futures::{SinkExt, StreamExt};
 use regex::{Regex, RegexSet};
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tungstenite::Message;
@@ -97,6 +97,24 @@ pub struct GooseControllerResponse {
     pub client_id: u32,
     /// The actual response message.
     pub response: GooseControllerResponseMessage,
+}
+
+/// The required format for any request sent to the WebSocket Controller.
+#[derive(Debug, Deserialize)]
+pub struct GooseControllerWebSocketRequest {
+    /// A valid command string.
+    request: String,
+}
+
+/// The format of all responses returned by the WebSocket Controller.
+#[derive(Debug, Serialize)]
+pub struct GooseControllerWebSocketResponse {
+    /// The response from the controller.
+    response: String,
+    /// Whether the request was successful or not.
+    success: bool,
+    /// If success is false, a description of the error.
+    error: Option<String>,
 }
 
 /// The control loop listens for connection on the configured TCP port. Each connection
@@ -424,11 +442,32 @@ async fn accept_websocket_connection(
             .await
             .expect("failed to read data from socket");
 
-        if let Ok(command) = data {
-            if command.is_text() {
-                if let Ok(command) = command.into_text() {
-                    info!("{:?}", command.trim());
-                    let matches = commands.matches(&command.trim());
+        if let Ok(request) = data {
+            if request.is_text() {
+                if let Ok(request) = request.into_text() {
+                    debug!("websocket request: {:?}", request.trim());
+
+                    let command: GooseControllerWebSocketRequest =
+                        match serde_json::from_str(&request) {
+                            Ok(c) => c,
+                            Err(_) => {
+                                ws_sender
+                                    .send(Message::Text(
+                                        serde_json::to_string(&GooseControllerWebSocketResponse {
+                                            response: "unrecognized json request".to_string(),
+                                            success: false,
+                                            error: Some("unrecognized json request".to_string()),
+                                        })
+                                        .unwrap(),
+                                    ))
+                                    .await
+                                    .expect("failed to write data to stream");
+                                continue;
+                            }
+                        };
+                    debug!("websocket request command: {:?}", command);
+
+                    let matches = commands.matches(&command.request);
                     // Exit
                     if matches.matched(GooseControllerCommand::Exit as usize) {
                         ws_sender
@@ -455,17 +494,26 @@ async fn accept_websocket_connection(
                         {
                             Ok(_) => {
                                 ws_sender
-                                    .send(Message::Text(json!({"success": true}).to_string()))
+                                    .send(Message::Text(
+                                        serde_json::to_string(&GooseControllerWebSocketResponse {
+                                            response: "echo".to_string(),
+                                            success: true,
+                                            error: None,
+                                        })
+                                        .unwrap(),
+                                    ))
                                     .await
                                     .expect("failed to write data to stream");
                             }
                             Err(e) => {
                                 ws_sender
                                     .send(Message::Text(
-                                        json!({
-                                            "error": format!("failed to echo load test [{}]", e)
+                                        serde_json::to_string(&GooseControllerWebSocketResponse {
+                                            response: "echo failed".to_string(),
+                                            success: false,
+                                            error: Some(e),
                                         })
-                                        .to_string(),
+                                        .unwrap(),
                                     ))
                                     .await
                                     .expect("failed to write data to stream");
@@ -493,10 +541,12 @@ async fn accept_websocket_connection(
                             Err(e) => {
                                 ws_sender
                                     .send(Message::Text(
-                                        json!({
-                                            "error": format!("failed to stop load test [{}]", e)
+                                        serde_json::to_string(&GooseControllerWebSocketResponse {
+                                            response: "failed to stop load test".to_string(),
+                                            success: false,
+                                            error: Some(e),
                                         })
-                                        .to_string(),
+                                        .unwrap(),
                                     ))
                                     .await
                                     .expect("failed to write data to stream");
@@ -506,7 +556,7 @@ async fn accept_websocket_connection(
                     } else if matches.matched(GooseControllerCommand::HatchRate as usize) {
                         // Perform a second map to capture the hatch_rate value.
                         let caps = captures[GooseControllerCommand::HatchRate as usize]
-                            .captures(&command.trim())
+                            .captures(&command.request)
                             .unwrap();
                         let hatch_rate = caps.get(2).map_or("", |m| m.as_str());
                         info!("matched hatch_rate: {}", hatch_rate);
@@ -519,7 +569,14 @@ async fn accept_websocket_connection(
                         )
                         .await;
                         ws_sender
-                            .send(Message::Text(json!({"success": true}).to_string()))
+                            .send(Message::Text(
+                                serde_json::to_string(&GooseControllerWebSocketResponse {
+                                    response: "set hatch_rate".to_string(),
+                                    success: true,
+                                    error: None,
+                                })
+                                .unwrap(),
+                            ))
                             .await
                             .expect("failed to write data to stream");
                     // Config
@@ -539,7 +596,14 @@ async fn accept_websocket_connection(
                             let config_json: String =
                                 serde_json::to_string(&config).expect("unexpected failure");
                             ws_sender
-                                .send(Message::Text(config_json))
+                                .send(Message::Text(
+                                    serde_json::to_string(&GooseControllerWebSocketResponse {
+                                        response: config_json,
+                                        success: true,
+                                        error: None,
+                                    })
+                                    .unwrap(),
+                                ))
                                 .await
                                 .expect("failed to write data to stream");
                         }
@@ -560,7 +624,14 @@ async fn accept_websocket_connection(
                             let metrics_json: String =
                                 serde_json::to_string(&metrics).expect("unexpected failure");
                             ws_sender
-                                .send(Message::Text(metrics_json))
+                                .send(Message::Text(
+                                    serde_json::to_string(&GooseControllerWebSocketResponse {
+                                        response: metrics_json,
+                                        success: true,
+                                        error: None,
+                                    })
+                                    .unwrap(),
+                                ))
                                 .await
                                 .expect("failed to write data to stream");
                         }
@@ -568,13 +639,18 @@ async fn accept_websocket_connection(
                     } else {
                         ws_sender
                             .send(Message::Text(
-                                json!({"error": "unrecognized command"}).to_string(),
+                                serde_json::to_string(&GooseControllerWebSocketResponse {
+                                    response: "unrecognized command".to_string(),
+                                    success: false,
+                                    error: Some("unrecognized command".to_string()),
+                                })
+                                .unwrap(),
                             ))
                             .await
                             .expect("failed to write data to stream");
                     }
                 }
-            } else if command.is_close() {
+            } else if request.is_close() {
                 info!(
                     "telnet client [{}] disconnected from {}",
                     thread_id, peer_addr

@@ -541,7 +541,42 @@ goose>
 
 The host and port that the WebSocket Controller listens on can be configured at start time with `--websocket-host` and `--websocket-port`. The WebSocket Controller can be completely disabled with the `--no-websocket` command line option. The defaults can be changed with `GooseDefault::WebSocketHost`,`GooseDefault::WebSocketPort`, and `GooseDefault::NoWebSocket`.
 
-The WebSocket Controller supports a subset of the above commands, including `exit`, `stop`, `hatchrate FLOAT`, `config` and `metrics`. All commands that return results do so in json format.
+The WebSocket Controller supports a subset of the above commands, including `exit`, `stop`, `hatchrate FLOAT`, `config` and `metrics`. Requests and Response are in JSON format.
+
+Requests must be in the following format:
+```json
+{
+  "request": String, 
+}
+```
+
+For example, a client should send the follow json to request the current load test metrics:
+```json
+{
+  "request": "metrics", 
+}
+```
+
+Responses will always be in the following format:
+```json
+{
+  "response": String,
+  "success": Boolean,
+  "error": Option<String>,
+}
+```
+
+Note that the `error` field will only contain a String if `success` is `false`.
+
+For example:
+```
+% websocat ws://127.0.0.1:5117
+foobar
+{"response":"unrecognized json request","success":false,"error":"unrecognized json request"}
+{"request": "config"}
+{"response":"{\"help\":false,\"version\":false,\"list\":false,\"host\":\"http://apache/\",\"users\":1,\"hatch_rate\":\".5\",\"run_time\":\"\",\"log_level\":0,\"log_file\":\"\",\"verbose\":1,\"running_metrics\":null,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_task_metrics\":false,\"no_error_summary\":false,\"report_file\":\"\",\"requests_file\":\"\",\"requests_format\":\"json\",\"debug_file\":\"\",\"debug_format\":\"json\",\"no_debug_body\":false,\"status_codes\":false,\"no_telnet\":false,\"telnet_host\":\"0.0.0.0\",\"telnet_port\":5116,\"no_websocket\":false,\"websocket_host\":\"0.0.0.0\",\"websocket_port\":5117,\"throttle_requests\":0,\"sticky_follow\":false,\"manager\":false,\"expect_workers\":null,\"no_hash_check\":false,\"manager_bind_host\":\"\",\"manager_bind_port\":0,\"worker\":false,\"manager_host\":\"\",\"manager_port\":0}","success":true,"error":null}
+{"request": "exit"}
+```
 
 ## Throttling Requests
 
