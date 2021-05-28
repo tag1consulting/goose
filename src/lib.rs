@@ -57,7 +57,6 @@
 //! use goose::{
 //!     task, taskset, GooseAttack, GooseDefault, GooseDefaultType, GooseError, GooseScheduler,
 //! };
-
 //! ```
 //!
 //! Below your `main` function (which currently is the default `Hello, world!`), add
@@ -465,8 +464,8 @@ use tokio::runtime::Runtime;
 use url::Url;
 
 use crate::controller::{
-    GooseControllerCommand, GooseControllerRequest, GooseControllerRequestMessage,
-    GooseControllerResponse, GooseControllerResponseMessage,
+    GooseControllerCommand, GooseControllerProtocol, GooseControllerRequest,
+    GooseControllerRequestMessage, GooseControllerResponse, GooseControllerResponseMessage,
 };
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
@@ -479,8 +478,11 @@ use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 /// Constant defining Goose's default port when running a Gaggle.
 const DEFAULT_PORT: &str = "5115";
 
-/// Constant defining Goose's default Controller port.
-const DEFAULT_CONTROLLER_PORT: &str = "5116";
+/// Constant defining Goose's default telnet Controller port.
+const DEFAULT_TELNET_PORT: &str = "5116";
+
+/// Constant defining Goose's default WebSocket Controller port.
+const DEFAULT_WEBSOCKET_PORT: &str = "5117";
 
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
@@ -706,7 +708,9 @@ pub struct GooseDefaults {
     /// An optional default for not logging response body in debug log.
     no_debug_body: Option<bool>,
     /// An optional default for not enabling telnet Controller thread.
-    no_controller: Option<bool>,
+    no_telnet: Option<bool>,
+    /// An optional default for not enabling WebSocket Controller thread.
+    no_websocket: Option<bool>,
     /// An optional default to track additional status code metrics.
     status_codes: Option<bool>,
     /// An optional default maximum requests per second.
@@ -719,10 +723,14 @@ pub struct GooseDefaults {
     expect_workers: Option<u16>,
     /// An optional default for Manager to ignore load test checksum.
     no_hash_check: Option<bool>,
-    /// An optional default for host Controller listens on.
-    controller_host: Option<String>,
-    /// An optional default for port Controller listens on.
-    controller_port: Option<u16>,
+    /// An optional default for host telnet Controller listens on.
+    telnet_host: Option<String>,
+    /// An optional default for port telnet Controller listens on.
+    telnet_port: Option<u16>,
+    /// An optional default for host WebSocket Controller listens on.
+    websocket_host: Option<String>,
+    /// An optional default for port WebSocket Controller listens on.
+    websocket_port: Option<u16>,
     /// An optional default for host Manager listens on.
     manager_bind_host: Option<String>,
     /// An optional default for port Manager listens on.
@@ -775,7 +783,9 @@ pub enum GooseDefault {
     /// An optional default for not logging the response body in the debug log.
     NoDebugBody,
     /// An optional default for not enabling telnet Controller thread.
-    NoController,
+    NoTelnet,
+    /// An optional default for not enabling WebSocket Controller thread.
+    NoWebSocket,
     /// An optional default to track additional status code metrics.
     StatusCodes,
     /// An optional default maximum requests per second.
@@ -788,10 +798,14 @@ pub enum GooseDefault {
     ExpectWorkers,
     /// An optional default for Manager to ignore load test checksum.
     NoHashCheck,
-    /// An optional default for host Controller listens on.
-    ControllerHost,
-    /// An optional default for port Controller listens on.
-    ControllerPort,
+    /// An optional default for host telnet Controller listens on.
+    TelnetHost,
+    /// An optional default for port telnet Controller listens on.
+    TelnetPort,
+    /// An optional default for host Websocket Controller listens on.
+    WebSocketHost,
+    /// An optional default for port WebSocket Controller listens on.
+    WebSocketPort,
     /// An optional default for host Manager listens on.
     ManagerBindHost,
     /// An optional default for port Manager listens on.
@@ -2660,32 +2674,14 @@ impl GooseAttack {
         (Some(all_threads_throttle), Some(parent_to_throttle_tx))
     }
 
-    // Helper to spawn a controller thread. The controller thread uses one channel to send
-    // requests to the parent thread. The parent uses the other channel to send responses
-    // back to the controller thread.
-    async fn setup_controller(&mut self) -> Option<flume::Receiver<GooseControllerRequest>> {
-        // If the controller is disabled, return immediately.
-        if self.configuration.no_controller {
+    // Helper to optionally spawn a telnet and/or WebSocket Controller thread. The Controller
+    // threads share a control channel, allowing it to send requests to the parent process. When
+    // a response is required, the Controller will also send a one-shot channel allowing a direct
+    // reply.
+    async fn setup_controllers(&mut self) -> Option<flume::Receiver<GooseControllerRequest>> {
+        // If the telnet controller is disabled, return immediately.
+        if self.configuration.no_telnet && self.configuration.no_websocket {
             return None;
-        }
-
-        // Configure controller_host, using default if run-time option is not set.
-        if self.configuration.controller_host.is_empty() {
-            self.configuration.controller_host =
-                if let Some(host) = self.defaults.controller_host.clone() {
-                    host
-                } else {
-                    "0.0.0.0".to_string()
-                }
-        }
-
-        // Then configure controller_port, using default if run-time option is not set.
-        if self.configuration.controller_port == 0 {
-            self.configuration.controller_port = if let Some(port) = self.defaults.controller_port {
-                port
-            } else {
-                DEFAULT_CONTROLLER_PORT.to_string().parse().unwrap()
-            };
         }
 
         // Create an unbounded channel for controller threads to send requests to the parent
@@ -2695,14 +2691,68 @@ impl GooseAttack {
             flume::Receiver<GooseControllerRequest>,
         ) = flume::unbounded();
 
-        // Spawn the initial controller thread to allow real-time control of the load test.
-        // There is no need to rejoin this thread when the load test ends.
-        let _ = Some(tokio::spawn(controller::controller_main(
-            self.configuration.clone(),
-            all_threads_controller_request_tx,
-        )));
+        // Configured telnet Controller if not disabled.
+        if !self.configuration.no_telnet {
+            // Configure telnet_host, using default if run-time option is not set.
+            if self.configuration.telnet_host.is_empty() {
+                self.configuration.telnet_host =
+                    if let Some(host) = self.defaults.telnet_host.clone() {
+                        host
+                    } else {
+                        "0.0.0.0".to_string()
+                    }
+            }
 
-        // Return the parent end of the channel, if created.
+            // Then configure telnet_port, using default if run-time option is not set.
+            if self.configuration.telnet_port == 0 {
+                self.configuration.telnet_port = if let Some(port) = self.defaults.telnet_port {
+                    port
+                } else {
+                    DEFAULT_TELNET_PORT.to_string().parse().unwrap()
+                };
+            }
+
+            // Spawn the initial controller thread to allow real-time control of the load test.
+            // There is no need to rejoin this thread when the load test ends.
+            let _ = Some(tokio::spawn(controller::controller_main(
+                self.configuration.clone(),
+                all_threads_controller_request_tx.clone(),
+                GooseControllerProtocol::Telnet,
+            )));
+        }
+
+        // Configured WebSocket Controller if not disabled.
+        if !self.configuration.no_websocket {
+            // Configure websocket_host, using default if run-time option is not set.
+            if self.configuration.websocket_host.is_empty() {
+                self.configuration.websocket_host =
+                    if let Some(host) = self.defaults.websocket_host.clone() {
+                        host
+                    } else {
+                        "0.0.0.0".to_string()
+                    }
+            }
+
+            // Then configure websocket_port, using default if run-time option is not set.
+            if self.configuration.websocket_port == 0 {
+                self.configuration.websocket_port = if let Some(port) = self.defaults.websocket_port
+                {
+                    port
+                } else {
+                    DEFAULT_WEBSOCKET_PORT.to_string().parse().unwrap()
+                };
+            }
+
+            // Spawn the initial controller thread to allow real-time control of the load test.
+            // There is no need to rejoin this thread when the load test ends.
+            let _ = Some(tokio::spawn(controller::controller_main(
+                self.configuration.clone(),
+                all_threads_controller_request_tx,
+                GooseControllerProtocol::WebSocket,
+            )));
+        }
+
+        // Return the parent end of the Controller channel.
         Some(controller_request_rx)
     }
 
@@ -2805,8 +2855,8 @@ impl GooseAttack {
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
-        // Spawn a controller thread.
-        let controller_channel_rx = self.setup_controller().await;
+        // Optionally spawn a telnet and/or Websocket Controller thread.
+        let controller_channel_rx = self.setup_controllers().await;
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
@@ -3715,6 +3765,7 @@ impl GooseAttack {
                             },
                             GooseControllerRequestMessage::CommandAndValue(command_and_value) => {
                                 match command_and_value.command {
+                                    /*
                                     GooseControllerCommand::Users => {
                                         info!(
                                             "changing users from {:?} to {}",
@@ -3723,6 +3774,7 @@ impl GooseAttack {
                                         self.configuration.users =
                                             Some(command_and_value.value.parse().unwrap());
                                     }
+                                    */
                                     GooseControllerCommand::HatchRate => {
                                         // The controller uses a regular expression to validate that
                                         // this is a valid float, so simply use it with further
@@ -3930,7 +3982,8 @@ impl GooseAttack {
 ///  - GooseDefault::RequestsFormat
 ///  - GooseDefault::DebugFile
 ///  - GooseDefault::DebugFormat
-///  - GooseDefault::ControllerHost
+///  - GooseDefault::TelnetHost
+///  - GooseDefault::WebSocketHost
 ///  - GooseDefault::ManagerBindHost
 ///  - GooseDefault::ManagerHost
 ///
@@ -3944,7 +3997,8 @@ impl GooseAttack {
 ///  - GooseDefault::Verbose
 ///  - GooseDefault::ThrottleRequests
 ///  - GooseDefault::ExpectWorkers
-///  - GooseDefault::ControllerPort
+///  - GooseDefault::TelnetPort
+///  - GooseDefault::WebSocketPort
 ///  - GooseDefault::ManagerBindPort
 ///  - GooseDefault::ManagerPort
 ///
@@ -3955,7 +4009,8 @@ impl GooseAttack {
 ///  - GooseDefault::NoTaskMetrics
 ///  - GooseDefault::NoErrorSummary
 ///  - GooseDefault::NoDebugBody
-///  - GooseDefault::NoController
+///  - GooseDefault::NoTelnet
+///  - GooseDefault::NoWebSocket
 ///  - GooseDefault::StatusCodes
 ///  - GooseDefault::StickyFollow
 ///  - GooseDefault::Manager
@@ -3990,7 +4045,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::RequestsFormat => self.defaults.requests_format = Some(value.to_string()),
             GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value.to_string()),
-            GooseDefault::ControllerHost => self.defaults.controller_host = Some(value.to_string()),
+            GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
+            GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
             GooseDefault::ManagerBindHost => {
                 self.defaults.manager_bind_host = Some(value.to_string())
             }
@@ -4002,7 +4058,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
-            | GooseDefault::ControllerPort
+            | GooseDefault::TelnetPort
+            | GooseDefault::WebSocketPort
             | GooseDefault::ManagerBindPort
             | GooseDefault::ManagerPort => {
                 return Err(GooseError::InvalidOption {
@@ -4020,7 +4077,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoTaskMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
-            | GooseDefault::NoController
+            | GooseDefault::NoTelnet
+            | GooseDefault::NoWebSocket
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -4049,7 +4107,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
             GooseDefault::ExpectWorkers => self.defaults.expect_workers = Some(value as u16),
-            GooseDefault::ControllerPort => self.defaults.controller_port = Some(value as u16),
+            GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
+            GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
             GooseDefault::ManagerBindPort => self.defaults.manager_bind_port = Some(value as u16),
             GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
@@ -4061,7 +4120,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::RequestsFormat
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
-            | GooseDefault::ControllerHost
+            | GooseDefault::TelnetHost
+            | GooseDefault::WebSocketHost
             | GooseDefault::ManagerBindHost
             | GooseDefault::ManagerHost => {
                 return Err(GooseError::InvalidOption {
@@ -4078,7 +4138,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoTaskMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
-            | GooseDefault::NoController
+            | GooseDefault::NoTelnet
+            | GooseDefault::NoWebSocket
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -4105,7 +4166,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
-            GooseDefault::NoController => self.defaults.no_controller = Some(value),
+            GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
+            GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
@@ -4120,7 +4182,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::RunningMetrics
             | GooseDefault::DebugFile
             | GooseDefault::DebugFormat
-            | GooseDefault::ControllerHost
+            | GooseDefault::TelnetHost
+            | GooseDefault::WebSocketHost
             | GooseDefault::ManagerBindHost
             | GooseDefault::ManagerHost => {
                 return Err(GooseError::InvalidOption {
@@ -4139,7 +4202,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
-            | GooseDefault::ControllerPort
+            | GooseDefault::TelnetPort
+            | GooseDefault::WebSocketPort
             | GooseDefault::ManagerBindPort
             | GooseDefault::ManagerPort => {
                 return Err(GooseError::InvalidOption {
@@ -4232,15 +4296,24 @@ pub struct GooseConfiguration {
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
 
-    /// Doesn't enable Controller TCP port
+    /// Doesn't enable telnet Controller
     #[options(no_short)]
-    pub no_controller: bool,
-    /// Sets host Controller listens on (default: 0.0.0.0)
+    pub no_telnet: bool,
+    /// Sets telnet Controller host (default: 0.0.0.0)
     #[options(no_short, meta = "HOST")]
-    pub controller_host: String,
-    /// Sets port Controller listens on (default: 5116)
+    pub telnet_host: String,
+    /// Sets telnet Controller TCP port (default: 5116)
     #[options(no_short, meta = "PORT")]
-    pub controller_port: u16,
+    pub telnet_port: u16,
+    /// Doesn't enable WebSocket Controller
+    #[options(no_short)]
+    pub no_websocket: bool,
+    /// Sets WebSocket Controller host (default: 0.0.0.0)
+    #[options(no_short, meta = "HOST")]
+    pub websocket_host: String,
+    /// Sets WebSocket Controller TCP port (default: 5117)
+    #[options(no_short, meta = "PORT")]
+    pub websocket_port: u16,
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
@@ -4614,7 +4687,9 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoErrorSummary, true)
             .unwrap()
-            .set_default(GooseDefault::NoController, true)
+            .set_default(GooseDefault::NoTelnet, true)
+            .unwrap()
+            .set_default(GooseDefault::NoWebSocket, true)
             .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
@@ -4664,7 +4739,8 @@ mod test {
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
         assert!(goose_attack.defaults.no_error_summary == Some(true));
-        assert!(goose_attack.defaults.no_controller == Some(true));
+        assert!(goose_attack.defaults.no_telnet == Some(true));
+        assert!(goose_attack.defaults.no_websocket == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.requests_format == Some(requests_format));

@@ -232,9 +232,12 @@ Metrics:
   --status-codes             Tracks additional status code metrics
 
 Advanced:
-  --no-controller            Doesn't enable Controller TCP port
-  --controller-host HOST     Sets host Controller listens on (default: 0.0.0.0)
-  --controller-port PORT     Sets port Controller listens on (default: 5116)
+  --no-telnet                Doesn't enable telnet Controller
+  --telnet-host HOST         Sets telnet Controller host (default: 0.0.0.0)
+  --telnet-port PORT         Sets telnet Controller TCP port (default: 5116)
+  --no-websocket             Doesn't enable WebSocket Controller
+  --websocket-host HOST      Sets WebSocket Controller host (default: 0.0.0.0)
+  --websocket-port PORT      Sets WebSocket Controller TCP port (default: 5117)
   --throttle-requests VALUE  Sets maximum requests per second
   --sticky-follow            Follows base_url redirect with subsequent requests
 
@@ -454,7 +457,8 @@ The following defaults can be configured with a `&str`:
  - requests log file format: `GooseDefault::RequestsFormat`
  - debug log file name: `GooseDefault::DebugFile`
  - debug log file format: `GooseDefault::DebugFormat`
- - host to bind telnet Controller to: `GooseDefault::ControllerHost`
+ - host to bind telnet Controller to: `GooseDefault::TelnetHost`
+ - host to bind WebSocket Controller to: `GooseDefault::WebSocketHost`
  - host to bind Manager to: `GooseDefault::ManagerBindHost`
  - host for Worker to connect to: `GooseDefault::ManagerHost`
 
@@ -467,7 +471,8 @@ The following defaults can be configured with a `usize` integer:
  - verbosity: `GooseDefault::Verbose`
  - maximum requests per second: `GooseDefault::ThrottleRequests`
  - number of Workers to expect: `GooseDefault::ExpectWorkers`
- - port to bind telnet Controller to: `GooseDefault::ControllerPort`
+ - port to bind telnet Controller to: `GooseDefault::TelnetPort`
+ - port to bind WebSocket Controller to: `GooseDefault::WebSocketPort`
  - port to bind Manager to: `GooseDefault::ManagerBindPort`
  - port for Worker to connect to: `GooseDefault::ManagerPort`
 
@@ -475,7 +480,8 @@ The following defaults can be configured with a `bool`:
  - do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
  - do not track metrics: `GooseDefault::NoMetrics`
  - do not track task metrics: `GooseDefault::NoTaskMetrics`
- - do not start telnet Controller thread: `GooseDefault::NoController`
+ - do not start telnet Controller thread: `GooseDefault::NoTelnet`
+ - do not start WebSocket Controller thread: `GooseDefault::NoWebSocket`
  - track status codes: `GooseDefault::StatusCodes`
  - follow redirect of base_url: `GooseDefault::StickyFollow`
  - enable Manager mode: `GooseDefault::Manager`
@@ -505,7 +511,11 @@ For example, without any run-time options the following load test would automati
 
 ## Controlling Running Goose Load Test
 
-By default, Goose will launch a telnet Controller thread that listens on `0.0.0.0:5116` and allows real-time control of a running load test. The host and port can be configured at start time with the `--controller-host` and `--controller-port` command line options. The defaults can be changed with `GooseDefault::ControllerHost` and `GooseDefault::ControllerPost`. To completely disable the telnet Controller thread, launch Goose with the `--no-controller` command line option.
+By default, Goose will launch a telnet Controller thread that listens on `0.0.0.0:5116`, and a WebSocket Controller thread that listens on `0.0.0.0:5117`. The running Goose load test can be controlled through these Controllers.
+
+### Telnet Controller
+
+The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with `GooseDefault::TelnetHost`,`GooseDefault::TelnetPort`, and `GooseDefault::NoTelnet`.
 
 To learn about all available commands, telnet into the Controller thread and enter `help` (or `?`), for example:
 ```
@@ -525,6 +535,47 @@ goose 0.11.2 controller commands:
  metrics            display metrics for current load test
  metrics-json       display metrics for current load test in json format
 goose> 
+```
+
+### WebSocket Controller
+
+The host and port that the WebSocket Controller listens on can be configured at start time with `--websocket-host` and `--websocket-port`. The WebSocket Controller can be completely disabled with the `--no-websocket` command line option. The defaults can be changed with `GooseDefault::WebSocketHost`,`GooseDefault::WebSocketPort`, and `GooseDefault::NoWebSocket`.
+
+The WebSocket Controller supports a subset of the above commands, including `exit`, `stop`, `hatchrate FLOAT`, `config` and `metrics`. Requests and Response are in JSON format.
+
+Requests must be in the following format:
+```json
+{
+  "request": String, 
+}
+```
+
+For example, a client should send the follow json to request the current load test metrics:
+```json
+{
+  "request": "metrics", 
+}
+```
+
+Responses will always be in the following format:
+```json
+{
+  "response": String,
+  "success": Boolean,
+  "error": Option<String>,
+}
+```
+
+Note that the `error` field will only contain a String if `success` is `false`.
+
+For example:
+```
+% websocat ws://127.0.0.1:5117
+foobar
+{"response":"unrecognized json request","success":false,"error":"unrecognized json request"}
+{"request": "config"}
+{"response":"{\"help\":false,\"version\":false,\"list\":false,\"host\":\"http://apache/\",\"users\":1,\"hatch_rate\":\".5\",\"run_time\":\"\",\"log_level\":0,\"log_file\":\"\",\"verbose\":1,\"running_metrics\":null,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_task_metrics\":false,\"no_error_summary\":false,\"report_file\":\"\",\"requests_file\":\"\",\"requests_format\":\"json\",\"debug_file\":\"\",\"debug_format\":\"json\",\"no_debug_body\":false,\"status_codes\":false,\"no_telnet\":false,\"telnet_host\":\"0.0.0.0\",\"telnet_port\":5116,\"no_websocket\":false,\"websocket_host\":\"0.0.0.0\",\"websocket_port\":5117,\"throttle_requests\":0,\"sticky_follow\":false,\"manager\":false,\"expect_workers\":null,\"no_hash_check\":false,\"manager_bind_host\":\"\",\"manager_bind_port\":0,\"worker\":false,\"manager_host\":\"\",\"manager_port\":0}","success":true,"error":null}
+{"request": "exit"}
 ```
 
 ## Throttling Requests
