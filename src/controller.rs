@@ -46,8 +46,12 @@ pub enum GooseControllerCommand {
     Exit,
     /// Verify that the controller can talk to the parent process.
     Echo,
-    /// Tell the load test to stop (which will disconnect the controller).
+    /// Start an idle load test.
+    Start,
+    /// Stop a running test, putting it into an idle state.
     Stop,
+    /// Tell the load test to shut down (which will disconnect the controller).
+    Shutdown,
 }
 
 /// This structure is used to send commands and values to the parent process.
@@ -180,8 +184,12 @@ pub async fn controller_main(
         r"(?i)^(exit|quit)$",
         // Confirm the server is still connected and alive.
         r"(?i)^echo$",
-        // Stop the load test (which will cause the controller connection to quit).
+        // Start an idle load test.
+        r"(?i)^start$",
+        // Stop an idle load test.
         r"(?i)^stop$",
+        // Shutdown the load test (which will cause the controller connection to quit).
+        r"(?i)^shutdown$",
     ])
     .unwrap();
 
@@ -294,18 +302,39 @@ async fn accept_telnet_connection(
                 Ok(_) => write_to_socket(&mut socket, "echo").await,
                 Err(e) => write_to_socket(&mut socket, &format!("echo failed: [{}]", e)).await,
             }
-        // Stop
-        } else if matches.matched(GooseControllerCommand::Stop as usize) {
-            write_to_socket_raw(&mut socket, "stopping load test ...\n").await;
-            if let Err(e) = send_to_parent_and_get_reply(
+        // Start
+        } else if matches.matched(GooseControllerCommand::Start as usize) {
+            write_to_socket_raw(&mut socket, "starting load test ...").await;
+            match send_to_parent_and_get_reply(
                 thread_id,
                 &channel_tx,
-                GooseControllerCommand::Stop,
+                GooseControllerCommand::Start,
                 None,
             )
             .await
             {
-                write_to_socket(&mut socket, &format!("failed to stop load test [{}]", e)).await;
+                Ok(_) => write_to_socket(&mut socket, "").await,
+                Err(e) => {
+                    write_to_socket(&mut socket, &format!("failed to start load test [{}]", e))
+                        .await
+                }
+            }
+        // Shutdown
+        } else if matches.matched(GooseControllerCommand::Shutdown as usize) {
+            write_to_socket_raw(&mut socket, "shutting down load test ...\n").await;
+            if let Err(e) = send_to_parent_and_get_reply(
+                thread_id,
+                &channel_tx,
+                GooseControllerCommand::Shutdown,
+                None,
+            )
+            .await
+            {
+                write_to_socket(
+                    &mut socket,
+                    &format!("failed to shut down load test [{}]", e),
+                )
+                .await;
             }
         // Hatch rate
         } else if matches.matched(GooseControllerCommand::HatchRate as usize) {
@@ -519,12 +548,49 @@ async fn accept_websocket_connection(
                                     .expect("failed to write data to stream");
                             }
                         }
-                    // Stop
-                    } else if matches.matched(GooseControllerCommand::Stop as usize) {
+                    // Start
+                    } else if matches.matched(GooseControllerCommand::Start as usize) {
                         match send_to_parent_and_get_reply(
                             thread_id,
                             &channel_tx,
-                            GooseControllerCommand::Stop,
+                            GooseControllerCommand::Start,
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                ws_sender
+                                    .send(Message::Text(
+                                        serde_json::to_string(&GooseControllerWebSocketResponse {
+                                            response: "load test started".to_string(),
+                                            success: true,
+                                            error: None,
+                                        })
+                                        .unwrap(),
+                                    ))
+                                    .await
+                                    .expect("failed to write data to stream");
+                            }
+                            Err(e) => {
+                                ws_sender
+                                    .send(Message::Text(
+                                        serde_json::to_string(&GooseControllerWebSocketResponse {
+                                            response: "starting load test failed".to_string(),
+                                            success: false,
+                                            error: Some(e),
+                                        })
+                                        .unwrap(),
+                                    ))
+                                    .await
+                                    .expect("failed to write data to stream");
+                            }
+                        }
+                    // Shutdown
+                    } else if matches.matched(GooseControllerCommand::Shutdown as usize) {
+                        match send_to_parent_and_get_reply(
+                            thread_id,
+                            &channel_tx,
+                            GooseControllerCommand::Shutdown,
                             None,
                         )
                         .await
@@ -542,7 +608,7 @@ async fn accept_websocket_connection(
                                 ws_sender
                                     .send(Message::Text(
                                         serde_json::to_string(&GooseControllerWebSocketResponse {
-                                            response: "failed to stop load test".to_string(),
+                                            response: "failed to shut down load test".to_string(),
                                             success: false,
                                             error: Some(e),
                                         })
@@ -740,7 +806,8 @@ fn display_help() -> String {
  help (?)           this help
  exit (quit)        exit controller
  echo               confirm controller is working
- stop               stop running load test (and exit controller)
+ start              start an idle loat test
+ shutdown           shutdown running load test (and exit controller)
  hatchrate FLOAT    set per-second rate users hatch
  config             display load test configuration
  config-json        display load test configuration in json format

@@ -5,7 +5,7 @@
     o `help` (and `?`) display help
     o `exit` (and `quit`) exit the telnet Controller
     o `echo` pings the parent process and confirms the controller is working
-    o `stop` stops the running load test (and exits the controller)
+    o `shutdown` shuts down the running load test (and exits the controller)
     o `hatchrate` (and `hatch_rate`) FLOAT sets per-second rate users hatch
     o `config` displays the current load test configuration
     o `config-json` displays the current load test configuration in json format
@@ -19,7 +19,7 @@
     o default port to bind telnet Controller to: `GooseDefault::TelnetPort` (usize)
  - introduce WebSocket Controller allowing real-time control of load test, optionally disable with `--no-websocket`, supports the following commands:
     o `exit` (and `quit`) exit the WebSocket Controller
-    o `stop` stops the running load test (and exits the controller)
+    o `shutdown` shuts down the running load test (and exits the controller)
     o `hatchrate` (and `hatch_rate`) FLOAT sets per-second rate users hatch
     o `config` returns the current load test configuration in json format
     o `metrics` (and `stats`) returns metrics for the current load test in json format
@@ -29,6 +29,10 @@
     o default to not enabling WebSocket Controller: `GooseDefault::NoWebSocket` (bool)
     o default host to bind WebSocket Controller to: `GooseDefault::WebSocketHost` (&str)
     o default port to bind WebSocket Controller to: `GooseDefault::WebSocketPort` (usize)
+ - make it possible to start and stop a load test without completely restarting Goose
+ - introduce `--no-autostart` to disable automatically starting the load test, leaves Goose in an idle state waiting for Controller commands
+    o renamed `stop` Controller command to `shutdown`
+    o added new `start` Controller command, telling idle Goose load test to start
 
 ## 0.11.1 May 16, 2021
  - update [`rand`](https://docs.rs/rand) dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call

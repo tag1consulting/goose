@@ -528,7 +528,8 @@ goose 0.11.2 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  echo               confirm controller is working
- stop               stop running load test (and exit controller)
+ start              start an idle loat test
+ shutdown           shutdown running load test (and exit controller)
  hatchrate FLOAT    set per-second rate users hatch
  config             display load test configuration
  config-json        display load test configuration in json format

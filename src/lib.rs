@@ -645,6 +645,8 @@ pub enum AttackMode {
 /// A [`GooseAttack`](./struct.GooseAttack.html) load test moves through each of the following
 /// phases during a complete load test.
 pub enum AttackPhase {
+    /// No load test is running.
+    Idle,
     /// Memory is being allocated for the [`GooseAttack`](./struct.GooseAttack.html).
     Initializing,
     /// [`GooseUser`](./goose/struct.GooseUser.html)s are starting and beginning to generate
@@ -711,6 +713,8 @@ pub struct GooseDefaults {
     no_telnet: Option<bool>,
     /// An optional default for not enabling WebSocket Controller thread.
     no_websocket: Option<bool>,
+    /// An optional default for not auto-starting the load test.
+    no_autostart: Option<bool>,
     /// An optional default to track additional status code metrics.
     status_codes: Option<bool>,
     /// An optional default maximum requests per second.
@@ -786,6 +790,8 @@ pub enum GooseDefault {
     NoTelnet,
     /// An optional default for not enabling WebSocket Controller thread.
     NoWebSocket,
+    /// An optional default for not automatically starting load test.
+    NoAutoStart,
     /// An optional default to track additional status code metrics.
     StatusCodes,
     /// An optional default maximum requests per second.
@@ -858,6 +864,8 @@ struct GooseAttackRunState {
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
+    /// A flag tracking whether or not the idle status has been displayed.
+    idle_status_displayed: bool,
     /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
     /// can be stopped later.
     users: Vec<tokio::task::JoinHandle<()>>,
@@ -866,6 +874,8 @@ struct GooseAttackRunState {
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
+    /// Timer tracking when to next synchronize the metrics.
+    sync_metrics_timer: std::time::Instant,
     /// Boolean flag indicating if running metrics should be displayed.
     display_running_metrics: bool,
     /// Boolean flag indicating if all [`GooseUser`](./goose/struct.GooseUser.html)s
@@ -930,7 +940,7 @@ impl GooseAttack {
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             run_time: 0,
             attack_mode: AttackMode::Undefined,
-            attack_phase: AttackPhase::Initializing,
+            attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
@@ -961,7 +971,7 @@ impl GooseAttack {
             configuration,
             run_time: 0,
             attack_mode: AttackMode::Undefined,
-            attack_phase: AttackPhase::Initializing,
+            attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
@@ -2901,9 +2911,11 @@ impl GooseAttack {
             report_file,
             requests_file,
             metrics_header_displayed: false,
+            idle_status_displayed: false,
             users: Vec::new(),
             user_channels: Vec::new(),
             running_metrics_timer: std_now,
+            sync_metrics_timer: std_now,
             display_running_metrics: false,
             all_users_spawned: false,
             canceled: Arc::new(AtomicBool::new(false)),
@@ -3669,35 +3681,71 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Called internally in local-mode and gaggle-mode.
-    async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
-        trace!("start_attack: socket({:?})", socket);
-
+    // Creates the initial GooseAttackRunState
+    async fn initialize_run_state(&mut self, socket: Option<Socket>) -> GooseAttackRunState {
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
-        let mut goose_attack_run_state = self
+        let goose_attack_run_state = self
             .initialize_attack(socket)
             .await
             .expect("failed to initialize GooseAttackRunState");
 
-        // Only initialize once, then change to the next attack phase.
-        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
+        goose_attack_run_state
+    }
 
-        // Start a timer to track when to next synchronize the metrics.
-        let mut sync_metrics_timer = std::time::Instant::now();
-        // Sync at least as often as we display metrics, or every ten seconds.
-        let mut sync_every = self.configuration.running_metrics.unwrap_or(10);
-        if sync_every > 10 {
-            sync_every = 10;
-        }
+    // Reset the GooseAttackRunState before starting a load test. This is to allow a Controller
+    // to stop and start the load test multiple times, for example from a UI.
+    async fn reset_run_state(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        // Reset Run State
+        let std_now = std::time::Instant::now();
+        goose_attack_run_state.spawn_user_timer = std_now;
+        goose_attack_run_state.spawn_user_in_ms = 0;
+        goose_attack_run_state.spawn_user_counter = 0;
+        goose_attack_run_state.drift_timer = tokio::time::Instant::now();
+        goose_attack_run_state.metrics_header_displayed = false;
+        goose_attack_run_state.idle_status_displayed = false;
+        goose_attack_run_state.users = Vec::new();
+        goose_attack_run_state.user_channels = Vec::new();
+        goose_attack_run_state.running_metrics_timer = std_now;
+        goose_attack_run_state.sync_metrics_timer = std_now;
+        goose_attack_run_state.display_running_metrics = false;
+        goose_attack_run_state.all_users_spawned = false;
+    }
+
+    // Called internally in local-mode and gaggle-mode.
+    async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
+        trace!("start_attack: socket({:?})", socket);
+
+        let mut goose_attack_run_state = self.initialize_run_state(socket).await;
 
         loop {
             match self.attack_phase {
+                // The GooseAttack is idle, the configuration can be changed by a Controller.
+                AttackPhase::Idle => {
+                    if self.configuration.no_autostart {
+                        if !goose_attack_run_state.idle_status_displayed {
+                            info!("Goose is currently idle.");
+                            goose_attack_run_state.idle_status_displayed = true;
+                        } else {
+                            let sleep_duration = tokio::time::Duration::from_millis(250);
+                            debug!("sleeping {:?}...", sleep_duration);
+                            goose_attack_run_state.drift_timer = util::sleep_minus_drift(
+                                sleep_duration,
+                                goose_attack_run_state.drift_timer,
+                            )
+                            .await;
+                        }
+                    } else {
+                        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
+                    }
+                }
                 // Start spawning GooseUser threads.
-                AttackPhase::Starting => self
-                    .spawn_attack(&mut goose_attack_run_state)
-                    .await
-                    .expect("failed to start GooseAttack"),
+                AttackPhase::Starting => {
+                    self.reset_run_state(&mut goose_attack_run_state).await;
+                    self.spawn_attack(&mut goose_attack_run_state)
+                        .await
+                        .expect("failed to start GooseAttack");
+                }
                 // Now that all GooseUser threads started, run the load test.
                 AttackPhase::Running => self.monitor_attack(&mut goose_attack_run_state).await?,
                 // Stop all GooseUser threads and clean up.
@@ -3710,9 +3758,9 @@ impl GooseAttack {
                 _ => panic!("GooseAttack entered an impossible phase"),
             }
             // Synchronize metrics if enough time has elapsed.
-            if util::timer_expired(sync_metrics_timer, sync_every) {
+            if util::timer_expired(goose_attack_run_state.sync_metrics_timer, 3) {
                 self.sync_metrics(&mut goose_attack_run_state).await?;
-                sync_metrics_timer = std::time::Instant::now();
+                goose_attack_run_state.sync_metrics_timer = std::time::Instant::now();
             }
 
             // If the controller is enabled, check if we've received any
@@ -3751,8 +3799,24 @@ impl GooseAttack {
                                         )),
                                     );
                                 }
+                                // Start the load test, and acknowledge command.
+                                GooseControllerCommand::Start => {
+                                    // We can only start an idle load test.
+                                    if self.attack_phase == AttackPhase::Idle {
+                                        self.attack_phase = AttackPhase::Starting;
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(true),
+                                        );
+                                    } else {
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(false),
+                                        );
+                                    }
+                                }
                                 // Stop the load test, and acknowledge request.
-                                GooseControllerCommand::Stop => {
+                                GooseControllerCommand::Shutdown => {
                                     self.attack_phase = AttackPhase::Stopping;
                                     self.reply_to_controller(
                                         message,
@@ -4011,6 +4075,7 @@ impl GooseAttack {
 ///  - GooseDefault::NoDebugBody
 ///  - GooseDefault::NoTelnet
 ///  - GooseDefault::NoWebSocket
+///  - GooseDefault::NoAutoStart
 ///  - GooseDefault::StatusCodes
 ///  - GooseDefault::StickyFollow
 ///  - GooseDefault::Manager
@@ -4079,6 +4144,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
+            | GooseDefault::NoAutoStart
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -4140,6 +4206,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
+            | GooseDefault::NoAutoStart
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -4168,6 +4235,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
+            GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
@@ -4308,6 +4376,9 @@ pub struct GooseConfiguration {
     /// Doesn't enable WebSocket Controller
     #[options(no_short)]
     pub no_websocket: bool,
+    /// Doesn't automatically start load test
+    #[options(no_short)]
+    pub no_autostart: bool,
     /// Sets WebSocket Controller host (default: 0.0.0.0)
     #[options(no_short, meta = "HOST")]
     pub websocket_host: String,
@@ -4691,6 +4762,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoWebSocket, true)
             .unwrap()
+            .set_default(GooseDefault::NoAutoStart, true)
+            .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
@@ -4741,6 +4814,7 @@ mod test {
         assert!(goose_attack.defaults.no_error_summary == Some(true));
         assert!(goose_attack.defaults.no_telnet == Some(true));
         assert!(goose_attack.defaults.no_websocket == Some(true));
+        assert!(goose_attack.defaults.no_autostart == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.requests_format == Some(requests_format));
