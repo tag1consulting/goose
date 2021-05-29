@@ -645,17 +645,17 @@ pub enum AttackMode {
 /// A [`GooseAttack`](./struct.GooseAttack.html) load test moves through each of the following
 /// phases during a complete load test.
 pub enum AttackPhase {
-    /// No load test is running.
+    /// No load test is running, configuration can be changed by a Controller.
     Idle,
-    /// Memory is being allocated for the [`GooseAttack`](./struct.GooseAttack.html).
-    Initializing,
-    /// [`GooseUser`](./goose/struct.GooseUser.html)s are starting and beginning to generate
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s are launching and beginning to generate
     /// load.
     Starting,
-    /// All [`GooseUser`](./goose/struct.GooseUser.html)s have started and are generating load.
+    /// All [`GooseUser`](./goose/struct.GooseUser.html)s have launched and are generating load.
     Running,
     /// [`GooseUser`](./goose/struct.GooseUser.html)s are stopping.
     Stopping,
+    /// Exiting the load test.
+    Shutdown,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -824,6 +824,7 @@ pub enum GooseDefault {
     ManagerPort,
 }
 
+#[derive(Debug)]
 /// Internal global run state for load test.
 struct GooseAttackRunState {
     /// A timestamp tracking when the previous [`GooseUser`](./goose/struct.GooseUser.html)
@@ -864,7 +865,7 @@ struct GooseAttackRunState {
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
-    /// A flag tracking whether or not the idle status has been displayed.
+    /// When entering the idle phase use this flag to only display a message one time.
     idle_status_displayed: bool,
     /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
     /// can be stopped later.
@@ -3681,21 +3682,16 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Creates the initial GooseAttackRunState
-    async fn initialize_run_state(&mut self, socket: Option<Socket>) -> GooseAttackRunState {
-        // The GooseAttackRunState is used while spawning and running the
-        // GooseUser threads that generate the load test.
-        let goose_attack_run_state = self
-            .initialize_attack(socket)
-            .await
-            .expect("failed to initialize GooseAttackRunState");
-
-        goose_attack_run_state
-    }
-
     // Reset the GooseAttackRunState before starting a load test. This is to allow a Controller
     // to stop and start the load test multiple times, for example from a UI.
     async fn reset_run_state(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        // Run any configured test_start() functions.
+        self.run_test_start().await.unwrap();
+
+        // @TODO: Review this.
+        self.metrics
+            .initialize_task_metrics(&self.task_sets, &self.configuration);
+
         // Reset Run State
         let std_now = std::time::Instant::now();
         goose_attack_run_state.spawn_user_timer = std_now;
@@ -3710,23 +3706,34 @@ impl GooseAttack {
         goose_attack_run_state.sync_metrics_timer = std_now;
         goose_attack_run_state.display_running_metrics = false;
         goose_attack_run_state.all_users_spawned = false;
+
+        // Reset timers, load test is starting.
+        self.started = Some(std_now);
+        self.metrics.started = Some(Local::now());
     }
 
     // Called internally in local-mode and gaggle-mode.
     async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
         trace!("start_attack: socket({:?})", socket);
 
-        let mut goose_attack_run_state = self.initialize_run_state(socket).await;
+        // The GooseAttackRunState is used while spawning and running the
+        // GooseUser threads that generate the load test.
+        // @TODO: logs should be created when we start, not when we idle.
+        let mut goose_attack_run_state = self
+            .initialize_attack(socket)
+            .await
+            .expect("failed to initialize GooseAttackRunState");
 
+        // The Goose parent process GooseAttack loop runs until Goose shuts down. Goose enters
+        // the loop in AttackPhase::Idle, and exits in AttackPhase::Stopping.
         loop {
             match self.attack_phase {
-                // The GooseAttack is idle, the configuration can be changed by a Controller.
+                // In the Idle phase the Goose configuration can be changed by a Controller,
+                // and otherwise nothing happens but sleeping an checking for messages.
                 AttackPhase::Idle => {
                     if self.configuration.no_autostart {
-                        if !goose_attack_run_state.idle_status_displayed {
-                            info!("Goose is currently idle.");
-                            goose_attack_run_state.idle_status_displayed = true;
-                        } else {
+                        // Sleep then check for further instructions.
+                        if goose_attack_run_state.idle_status_displayed {
                             let sleep_duration = tokio::time::Duration::from_millis(250);
                             debug!("sleeping {:?}...", sleep_duration);
                             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
@@ -3734,28 +3741,35 @@ impl GooseAttack {
                                 goose_attack_run_state.drift_timer,
                             )
                             .await;
+                        // Only display informational message about being idle one time.
+                        } else {
+                            info!("Goose is currently idle.");
+                            goose_attack_run_state.idle_status_displayed = true;
                         }
                     } else {
+                        // Prepare to start the load test, resetting timers and counters.
+                        self.reset_run_state(&mut goose_attack_run_state).await;
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
                     }
                 }
-                // Start spawning GooseUser threads.
-                AttackPhase::Starting => {
-                    self.reset_run_state(&mut goose_attack_run_state).await;
-                    self.spawn_attack(&mut goose_attack_run_state)
-                        .await
-                        .expect("failed to start GooseAttack");
-                }
-                // Now that all GooseUser threads started, run the load test.
+                // In the Start phase, Goose launches GooseUser threads and starts a GooseAttack.
+                AttackPhase::Starting => self
+                    .spawn_attack(&mut goose_attack_run_state)
+                    .await
+                    .expect("failed to start GooseAttack"),
+                // In the Running phase, Goose maintains the configured GooseAttack.
                 AttackPhase::Running => self.monitor_attack(&mut goose_attack_run_state).await?,
-                // Stop all GooseUser threads and clean up.
+                // In the Stopping phase, Goose stops all GooseUser threads and optionally reports
+                // any collected metrics.
                 AttackPhase::Stopping => {
                     self.stop_attack(&mut goose_attack_run_state).await?;
                     self.sync_metrics(&mut goose_attack_run_state).await?;
                     self.write_html_report(&mut goose_attack_run_state).await?;
-                    break;
+                    // @TODO: Optionally return to an idle state.
+                    self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Shutdown);
                 }
-                _ => panic!("GooseAttack entered an impossible phase"),
+                // By reaching the Shutdown phase, break out of the GooseAttack loop.
+                AttackPhase::Shutdown => break,
             }
             // Synchronize metrics if enough time has elapsed.
             if util::timer_expired(goose_attack_run_state.sync_metrics_timer, 3) {
