@@ -319,6 +319,22 @@ async fn accept_telnet_connection(
                         .await
                 }
             }
+        // Stop
+        } else if matches.matched(GooseControllerCommand::Stop as usize) {
+            write_to_socket_raw(&mut socket, "stopping load test ...").await;
+            match send_to_parent_and_get_reply(
+                thread_id,
+                &channel_tx,
+                GooseControllerCommand::Stop,
+                None,
+            )
+            .await
+            {
+                Ok(_) => write_to_socket(&mut socket, "").await,
+                Err(e) => {
+                    write_to_socket(&mut socket, &format!("failed to stop load test [{}]", e)).await
+                }
+            }
         // Shutdown
         } else if matches.matched(GooseControllerCommand::Shutdown as usize) {
             write_to_socket_raw(&mut socket, "shutting down load test ...\n").await;
@@ -557,6 +573,33 @@ async fn accept_websocket_connection(
                                 write_to_websocket(
                                     &mut ws_sender,
                                     "failed to start load test".to_string(),
+                                    Some(e),
+                                )
+                                .await;
+                            }
+                        }
+                    // Stop
+                    } else if matches.matched(GooseControllerCommand::Stop as usize) {
+                        match send_to_parent_and_get_reply(
+                            thread_id,
+                            &channel_tx,
+                            GooseControllerCommand::Stop,
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "load test stopped".to_string(),
+                                    None,
+                                )
+                                .await;
+                            }
+                            Err(e) => {
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "failed to stop load test".to_string(),
                                     Some(e),
                                 )
                                 .await;
