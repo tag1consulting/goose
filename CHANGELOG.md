@@ -30,9 +30,17 @@
     o default host to bind WebSocket Controller to: `GooseDefault::WebSocketHost` (&str)
     o default port to bind WebSocket Controller to: `GooseDefault::WebSocketPort` (usize)
  - make it possible to start and stop a load test without completely restarting Goose
- - introduce `--no-autostart` to disable automatically starting the load test, leaves Goose in an idle state waiting for Controller commands
+ - introduce `--no-autostart` to disable automatically starting the load test, leaves Goose in an idle state waiting for Controller commands (optionally change the default with `GooseDefault::NoAutoStart`)
     o renamed `stop` Controller command to `shutdown`
     o added new `start` Controller command, telling idle Goose load test to start
+    o added new `stop` Controller command, telling running Goose load test to stop and return to idle state
+ - code cleanup and logic consollidation to support Controller fixed a bug where metrics wouldn't display and the debug file, request file, and html report weren't written when load test was stopped while still launching users
+ - regularly sync metrics, using a timeout to avoid hanging the main loop
+ - properly reset metrics when load test is stopped and restarted
+ - properly flush debug file, request file, and html report when stopping load test with Controller
+ - properly (re)create debug file, request file, and html report when starting load test with Controller
+ - if metrics are enabled, display when controller stops load test
+
 
 ## 0.11.1 May 16, 2021
  - update [`rand`](https://docs.rs/rand) dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call

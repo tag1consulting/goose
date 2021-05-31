@@ -4477,15 +4477,15 @@ pub struct GooseConfiguration {
     /// Doesn't enable WebSocket Controller
     #[options(no_short)]
     pub no_websocket: bool,
-    /// Doesn't automatically start load test
-    #[options(no_short)]
-    pub no_autostart: bool,
     /// Sets WebSocket Controller host (default: 0.0.0.0)
     #[options(no_short, meta = "HOST")]
     pub websocket_host: String,
     /// Sets WebSocket Controller TCP port (default: 5117)
     #[options(no_short, meta = "PORT")]
     pub websocket_port: u16,
+    /// Doesn't automatically start load test
+    #[options(no_short)]
+    pub no_autostart: bool,
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
