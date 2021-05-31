@@ -3744,6 +3744,15 @@ impl GooseAttack {
                             info!("Goose is currently idle.");
                             goose_attack_run_state.idle_status_displayed = true;
                         }
+                        // Gracefully exit loop if ctrl-c is caught.
+                        if goose_attack_run_state.canceled.load(Ordering::SeqCst) {
+                            // No metrics to display when sitting idle, so disable.
+                            self.metrics.display_metrics = false;
+                            self.set_attack_phase(
+                                &mut goose_attack_run_state,
+                                AttackPhase::Stopping,
+                            );
+                        }
                     } else {
                         // Prepare to start the load test, resetting timers and counters.
                         self.reset_run_state(&mut goose_attack_run_state).await;
