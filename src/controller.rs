@@ -821,7 +821,8 @@ fn display_help() -> String {
  help (?)           this help
  exit (quit)        exit controller
  echo               confirm controller is working
- start              start an idle loat test
+ start              start an idle load test
+ stop               stop a running load test and return to idle state
  shutdown           shutdown running load test (and exit controller)
  hatchrate FLOAT    set per-second rate users hatch
  config             display load test configuration

@@ -528,7 +528,8 @@ goose 0.11.2 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  echo               confirm controller is working
- start              start an idle loat test
+ start              start an idle load test
+ stop               stop a running load test and return to idle state
  shutdown           shutdown running load test (and exit controller)
  hatchrate FLOAT    set per-second rate users hatch
  config             display load test configuration
@@ -542,9 +543,9 @@ goose>
 
 The host and port that the WebSocket Controller listens on can be configured at start time with `--websocket-host` and `--websocket-port`. The WebSocket Controller can be completely disabled with the `--no-websocket` command line option. The defaults can be changed with `GooseDefault::WebSocketHost`,`GooseDefault::WebSocketPort`, and `GooseDefault::NoWebSocket`.
 
-The WebSocket Controller supports a subset of the above commands, including `exit`, `stop`, `hatchrate FLOAT`, `config` and `metrics`. Requests and Response are in JSON format.
+The WebSocket Controller supports a subset of the above commands, including `exit`, `start`, `stop`, `shutdown`, `hatchrate FLOAT`, `config` and `metrics`. Requests and Response are in JSON format.
 
-Requests must be in the following format:
+Requests must be made in the following format:
 ```json
 {
   "request": String, 
@@ -567,7 +568,7 @@ Responses will always be in the following format:
 }
 ```
 
-Note that the `error` field will only contain a String if `success` is `false`.
+The `error` field will only contain a String if `success` is `false`.
 
 For example:
 ```

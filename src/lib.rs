@@ -2847,21 +2847,12 @@ impl GooseAttack {
     ) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
-        // Only display status codes if enabled.
-        self.metrics.display_status_codes = self.configuration.status_codes;
-
         // Create a single channel used to send metrics from GooseUser threads
         // to parent thread.
         let (all_threads_metrics_tx, metrics_rx): (
             flume::Sender<GooseMetric>,
             flume::Receiver<GooseMetric>,
         ) = flume::unbounded();
-
-        // If enabled, spawn a logger thread.
-        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger();
-
-        // If enabled, spawn a throttle thread.
-        let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
         // Optionally spawn a telnet and/or Websocket Controller thread.
         let controller_channel_rx = self.setup_controllers().await;
@@ -2870,30 +2861,6 @@ impl GooseAttack {
         // the run state.
         let std_now = std::time::Instant::now();
 
-        // If the report file is enabled, open it now to confirm we have access
-        let report_file = match self.prepare_report_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                })
-            }
-        };
-
-        // If the requests file is enabled, open it now to confirm we have access
-        let requests_file = match self.prepare_requests_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
-                    option: "--requests-file".to_string(),
-                    value: self.get_requests_file_path().unwrap().to_string(),
-                    detail: format!("Failed to create request file: {}", e),
-                })
-            }
-        };
-
         let goose_attack_run_state = GooseAttackRunState {
             spawn_user_timer: std_now,
             spawn_user_in_ms: 0,
@@ -2901,13 +2868,13 @@ impl GooseAttack {
             drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
             metrics_rx,
-            debug_logger,
-            all_threads_debug_logger_tx,
-            throttle_threads_tx,
-            parent_to_throttle_tx,
+            debug_logger: None,
+            all_threads_debug_logger_tx: None,
+            throttle_threads_tx: None,
+            parent_to_throttle_tx: None,
             controller_channel_rx,
-            report_file,
-            requests_file,
+            report_file: None,
+            requests_file: None,
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
@@ -2925,18 +2892,6 @@ impl GooseAttack {
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
         util::setup_ctrlc_handler(&goose_attack_run_state.canceled);
-
-        // Initialize the optional task metrics.
-        self.metrics
-            .initialize_task_metrics(&self.task_sets, &self.configuration);
-
-        // Our load test is officially starting. Store an initial measurement
-        // of a monotonically nondecreasing clock so we can see how long has
-        // elapsed without worrying about the clock going backward.
-        self.started = Some(time::Instant::now());
-
-        // Also store a formattable timestamp, for human readable reports.
-        self.metrics.started = Some(Local::now());
 
         Ok(goose_attack_run_state)
     }
@@ -3687,15 +3642,24 @@ impl GooseAttack {
 
     // Reset the GooseAttackRunState before starting a load test. This is to allow a Controller
     // to stop and start the load test multiple times, for example from a UI.
-    async fn reset_run_state(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+    async fn reset_run_state(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
         // Run any configured test_start() functions.
         self.run_test_start().await.unwrap();
 
         // Prepare to collect metrics, if enabled.
-        self.metrics
-            .initialize_task_metrics(&self.task_sets, &self.configuration);
+        self.metrics = GooseMetrics::default();
+        if !self.configuration.no_metrics {
+            self.metrics
+                .initialize_task_metrics(&self.task_sets, &self.configuration);
+            self.metrics.display_metrics = true;
+            // Only display status codes if enabled.
+            self.metrics.display_status_codes = self.configuration.status_codes;
+        }
 
-        // Reset Run State
+        // Reset the run state.
         let std_now = std::time::Instant::now();
         goose_attack_run_state.spawn_user_timer = std_now;
         goose_attack_run_state.spawn_user_in_ms = 0;
@@ -3710,14 +3674,47 @@ impl GooseAttack {
         goose_attack_run_state.shutdown_after_stop = true;
         goose_attack_run_state.all_users_spawned = false;
 
-        // @TODO: What other metrics need to be re-initialized?
-        self.metrics.users = 0;
+        // If enabled, spawn a logger thread.
+        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger();
+        goose_attack_run_state.debug_logger = debug_logger;
+        goose_attack_run_state.all_threads_debug_logger_tx = all_threads_debug_logger_tx;
 
-        println!("{:#?}", goose_attack_run_state);
+        // If enabled, spawn a throttle thread.
+        let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
+        goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
+        goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
-        // Reset timers, load test is starting.
-        self.started = Some(std_now);
+        // If enabled, create an report file and confirm access.
+        goose_attack_run_state.report_file = match self.prepare_report_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: self.get_report_file_path().unwrap(),
+                    detail: format!("Failed to create report file: {}", e),
+                })
+            }
+        };
+
+        // If enabled, create a requests file and confirm access.
+        goose_attack_run_state.requests_file = match self.prepare_requests_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--requests-file".to_string(),
+                    value: self.get_requests_file_path().unwrap().to_string(),
+                    detail: format!("Failed to create request file: {}", e),
+                })
+            }
+        };
+
+        // Record when the GooseAttack officially started.
+        self.started = Some(time::Instant::now());
+
+        // Also record a formattable timestamp, for human readable reports.
         self.metrics.started = Some(Local::now());
+
+        Ok(())
     }
 
     // Called internally in local-mode and gaggle-mode.
@@ -3754,19 +3751,9 @@ impl GooseAttack {
                             info!("Goose is currently idle.");
                             goose_attack_run_state.idle_status_displayed = true;
                         }
-                        // Gracefully exit loop if ctrl-c is caught.
-                        if goose_attack_run_state.canceled.load(Ordering::SeqCst) {
-                            // No metrics to display when sitting idle, so disable.
-                            self.metrics.display_metrics = false;
-                            self.set_attack_phase(
-                                &mut goose_attack_run_state,
-                                AttackPhase::Stopping,
-                            );
-                            goose_attack_run_state.shutdown_after_stop = true;
-                        }
                     } else {
                         // Prepare to start the load test, resetting timers and counters.
-                        self.reset_run_state(&mut goose_attack_run_state).await;
+                        self.reset_run_state(&mut goose_attack_run_state).await?;
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
                     }
                 }
@@ -3800,6 +3787,10 @@ impl GooseAttack {
                     if goose_attack_run_state.shutdown_after_stop {
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Shutdown);
                     } else {
+                        // Print metrics, if enabled.
+                        if !self.configuration.no_metrics {
+                            println!("{}", self.metrics);
+                        }
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Idle);
                     }
                 }
@@ -3858,7 +3849,8 @@ impl GooseAttack {
                                             message,
                                             GooseControllerResponseMessage::Bool(true),
                                         );
-                                        self.reset_run_state(&mut goose_attack_run_state).await;
+                                        // Reset the run state when starting a new load test.
+                                        self.reset_run_state(&mut goose_attack_run_state).await?;
                                     } else {
                                         self.reply_to_controller(
                                             message,
@@ -3878,6 +3870,8 @@ impl GooseAttack {
                                         );
                                         // Don't shutdown when load test is stopped by controller, remain idle instead.
                                         goose_attack_run_state.shutdown_after_stop = false;
+                                        // Don't automatically restart the load test.
+                                        self.configuration.no_autostart = true;
                                         self.reply_to_controller(
                                             message,
                                             GooseControllerResponseMessage::Bool(true),
