@@ -645,15 +645,17 @@ pub enum AttackMode {
 /// A [`GooseAttack`](./struct.GooseAttack.html) load test moves through each of the following
 /// phases during a complete load test.
 pub enum AttackPhase {
-    /// Memory is being allocated for the [`GooseAttack`](./struct.GooseAttack.html).
-    Initializing,
-    /// [`GooseUser`](./goose/struct.GooseUser.html)s are starting and beginning to generate
+    /// No load test is running, configuration can be changed by a Controller.
+    Idle,
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s are launching and beginning to generate
     /// load.
     Starting,
-    /// All [`GooseUser`](./goose/struct.GooseUser.html)s have started and are generating load.
+    /// All [`GooseUser`](./goose/struct.GooseUser.html)s have launched and are generating load.
     Running,
     /// [`GooseUser`](./goose/struct.GooseUser.html)s are stopping.
     Stopping,
+    /// Exiting the load test.
+    Shutdown,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -711,6 +713,8 @@ pub struct GooseDefaults {
     no_telnet: Option<bool>,
     /// An optional default for not enabling WebSocket Controller thread.
     no_websocket: Option<bool>,
+    /// An optional default for not auto-starting the load test.
+    no_autostart: Option<bool>,
     /// An optional default to track additional status code metrics.
     status_codes: Option<bool>,
     /// An optional default maximum requests per second.
@@ -786,6 +790,8 @@ pub enum GooseDefault {
     NoTelnet,
     /// An optional default for not enabling WebSocket Controller thread.
     NoWebSocket,
+    /// An optional default for not automatically starting load test.
+    NoAutoStart,
     /// An optional default to track additional status code metrics.
     StatusCodes,
     /// An optional default maximum requests per second.
@@ -818,6 +824,7 @@ pub enum GooseDefault {
     ManagerPort,
 }
 
+#[derive(Debug)]
 /// Internal global run state for load test.
 struct GooseAttackRunState {
     /// A timestamp tracking when the previous [`GooseUser`](./goose/struct.GooseUser.html)
@@ -858,6 +865,8 @@ struct GooseAttackRunState {
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
+    /// When entering the idle phase use this flag to only display a message one time.
+    idle_status_displayed: bool,
     /// Collection of all [`GooseUser`](./goose/struct.GooseUser.html) threads so they
     /// can be stopped later.
     users: Vec<tokio::task::JoinHandle<()>>,
@@ -871,6 +880,8 @@ struct GooseAttackRunState {
     /// Boolean flag indicating if all [`GooseUser`](./goose/struct.GooseUser.html)s
     /// have been spawned.
     all_users_spawned: bool,
+    /// Boolean flag indicating of Goose should shutdown after stopping a running load test.
+    shutdown_after_stop: bool,
     /// Thread-safe boolean flag indicating if the [`GooseAttack`](./struct.GooseAttack.html)
     /// has been canceled.
     canceled: Arc<AtomicBool>,
@@ -930,7 +941,7 @@ impl GooseAttack {
             configuration: GooseConfiguration::parse_args_default_or_exit(),
             run_time: 0,
             attack_mode: AttackMode::Undefined,
-            attack_phase: AttackPhase::Initializing,
+            attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
@@ -961,7 +972,7 @@ impl GooseAttack {
             configuration,
             run_time: 0,
             attack_mode: AttackMode::Undefined,
-            attack_phase: AttackPhase::Initializing,
+            attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
@@ -2836,24 +2847,12 @@ impl GooseAttack {
     ) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
-        // Run any configured test_start() functions.
-        self.run_test_start().await?;
-
-        // Only display status codes if enabled.
-        self.metrics.display_status_codes = self.configuration.status_codes;
-
         // Create a single channel used to send metrics from GooseUser threads
         // to parent thread.
         let (all_threads_metrics_tx, metrics_rx): (
             flume::Sender<GooseMetric>,
             flume::Receiver<GooseMetric>,
         ) = flume::unbounded();
-
-        // If enabled, spawn a logger thread.
-        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger();
-
-        // If enabled, spawn a throttle thread.
-        let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
 
         // Optionally spawn a telnet and/or Websocket Controller thread.
         let controller_channel_rx = self.setup_controllers().await;
@@ -2862,30 +2861,6 @@ impl GooseAttack {
         // the run state.
         let std_now = std::time::Instant::now();
 
-        // If the report file is enabled, open it now to confirm we have access
-        let report_file = match self.prepare_report_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                })
-            }
-        };
-
-        // If the requests file is enabled, open it now to confirm we have access
-        let requests_file = match self.prepare_requests_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
-                    option: "--requests-file".to_string(),
-                    value: self.get_requests_file_path().unwrap().to_string(),
-                    detail: format!("Failed to create request file: {}", e),
-                })
-            }
-        };
-
         let goose_attack_run_state = GooseAttackRunState {
             spawn_user_timer: std_now,
             spawn_user_in_ms: 0,
@@ -2893,19 +2868,21 @@ impl GooseAttack {
             drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
             metrics_rx,
-            debug_logger,
-            all_threads_debug_logger_tx,
-            throttle_threads_tx,
-            parent_to_throttle_tx,
+            debug_logger: None,
+            all_threads_debug_logger_tx: None,
+            throttle_threads_tx: None,
+            parent_to_throttle_tx: None,
             controller_channel_rx,
-            report_file,
-            requests_file,
+            report_file: None,
+            requests_file: None,
             metrics_header_displayed: false,
+            idle_status_displayed: false,
             users: Vec::new(),
             user_channels: Vec::new(),
             running_metrics_timer: std_now,
             display_running_metrics: false,
             all_users_spawned: false,
+            shutdown_after_stop: true,
             canceled: Arc::new(AtomicBool::new(false)),
             socket,
         };
@@ -2916,18 +2893,6 @@ impl GooseAttack {
         // Catch ctrl-c to allow clean shutdown to display metrics.
         util::setup_ctrlc_handler(&goose_attack_run_state.canceled);
 
-        // Initialize the optional task metrics.
-        self.metrics
-            .initialize_task_metrics(&self.task_sets, &self.configuration);
-
-        // Our load test is officially starting. Store an initial measurement
-        // of a monotonically nondecreasing clock so we can see how long has
-        // elapsed without worrying about the clock going backward.
-        self.started = Some(time::Instant::now());
-
-        // Also store a formattable timestamp, for human readable reports.
-        self.metrics.started = Some(Local::now());
-
         Ok(goose_attack_run_state)
     }
 
@@ -2937,12 +2902,9 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        // If the run_timer has expired or ctrl-c was caught, stop spawning
-        // threads and start stopping threads. Unwrap is safe here because
-        // we had to have started to get here.
-        if util::timer_expired(self.started.unwrap(), self.run_time)
-            || goose_attack_run_state.canceled.load(Ordering::SeqCst)
-        {
+        // If the run_timer has expired, stop spawning user threads and start stopping them
+        // instead. Unwrap is safe here because load test had to start to get here.
+        if util::timer_expired(self.started.unwrap(), self.run_time) {
             self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
             return Ok(());
         }
@@ -3099,110 +3061,25 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Update metrics showing how long the load test has been running.
+    fn update_duration(&mut self) {
+        self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
+    }
+
     // Let the [`GooseAttack`](./struct.GooseAttack.html) run until the timer expires
     // (or the test is canceled), and then trigger a shut down.
     async fn monitor_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        if util::timer_expired(self.started.unwrap(), self.run_time)
-            || goose_attack_run_state.canceled.load(Ordering::SeqCst)
-        {
-            if self.attack_mode == AttackMode::Worker {
-                info!(
-                    "[{}] stopping after {} seconds...",
-                    get_worker_id(),
-                    self.started.unwrap().elapsed().as_secs()
-                );
-
-                // Load test is shutting down, update pipe handler so there is no panic
-                // when the Manager goes away.
-                #[cfg(feature = "gaggle")]
-                {
-                    let manager = goose_attack_run_state.socket.clone().unwrap();
-                    register_shutdown_pipe_handler(&manager);
-                }
-            } else {
-                info!(
-                    "stopping after {} seconds...",
-                    self.started.unwrap().elapsed().as_secs()
-                );
-            }
-            for (index, send_to_user) in goose_attack_run_state.user_channels.iter().enumerate() {
-                match send_to_user.send(GooseUserCommand::Exit) {
-                    Ok(_) => {
-                        debug!("telling user {} to exit", index);
-                    }
-                    Err(e) => {
-                        info!("failed to tell user {} to exit: {}", index, e);
-                    }
-                }
-            }
-            if self.attack_mode == AttackMode::Worker {
-                info!("[{}] waiting for users to exit", get_worker_id());
-            } else {
-                info!("waiting for users to exit");
-            }
-
-            // If throttle is enabled, tell throttle thread the load test is over.
-            if let Some(tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
-                let _ = tx.send(false);
-            }
-
-            // Take the users vector out of the GooseAttackRunState object so it can be
-            // consumed by futures::future::join_all().
-            let users = std::mem::take(&mut goose_attack_run_state.users);
-            futures::future::join_all(users).await;
-            debug!("all users exited");
-
-            if self.get_debug_file_path().is_some() {
-                // Tell logger thread to flush and exit.
-                if let Err(e) = goose_attack_run_state
-                    .all_threads_debug_logger_tx
-                    .clone()
-                    .unwrap()
-                    .send(None)
-                {
-                    warn!("unexpected error telling logger thread to exit: {}", e);
-                };
-                // If the debug logger is enabled, wait for thread to flush and exit.
-                if goose_attack_run_state.debug_logger.is_some() {
-                    // Take debug_logger out of the GooseAttackRunState object so it can be
-                    // consumed by tokio::join!().
-                    let debug_logger = std::mem::take(&mut goose_attack_run_state.debug_logger);
-                    let _ = tokio::join!(debug_logger.unwrap());
-                }
-            }
-
-            // If we're printing metrics, collect the final metrics received from users.
-            if !self.configuration.no_metrics {
-                let _received_message = self.receive_metrics(goose_attack_run_state).await?;
-            }
-
-            #[cfg(feature = "gaggle")]
-            {
-                // As worker, push metrics up to manager.
-                if self.attack_mode == AttackMode::Worker {
-                    worker::push_metrics_to_manager(
-                        &goose_attack_run_state.socket.clone().unwrap(),
-                        vec![
-                            GaggleMetrics::Requests(self.metrics.requests.clone()),
-                            GaggleMetrics::Errors(self.metrics.errors.clone()),
-                            GaggleMetrics::Tasks(self.metrics.tasks.clone()),
-                        ],
-                        true,
-                    );
-                    // No need to reset local metrics, the worker is exiting.
-                }
-            }
-
-            // All users are done, exit out of loop for final cleanup.
+        // Exit if run_time timer expires.
+        if util::timer_expired(self.started.unwrap(), self.run_time) {
             self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
         } else {
-            // Subtract the time spent doing other things, with the goal of running the
-            // main parent loop once every second.
+            // Subtract the time spent doing other things, running the main parent loop twice
+            // per second.
             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
-                time::Duration::from_secs(1),
+                time::Duration::from_millis(500),
                 goose_attack_run_state.drift_timer,
             )
             .await;
@@ -3211,10 +3088,111 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If metrics are enabled, synchronize metrics from child threads to the parent.
+    async fn stop_running_users(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        if self.attack_mode == AttackMode::Worker {
+            info!(
+                "[{}] stopping after {} seconds...",
+                get_worker_id(),
+                self.started.unwrap().elapsed().as_secs()
+            );
+
+            // Load test is shutting down, update pipe handler so there is no panic
+            // when the Manager goes away.
+            #[cfg(feature = "gaggle")]
+            {
+                let manager = goose_attack_run_state.socket.clone().unwrap();
+                register_shutdown_pipe_handler(&manager);
+            }
+        } else {
+            info!(
+                "stopping after {} seconds...",
+                self.started.unwrap().elapsed().as_secs()
+            );
+        }
+        for (index, send_to_user) in goose_attack_run_state.user_channels.iter().enumerate() {
+            match send_to_user.send(GooseUserCommand::Exit) {
+                Ok(_) => {
+                    debug!("telling user {} to exit", index);
+                }
+                Err(e) => {
+                    info!("failed to tell user {} to exit: {}", index, e);
+                }
+            }
+        }
+        if self.attack_mode == AttackMode::Worker {
+            info!("[{}] waiting for users to exit", get_worker_id());
+        } else {
+            info!("waiting for users to exit");
+        }
+
+        // If throttle is enabled, tell throttle thread the load test is over.
+        if let Some(throttle_tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
+            let _ = throttle_tx.send(false);
+        }
+
+        // Take the users vector out of the GooseAttackRunState object so it can be
+        // consumed by futures::future::join_all().
+        let users = std::mem::take(&mut goose_attack_run_state.users);
+        futures::future::join_all(users).await;
+        debug!("all users exited");
+
+        if self.get_debug_file_path().is_some() {
+            // Tell logger thread to flush and exit.
+            if let Err(e) = goose_attack_run_state
+                .all_threads_debug_logger_tx
+                .clone()
+                .unwrap()
+                .send(None)
+            {
+                warn!("unexpected error telling logger thread to exit: {}", e);
+            };
+            // If the debug logger is enabled, wait for thread to flush and exit.
+            if goose_attack_run_state.debug_logger.is_some() {
+                // Take debug_logger out of the GooseAttackRunState object so it can be
+                // consumed by tokio::join!().
+                let debug_logger = std::mem::take(&mut goose_attack_run_state.debug_logger);
+                let _ = tokio::join!(debug_logger.unwrap());
+            }
+        }
+
+        // If we're printing metrics, collect the final metrics received from users.
+        if !self.configuration.no_metrics {
+            // Set the second parameter to true, ensuring that Goose waits until all metrics
+            // are received.
+            let _received_message = self.receive_metrics(goose_attack_run_state, true).await?;
+        }
+
+        #[cfg(feature = "gaggle")]
+        {
+            // As worker, push metrics up to manager.
+            if self.attack_mode == AttackMode::Worker {
+                worker::push_metrics_to_manager(
+                    &goose_attack_run_state.socket.clone().unwrap(),
+                    vec![
+                        GaggleMetrics::Requests(self.metrics.requests.clone()),
+                        GaggleMetrics::Errors(self.metrics.errors.clone()),
+                        GaggleMetrics::Tasks(self.metrics.tasks.clone()),
+                    ],
+                    true,
+                );
+                // No need to reset local metrics, the worker is exiting.
+            }
+        }
+
+        Ok(())
+    }
+
+    // If metrics are enabled, synchronize metrics from child threads to the parent. If
+    // flush is true all metrics will be received regardless of how long it takes. If
+    // flush is false, metrics will only be received for up to 400 ms before exiting to
+    // continue on the next call to this function.
     async fn sync_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
+        flush: bool,
     ) -> Result<(), GooseError> {
         if !self.configuration.no_metrics {
             // Check if we're displaying running metrics.
@@ -3231,7 +3209,7 @@ impl GooseAttack {
             }
 
             // Load messages from user threads until the receiver queue is empty.
-            let received_message = self.receive_metrics(goose_attack_run_state).await?;
+            let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
 
             // As worker, push metrics up to manager.
             if self.attack_mode == AttackMode::Worker && received_message {
@@ -3262,7 +3240,7 @@ impl GooseAttack {
         // If enabled, display running metrics after sync
         if goose_attack_run_state.display_running_metrics {
             goose_attack_run_state.display_running_metrics = false;
-            self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
+            self.update_duration();
             self.metrics.print_running();
         }
 
@@ -3278,13 +3256,13 @@ impl GooseAttack {
         // Flush metrics collected prior to all user threads running
         if !goose_attack_run_state.all_users_spawned {
             // Receive metrics before resetting them.
-            self.sync_metrics(goose_attack_run_state).await?;
+            self.sync_metrics(goose_attack_run_state, true).await?;
 
             goose_attack_run_state.all_users_spawned = true;
             let users = self.configuration.users.clone().unwrap();
             if !self.configuration.no_reset_metrics {
                 // Display the running metrics collected so far, before resetting them.
-                self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
+                self.update_duration();
                 self.metrics.print_running();
                 // Reset running_metrics_timer.
                 goose_attack_run_state.running_metrics_timer = time::Instant::now();
@@ -3325,8 +3303,6 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        self.metrics.duration = self.started.unwrap().elapsed().as_secs() as usize;
-
         // Run any configured test_stop() functions.
         self.run_test_stop().await?;
 
@@ -3669,6 +3645,83 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Reset the GooseAttackRunState before starting a load test. This is to allow a Controller
+    // to stop and start the load test multiple times, for example from a UI.
+    async fn reset_run_state(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        // Run any configured test_start() functions.
+        self.run_test_start().await.unwrap();
+
+        // Prepare to collect metrics, if enabled.
+        self.metrics = GooseMetrics::default();
+        if !self.configuration.no_metrics {
+            self.metrics
+                .initialize_task_metrics(&self.task_sets, &self.configuration);
+            self.metrics.display_metrics = true;
+            // Only display status codes if enabled.
+            self.metrics.display_status_codes = self.configuration.status_codes;
+        }
+
+        // Reset the run state.
+        let std_now = std::time::Instant::now();
+        goose_attack_run_state.spawn_user_timer = std_now;
+        goose_attack_run_state.spawn_user_in_ms = 0;
+        goose_attack_run_state.spawn_user_counter = 0;
+        goose_attack_run_state.drift_timer = tokio::time::Instant::now();
+        goose_attack_run_state.metrics_header_displayed = false;
+        goose_attack_run_state.idle_status_displayed = false;
+        goose_attack_run_state.users = Vec::new();
+        goose_attack_run_state.user_channels = Vec::new();
+        goose_attack_run_state.running_metrics_timer = std_now;
+        goose_attack_run_state.display_running_metrics = false;
+        goose_attack_run_state.shutdown_after_stop = true;
+        goose_attack_run_state.all_users_spawned = false;
+
+        // If enabled, spawn a logger thread.
+        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger();
+        goose_attack_run_state.debug_logger = debug_logger;
+        goose_attack_run_state.all_threads_debug_logger_tx = all_threads_debug_logger_tx;
+
+        // If enabled, spawn a throttle thread.
+        let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
+        goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
+        goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
+
+        // If enabled, create an report file and confirm access.
+        goose_attack_run_state.report_file = match self.prepare_report_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: self.get_report_file_path().unwrap(),
+                    detail: format!("Failed to create report file: {}", e),
+                })
+            }
+        };
+
+        // If enabled, create a requests file and confirm access.
+        goose_attack_run_state.requests_file = match self.prepare_requests_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--requests-file".to_string(),
+                    value: self.get_requests_file_path().unwrap().to_string(),
+                    detail: format!("Failed to create request file: {}", e),
+                })
+            }
+        };
+
+        // Record when the GooseAttack officially started.
+        self.started = Some(time::Instant::now());
+
+        // Also record a formattable timestamp, for human readable reports.
+        self.metrics.started = Some(Local::now());
+
+        Ok(())
+    }
+
     // Called internally in local-mode and gaggle-mode.
     async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
         trace!("start_attack: socket({:?})", socket);
@@ -3680,40 +3733,77 @@ impl GooseAttack {
             .await
             .expect("failed to initialize GooseAttackRunState");
 
-        // Only initialize once, then change to the next attack phase.
-        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
-
-        // Start a timer to track when to next synchronize the metrics.
-        let mut sync_metrics_timer = std::time::Instant::now();
-        // Sync at least as often as we display metrics, or every ten seconds.
-        let mut sync_every = self.configuration.running_metrics.unwrap_or(10);
-        if sync_every > 10 {
-            sync_every = 10;
-        }
-
+        // The Goose parent process GooseAttack loop runs until Goose shuts down. Goose enters
+        // the loop in AttackPhase::Idle, and exits in AttackPhase::Shutdown.
         loop {
             match self.attack_phase {
-                // Start spawning GooseUser threads.
-                AttackPhase::Starting => self
-                    .spawn_attack(&mut goose_attack_run_state)
-                    .await
-                    .expect("failed to start GooseAttack"),
-                // Now that all GooseUser threads started, run the load test.
-                AttackPhase::Running => self.monitor_attack(&mut goose_attack_run_state).await?,
-                // Stop all GooseUser threads and clean up.
-                AttackPhase::Stopping => {
-                    self.stop_attack(&mut goose_attack_run_state).await?;
-                    self.sync_metrics(&mut goose_attack_run_state).await?;
-                    self.write_html_report(&mut goose_attack_run_state).await?;
-                    break;
+                // In the Idle phase the Goose configuration can be changed by a Controller,
+                // and otherwise nothing happens but sleeping an checking for messages.
+                AttackPhase::Idle => {
+                    if self.configuration.no_autostart {
+                        // Sleep then check for further instructions.
+                        if goose_attack_run_state.idle_status_displayed {
+                            let sleep_duration = tokio::time::Duration::from_millis(250);
+                            debug!("sleeping {:?}...", sleep_duration);
+                            goose_attack_run_state.drift_timer = util::sleep_minus_drift(
+                                sleep_duration,
+                                goose_attack_run_state.drift_timer,
+                            )
+                            .await;
+                        // Only display informational message about being idle one time.
+                        } else {
+                            info!("Goose is currently idle.");
+                            goose_attack_run_state.idle_status_displayed = true;
+                        }
+                    } else {
+                        // Prepare to start the load test, resetting timers and counters.
+                        self.reset_run_state(&mut goose_attack_run_state).await?;
+                        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
+                    }
                 }
-                _ => panic!("GooseAttack entered an impossible phase"),
+                // In the Start phase, Goose launches GooseUser threads and starts a GooseAttack.
+                AttackPhase::Starting => {
+                    self.update_duration();
+                    self.spawn_attack(&mut goose_attack_run_state)
+                        .await
+                        .expect("failed to start GooseAttack");
+                }
+                // In the Running phase, Goose maintains the configured GooseAttack.
+                AttackPhase::Running => {
+                    self.update_duration();
+                    self.monitor_attack(&mut goose_attack_run_state).await?;
+                }
+                // In the Stopping phase, Goose stops all GooseUser threads and optionally reports
+                // any collected metrics.
+                AttackPhase::Stopping => {
+                    // If displaying metrics, update internal state reflecting how long load test
+                    // has been running.
+                    self.update_duration();
+                    // Tell all running GooseUsers to stop.
+                    self.stop_running_users(&mut goose_attack_run_state).await?;
+                    // Stop any running GooseUser threads.
+                    self.stop_attack(&mut goose_attack_run_state).await?;
+                    // Collect all metrics sent by GooseUser threads.
+                    self.sync_metrics(&mut goose_attack_run_state, true).await?;
+                    // Write an html report, if enabled.
+                    self.write_html_report(&mut goose_attack_run_state).await?;
+                    // Shutdown Goose or go into an idle waiting state.
+                    if goose_attack_run_state.shutdown_after_stop {
+                        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Shutdown);
+                    } else {
+                        // Print metrics, if enabled.
+                        if !self.configuration.no_metrics {
+                            println!("{}", self.metrics);
+                        }
+                        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Idle);
+                    }
+                }
+                // By reaching the Shutdown phase, break out of the GooseAttack loop.
+                AttackPhase::Shutdown => break,
             }
-            // Synchronize metrics if enough time has elapsed.
-            if util::timer_expired(sync_metrics_timer, sync_every) {
-                self.sync_metrics(&mut goose_attack_run_state).await?;
-                sync_metrics_timer = std::time::Instant::now();
-            }
+            // Regularly synchronize metrics.
+            self.sync_metrics(&mut goose_attack_run_state, false)
+                .await?;
 
             // If the controller is enabled, check if we've received any
             // messages.
@@ -3751,9 +3841,60 @@ impl GooseAttack {
                                         )),
                                     );
                                 }
-                                // Stop the load test, and acknowledge request.
+                                // Start the load test, and acknowledge command.
+                                GooseControllerCommand::Start => {
+                                    // We can only start an idle load test.
+                                    if self.attack_phase == AttackPhase::Idle {
+                                        self.set_attack_phase(
+                                            &mut goose_attack_run_state,
+                                            AttackPhase::Starting,
+                                        );
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(true),
+                                        );
+                                        // Reset the run state when starting a new load test.
+                                        self.reset_run_state(&mut goose_attack_run_state).await?;
+                                    } else {
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(false),
+                                        );
+                                    }
+                                }
+                                // Stop the load test, and acknowledge command.
                                 GooseControllerCommand::Stop => {
-                                    self.attack_phase = AttackPhase::Stopping;
+                                    // We can only stop a starting or running load test.
+                                    if [AttackPhase::Starting, AttackPhase::Running]
+                                        .contains(&self.attack_phase)
+                                    {
+                                        self.set_attack_phase(
+                                            &mut goose_attack_run_state,
+                                            AttackPhase::Stopping,
+                                        );
+                                        // Don't shutdown when load test is stopped by controller, remain idle instead.
+                                        goose_attack_run_state.shutdown_after_stop = false;
+                                        // Don't automatically restart the load test.
+                                        self.configuration.no_autostart = true;
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(true),
+                                        );
+                                    } else {
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(false),
+                                        );
+                                    }
+                                }
+                                // Stop the load test, and acknowledge request.
+                                GooseControllerCommand::Shutdown => {
+                                    self.set_attack_phase(
+                                        &mut goose_attack_run_state,
+                                        AttackPhase::Stopping,
+                                    );
+                                    // Shutdown after stopping.
+                                    goose_attack_run_state.shutdown_after_stop = true;
                                     self.reply_to_controller(
                                         message,
                                         GooseControllerResponseMessage::Bool(true),
@@ -3799,6 +3940,22 @@ impl GooseAttack {
                     }
                 }
             };
+
+            // Gracefully exit loop if ctrl-c is caught.
+            if self.attack_phase != AttackPhase::Shutdown
+                && goose_attack_run_state.canceled.load(Ordering::SeqCst)
+            {
+                // Shutdown after stopping as the load test was canceled.
+                goose_attack_run_state.shutdown_after_stop = true;
+
+                // No metrics to display when sitting idle, so disable.
+                if self.attack_phase == AttackPhase::Idle {
+                    self.metrics.display_metrics = false;
+                }
+
+                // Cleanly stop the load test.
+                self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Stopping);
+            }
         }
 
         Ok(self)
@@ -3819,13 +3976,21 @@ impl GooseAttack {
         }
     }
 
-    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads.
+    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
+    // is true all metrics will be received regardless of how long it takes. If flush is
+    // false, metrics will only be received for up to 400 ms before exiting to continue on
+    // the next call to this function.
     async fn receive_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
+        flush: bool,
     ) -> Result<bool, GooseError> {
         let mut received_message = false;
         let mut message = goose_attack_run_state.metrics_rx.try_recv();
+
+        // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
+        let receive_timeout = 400;
+        let receive_started = time::Instant::now();
 
         while message.is_ok() {
             received_message = true;
@@ -3916,6 +4081,10 @@ impl GooseAttack {
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
                 }
+            }
+            // Unless flushing all metrics, break out of receive loop after timeout.
+            if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
+                break;
             }
             message = goose_attack_run_state.metrics_rx.try_recv();
         }
@@ -4011,6 +4180,7 @@ impl GooseAttack {
 ///  - GooseDefault::NoDebugBody
 ///  - GooseDefault::NoTelnet
 ///  - GooseDefault::NoWebSocket
+///  - GooseDefault::NoAutoStart
 ///  - GooseDefault::StatusCodes
 ///  - GooseDefault::StickyFollow
 ///  - GooseDefault::Manager
@@ -4079,6 +4249,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
+            | GooseDefault::NoAutoStart
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -4140,6 +4311,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
+            | GooseDefault::NoAutoStart
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -4168,6 +4340,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
+            GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
@@ -4314,6 +4487,9 @@ pub struct GooseConfiguration {
     /// Sets WebSocket Controller TCP port (default: 5117)
     #[options(no_short, meta = "PORT")]
     pub websocket_port: u16,
+    /// Doesn't automatically start load test
+    #[options(no_short)]
+    pub no_autostart: bool,
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
@@ -4691,6 +4867,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoWebSocket, true)
             .unwrap()
+            .set_default(GooseDefault::NoAutoStart, true)
+            .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
@@ -4741,6 +4919,7 @@ mod test {
         assert!(goose_attack.defaults.no_error_summary == Some(true));
         assert!(goose_attack.defaults.no_telnet == Some(true));
         assert!(goose_attack.defaults.no_websocket == Some(true));
+        assert!(goose_attack.defaults.no_autostart == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.requests_format == Some(requests_format));

@@ -46,8 +46,12 @@ pub enum GooseControllerCommand {
     Exit,
     /// Verify that the controller can talk to the parent process.
     Echo,
-    /// Tell the load test to stop (which will disconnect the controller).
+    /// Start an idle load test.
+    Start,
+    /// Stop a running test, putting it into an idle state.
     Stop,
+    /// Tell the load test to shut down (which will disconnect the controller).
+    Shutdown,
 }
 
 /// This structure is used to send commands and values to the parent process.
@@ -180,8 +184,12 @@ pub async fn controller_main(
         r"(?i)^(exit|quit)$",
         // Confirm the server is still connected and alive.
         r"(?i)^echo$",
-        // Stop the load test (which will cause the controller connection to quit).
+        // Start an idle load test.
+        r"(?i)^start$",
+        // Stop an idle load test.
         r"(?i)^stop$",
+        // Shutdown the load test (which will cause the controller connection to quit).
+        r"(?i)^shutdown$",
     ])
     .unwrap();
 
@@ -294,10 +302,27 @@ async fn accept_telnet_connection(
                 Ok(_) => write_to_socket(&mut socket, "echo").await,
                 Err(e) => write_to_socket(&mut socket, &format!("echo failed: [{}]", e)).await,
             }
+        // Start
+        } else if matches.matched(GooseControllerCommand::Start as usize) {
+            write_to_socket_raw(&mut socket, "starting load test ...").await;
+            match send_to_parent_and_get_reply(
+                thread_id,
+                &channel_tx,
+                GooseControllerCommand::Start,
+                None,
+            )
+            .await
+            {
+                Ok(_) => write_to_socket(&mut socket, "").await,
+                Err(e) => {
+                    write_to_socket(&mut socket, &format!("failed to start load test [{}]", e))
+                        .await
+                }
+            }
         // Stop
         } else if matches.matched(GooseControllerCommand::Stop as usize) {
-            write_to_socket_raw(&mut socket, "stopping load test ...\n").await;
-            if let Err(e) = send_to_parent_and_get_reply(
+            write_to_socket_raw(&mut socket, "stopping load test ...").await;
+            match send_to_parent_and_get_reply(
                 thread_id,
                 &channel_tx,
                 GooseControllerCommand::Stop,
@@ -305,7 +330,27 @@ async fn accept_telnet_connection(
             )
             .await
             {
-                write_to_socket(&mut socket, &format!("failed to stop load test [{}]", e)).await;
+                Ok(_) => write_to_socket(&mut socket, "").await,
+                Err(e) => {
+                    write_to_socket(&mut socket, &format!("failed to stop load test [{}]", e)).await
+                }
+            }
+        // Shutdown
+        } else if matches.matched(GooseControllerCommand::Shutdown as usize) {
+            write_to_socket_raw(&mut socket, "shutting down load test ...\n").await;
+            if let Err(e) = send_to_parent_and_get_reply(
+                thread_id,
+                &channel_tx,
+                GooseControllerCommand::Shutdown,
+                None,
+            )
+            .await
+            {
+                write_to_socket(
+                    &mut socket,
+                    &format!("failed to shut down load test [{}]", e),
+                )
+                .await;
             }
         // Hatch rate
         } else if matches.matched(GooseControllerCommand::HatchRate as usize) {
@@ -428,9 +473,13 @@ async fn accept_websocket_connection(
         thread_id, peer_addr
     );
 
-    let ws_stream = tokio_tungstenite::accept_async(stream)
-        .await
-        .expect("Error during the websocket handshake occurred");
+    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+        Ok(s) => s,
+        Err(e) => {
+            info!("invalid websocket handshake: {}", e);
+            return;
+        }
+    };
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -451,17 +500,15 @@ async fn accept_websocket_connection(
                         match serde_json::from_str(&request) {
                             Ok(c) => c,
                             Err(_) => {
-                                ws_sender
-                                    .send(Message::Text(
-                                        serde_json::to_string(&GooseControllerWebSocketResponse {
-                                            response: "unrecognized json request".to_string(),
-                                            success: false,
-                                            error: Some("unrecognized json request".to_string()),
-                                        })
-                                        .unwrap(),
-                                    ))
-                                    .await
-                                    .expect("failed to write data to stream");
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "unrecognized json request".to_string(),
+                                    Some(
+                                        "unrecognized json request, refer to Goose README.md"
+                                            .to_string(),
+                                    ),
+                                )
+                                .await;
                                 continue;
                             }
                         };
@@ -493,30 +540,42 @@ async fn accept_websocket_connection(
                         .await
                         {
                             Ok(_) => {
-                                ws_sender
-                                    .send(Message::Text(
-                                        serde_json::to_string(&GooseControllerWebSocketResponse {
-                                            response: "echo".to_string(),
-                                            success: true,
-                                            error: None,
-                                        })
-                                        .unwrap(),
-                                    ))
-                                    .await
-                                    .expect("failed to write data to stream");
+                                write_to_websocket(&mut ws_sender, "echo".to_string(), None).await;
                             }
                             Err(e) => {
-                                ws_sender
-                                    .send(Message::Text(
-                                        serde_json::to_string(&GooseControllerWebSocketResponse {
-                                            response: "echo failed".to_string(),
-                                            success: false,
-                                            error: Some(e),
-                                        })
-                                        .unwrap(),
-                                    ))
-                                    .await
-                                    .expect("failed to write data to stream");
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "echo failed".to_string(),
+                                    Some(e),
+                                )
+                                .await;
+                            }
+                        }
+                    // Start
+                    } else if matches.matched(GooseControllerCommand::Start as usize) {
+                        match send_to_parent_and_get_reply(
+                            thread_id,
+                            &channel_tx,
+                            GooseControllerCommand::Start,
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "load test started".to_string(),
+                                    None,
+                                )
+                                .await;
+                            }
+                            Err(e) => {
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "failed to start load test".to_string(),
+                                    Some(e),
+                                )
+                                .await;
                             }
                         }
                     // Stop
@@ -525,6 +584,33 @@ async fn accept_websocket_connection(
                             thread_id,
                             &channel_tx,
                             GooseControllerCommand::Stop,
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "load test stopped".to_string(),
+                                    None,
+                                )
+                                .await;
+                            }
+                            Err(e) => {
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "failed to stop load test".to_string(),
+                                    Some(e),
+                                )
+                                .await;
+                            }
+                        }
+                    // Shutdown
+                    } else if matches.matched(GooseControllerCommand::Shutdown as usize) {
+                        match send_to_parent_and_get_reply(
+                            thread_id,
+                            &channel_tx,
+                            GooseControllerCommand::Shutdown,
                             None,
                         )
                         .await
@@ -539,17 +625,12 @@ async fn accept_websocket_connection(
                                     .expect("failed to write data to stream");
                             }
                             Err(e) => {
-                                ws_sender
-                                    .send(Message::Text(
-                                        serde_json::to_string(&GooseControllerWebSocketResponse {
-                                            response: "failed to stop load test".to_string(),
-                                            success: false,
-                                            error: Some(e),
-                                        })
-                                        .unwrap(),
-                                    ))
-                                    .await
-                                    .expect("failed to write data to stream");
+                                write_to_websocket(
+                                    &mut ws_sender,
+                                    "failed to shutdown load test".to_string(),
+                                    Some(e),
+                                )
+                                .await;
                             }
                         }
                     // Hatch rate
@@ -568,17 +649,12 @@ async fn accept_websocket_connection(
                             Some(hatch_rate.to_string()),
                         )
                         .await;
-                        ws_sender
-                            .send(Message::Text(
-                                serde_json::to_string(&GooseControllerWebSocketResponse {
-                                    response: "set hatch_rate".to_string(),
-                                    success: true,
-                                    error: None,
-                                })
-                                .unwrap(),
-                            ))
-                            .await
-                            .expect("failed to write data to stream");
+                        write_to_websocket(
+                            &mut ws_sender,
+                            "configured hatch_rate".to_string(),
+                            None,
+                        )
+                        .await;
                     // Config
                     } else if matches.matched(GooseControllerCommand::Config as usize) {
                         // Get an up-to-date copy of the configuration, as it may have changed since
@@ -595,17 +671,7 @@ async fn accept_websocket_connection(
                             // Convert the configuration object to a JSON string.
                             let config_json: String =
                                 serde_json::to_string(&config).expect("unexpected failure");
-                            ws_sender
-                                .send(Message::Text(
-                                    serde_json::to_string(&GooseControllerWebSocketResponse {
-                                        response: config_json,
-                                        success: true,
-                                        error: None,
-                                    })
-                                    .unwrap(),
-                                ))
-                                .await
-                                .expect("failed to write data to stream");
+                            write_to_websocket(&mut ws_sender, config_json, None).await;
                         }
                     // Metrics
                     } else if matches.matched(GooseControllerCommand::Metrics as usize) {
@@ -623,31 +689,16 @@ async fn accept_websocket_connection(
                             // Convert the configuration object to a JSON string.
                             let metrics_json: String =
                                 serde_json::to_string(&metrics).expect("unexpected failure");
-                            ws_sender
-                                .send(Message::Text(
-                                    serde_json::to_string(&GooseControllerWebSocketResponse {
-                                        response: metrics_json,
-                                        success: true,
-                                        error: None,
-                                    })
-                                    .unwrap(),
-                                ))
-                                .await
-                                .expect("failed to write data to stream");
+                            write_to_websocket(&mut ws_sender, metrics_json, None).await;
                         }
                     // Unknown command
                     } else {
-                        ws_sender
-                            .send(Message::Text(
-                                serde_json::to_string(&GooseControllerWebSocketResponse {
-                                    response: "unrecognized command".to_string(),
-                                    success: false,
-                                    error: Some("unrecognized command".to_string()),
-                                })
-                                .unwrap(),
-                            ))
-                            .await
-                            .expect("failed to write data to stream");
+                        write_to_websocket(
+                            &mut ws_sender,
+                            "unrecognized command".to_string(),
+                            Some("unsupported command".to_string()),
+                        )
+                        .await;
                     }
                 }
             } else if request.is_close() {
@@ -677,6 +728,36 @@ async fn write_to_socket(socket: &mut tokio::net::TcpStream, message: &str) {
         .write_all([message, "\ngoose> "].concat().as_bytes())
         .await
         .expect("failed to write data to socket");
+}
+
+// Send a json-formatted response to the WebSocket.
+async fn write_to_websocket(
+    ws_sender: &mut futures::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        tungstenite::Message,
+    >,
+    response: String,
+    error: Option<String>,
+) {
+    if let Err(e) = ws_sender
+        .send(Message::Text(
+            match serde_json::to_string(&GooseControllerWebSocketResponse {
+                response,
+                // Success is true if there is no error, false if there is an error.
+                success: error.is_none(),
+                error,
+            }) {
+                Ok(json) => json,
+                Err(e) => {
+                    warn!("failed to json encode response: {}", e);
+                    return;
+                }
+            },
+        ))
+        .await
+    {
+        warn!("failed to write data to websocket: {}", e);
+    }
 }
 
 /// Send a message to parent thread, with or without an optional value.
@@ -740,7 +821,9 @@ fn display_help() -> String {
  help (?)           this help
  exit (quit)        exit controller
  echo               confirm controller is working
- stop               stop running load test (and exit controller)
+ start              start an idle load test
+ stop               stop a running load test and return to idle state
+ shutdown           shutdown running load test (and exit controller)
  hatchrate FLOAT    set per-second rate users hatch
  config             display load test configuration
  config-json        display load test configuration in json format
