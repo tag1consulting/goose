@@ -3076,8 +3076,8 @@ impl GooseAttack {
         if util::timer_expired(self.started.unwrap(), self.run_time) {
             self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
         } else {
-            // Subtract the time spent doing other things, with the goal of running the
-            // main parent twice a second.
+            // Subtract the time spent doing other things, running the main parent loop twice
+            // per second.
             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
                 time::Duration::from_millis(500),
                 goose_attack_run_state.drift_timer,
@@ -3129,8 +3129,8 @@ impl GooseAttack {
         }
 
         // If throttle is enabled, tell throttle thread the load test is over.
-        if let Some(tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
-            let _ = tx.send(false);
+        if let Some(throttle_tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
+            let _ = throttle_tx.send(false);
         }
 
         // Take the users vector out of the GooseAttackRunState object so it can be
@@ -3160,6 +3160,8 @@ impl GooseAttack {
 
         // If we're printing metrics, collect the final metrics received from users.
         if !self.configuration.no_metrics {
+            // Set the second parameter to true, ensuring that Goose waits until all metrics
+            // are received.
             let _received_message = self.receive_metrics(goose_attack_run_state, true).await?;
         }
 
@@ -3183,7 +3185,10 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If metrics are enabled, synchronize metrics from child threads to the parent.
+    // If metrics are enabled, synchronize metrics from child threads to the parent. If
+    // flush is true all metrics will be received regardless of how long it takes. If
+    // flush is false, metrics will only be received for up to 400 ms before exiting to
+    // continue on the next call to this function.
     async fn sync_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -3723,7 +3728,6 @@ impl GooseAttack {
 
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
-        // @TODO: logs should be created when we start, not when we idle.
         let mut goose_attack_run_state = self
             .initialize_attack(socket)
             .await
@@ -3947,9 +3951,6 @@ impl GooseAttack {
                 // No metrics to display when sitting idle, so disable.
                 if self.attack_phase == AttackPhase::Idle {
                     self.metrics.display_metrics = false;
-                // Goose should fully shutdown if ctrl-c was caught while stopping.
-                } else if self.attack_phase == AttackPhase::Stopping {
-                    goose_attack_run_state.shutdown_after_stop = true;
                 }
 
                 // Cleanly stop the load test.
@@ -3975,7 +3976,10 @@ impl GooseAttack {
         }
     }
 
-    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads.
+    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
+    // is true all metrics will be received regardless of how long it takes. If flush is
+    // false, metrics will only be received for up to 400 ms before exiting to continue on
+    // the next call to this function.
     async fn receive_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
