@@ -310,14 +310,35 @@ impl GooseControllerState {
         }
     }
 
-    // Use a rust match to enforce at compile time that all commands are supported.
+    /// Send a message to parent thread, with or without an optional value, and wait for
+    /// a reply.
     async fn process_command(
         &self,
-        request_message: GooseControllerRequestMessage,
+        request: GooseControllerRequestMessage,
     ) -> Result<GooseControllerResponseMessage, String> {
-        match self.send_to_parent_and_get_reply(request_message).await {
-            Ok(r) => Ok(r),
-            Err(e) => Err(format!("controller command failed: {}", e)),
+        // Create a one-shot channel to allow the parent to reply to our request. As flume
+        // doesn't implement a one-shot channel, we use tokio for this temporary channel.
+        let (response_tx, response_rx): (
+            tokio::sync::oneshot::Sender<GooseControllerResponse>,
+            tokio::sync::oneshot::Receiver<GooseControllerResponse>,
+        ) = tokio::sync::oneshot::channel();
+
+        if self
+            .channel_tx
+            .try_send(GooseControllerRequest {
+                response_channel: Some(response_tx),
+                client_id: self.thread_id,
+                request,
+            })
+            .is_err()
+        {
+            return Err("parent process has closed the controller channel".to_string());
+        }
+
+        // Await response from parent.
+        match response_rx.await {
+            Ok(value) => Ok(value.response),
+            Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
         }
     }
 
@@ -402,38 +423,6 @@ impl GooseControllerState {
                 error!("{}", e);
                 Err(e.to_string())
             }
-        }
-    }
-
-    /// Send a message to parent thread, with or without an optional value, and wait for
-    /// a reply.
-    async fn send_to_parent_and_get_reply(
-        &self,
-        request: GooseControllerRequestMessage,
-    ) -> Result<GooseControllerResponseMessage, String> {
-        // Create a one-shot channel to allow the parent to reply to our request. As flume
-        // doesn't implement a one-shot channel, we use tokio for this temporary channel.
-        let (response_tx, response_rx): (
-            tokio::sync::oneshot::Sender<GooseControllerResponse>,
-            tokio::sync::oneshot::Receiver<GooseControllerResponse>,
-        ) = tokio::sync::oneshot::channel();
-
-        if self
-            .channel_tx
-            .try_send(GooseControllerRequest {
-                response_channel: Some(response_tx),
-                client_id: self.thread_id,
-                request,
-            })
-            .is_err()
-        {
-            return Err("parent process has closed the controller channel".to_string());
-        }
-
-        // Await response from parent.
-        match response_rx.await {
-            Ok(value) => Ok(value.response),
-            Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
         }
     }
 }
@@ -546,7 +535,7 @@ impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerSta
 
         // Always write the returned String to the socket, whether or not the command
         // was successful.
-        match self.process_response(command.clone(), response) {
+        match self.process_response(command, response) {
             Ok(message) => self.write_to_socket(socket, message, None).await,
             Err(message) => self.write_to_socket(socket, message, None).await,
         }
