@@ -4,7 +4,6 @@
  - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:
     o `help` (and `?`) display help
     o `exit` (and `quit`) exit the telnet Controller
-    o `echo` pings the parent process and confirms the controller is working
     o `shutdown` shuts down the running load test (and exits the controller)
     o `hatchrate` (and `hatch_rate`) FLOAT sets per-second rate users hatch
     o `config` displays the current load test configuration
@@ -17,12 +16,9 @@
     o default to not enabling telnet Controller: `GooseDefault::NoTelnet` (bool)
     o default host to bind telnet Controller to: `GooseDefault::TelnetHost` (&str)
     o default port to bind telnet Controller to: `GooseDefault::TelnetPort` (usize)
- - introduce WebSocket Controller allowing real-time control of load test, optionally disable with `--no-websocket`, supports the following commands:
-    o `exit` (and `quit`) exit the WebSocket Controller
-    o `shutdown` shuts down the running load test (and exits the controller)
-    o `hatchrate` (and `hatch_rate`) FLOAT sets per-second rate users hatch
-    o `config` returns the current load test configuration in json format
-    o `metrics` (and `stats`) returns metrics for the current load test in json format
+ - introduce WebSocket Controller allowing real-time control of load test, optionally disable with `--no-websocket`, supports the same commands as the telnet Controller, except:
+    o `config` and `config-json` both return the load test configuration in json format
+    o `metrics` and `metrics-json` both return metrics for the current load test in json format
  - WebSocket Controller bind host defaults to `0.0.0.0`, can be configured with `--websocket-host`
  - WebSocket Controller bind port defaults to `5117`, can be configured with `--websocket-port`
  - WebSocket Controller defaults can be changed:
@@ -40,6 +36,8 @@
  - properly flush debug file, request file, and html report when stopping load test with Controller
  - properly (re)create debug file, request file, and html report when starting load test with Controller
  - if metrics are enabled, display when controller stops load test
+ - de-duplicate code with traits, gaining compile-time validation that both Controllers are properly handling all defined commands
+ - add [`async_trait`](https://docs.rs/async_trait) dependency as stable Rust doesn't otherwise support async traits
 
 
 ## 0.11.1 May 16, 2021

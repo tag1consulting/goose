@@ -112,8 +112,6 @@ pub struct GooseControllerWebSocketResponse {
     response: String,
     /// Whether the request was successful or not.
     success: bool,
-    /// If success is false, a description of the error.
-    error: Option<String>,
 }
 
 /// Return type to indicate whether or not to exit the Controller thread.
@@ -163,14 +161,21 @@ impl GooseControllerState {
 
                 loop {
                     // Process data received from the client in a loop.
-                    let n = socket
-                        .read(&mut buf)
-                        .await
-                        .expect("failed to read data from socket");
+                    let n = match socket.read(&mut buf).await {
+                        Ok(data) => data,
+                        Err(e) => {
+                            warn!("failed to read data from socket: {}", e);
+                            break;
+                        }
+                    };
 
                     // Invalid request, exit.
                     if n == 0 {
-                        return;
+                        info!(
+                            "Telnet client [{}] disconnected from {}",
+                            self.thread_id, peer_addr
+                        );
+                        break;
                     }
 
                     // Extract the command string in a protocol-specific way.
@@ -181,7 +186,7 @@ impl GooseControllerState {
                             if self.execute_command(&mut socket, request_message).await {
                                 // If execute_command returns true, it's time to exit.
                                 info!(
-                                    "telnet client [{}] disconnected from {}",
+                                    "Telnet client [{}] disconnected from {}",
                                     self.thread_id, peer_addr
                                 );
                                 break;
@@ -189,15 +194,14 @@ impl GooseControllerState {
                         } else {
                             self.write_to_socket(
                                 &mut socket,
-                                "unrecognized command".to_string(),
-                                None,
+                                Err("unrecognized command".to_string()),
                             )
                             .await;
                         }
                     } else {
                         // Corrupted request from telnet client, exit.
                         info!(
-                            "telnet client [{}] disconnected from {}",
+                            "Telnet client [{}] disconnected from {}",
                             self.thread_id, peer_addr
                         );
                         break;
@@ -216,10 +220,17 @@ impl GooseControllerState {
 
                 loop {
                     // Wait until the client sends a command.
-                    let data = ws_receiver
-                        .next()
-                        .await
-                        .expect("failed to read data from socket");
+                    let data = match ws_receiver.next().await {
+                        Some(d) => (d),
+                        None => {
+                            // Returning with no data means the client disconnected.
+                            info!(
+                                "Telnet client [{}] disconnected from {}",
+                                self.thread_id, peer_addr
+                            );
+                            break;
+                        }
+                    };
 
                     // Extract the command string in a protocol-specific way.
                     if let Ok(command_string) = self.get_command_string(data).await {
@@ -228,7 +239,7 @@ impl GooseControllerState {
                             if self.execute_command(&mut ws_sender, request_message).await {
                                 // If execute_command() returns true, it's time to exit.
                                 info!(
-                                    "telnet client [{}] disconnected from {}",
+                                    "Telnet client [{}] disconnected from {}",
                                     self.thread_id, peer_addr
                                 );
                                 break;
@@ -236,11 +247,16 @@ impl GooseControllerState {
                         } else {
                             self.write_to_socket(
                                 &mut ws_sender,
-                                "unrecognized command".to_string(),
-                                Some("unrecognized command".to_string()),
+                                Err("unrecognized command, see Goose README.MD".to_string()),
                             )
                             .await;
                         }
+                    } else {
+                        self.write_to_socket(
+                            &mut ws_sender,
+                            Err("unable to parse json, see Goose README.MD".to_string()),
+                        )
+                        .await;
                     }
                 }
             }
@@ -488,20 +504,16 @@ impl GooseController<GooseControllerWebSocketMessage> for GooseControllerState {
 }
 #[async_trait]
 trait GooseControllerExecuteCommand<T> {
-    // Run the command received from a Controller request.
+    // Run the command received from a Controller request. Returns a boolean, if true exit.
     async fn execute_command(
         &self,
         socket: &mut T,
         request_message: GooseControllerRequestMessage,
     ) -> GooseControllerExit;
 
-    // Send response to Controller client.
-    async fn write_to_socket(
-        &self,
-        socket: &mut T,
-        response_message: String,
-        error: Option<String>,
-    );
+    // Send response to Controller client. The response is wrapped in a Result to indicate
+    // if the request was successful or not.
+    async fn write_to_socket(&self, socket: &mut T, response_message: Result<String, String>);
 }
 #[async_trait]
 impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerState {
@@ -513,8 +525,8 @@ impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerSta
     ) -> GooseControllerExit {
         // First handle commands that don't require interaction with the parent process.
         if let Some(message) = self.process_local_command(&request_message) {
-            self.write_to_socket(socket, message, None).await;
-            // Return true if it's time to exit, false if not.
+            self.write_to_socket(socket, Ok(message)).await;
+            // If Exit was received return true to exit, otherwise return false.
             return request_message.command == GooseControllerCommand::Exit;
         }
 
@@ -525,36 +537,44 @@ impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerSta
         let response = match self.process_command(request_message).await {
             Ok(r) => r,
             Err(e) => {
-                self.write_to_socket(socket, e, None).await;
-                return false;
+                // Receiving an error here means the parent closed the communication
+                // channel. Write the error to the Controller client and then return
+                // true to exit.
+                self.write_to_socket(socket, Err(e)).await;
+                return true;
             }
         };
 
-        // Determine whether or not to exit controller.
+        // If Shutdown command was received return true to exit, otherwise return false.
         let exit_controller = command == GooseControllerCommand::Shutdown;
 
-        // Always write the returned String to the socket, whether or not the command
-        // was successful.
-        match self.process_response(command, response) {
-            Ok(message) => self.write_to_socket(socket, message, None).await,
-            Err(message) => self.write_to_socket(socket, message, None).await,
-        }
+        // Write the response to the Controller client socket.
+        self.write_to_socket(socket, self.process_response(command, response))
+            .await;
 
+        // Return true if it's time to exit the Controller.
         exit_controller
     }
 
-    // Send response to Controller client.
+    // Send response to telnet Controller client.
     async fn write_to_socket(
         &self,
         socket: &mut tokio::net::TcpStream,
-        response_message: String,
-        _error: Option<String>,
+        message: Result<String, String>,
     ) {
-        socket
+        // Send result to telnet Controller client, whether Ok() or Err().
+        let response_message = match message {
+            Ok(m) => m,
+            Err(e) => e,
+        };
+        if socket
             // Add a linefeed to the end of the message.
             .write_all([&response_message, "\ngoose> "].concat().as_bytes())
             .await
-            .expect("failed to write data to socket");
+            .is_err()
+        {
+            warn!("failed to write data to socker");
+        };
     }
 }
 #[async_trait]
@@ -567,70 +587,66 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
     ) -> GooseControllerExit {
         // First handle commands that don't require interaction with the parent process.
         if let Some(message) = self.process_local_command(&request_message) {
-            self.write_to_socket(socket, message, None).await;
+            self.write_to_socket(socket, Ok(message)).await;
 
-            // Set exit_controller to true if Exit command was received.
+            // If Exit was received return true to exit, otherwise return false.
             let exit_controller = request_message.command == GooseControllerCommand::Exit;
-
-            // Notify the WebSocket client that this connection is closing.
-            if exit_controller {
-                socket
+            // If exiting, notify the WebSocket client that this connection is closing.
+            if exit_controller
+                && socket
                     .send(Message::Close(Some(tungstenite::protocol::CloseFrame {
                         code: tungstenite::protocol::frame::coding::CloseCode::Normal,
                         reason: std::borrow::Cow::Borrowed("exit"),
                     })))
                     .await
-                    .expect("failed to write data to stream");
+                    .is_err()
+            {
+                warn!("failed to write data to stream");
             }
 
             return exit_controller;
         }
 
-        // GooseController always returns JSON
-        let command = if request_message.command == GooseControllerCommand::Config {
-            GooseControllerCommand::ConfigJson
-        } else if request_message.command == GooseControllerCommand::Metrics {
-            GooseControllerCommand::MetricsJson
-        } else {
-            request_message.command.clone()
+        // WebSocket Controller always returns JSON, convert command where necessary.
+        let command = match request_message.command {
+            GooseControllerCommand::Config => GooseControllerCommand::ConfigJson,
+            GooseControllerCommand::Metrics => GooseControllerCommand::MetricsJson,
+            _ => request_message.command.clone(),
         };
 
         // Now handle commands that require interaction with the parent process.
         let response = match self.process_command(request_message).await {
             Ok(r) => r,
             Err(e) => {
-                self.write_to_socket(socket, e, None).await;
-                return false;
+                // Receiving an error here means the parent closed the communication
+                // channel. Write the error to the Controller client and then return
+                // true to exit.
+                self.write_to_socket(socket, Err(e)).await;
+                return true;
             }
         };
 
-        // Determine whether or not to exit controller.
+        // If Shutdown command was received return true to exit, otherwise return false.
         let exit_controller = command == GooseControllerCommand::Shutdown;
 
-        match self.process_response(command, response) {
-            // Command was processed successfully.
-            Ok(message) => {
-                self.write_to_socket(socket, message, None).await;
-            }
-            // Command failed.
-            Err(error) => {
-                self.write_to_socket(socket, error.clone(), Some(error))
-                    .await;
-            }
-        }
+        // Write the response to the Controller client socket.
+        self.write_to_socket(socket, self.process_response(command, response))
+            .await;
 
-        // Notify the WebSocket client that this connection is closing.
-        if exit_controller {
-            socket
+        // If exiting, notify the WebSocket client that this connection is closing.
+        if exit_controller
+            && socket
                 .send(Message::Close(Some(tungstenite::protocol::CloseFrame {
                     code: tungstenite::protocol::frame::coding::CloseCode::Normal,
                     reason: std::borrow::Cow::Borrowed("shutdown"),
                 })))
                 .await
-                .expect("failed to write data to stream");
+                .is_err()
+        {
+            warn!("failed to write data to stream");
         }
 
-        // Return true if it's time to exit the controller.
+        // Return true if it's time to exit the Controller.
         exit_controller
     }
 
@@ -638,16 +654,25 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
     async fn write_to_socket(
         &self,
         socket: &mut GooseControllerWebSocketSender,
-        response: String,
-        error: Option<String>,
+        response_result: Result<String, String>,
     ) {
+        let success;
+        let response = match response_result {
+            Ok(m) => {
+                success = true;
+                m
+            }
+            Err(e) => {
+                success = false;
+                e
+            }
+        };
         if let Err(e) = socket
             .send(Message::Text(
                 match serde_json::to_string(&GooseControllerWebSocketResponse {
                     response,
                     // Success is true if there is no error, false if there is an error.
-                    success: error.is_none(),
-                    error,
+                    success,
                 }) {
                     Ok(json) => json,
                     Err(e) => {
@@ -658,7 +683,7 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
             ))
             .await
         {
-            warn!("failed to write data to websocket: {}", e);
+            info!("failed to write data to websocket: {}", e);
         }
     }
 }
@@ -762,11 +787,14 @@ pub async fn controller_main(
 
 /// Send a message to the client TcpStream, no prompt or line feed.
 async fn write_to_socket_raw(socket: &mut tokio::net::TcpStream, message: &str) {
-    socket
+    if socket
         // Add a linefeed to the end of the message.
         .write_all(message.as_bytes())
         .await
-        .expect("failed to write data to socket");
+        .is_err()
+    {
+        warn!("failed to write data to socket");
+    }
 }
 
 // A controller help screen.

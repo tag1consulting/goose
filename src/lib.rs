@@ -3883,12 +3883,18 @@ impl GooseAttack {
                             }
                             // Stop the load test, and acknowledge request.
                             GooseControllerCommand::Shutdown => {
+                                // If load test is Idle, there are no metrics to display.
+                                if self.attack_phase == AttackPhase::Idle {
+                                    self.metrics.display_metrics = false;
+                                }
+                                // Shutdown after stopping.
+                                goose_attack_run_state.shutdown_after_stop = true;
+                                // Properly stop any running GooseAttack first.
                                 self.set_attack_phase(
                                     &mut goose_attack_run_state,
                                     AttackPhase::Stopping,
                                 );
-                                // Shutdown after stopping.
-                                goose_attack_run_state.shutdown_after_stop = true;
+                                // Confirm shut down to Controller.
                                 self.reply_to_controller(
                                     message,
                                     GooseControllerResponseMessage::Bool(true),
