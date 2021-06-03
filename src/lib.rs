@@ -463,10 +463,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use url::Url;
 
-use crate::controller::{
-    GooseControllerCommand, GooseControllerProtocol, GooseControllerRequest,
-    GooseControllerResponse, GooseControllerResponseMessage,
-};
+use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{
     GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
     GooseUserCommand,
@@ -3806,132 +3803,9 @@ impl GooseAttack {
             self.sync_metrics(&mut goose_attack_run_state, false)
                 .await?;
 
-            // If the controller is enabled, check if we've received any
-            // messages.
-            if let Some(c) = goose_attack_run_state.controller_channel_rx.as_ref() {
-                match c.try_recv() {
-                    Ok(message) => {
-                        info!(
-                            "request from controller client {}: {:?}",
-                            message.client_id, message.request
-                        );
-                        match &message.request.command {
-                            // Send back a copy of the running configuration.
-                            GooseControllerCommand::Config | GooseControllerCommand::ConfigJson => {
-                                self.reply_to_controller(
-                                    message,
-                                    GooseControllerResponseMessage::Config(Box::new(
-                                        self.configuration.clone(),
-                                    )),
-                                );
-                            }
-                            // Send back a copy of the running metrics.
-                            GooseControllerCommand::Metrics
-                            | GooseControllerCommand::MetricsJson => {
-                                self.reply_to_controller(
-                                    message,
-                                    GooseControllerResponseMessage::Metrics(Box::new(
-                                        self.metrics.clone(),
-                                    )),
-                                );
-                            }
-                            // Start the load test, and acknowledge command.
-                            GooseControllerCommand::Start => {
-                                // We can only start an idle load test.
-                                if self.attack_phase == AttackPhase::Idle {
-                                    self.set_attack_phase(
-                                        &mut goose_attack_run_state,
-                                        AttackPhase::Starting,
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        GooseControllerResponseMessage::Bool(true),
-                                    );
-                                    // Reset the run state when starting a new load test.
-                                    self.reset_run_state(&mut goose_attack_run_state).await?;
-                                } else {
-                                    self.reply_to_controller(
-                                        message,
-                                        GooseControllerResponseMessage::Bool(false),
-                                    );
-                                }
-                            }
-                            // Stop the load test, and acknowledge command.
-                            GooseControllerCommand::Stop => {
-                                // We can only stop a starting or running load test.
-                                if [AttackPhase::Starting, AttackPhase::Running]
-                                    .contains(&self.attack_phase)
-                                {
-                                    self.set_attack_phase(
-                                        &mut goose_attack_run_state,
-                                        AttackPhase::Stopping,
-                                    );
-                                    // Don't shutdown when load test is stopped by controller, remain idle instead.
-                                    goose_attack_run_state.shutdown_after_stop = false;
-                                    // Don't automatically restart the load test.
-                                    self.configuration.no_autostart = true;
-                                    self.reply_to_controller(
-                                        message,
-                                        GooseControllerResponseMessage::Bool(true),
-                                    );
-                                } else {
-                                    self.reply_to_controller(
-                                        message,
-                                        GooseControllerResponseMessage::Bool(false),
-                                    );
-                                }
-                            }
-                            // Stop the load test, and acknowledge request.
-                            GooseControllerCommand::Shutdown => {
-                                // If load test is Idle, there are no metrics to display.
-                                if self.attack_phase == AttackPhase::Idle {
-                                    self.metrics.display_metrics = false;
-                                }
-                                // Shutdown after stopping.
-                                goose_attack_run_state.shutdown_after_stop = true;
-                                // Properly stop any running GooseAttack first.
-                                self.set_attack_phase(
-                                    &mut goose_attack_run_state,
-                                    AttackPhase::Stopping,
-                                );
-                                // Confirm shut down to Controller.
-                                self.reply_to_controller(
-                                    message,
-                                    GooseControllerResponseMessage::Bool(true),
-                                );
-                            }
-                            GooseControllerCommand::HatchRate => {
-                                // The controller uses a regular expression to validate that
-                                // this is a valid float, so simply use it with further
-                                // validation.
-                                if let Some(hatch_rate) = &message.request.value {
-                                    info!(
-                                        "changing hatch_rate from {:?} to {}",
-                                        self.configuration.hatch_rate, hatch_rate
-                                    );
-                                    self.configuration.hatch_rate = Some(hatch_rate.clone());
-                                    self.reply_to_controller(
-                                        message,
-                                        GooseControllerResponseMessage::Bool(true),
-                                    );
-                                } else {
-                                    warn!(
-                                        "Controller didn't provide hatch_rate: {:#?}",
-                                        &message.request
-                                    );
-                                }
-                            }
-                            _ => {
-                                warn!("Unexpected command: {:?}", &message.request);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        // Errors can be ignored, they happen any time there are no messages.
-                        debug!("error receiving message: {}", e);
-                    }
-                }
-            };
+            // Check if a Controller has made a request.
+            self.handle_controller_requests(&mut goose_attack_run_state)
+                .await?;
 
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
@@ -3951,21 +3825,6 @@ impl GooseAttack {
         }
 
         Ok(self)
-    }
-
-    // Use the provided oneshot channel to reply to a controller client request.
-    fn reply_to_controller(
-        &mut self,
-        request: GooseControllerRequest,
-        response: GooseControllerResponseMessage,
-    ) {
-        if let Some(oneshot_tx) = request.response_channel {
-            // @TODO: handle an error sending the message.
-            let _ = oneshot_tx.send(GooseControllerResponse {
-                client_id: request.client_id,
-                response,
-            });
-        }
     }
 
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
