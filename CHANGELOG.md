@@ -5,7 +5,10 @@
     o `help` (and `?`) display help
     o `exit` (and `quit`) exit the telnet Controller
     o `shutdown` shuts down the running load test (and exits the controller)
+    o `host` (and `hosts`) HOST sets host to load test against, ie http://localhost/
+    o `users` (and `user`) INT sets number of simulated users
     o `hatchrate` (and `hatch_rate`) FLOAT sets per-second rate users hatch
+    o `runtime` (and `run_time`) TIME sets how long the load test should run
     o `config` displays the current load test configuration
     o `config-json` displays the current load test configuration in json format
     o `metrics` (and `stats`) displays metrics for the current load test

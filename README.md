@@ -534,7 +534,10 @@ goose 0.11.2 controller commands:
  start              start an idle load test
  stop               stop a running load test and return to idle state
  shutdown           shutdown running load test (and exit controller)
+ host HOST          set host to load test, ie http://localhost/
+ users INT          set number of simulated users
  hatchrate FLOAT    set per-second rate users hatch
+ runtime TIME       set how long to run test, ie 1h30m5s
  config             display load test configuration
  config-json        display load test configuration in json format
  metrics            display metrics for current load test

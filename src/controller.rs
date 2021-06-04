@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tungstenite::Message;
@@ -34,10 +35,18 @@ pub enum GooseControllerProtocol {
 /// [`controller_main()`](./fn.controller_main.html) as it is used to determine which
 /// regex matched, if any. Any commands that require a second match to capture values
 /// must be defined at the beginning of this enum.
+///
+/// @TODO: Document the steps necessary to add a new Controller command.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GooseControllerCommand {
-    /// Change how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    /// Configure the host to load test, for example http://localhost/.
+    Host,
+    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    Users,
+    /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
     HatchRate,
+    /// Configure how long the load test should run before stopping.
+    RunTime,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     Config,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s in json format.
@@ -315,6 +324,26 @@ impl GooseControllerState {
                 command: GooseControllerCommand::MetricsJson,
                 value: None,
             })
+        } else if matches.matched(GooseControllerCommand::Host as usize) {
+            // Perform a second regex to capture the hatch_rate value.
+            let caps = self.captures[GooseControllerCommand::Host as usize]
+                .captures(command_string)
+                .unwrap();
+            let host = caps.get(2).map_or("", |m| m.as_str());
+            Ok(GooseControllerRequestMessage {
+                command: GooseControllerCommand::Host,
+                value: Some(host.to_string()),
+            })
+        } else if matches.matched(GooseControllerCommand::Users as usize) {
+            // Perform a second regex to capture the hatch_rate value.
+            let caps = self.captures[GooseControllerCommand::Users as usize]
+                .captures(command_string)
+                .unwrap();
+            let users = caps.get(2).map_or("", |m| m.as_str());
+            Ok(GooseControllerRequestMessage {
+                command: GooseControllerCommand::Users,
+                value: Some(users.to_string()),
+            })
         } else if matches.matched(GooseControllerCommand::HatchRate as usize) {
             // Perform a second regex to capture the hatch_rate value.
             let caps = self.captures[GooseControllerCommand::HatchRate as usize]
@@ -324,6 +353,16 @@ impl GooseControllerState {
             Ok(GooseControllerRequestMessage {
                 command: GooseControllerCommand::HatchRate,
                 value: Some(hatch_rate.to_string()),
+            })
+        } else if matches.matched(GooseControllerCommand::RunTime as usize) {
+            // Perform a second regex to capture the hatch_rate value.
+            let caps = self.captures[GooseControllerCommand::RunTime as usize]
+                .captures(command_string)
+                .unwrap();
+            let run_time = caps.get(2).map_or("", |m| m.as_str());
+            Ok(GooseControllerRequestMessage {
+                command: GooseControllerCommand::RunTime,
+                value: Some(run_time.to_string()),
             })
         } else {
             Err(())
@@ -383,11 +422,32 @@ impl GooseControllerState {
         response: GooseControllerResponseMessage,
     ) -> Result<String, String> {
         match command {
+            GooseControllerCommand::Host => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("host configured".to_string())
+                } else {
+                    Err("failed to reconfigure host".to_string())
+                }
+            }
+            GooseControllerCommand::Users => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("users configured".to_string())
+                } else {
+                    Err("failed to configure users".to_string())
+                }
+            }
             GooseControllerCommand::HatchRate => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("hatch_rate reconfigured".to_string())
+                    Ok("hatch_rate configured".to_string())
                 } else {
-                    Err("failed to reconfigure hatch_rate".to_string())
+                    Err("failed to configure hatch_rate".to_string())
+                }
+            }
+            GooseControllerCommand::RunTime => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("run_time configured".to_string())
+                } else {
+                    Err("failed to configure run_time".to_string())
                 }
             }
             GooseControllerCommand::Config => {
@@ -739,17 +799,26 @@ pub async fn controller_main(
     // against a command. The second time to capture specific matched values. This is a
     // limitiation of RegexSet as documented at:
     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
-    let hatchrate_regex = r"(?i)^(hatchrate|hatch_rate) ([0-9]*(\.[0-9]*)?){1}$";
-    // @TODO: enable when the parent process processes it properly.
-    //let users_regex = r"(?i)^users (\d+)$";
+    // @TODO: properly match hostname (http|https)://...
+    let host_regex = r"(?i)^(host|hostname|host_name|host-name) (\s+)$";
+    let users_regex = r"(?i)^(user|users) (\d+)$";
+    let hatchrate_regex = r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$";
+    // @TODO properly match run time (1s2m3h)...
+    let runtime_regex = r"(?i)^(run|runtime|run_time|run-time|) (\d+)$";
 
     // The following RegexSet is matched against all commands received through the controller.
     // Developer note: The order commands are defined here must match the order in which
     // the commands are defined in the GooseControllerCommand enum, as it is used to determine
     // which expression matched, if any.
     let commands = RegexSet::new(&[
-        // Modify how quickly users hatch (or exit if users are reduced).
+        // Modify the host the load test runs against.
+        host_regex,
+        // Modify how many users hatch.
+        users_regex,
+        // Modify how quickly users hatch.
         hatchrate_regex,
+        // Modify how long the load test will run.
+        runtime_regex,
         // Display the current load test configuration.
         r"(?i)^config$",
         // Display the current load test configuration in json.
@@ -773,7 +842,12 @@ pub async fn controller_main(
 
     // The following regular expressions are used when matching against certain commands
     // to then capture a matched value.
-    let captures = vec![Regex::new(hatchrate_regex).unwrap()];
+    let captures = vec![
+        Regex::new(host_regex).unwrap(),
+        Regex::new(users_regex).unwrap(),
+        Regex::new(hatchrate_regex).unwrap(),
+        Regex::new(runtime_regex).unwrap(),
+    ];
 
     // Counter increments each time a controller client connects with this protocol.
     let mut thread_id: u32 = 0;
@@ -818,8 +892,6 @@ async fn write_to_socket_raw(socket: &mut tokio::net::TcpStream, message: &str) 
 }
 
 // A controller help screen.
-// @TODO: document `users` when enabled:
-// users INT          set number of simulated users
 fn display_help() -> String {
     format!(
         r"{} {} controller commands:
@@ -828,7 +900,10 @@ fn display_help() -> String {
  start              start an idle load test
  stop               stop a running load test and return to idle state
  shutdown           shutdown running load test (and exit controller)
+ host HOST          set host to load test, ie http://localhost/
+ users INT          set number of simulated users
  hatchrate FLOAT    set per-second rate users hatch
+ runtime TIME       set how long to run test, ie 1h30m5s
  config             display load test configuration
  config-json        display load test configuration in json format
  metrics            display metrics for current load test
@@ -954,6 +1029,50 @@ impl GooseAttack {
                                 GooseControllerResponseMessage::Bool(true),
                             );
                         }
+                        GooseControllerCommand::Host => {
+                            // The controller uses a regular expression to validate that
+                            // this is a valid hostname, so simply use it with further
+                            // validation.
+                            if let Some(host) = &message.request.value {
+                                info!(
+                                    "changing host from {:?} to {}",
+                                    self.configuration.host, host
+                                );
+                                // @TODO: Update lib.rs to ensure host is read from the configuration
+                                // each time the load test starts.
+                                self.configuration.host = host.to_string();
+                                self.reply_to_controller(
+                                    message,
+                                    GooseControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                warn!("Controller didn't provide host: {:#?}", &message.request);
+                            }
+                        }
+                        GooseControllerCommand::Users => {
+                            // The controller uses a regular expression to validate that
+                            // this is a valid integer, so simply use it with further
+                            // validation.
+                            if let Some(users) = &message.request.value {
+                                info!(
+                                    "changing users from {:?} to {}",
+                                    self.configuration.users, users
+                                );
+                                // Use expect() as Controller uses regex to validate this is an integer.
+                                // @TODO: Update lib.rs to build users based on the configuration value
+                                // each time the load test starts (or at least if its changed).
+                                self.configuration.users = Some(
+                                    usize::from_str(&users)
+                                        .expect("failed to convert string to usize"),
+                                );
+                                self.reply_to_controller(
+                                    message,
+                                    GooseControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                warn!("Controller didn't provide users: {:#?}", &message.request);
+                            }
+                        }
                         GooseControllerCommand::HatchRate => {
                             // The controller uses a regular expression to validate that
                             // this is a valid float, so simply use it with further
@@ -975,7 +1094,32 @@ impl GooseAttack {
                                 );
                             }
                         }
-                        _ => {
+                        GooseControllerCommand::RunTime => {
+                            // The controller uses a regular expression to validate that
+                            // this is a valid run time, so simply use it with further
+                            // validation.
+                            if let Some(run_time) = &message.request.value {
+                                info!(
+                                    "changing run_time from {:?} to {}",
+                                    self.configuration.run_time, run_time
+                                );
+                                // @TODO: Update lib.rs to refer to the configuration value for run_time
+                                // whenever a load test starts. Also, be sure it doesn't shutdown Goose
+                                // if started with --no-autostart.
+                                self.configuration.run_time = run_time.clone();
+                                self.reply_to_controller(
+                                    message,
+                                    GooseControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                warn!(
+                                    "Controller didn't provide run_time: {:#?}",
+                                    &message.request
+                                );
+                            }
+                        }
+                        // These messages shouldn't be received here.
+                        GooseControllerCommand::Help | GooseControllerCommand::Exit => {
                             warn!("Unexpected command: {:?}", &message.request);
                         }
                     }
