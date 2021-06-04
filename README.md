@@ -574,9 +574,9 @@ For example:
 ```
 % websocat ws://127.0.0.1:5117
 foo   
-{"response":"unable to parse json, see Goose README.MD","success":false}
+{"response":"unable to parse json, see Goose README.md","success":false}
 {"request": "foo"}
-{"response":"unrecognized command","success":false}
+{"response":"unrecognized command, see Goose README.md","success":false}
 {"request": "config"}
 {"response":"{\"help\":false,\"version\":false,\"list\":false,\"host\":\"http://apache/\",\"users\":5,\"hatch_rate\":\".5\",\"run_time\":\"\",\"log_level\":0,\"log_file\":\"\",\"verbose\":1,\"running_metrics\":null,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_task_metrics\":false,\"no_error_summary\":false,\"report_file\":\"\",\"requests_file\":\"\",\"requests_format\":\"json\",\"debug_file\":\"\",\"debug_format\":\"json\",\"no_debug_body\":false,\"status_codes\":false,\"no_telnet\":false,\"telnet_host\":\"0.0.0.0\",\"telnet_port\":5116,\"no_websocket\":false,\"websocket_host\":\"0.0.0.0\",\"websocket_port\":5117,\"no_autostart\":true,\"throttle_requests\":0,\"sticky_follow\":false,\"manager\":false,\"expect_workers\":null,\"no_hash_check\":false,\"manager_bind_host\":\"\",\"manager_bind_port\":0,\"worker\":false,\"manager_host\":\"\",\"manager_port\":0}","success":true}
 {"request": "stop"}

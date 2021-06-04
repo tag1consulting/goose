@@ -117,7 +117,10 @@ pub struct GooseControllerWebSocketResponse {
 /// Return type to indicate whether or not to exit the Controller thread.
 type GooseControllerExit = bool;
 
-/// Simplify the GooseController trait definition for WebSockets.
+/// The telnet Controller message buffer.
+type GooseControllerTelnetMessage = [u8; 1024];
+
+/// The WebSocket Controller message buffer.
 type GooseControllerWebSocketMessage =
     std::result::Result<tungstenite::Message, tungstenite::Error>;
 
@@ -132,6 +135,8 @@ type GooseControllerWebSocketSender = futures::stream::SplitSink<
 pub struct GooseControllerState {
     /// Track which controller-thread this is.
     thread_id: u32,
+    /// Track the ip and port of the connected TCP client.
+    peer_address: String,
     /// A shared channel for communicating with the parent process.
     channel_tx: flume::Sender<GooseControllerRequest>,
     /// A compiled set of regular expressions used for matching commands.
@@ -144,17 +149,13 @@ pub struct GooseControllerState {
 // Defines functions shared by all Controllers.
 impl GooseControllerState {
     async fn accept_connections(self, mut socket: tokio::net::TcpStream) {
-        let peer_addr = socket
-            .peer_addr()
-            .map_or("UNKNOWN ADDRESS".to_string(), |p| p.to_string());
         info!(
             "{:?} client [{}] connected from {}",
-            self.protocol, self.thread_id, peer_addr
+            self.protocol, self.thread_id, self.peer_address
         );
-
         match self.protocol {
             GooseControllerProtocol::Telnet => {
-                let mut buf: [u8; 1024] = [0; 1024];
+                let mut buf: GooseControllerTelnetMessage = [0; 1024];
 
                 // Display initial goose> prompt.
                 write_to_socket_raw(&mut socket, "goose> ").await;
@@ -163,8 +164,11 @@ impl GooseControllerState {
                     // Process data received from the client in a loop.
                     let n = match socket.read(&mut buf).await {
                         Ok(data) => data,
-                        Err(e) => {
-                            warn!("failed to read data from socket: {}", e);
+                        Err(_) => {
+                            info!(
+                                "Telnet client [{}] disconnected from {}",
+                                self.thread_id, self.peer_address
+                            );
                             break;
                         }
                     };
@@ -173,7 +177,7 @@ impl GooseControllerState {
                     if n == 0 {
                         info!(
                             "Telnet client [{}] disconnected from {}",
-                            self.thread_id, peer_addr
+                            self.thread_id, self.peer_address
                         );
                         break;
                     }
@@ -187,7 +191,7 @@ impl GooseControllerState {
                                 // If execute_command returns true, it's time to exit.
                                 info!(
                                     "Telnet client [{}] disconnected from {}",
-                                    self.thread_id, peer_addr
+                                    self.thread_id, self.peer_address
                                 );
                                 break;
                             }
@@ -202,7 +206,7 @@ impl GooseControllerState {
                         // Corrupted request from telnet client, exit.
                         info!(
                             "Telnet client [{}] disconnected from {}",
-                            self.thread_id, peer_addr
+                            self.thread_id, self.peer_address
                         );
                         break;
                     }
@@ -212,7 +216,7 @@ impl GooseControllerState {
                 let stream = match tokio_tungstenite::accept_async(socket).await {
                     Ok(s) => s,
                     Err(e) => {
-                        info!("invalid websocket handshake: {}", e);
+                        info!("invalid WebSocket handshake: {}", e);
                         return;
                     }
                 };
@@ -226,7 +230,7 @@ impl GooseControllerState {
                             // Returning with no data means the client disconnected.
                             info!(
                                 "Telnet client [{}] disconnected from {}",
-                                self.thread_id, peer_addr
+                                self.thread_id, self.peer_address
                             );
                             break;
                         }
@@ -240,21 +244,21 @@ impl GooseControllerState {
                                 // If execute_command() returns true, it's time to exit.
                                 info!(
                                     "Telnet client [{}] disconnected from {}",
-                                    self.thread_id, peer_addr
+                                    self.thread_id, self.peer_address
                                 );
                                 break;
                             }
                         } else {
                             self.write_to_socket(
                                 &mut ws_sender,
-                                Err("unrecognized command, see Goose README.MD".to_string()),
+                                Err("unrecognized command, see Goose README.md".to_string()),
                             )
                             .await;
                         }
                     } else {
                         self.write_to_socket(
                             &mut ws_sender,
-                            Err("unable to parse json, see Goose README.MD".to_string()),
+                            Err("unable to parse json, see Goose README.md".to_string()),
                         )
                         .await;
                     }
@@ -326,6 +330,20 @@ impl GooseControllerState {
         }
     }
 
+    /// Process a request entirely within the Controller thread, without sending a message
+    /// to the parent thread.
+    fn process_local_command(
+        &self,
+        request_message: &GooseControllerRequestMessage,
+    ) -> Option<String> {
+        match request_message.command {
+            GooseControllerCommand::Help => Some(display_help()),
+            GooseControllerCommand::Exit => Some("goodbye!".to_string()),
+            // All other commands require sending the request to the parent thread.
+            _ => None,
+        }
+    }
+
     /// Send a message to parent thread, with or without an optional value, and wait for
     /// a reply.
     async fn process_command(
@@ -355,17 +373,6 @@ impl GooseControllerState {
         match response_rx.await {
             Ok(value) => Ok(value.response),
             Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
-        }
-    }
-
-    fn process_local_command(
-        &self,
-        request_message: &GooseControllerRequestMessage,
-    ) -> Option<String> {
-        match request_message.command {
-            GooseControllerCommand::Help => Some(display_help()),
-            GooseControllerCommand::Exit => Some("goodbye!".to_string()),
-            _ => None,
         }
     }
 
@@ -451,9 +458,12 @@ trait GooseController<T> {
     async fn get_command_string(&self, raw_value: T) -> Result<String, String>;
 }
 #[async_trait]
-impl GooseController<[u8; 1024]> for GooseControllerState {
+impl GooseController<GooseControllerTelnetMessage> for GooseControllerState {
     // Extract the command string from a telnet Controller client request.
-    async fn get_command_string(&self, raw_value: [u8; 1024]) -> Result<String, String> {
+    async fn get_command_string(
+        &self,
+        raw_value: GooseControllerTelnetMessage,
+    ) -> Result<String, String> {
         let command_string = match str::from_utf8(&raw_value) {
             Ok(m) => {
                 if let Some(c) = m.lines().next() {
@@ -492,14 +502,17 @@ impl GooseController<GooseControllerWebSocketMessage> for GooseControllerState {
                             }
                         };
                     return Ok(command_string.request);
+                } else {
+                    // Failed to consume the WebSocket message and convert it to a String.
+                    return Err("unsupported string format".to_string());
                 }
+            } else {
+                // Received a non-text WebSocket message.
+                return Err("unsupported format, requests must be sent as text".to_string());
             }
         }
-
-        Err(
-            "failed to get command string from WebSocket request, refer to Goose README.md"
-                .to_string(),
-        )
+        // Improper WebSocket handshake.
+        Err("WebSocket handshake error".to_string())
     }
 }
 #[async_trait]
@@ -568,7 +581,7 @@ impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerSta
             Err(e) => e,
         };
         if socket
-            // Add a linefeed to the end of the message.
+            // Add a linefeed to the end of the message, followed by a prompt.
             .write_all([&response_message, "\ngoose> "].concat().as_bytes())
             .await
             .is_err()
@@ -769,8 +782,15 @@ pub async fn controller_main(
     while let Ok((stream, _)) = listener.accept().await {
         thread_id += 1;
 
+        // Identify the client ip and port, used primarily for debug logging.
+        let peer_address = stream
+            .peer_addr()
+            .map_or("UNKNOWN ADDRESS".to_string(), |p| p.to_string());
+
+        // Create a per-client Controller state.
         let controller_state = GooseControllerState {
             thread_id,
+            peer_address,
             channel_tx: channel_tx.clone(),
             commands: commands.clone(),
             captures: captures.clone(),
