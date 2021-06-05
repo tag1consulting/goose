@@ -434,14 +434,14 @@ impl GooseControllerState {
                 if let GooseControllerResponseMessage::Bool(true) = response {
                     Ok("host configured".to_string())
                 } else {
-                    Err("failed to reconfigure host".to_string())
+                    Err("load test not idle, failed to reconfigure host".to_string())
                 }
             }
             GooseControllerCommand::Users => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
                     Ok("users configured".to_string())
                 } else {
-                    Err("failed to configure users".to_string())
+                    Err("load test not idle, failed to reconfigure users".to_string())
                 }
             }
             GooseControllerCommand::HatchRate => {
@@ -1037,47 +1037,67 @@ impl GooseAttack {
                             );
                         }
                         GooseControllerCommand::Host => {
-                            // The controller uses a regular expression to validate that
-                            // this is a valid hostname, so simply use it with further
-                            // validation.
-                            if let Some(host) = &message.request.value {
-                                info!(
-                                    "changing host from {:?} to {}",
-                                    self.configuration.host, host
-                                );
-                                // @TODO: Update lib.rs to ensure host is read from the configuration
-                                // each time the load test starts.
-                                self.configuration.host = host.to_string();
+                            if self.attack_phase == AttackPhase::Idle {
+                                // The controller uses a regular expression to validate that
+                                // this is a valid hostname, so simply use it with further
+                                // validation.
+                                if let Some(host) = &message.request.value {
+                                    info!(
+                                        "changing host from {:?} to {}",
+                                        self.configuration.host, host
+                                    );
+                                    self.configuration.host = host.to_string();
+                                    self.weighted_users = self.weight_task_set_users()?;
+                                    info!("load test ready");
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                } else {
+                                    warn!(
+                                        "Controller didn't provide host: {:#?}",
+                                        &message.request
+                                    );
+                                }
+                            } else {
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(true),
+                                    GooseControllerResponseMessage::Bool(false),
                                 );
-                            } else {
-                                warn!("Controller didn't provide host: {:#?}", &message.request);
                             }
                         }
                         GooseControllerCommand::Users => {
-                            // The controller uses a regular expression to validate that
-                            // this is a valid integer, so simply use it with further
-                            // validation.
-                            if let Some(users) = &message.request.value {
-                                info!(
-                                    "changing users from {:?} to {}",
-                                    self.configuration.users, users
-                                );
-                                // Use expect() as Controller uses regex to validate this is an integer.
-                                // @TODO: Update lib.rs to build users based on the configuration value
-                                // each time the load test starts (or at least if its changed).
-                                self.configuration.users = Some(
-                                    usize::from_str(&users)
-                                        .expect("failed to convert string to usize"),
-                                );
+                            if self.attack_phase == AttackPhase::Idle {
+                                // The controller uses a regular expression to validate that
+                                // this is a valid integer, so simply use it with further
+                                // validation.
+                                if let Some(users) = &message.request.value {
+                                    info!(
+                                        "changing users from {:?} to {}",
+                                        self.configuration.users, users
+                                    );
+                                    // Use expect() as Controller uses regex to validate this is an integer.
+                                    self.configuration.users = Some(
+                                        usize::from_str(&users)
+                                            .expect("failed to convert string to usize"),
+                                    );
+                                    self.weighted_users = self.weight_task_set_users()?;
+                                    info!("load test ready");
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                } else {
+                                    warn!(
+                                        "Controller didn't provide users: {:#?}",
+                                        &message.request
+                                    );
+                                }
+                            } else {
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(true),
+                                    GooseControllerResponseMessage::Bool(false),
                                 );
-                            } else {
-                                warn!("Controller didn't provide users: {:#?}", &message.request);
                             }
                         }
                         GooseControllerCommand::HatchRate => {
