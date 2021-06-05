@@ -1110,10 +1110,8 @@ impl GooseAttack {
                                     "changing run_time from {:?} to {}",
                                     self.configuration.run_time, run_time
                                 );
-                                // @TODO: Update lib.rs to refer to the configuration value for run_time
-                                // whenever a load test starts. Also, be sure it doesn't shutdown Goose
-                                // if started with --no-autostart.
                                 self.configuration.run_time = run_time.clone();
+                                self.set_run_time()?;
                                 self.reply_to_controller(
                                     message,
                                     GooseControllerResponseMessage::Bool(true),

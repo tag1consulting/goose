@@ -2878,7 +2878,7 @@ impl GooseAttack {
             running_metrics_timer: std_now,
             display_running_metrics: false,
             all_users_spawned: false,
-            shutdown_after_stop: true,
+            shutdown_after_stop: !self.configuration.no_autostart,
             canceled: Arc::new(AtomicBool::new(false)),
             socket,
         };
@@ -3673,7 +3673,7 @@ impl GooseAttack {
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
         goose_attack_run_state.display_running_metrics = false;
-        goose_attack_run_state.shutdown_after_stop = true;
+        goose_attack_run_state.shutdown_after_stop = !self.configuration.no_autostart;
         goose_attack_run_state.all_users_spawned = false;
 
         // If enabled, spawn a logger thread.
