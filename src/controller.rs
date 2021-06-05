@@ -4,19 +4,19 @@
 //! real-time control of the running load test.
 
 use crate::metrics::GooseMetrics;
+use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
+use std::io;
+use std::str;
 use std::str::FromStr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tungstenite::Message;
-
-use std::io;
-use std::str;
 
 /// Goose currently supports two different Controller protocols: telnet and WebSocket.
 #[derive(Clone, Debug)]
@@ -325,17 +325,25 @@ impl GooseControllerState {
                 value: None,
             })
         } else if matches.matched(GooseControllerCommand::Host as usize) {
-            // Perform a second regex to capture the hatch_rate value.
+            // Perform a second regex to capture the host value.
             let caps = self.captures[GooseControllerCommand::Host as usize]
                 .captures(command_string)
                 .unwrap();
             let host = caps.get(2).map_or("", |m| m.as_str());
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Host,
-                value: Some(host.to_string()),
-            })
+            // The Regex that captures the host only validates that the host starts with
+            // http:// or https://. Now use a library to properly validate that this is
+            // a valid host before sending to the parent process.
+            if util::is_valid_host(host).is_ok() {
+                Ok(GooseControllerRequestMessage {
+                    command: GooseControllerCommand::Host,
+                    value: Some(host.to_string()),
+                })
+            } else {
+                debug!("invalid host: {}", host);
+                Err(())
+            }
         } else if matches.matched(GooseControllerCommand::Users as usize) {
-            // Perform a second regex to capture the hatch_rate value.
+            // Perform a second regex to capture the users value.
             let caps = self.captures[GooseControllerCommand::Users as usize]
                 .captures(command_string)
                 .unwrap();
@@ -355,7 +363,7 @@ impl GooseControllerState {
                 value: Some(hatch_rate.to_string()),
             })
         } else if matches.matched(GooseControllerCommand::RunTime as usize) {
-            // Perform a second regex to capture the hatch_rate value.
+            // Perform a second regex to capture the run_time value.
             let caps = self.captures[GooseControllerCommand::RunTime as usize]
                 .captures(command_string)
                 .unwrap();
@@ -799,12 +807,11 @@ pub async fn controller_main(
     // against a command. The second time to capture specific matched values. This is a
     // limitiation of RegexSet as documented at:
     // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
-    // @TODO: properly match hostname (http|https)://...
-    let host_regex = r"(?i)^(host|hostname|host_name|host-name) (\s+)$";
-    let users_regex = r"(?i)^(user|users) (\d+)$";
+    let host_regex = r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$";
+    let users_regex = r"(?i)^(users?) (\d+)$";
     let hatchrate_regex = r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$";
-    // @TODO properly match run time (1s2m3h)...
-    let runtime_regex = r"(?i)^(run|runtime|run_time|run-time|) (\d+)$";
+    let runtime_regex =
+        r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$";
 
     // The following RegexSet is matched against all commands received through the controller.
     // Developer note: The order commands are defined here must match the order in which
