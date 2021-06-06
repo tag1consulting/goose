@@ -29,14 +29,25 @@ pub enum GooseControllerProtocol {
 
 /// All commands recognized by the Goose Controllers.
 ///
-/// Developer note: The order commands are defined here must match the order in which
-/// the commands are defined in the
+/// The steps required to add a new command:
+///  1) Define the command here in the GooseControllerCommand enum.
+///  2) Add the regular expression for matching the new command in the `command`
 /// [`regex::RegexSet`](https://docs.rs/regex/*/regex/struct.RegexSet.html) in
-/// [`controller_main()`](./fn.controller_main.html) as it is used to determine which
-/// regex matched, if any. Any commands that require a second match to capture values
-/// must be defined at the beginning of this enum.
-///
-/// @TODO: Document the steps necessary to add a new Controller command.
+/// [`controller_main()`](./fn.controller_main.html).
+///  2a) If a value needs to be captured, define the regular expression in a variable
+///      outside the set, and add the variable to the top section of the set with the
+///      other regex variables.
+///  2b) In the same function, also add the variable to the `captures` Vector, in the
+///      same order that it was added to the `command` `RegexSet`. Order is important
+///      as this is how the regex is later identified.
+///  3) Check for a match to the new regex in `get_match`, any additional validation
+///      beyond the regex must be performed here (for example, the regular expression
+///      for capturing hosts simply confirms that the host starts with http or https,
+///      then in `get_match` it calls `util::is_valid_host()` to be sure it is truly
+///      a valid host before passing it to the parent process).
+///  4) Add any parent process logic for the command to `handle_controller_requests`
+///  5) Handle the response in `process_response`, returning a `Result<String, String>`
+///     succinctly describing success or failure.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GooseControllerCommand {
     /// Configure the host to load test, for example http://localhost/.
