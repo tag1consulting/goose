@@ -2327,16 +2327,7 @@ impl GooseAttack {
         let mut value = false;
 
         // Currently Gaggles are not Controller-aware.
-        if [AttackMode::Manager, AttackMode::Worker].contains(&self.attack_mode) {
-            return Err(GooseError::InvalidOption {
-                option: key.to_string(),
-                value: value.to_string(),
-                detail: format!(
-                    "{} can not be set together with the --manager or --worker flags.",
-                    key
-                ),
-            });
-        } else if self.configuration.no_autostart {
+        if self.configuration.no_autostart {
             key = "--no-autostart";
             value = true;
         // Otherwise set default if configured.
@@ -2347,16 +2338,27 @@ impl GooseAttack {
             self.configuration.no_autostart = default_no_autostart;
         }
 
-        // Can't disable autostart if there's no Controller enabled.
-        if self.configuration.no_autostart
-            && self.configuration.no_telnet
-            && self.configuration.no_websocket
-        {
-            return Err(GooseError::InvalidOption {
-                option: key.to_string(),
-                value: value.to_string(),
-                detail: format!("{} can not be set together with both the --no-telnet and --no-websocket flags.", key),
-            });
+        if self.configuration.no_autostart {
+            // Can't disable autostart in Gaggle mode.
+            if [AttackMode::Manager, AttackMode::Worker].contains(&self.attack_mode) {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!(
+                        "{} can not be set together with the --manager or --worker flags.",
+                        key
+                    ),
+                });
+            }
+
+            // Can't disable autostart if there's no Controller enabled.
+            if self.configuration.no_telnet && self.configuration.no_websocket {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} can not be set together with both the --no-telnet and --no-websocket flags.", key),
+                });
+            }
         }
 
         Ok(())
