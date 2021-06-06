@@ -461,7 +461,6 @@ use std::{fmt, io, time};
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
-use url::Url;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{
@@ -2522,44 +2521,15 @@ impl GooseAttack {
         self.set_no_hash_check()?;
 
         // Confirm there's either a global host, or each task set has a host defined.
-        let mut empty_host = false;
-        if self.configuration.host.is_empty() {
-            for task_set in &self.task_sets {
-                match &task_set.host {
-                    Some(h) => {
-                        if util::is_valid_host(h).is_ok() {
-                            info!("host for {} configured: {}", task_set.name, h);
-                        }
-                    }
-                    None => match &self.defaults.host {
-                        Some(h) => {
-                            if util::is_valid_host(h).is_ok() {
-                                info!("host for {} configured: {}", task_set.name, h);
-                            }
-                        }
-                        None => {
-                            if self.configuration.no_autostart {
-                                empty_host = true;
-                            } else if self.attack_mode != AttackMode::Worker {
-                                return Err(GooseError::InvalidOption {
-                                    option: "--host".to_string(),
-                                    value: "".to_string(),
-                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
-                                });
-                            }
-                        }
-                    },
-                }
+        if let Err(e) = self.validate_host() {
+            if self.configuration.no_autostart {
+                info!("host must be configured via Controller before starting load test");
+            } else {
+                // If auto-starting, host must be valid.
+                return Err(e);
             }
-        } else if util::is_valid_host(&self.configuration.host).is_ok() {
-            info!("global host configured: {}", self.configuration.host);
-        }
-
-        if empty_host {
-            // The load test can't be started without further configuration.
-            info!("host must be configured via Controller before starting load test");
         } else {
-            // Prepare to start the load test.
+            info!("global host configured: {}", self.configuration.host);
             self.prepare_load_test()?;
         }
 
@@ -2609,18 +2579,44 @@ impl GooseAttack {
         Ok(self.metrics)
     }
 
+    // Returns OK(()) if there's a valid host, GooseError with details if not.
+    fn validate_host(&mut self) -> Result<(), GooseError> {
+        if self.configuration.host.is_empty() {
+            for task_set in &self.task_sets {
+                match &task_set.host {
+                    Some(h) => {
+                        if util::is_valid_host(h).is_ok() {
+                            info!("host for {} configured: {}", task_set.name, h);
+                        }
+                    }
+                    None => match &self.defaults.host {
+                        Some(h) => {
+                            if util::is_valid_host(h).is_ok() {
+                                info!("host for {} configured: {}", task_set.name, h);
+                            }
+                        }
+                        None => {
+                            if self.attack_mode != AttackMode::Worker {
+                                return Err(GooseError::InvalidOption {
+                                    option: "--host".to_string(),
+                                    value: "".to_string(),
+                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
+                                });
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        Ok(())
+    }
+
     // Create and schedule GooseUsers. This requires that the host that will be load tested
     // has been configured.
     fn prepare_load_test(&mut self) -> Result<(), GooseError> {
         // If not on a Worker, be sure a valid host has been defined before building configuration.
         if self.attack_mode != AttackMode::Worker {
-            Url::parse(&self.configuration.host).map_err(|parse_error| {
-                GooseError::InvalidHost {
-                    host: self.configuration.host.to_string(),
-                    detail: "There was a failure parsing the host.".to_string(),
-                    parse_error,
-                }
-            })?;
+            self.validate_host()?;
         }
 
         // Apply weights to tasks in each task set.
