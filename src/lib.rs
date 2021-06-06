@@ -2612,12 +2612,16 @@ impl GooseAttack {
     // Create and schedule GooseUsers. This requires that the host that will be load tested
     // has been configured.
     fn prepare_load_test(&mut self) -> Result<(), GooseError> {
-        // Be sure a valid host has been defined before building configuration.
-        Url::parse(&self.configuration.host).map_err(|parse_error| GooseError::InvalidHost {
-            host: self.configuration.host.to_string(),
-            detail: "There was a failure parsing the host.".to_string(),
-            parse_error,
-        })?;
+        // If not on a Worker, be sure a valid host has been defined before building configuration.
+        if self.attack_mode != AttackMode::Worker {
+            Url::parse(&self.configuration.host).map_err(|parse_error| {
+                GooseError::InvalidHost {
+                    host: self.configuration.host.to_string(),
+                    detail: "There was a failure parsing the host.".to_string(),
+                    parse_error,
+                }
+            })?;
+        }
 
         // Apply weights to tasks in each task set.
         for task_set in &mut self.task_sets {
