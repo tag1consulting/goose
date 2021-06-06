@@ -1,11 +1,13 @@
+use regex::Regex;
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time;
+use url::Url;
 
-use regex::Regex;
+use crate::GooseError;
 
 /// Parse a string representing a time span and return the number of seconds.
 /// Valid formats are: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
@@ -157,6 +159,16 @@ pub fn get_hatch_rate(hatch_rate: Option<String>) -> f32 {
         },
         None => 1.0,
     }
+}
+
+// Helper function to determine if a host can be parsed.
+pub(crate) fn is_valid_host(host: &str) -> Result<bool, GooseError> {
+    Url::parse(host).map_err(|parse_error| GooseError::InvalidHost {
+        host: host.to_string(),
+        detail: "Invalid host.".to_string(),
+        parse_error,
+    })?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -313,5 +325,28 @@ mod tests {
         assert!((get_hatch_rate(Some("g".to_string())) - 1.0).abs() < f32::EPSILON);
         assert!((get_hatch_rate(Some("2.1f".to_string())) - 1.0).abs() < f32::EPSILON);
         assert!((get_hatch_rate(Some("1.1.1".to_string())) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn valid_host() {
+        assert_eq!(is_valid_host("http://example.com").is_ok(), true);
+        assert_eq!(is_valid_host("example.com").is_ok(), false);
+        assert_eq!(is_valid_host("http://example.com/").is_ok(), true);
+        assert_eq!(is_valid_host("example.com/").is_ok(), false);
+        assert_eq!(
+            is_valid_host("https://www.example.com/and/with/path").is_ok(),
+            true
+        );
+        assert_eq!(
+            is_valid_host("www.example.com/and/with/path").is_ok(),
+            false
+        );
+        assert_eq!(is_valid_host("foo://example.com").is_ok(), true);
+        assert_eq!(is_valid_host("file:///path/to/file").is_ok(), true);
+        assert_eq!(is_valid_host("/path/to/file").is_ok(), false);
+        assert_eq!(is_valid_host("http://").is_ok(), false);
+        assert_eq!(is_valid_host("http://foo").is_ok(), true);
+        assert_eq!(is_valid_host("http:///example.com").is_ok(), true);
+        assert_eq!(is_valid_host("http:// example.com").is_ok(), false);
     }
 }

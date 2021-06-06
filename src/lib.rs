@@ -461,7 +461,6 @@ use std::{fmt, io, time};
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
-use url::Url;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{
@@ -2451,13 +2450,13 @@ impl GooseAttack {
             for task_set in &self.task_sets {
                 match &task_set.host {
                     Some(h) => {
-                        if is_valid_host(h).is_ok() {
+                        if util::is_valid_host(h).is_ok() {
                             info!("host for {} configured: {}", task_set.name, h);
                         }
                     }
                     None => match &self.defaults.host {
                         Some(h) => {
-                            if is_valid_host(h).is_ok() {
+                            if util::is_valid_host(h).is_ok() {
                                 info!("host for {} configured: {}", task_set.name, h);
                             }
                         }
@@ -2473,7 +2472,7 @@ impl GooseAttack {
                     },
                 }
             }
-        } else if is_valid_host(&self.configuration.host).is_ok() {
+        } else if util::is_valid_host(&self.configuration.host).is_ok() {
             info!("global host configured: {}", self.configuration.host);
         }
 
@@ -2879,7 +2878,7 @@ impl GooseAttack {
             running_metrics_timer: std_now,
             display_running_metrics: false,
             all_users_spawned: false,
-            shutdown_after_stop: true,
+            shutdown_after_stop: !self.configuration.no_autostart,
             canceled: Arc::new(AtomicBool::new(false)),
             socket,
         };
@@ -3674,7 +3673,7 @@ impl GooseAttack {
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
         goose_attack_run_state.display_running_metrics = false;
-        goose_attack_run_state.shutdown_after_stop = true;
+        goose_attack_run_state.shutdown_after_stop = !self.configuration.no_autostart;
         goose_attack_run_state.all_users_spawned = false;
 
         // If enabled, spawn a logger thread.
@@ -4630,42 +4629,9 @@ fn schedule_unsequenced_tasks(
     weighted_tasks
 }
 
-// Helper function to determine if a host can be parsed.
-fn is_valid_host(host: &str) -> Result<bool, GooseError> {
-    Url::parse(host).map_err(|parse_error| GooseError::InvalidHost {
-        host: host.to_string(),
-        detail: "Invalid host.".to_string(),
-        parse_error,
-    })?;
-    Ok(true)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
-
-    #[test]
-    fn valid_host() {
-        assert_eq!(is_valid_host("http://example.com").is_ok(), true);
-        assert_eq!(is_valid_host("example.com").is_ok(), false);
-        assert_eq!(is_valid_host("http://example.com/").is_ok(), true);
-        assert_eq!(is_valid_host("example.com/").is_ok(), false);
-        assert_eq!(
-            is_valid_host("https://www.example.com/and/with/path").is_ok(),
-            true
-        );
-        assert_eq!(
-            is_valid_host("www.example.com/and/with/path").is_ok(),
-            false
-        );
-        assert_eq!(is_valid_host("foo://example.com").is_ok(), true);
-        assert_eq!(is_valid_host("file:///path/to/file").is_ok(), true);
-        assert_eq!(is_valid_host("/path/to/file").is_ok(), false);
-        assert_eq!(is_valid_host("http://").is_ok(), false);
-        assert_eq!(is_valid_host("http://foo").is_ok(), true);
-        assert_eq!(is_valid_host("http:///example.com").is_ok(), true);
-        assert_eq!(is_valid_host("http:// example.com").is_ok(), false);
-    }
 
     #[test]
     fn set_defaults() {
