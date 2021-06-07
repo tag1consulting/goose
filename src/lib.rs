@@ -2299,23 +2299,27 @@ impl GooseAttack {
 
     // Configure whether or not to enable the telnet Controller. Always disable when in Gaggle mode.
     fn set_no_telnet(&mut self) {
-        // Currently Gaggles are not Controller-aware.
+        // Currently Gaggles are not Controller-aware, force disable.
         if [AttackMode::Manager, AttackMode::Worker].contains(&self.attack_mode) {
             self.configuration.no_telnet = true;
-        // Otherwise, respect default if configured.
-        } else if let Some(default_no_telnet) = self.defaults.no_telnet {
-            self.configuration.no_telnet = default_no_telnet;
+        // Otherwise, if --no-telnet flag not set, respect default if configured.
+        } else if !self.configuration.no_telnet {
+            if let Some(default_no_telnet) = self.defaults.no_telnet {
+                self.configuration.no_telnet = default_no_telnet;
+            }
         }
     }
 
     // Configure whether or not to enable the WebSocket Controller. Always disable when in Gaggle mode.
     fn set_no_websocket(&mut self) {
-        // Currently Gaggles are not Controller-aware.
+        // Currently Gaggles are not Controller-aware, force disable.
         if [AttackMode::Manager, AttackMode::Worker].contains(&self.attack_mode) {
             self.configuration.no_websocket = true;
-        // Otherwise, respect default if configured.
-        } else if let Some(default_no_telnet) = self.defaults.no_telnet {
-            self.configuration.no_websocket = default_no_telnet;
+        // Otherwise, if --no-websocket flag not set, respect default if configured.
+        } else if !self.configuration.no_websocket {
+            if let Some(default_no_telnet) = self.defaults.no_telnet {
+                self.configuration.no_websocket = default_no_telnet;
+            }
         }
     }
 
