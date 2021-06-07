@@ -2297,6 +2297,76 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Configure whether or not to enable the telnet Controller. Always disable when in Gaggle mode.
+    fn set_no_telnet(&mut self) {
+        // Currently Gaggles are not Controller-aware, force disable.
+        if [AttackMode::Manager, AttackMode::Worker].contains(&self.attack_mode) {
+            self.configuration.no_telnet = true;
+        // Otherwise, if --no-telnet flag not set, respect default if configured.
+        } else if !self.configuration.no_telnet {
+            if let Some(default_no_telnet) = self.defaults.no_telnet {
+                self.configuration.no_telnet = default_no_telnet;
+            }
+        }
+    }
+
+    // Configure whether or not to enable the WebSocket Controller. Always disable when in Gaggle mode.
+    fn set_no_websocket(&mut self) {
+        // Currently Gaggles are not Controller-aware, force disable.
+        if [AttackMode::Manager, AttackMode::Worker].contains(&self.attack_mode) {
+            self.configuration.no_websocket = true;
+        // Otherwise, if --no-websocket flag not set, respect default if configured.
+        } else if !self.configuration.no_websocket {
+            if let Some(default_no_telnet) = self.defaults.no_telnet {
+                self.configuration.no_websocket = default_no_telnet;
+            }
+        }
+    }
+
+    // Configure whether or not to autostart the load test.
+    fn set_no_autostart(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.no_autostart";
+        let mut value = false;
+
+        // Currently Gaggles are not Controller-aware.
+        if self.configuration.no_autostart {
+            key = "--no-autostart";
+            value = true;
+        // Otherwise set default if configured.
+        } else if let Some(default_no_autostart) = self.defaults.no_autostart {
+            key = "set_default(GooseDefault::NoAutoStart)";
+            value = default_no_autostart;
+
+            self.configuration.no_autostart = default_no_autostart;
+        }
+
+        if self.configuration.no_autostart {
+            // Can't disable autostart in Gaggle mode.
+            if [AttackMode::Manager, AttackMode::Worker].contains(&self.attack_mode) {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!(
+                        "{} can not be set together with the --manager or --worker flags.",
+                        key
+                    ),
+                });
+            }
+
+            // Can't disable autostart if there's no Controller enabled.
+            if self.configuration.no_telnet && self.configuration.no_websocket {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: value.to_string(),
+                    detail: format!("{} can not be set together with both the --no-telnet and --no-websocket flags.", key),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     // Configure whether to log response body.
     fn set_no_debug_body(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2393,6 +2463,15 @@ impl GooseAttack {
         // Configure run mode (StandAlone, Worker, Manager).
         self.set_attack_mode()?;
 
+        // Determine whether or not to enable the telnet Controller.
+        self.set_no_telnet();
+
+        // Determine whether or not to enable the WebSocket Controller.
+        self.set_no_websocket();
+
+        // Determine whether or not to autostart load test.
+        self.set_no_autostart()?;
+
         // Configure number of users to simulate.
         self.set_users()?;
 
@@ -2446,65 +2525,16 @@ impl GooseAttack {
         self.set_no_hash_check()?;
 
         // Confirm there's either a global host, or each task set has a host defined.
-        if self.configuration.host.is_empty() {
-            for task_set in &self.task_sets {
-                match &task_set.host {
-                    Some(h) => {
-                        if util::is_valid_host(h).is_ok() {
-                            info!("host for {} configured: {}", task_set.name, h);
-                        }
-                    }
-                    None => match &self.defaults.host {
-                        Some(h) => {
-                            if util::is_valid_host(h).is_ok() {
-                                info!("host for {} configured: {}", task_set.name, h);
-                            }
-                        }
-                        None => {
-                            if self.attack_mode != AttackMode::Worker {
-                                return Err(GooseError::InvalidOption {
-                                    option: "--host".to_string(),
-                                    value: "".to_string(),
-                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
-                                });
-                            }
-                        }
-                    },
-                }
+        if let Err(e) = self.validate_host() {
+            if self.configuration.no_autostart {
+                info!("host must be configured via Controller before starting load test");
+            } else {
+                // If auto-starting, host must be valid.
+                return Err(e);
             }
-        } else if util::is_valid_host(&self.configuration.host).is_ok() {
+        } else {
             info!("global host configured: {}", self.configuration.host);
-        }
-
-        // Apply weights to tasks in each task set.
-        for task_set in &mut self.task_sets {
-            let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) =
-                allocate_tasks(&task_set, &self.scheduler);
-            task_set.weighted_on_start_tasks = weighted_on_start_tasks;
-            task_set.weighted_tasks = weighted_tasks;
-            task_set.weighted_on_stop_tasks = weighted_on_stop_tasks;
-            debug!(
-                "weighted {} on_start: {:?} tasks: {:?} on_stop: {:?}",
-                task_set.name,
-                task_set.weighted_on_start_tasks,
-                task_set.weighted_tasks,
-                task_set.weighted_on_stop_tasks
-            );
-        }
-
-        if self.attack_mode != AttackMode::Worker {
-            // Stand-alone and Manager processes can display metrics.
-            if !self.configuration.no_metrics {
-                self.metrics.display_metrics = true;
-            }
-
-            if self.attack_mode == AttackMode::StandAlone {
-                // Allocate a state for each of the users we are about to start.
-                self.weighted_users = self.weight_task_set_users()?;
-            } else if self.attack_mode == AttackMode::Manager {
-                // Build a list of users to be allocated on Workers.
-                self.weighted_gaggle_users = self.prepare_worker_task_set_users()?;
-            }
+            self.prepare_load_test()?;
         }
 
         // Calculate a unique hash for the current load test.
@@ -2551,6 +2581,80 @@ impl GooseAttack {
         }
 
         Ok(self.metrics)
+    }
+
+    // Returns OK(()) if there's a valid host, GooseError with details if not.
+    fn validate_host(&mut self) -> Result<(), GooseError> {
+        if self.configuration.host.is_empty() {
+            for task_set in &self.task_sets {
+                match &task_set.host {
+                    Some(h) => {
+                        if util::is_valid_host(h).is_ok() {
+                            info!("host for {} configured: {}", task_set.name, h);
+                        }
+                    }
+                    None => match &self.defaults.host {
+                        Some(h) => {
+                            if util::is_valid_host(h).is_ok() {
+                                info!("host for {} configured: {}", task_set.name, h);
+                            }
+                        }
+                        None => {
+                            if self.attack_mode != AttackMode::Worker {
+                                return Err(GooseError::InvalidOption {
+                                    option: "--host".to_string(),
+                                    value: "".to_string(),
+                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
+                                });
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Create and schedule GooseUsers. This requires that the host that will be load tested
+    // has been configured.
+    fn prepare_load_test(&mut self) -> Result<(), GooseError> {
+        // If not on a Worker, be sure a valid host has been defined before building configuration.
+        if self.attack_mode != AttackMode::Worker {
+            self.validate_host()?;
+        }
+
+        // Apply weights to tasks in each task set.
+        for task_set in &mut self.task_sets {
+            let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) =
+                allocate_tasks(&task_set, &self.scheduler);
+            task_set.weighted_on_start_tasks = weighted_on_start_tasks;
+            task_set.weighted_tasks = weighted_tasks;
+            task_set.weighted_on_stop_tasks = weighted_on_stop_tasks;
+            debug!(
+                "weighted {} on_start: {:?} tasks: {:?} on_stop: {:?}",
+                task_set.name,
+                task_set.weighted_on_start_tasks,
+                task_set.weighted_tasks,
+                task_set.weighted_on_stop_tasks
+            );
+        }
+
+        if self.attack_mode != AttackMode::Worker {
+            // Stand-alone and Manager processes can display metrics.
+            if !self.configuration.no_metrics {
+                self.metrics.display_metrics = true;
+            }
+
+            if self.attack_mode == AttackMode::StandAlone {
+                // Allocate a state for each of the users we are about to start.
+                self.weighted_users = self.weight_task_set_users()?;
+            } else if self.attack_mode == AttackMode::Manager {
+                // Build a list of users to be allocated on Workers.
+                self.weighted_gaggle_users = self.prepare_worker_task_set_users()?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Helper to wrap configured host in `Option<>` if set.

@@ -41,6 +41,7 @@
  - if metrics are enabled, display when controller stops load test
  - de-duplicate code with traits, gaining compile-time validation that both Controllers are properly handling all defined commands
  - add [`async_trait`](https://docs.rs/async_trait) dependency as stable Rust doesn't otherwise support async traits
+ - allow starting Goose without specifying a host if `--no-autostart` is enabled, requiring instead that the host be configured via a Controller before starting a load test
 
 
 ## 0.11.1 May 16, 2021

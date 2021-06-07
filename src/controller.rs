@@ -501,7 +501,10 @@ impl GooseControllerState {
                 if let GooseControllerResponseMessage::Bool(true) = response {
                     Ok("load test started".to_string())
                 } else {
-                    Err("load test not idle, failed to start".to_string())
+                    Err(
+                        "unable to start load test, be sure it is idle and host is configured"
+                            .to_string(),
+                    )
                 }
             }
             // This shouldn't work if the load test isn't running.
@@ -989,16 +992,24 @@ impl GooseAttack {
                         GooseControllerCommand::Start => {
                             // We can only start an idle load test.
                             if self.attack_phase == AttackPhase::Idle {
-                                self.set_attack_phase(
-                                    goose_attack_run_state,
-                                    AttackPhase::Starting,
-                                );
-                                self.reply_to_controller(
-                                    message,
-                                    GooseControllerResponseMessage::Bool(true),
-                                );
-                                // Reset the run state when starting a new load test.
-                                self.reset_run_state(goose_attack_run_state).await?;
+                                if self.prepare_load_test().is_ok() {
+                                    self.set_attack_phase(
+                                        goose_attack_run_state,
+                                        AttackPhase::Starting,
+                                    );
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                    // Reset the run state when starting a new load test.
+                                    self.reset_run_state(goose_attack_run_state).await?;
+                                } else {
+                                    // Do not move to Starting phase if unable to prepare load test.
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(false),
+                                    );
+                                }
                             } else {
                                 self.reply_to_controller(
                                     message,
@@ -1058,8 +1069,6 @@ impl GooseAttack {
                                         self.configuration.host, host
                                     );
                                     self.configuration.host = host.to_string();
-                                    self.weighted_users = self.weight_task_set_users()?;
-                                    info!("load test ready");
                                     self.reply_to_controller(
                                         message,
                                         GooseControllerResponseMessage::Bool(true),
@@ -1092,8 +1101,6 @@ impl GooseAttack {
                                         usize::from_str(&users)
                                             .expect("failed to convert string to usize"),
                                     );
-                                    self.weighted_users = self.weight_task_set_users()?;
-                                    info!("load test ready");
                                     self.reply_to_controller(
                                         message,
                                         GooseControllerResponseMessage::Bool(true),
