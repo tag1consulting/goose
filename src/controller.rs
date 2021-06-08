@@ -510,7 +510,7 @@ impl GooseControllerState {
             // This shouldn't work if the load test isn't running.
             GooseControllerCommand::Stop => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("load test stoped".to_string())
+                    Ok("load test stopped".to_string())
                 } else {
                     Err("load test not running, failed to stop".to_string())
                 }

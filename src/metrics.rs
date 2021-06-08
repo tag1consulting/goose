@@ -1053,7 +1053,7 @@ impl Serialize for GooseMetrics {
         s.serialize_field("errors", &self.errors)?;
         s.serialize_field("final_metrics", &self.final_metrics)?;
         s.serialize_field("display_status_codes", &self.display_status_codes)?;
-        s.serialize_field("display_mertrics", &self.display_metrics)?;
+        s.serialize_field("display_metrics", &self.display_metrics)?;
         s.end()
     }
 }
