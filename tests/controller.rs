@@ -1,6 +1,5 @@
 use gumdrop::Options;
 use httpmock::{Method::GET, MockRef, MockServer};
-use serial_test::serial;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::{str, thread, time};
@@ -40,7 +39,7 @@ struct TestState {
     position: usize,
     step: usize,
     command: GooseControllerCommand,
-    stream: TcpStream,
+    telnet_stream: TcpStream,
 }
 
 // Test task.
@@ -141,11 +140,14 @@ fn run_standalone_test(test_type: TestType) {
     // Setup the endpoints needed for this test on the mock server.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    let mut configuration_flags = match test_type {
-        TestType::Both => vec![],
-        //TestType::NoTelnet => vec!["--no-telnet"],
-        TestType::NoWebSocket => vec!["--no-websocket"],
+    let mut configuration_flags = match &test_type {
+        TestType::Both => vec!["--telnet-port", "5001", "--websocket-port", "6001"],
+        //TestType::NoTelnet => vec!["--no-telnet", "--websocket-port", "6002"],
+        TestType::NoWebSocket => vec!["--no-websocket", "--telnet-port", "5002"],
     };
+
+    // Keep a copy for validation.
+    let validate_test_type = test_type.clone();
 
     // Build common configuration elements.
     let configuration = common_build_configuration(&server, &mut configuration_flags);
@@ -156,10 +158,10 @@ fn run_standalone_test(test_type: TestType) {
         thread::sleep(time::Duration::from_millis(250));
 
         // Initiailize the state engine.
-        let mut test_state = update_state(None);
+        let mut test_state = update_state(None, &test_type);
         loop {
             // Process data received from the client in a loop.
-            let _ = match test_state.stream.read(&mut test_state.buf) {
+            let _ = match test_state.telnet_stream.read(&mut test_state.buf) {
                 Ok(data) => data,
                 Err(_) => {
                     panic!("ERROR: server disconnected!");
@@ -168,6 +170,24 @@ fn run_standalone_test(test_type: TestType) {
 
             let response = str::from_utf8(&test_state.buf).unwrap();
             match test_state.command {
+                GooseControllerCommand::Exit => {
+                    match test_state.step {
+                        // Exit the Controller.
+                        0 => {
+                            make_request(&mut test_state, "exit\r\n");
+                        }
+                        // Confirm that the Controller exited.
+                        _ => {
+                            assert!(response.starts_with("goodbye!"));
+
+                            // Re-connect to the Controller.
+                            test_state = update_state(None, &test_type);
+
+                            // Move onto the next command.
+                            test_state = update_state(Some(test_state), &test_type);
+                        }
+                    }
+                }
                 GooseControllerCommand::Help => {
                     match test_state.step {
                         0 => {
@@ -186,7 +206,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.contains("controller commands:"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -217,7 +237,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("unrecognized command"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -244,7 +264,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("unrecognized command"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -286,7 +306,7 @@ fn run_standalone_test(test_type: TestType) {
                             // further validation required here.
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -344,7 +364,7 @@ fn run_standalone_test(test_type: TestType) {
                             // the load test could run forever.
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -359,7 +379,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with(r"GooseConfiguration "));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -375,7 +395,7 @@ fn run_standalone_test(test_type: TestType) {
                                 .starts_with(r#"{"help":false,"version":false,"list":false,"#));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -390,7 +410,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.contains("=== PER TASK METRICS ==="));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -405,7 +425,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with(r#"{"hash":0,"#));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -434,7 +454,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("unable to start load test"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -466,7 +486,7 @@ fn run_standalone_test(test_type: TestType) {
                             thread::sleep(time::Duration::from_millis(500));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
                 }
@@ -481,13 +501,9 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("load test shut down"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state));
+                            test_state = update_state(Some(test_state), &test_type);
                         }
                     }
-                }
-                GooseControllerCommand::Exit => {
-                    // @TODO: this command is not currently tested.
-                    unreachable!()
                 }
             }
             // Flush the buffer.
@@ -505,14 +521,20 @@ fn run_standalone_test(test_type: TestType) {
     );
 
     // Confirm that the load test ran correctly.
-    validate_one_taskset(&goose_metrics, &mock_endpoints, &configuration, test_type);
+    validate_one_taskset(
+        &goose_metrics,
+        &mock_endpoints,
+        &configuration,
+        validate_test_type,
+    );
 }
 
 // Update (or create) the current testing state. A simple state maching for
 // navigating through all supported Controller commands and test states.
-fn update_state(test_state: Option<TestState>) -> TestState {
+fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestState {
     // The commands being tested, and the order they are tested.
     let commands_to_test = [
+        GooseControllerCommand::Exit,
         GooseControllerCommand::Help,
         GooseControllerCommand::Host,
         GooseControllerCommand::Users,
@@ -534,37 +556,40 @@ fn update_state(test_state: Option<TestState>) -> TestState {
             state.command = command.clone();
         }
         // Generate a new prompt.
-        state.stream.write_all("\r\n".as_bytes()).unwrap();
+        state.telnet_stream.write_all("\r\n".as_bytes()).unwrap();
         state
     } else {
+        let telnet_stream = match test_type {
+            TestType::Both => "127.0.0.1:5001",
+            TestType::NoWebSocket => "127.0.0.1:5002",
+        };
         TestState {
             buf: [0; 2048],
             position: 0,
             step: 0,
             command: commands_to_test.first().unwrap().clone(),
             // Connect to the TCP Controller.
-            stream: TcpStream::connect("127.0.0.1:5116").unwrap(),
+            telnet_stream: TcpStream::connect(telnet_stream).unwrap(),
         }
     }
 }
 
 fn make_request(test_state: &mut TestState, command: &str) {
     //println!("making request: {}", command);
-    test_state.stream.write_all(command.as_bytes()).unwrap();
+    test_state
+        .telnet_stream
+        .write_all(command.as_bytes())
+        .unwrap();
     test_state.step += 1;
 }
 
 #[test]
-#[serial]
 // Test controlling a load test with Telnet and WebSockets both.
-// @TODO: start controllers on a custom port to avoid having to test serially.
 fn test_both_controllers() {
     run_standalone_test(TestType::Both);
 }
 
 #[test]
-#[serial]
-// @TODO: start controller on a custom port to avoid having to test serially.
 // Test controlling a load test with Telnet, when the WebSocket controller is disabled.
 fn test_telnet_controller() {
     run_standalone_test(TestType::NoWebSocket);
