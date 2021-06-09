@@ -445,7 +445,10 @@ impl GooseControllerState {
                 if let GooseControllerResponseMessage::Bool(true) = response {
                     Ok("host configured".to_string())
                 } else {
-                    Err("load test not idle, failed to reconfigure host".to_string())
+                    Err(
+                        "failed to reconfigure host, be sure host is valid and load test is idle"
+                            .to_string(),
+                    )
                 }
             }
             GooseControllerCommand::Users => {
