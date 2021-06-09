@@ -3,8 +3,11 @@ use httpmock::{Method::GET, MockRef, MockServer};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::{str, thread, time};
+use tungstenite::Message;
 
-use goose::controller::GooseControllerCommand;
+use goose::controller::{
+    GooseControllerCommand, GooseControllerWebSocketRequest, GooseControllerWebSocketResponse,
+};
 use goose::prelude::*;
 use goose::GooseConfiguration;
 
@@ -25,21 +28,37 @@ const RUN_TIME: usize = 10;
 // There are multiple test variations in this file.
 #[derive(Clone)]
 enum TestType {
-    // Both controllers enabled.
-    Both,
     // Enable --no-telnet.
-    //NoTelnet,
+    WebSocket,
     // Enable --no-websocket.
-    NoWebSocket,
+    Telnet,
 }
 
 // State machine for tracking Controller state during tests.
 struct TestState {
+    // A buffer for the telnet Controller.
     buf: [u8; 2048],
+    // Track iterations through GooseControllerCommands.
     position: usize,
+    // Track the steps within a given iteration.
     step: usize,
+    // The Controller command currently being tested.
     command: GooseControllerCommand,
-    telnet_stream: TcpStream,
+    // A TCP socket if testing the telnet Controller.
+    telnet_stream: Option<TcpStream>,
+    // A TCP socket if testing the WebSocket Controller.
+    websocket_stream: Option<
+        tungstenite::WebSocket<
+            tungstenite::stream::Stream<
+                std::net::TcpStream,
+                native_tls::TlsStream<std::net::TcpStream>,
+            >,
+        >,
+    >,
+    // A flag indicating whether or not to wait for a reply.
+    websocket_expect_reply: bool,
+    // A flag indicating whether or not the WebSocket controller is being tested.
+    websocket_controller: bool,
 }
 
 // Test task.
@@ -141,9 +160,8 @@ fn run_standalone_test(test_type: TestType) {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     let mut configuration_flags = match &test_type {
-        TestType::Both => vec!["--telnet-port", "5001", "--websocket-port", "6001"],
-        //TestType::NoTelnet => vec!["--no-telnet", "--websocket-port", "6002"],
-        TestType::NoWebSocket => vec!["--no-websocket", "--telnet-port", "5002"],
+        TestType::WebSocket => vec!["--no-telnet"],
+        TestType::Telnet => vec!["--no-websocket"],
     };
 
     // Keep a copy for validation.
@@ -161,14 +179,46 @@ fn run_standalone_test(test_type: TestType) {
         let mut test_state = update_state(None, &test_type);
         loop {
             // Process data received from the client in a loop.
-            let _ = match test_state.telnet_stream.read(&mut test_state.buf) {
-                Ok(data) => data,
-                Err(_) => {
-                    panic!("ERROR: server disconnected!");
+            let response;
+            let websocket_response: GooseControllerWebSocketResponse;
+            if let Some(stream) = test_state.telnet_stream.as_mut() {
+                let _ = match stream.read(&mut test_state.buf) {
+                    Ok(data) => data,
+                    Err(_) => {
+                        panic!("ERROR: server disconnected!");
+                    }
+                };
+                response = str::from_utf8(&test_state.buf).unwrap();
+            // Process data received from the client in a loop.
+            } else if let Some(stream) = test_state.websocket_stream.as_mut() {
+                if !test_state.websocket_expect_reply {
+                    response = "";
+                    test_state.websocket_expect_reply = true;
+                } else {
+                    match stream.read_message() {
+                        Ok(message) => {
+                            if let Ok(r) = message.into_text() {
+                                // Keep response around for the entire loop.
+                                websocket_response = match serde_json::from_str(&r) {
+                                    Ok(c) => c,
+                                    Err(e) => panic!("invalid response from server: {}", e),
+                                };
+                                response = &websocket_response.response;
+                            } else {
+                                // @TODO: support non-text too
+                                panic!("ERROR: invalid message type!");
+                            }
+                        }
+                        Err(e) => {
+                            panic!("error reading from server: {}", e);
+                        }
+                    }
                 }
-            };
+            } else {
+                unreachable!();
+            }
 
-            let response = str::from_utf8(&test_state.buf).unwrap();
+            //println!("{:?}: {}", test_state.command, response);
             match test_state.command {
                 GooseControllerCommand::Exit => {
                     match test_state.step {
@@ -374,9 +424,15 @@ fn run_standalone_test(test_type: TestType) {
                         0 => {
                             make_request(&mut test_state, "config\r\n");
                         }
-                        // Confirm the configuration object is returned.
                         _ => {
-                            assert!(response.starts_with(r"GooseConfiguration "));
+                            // Confirm the configuration is returned in jsonformat.
+                            if test_state.websocket_controller {
+                                assert!(response
+                                    .starts_with(r#"{"help":false,"version":false,"list":false,"#));
+                            // Confirm the configuration object is returned.
+                            } else {
+                                assert!(response.starts_with(r"GooseConfiguration "));
+                            }
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type);
@@ -405,9 +461,15 @@ fn run_standalone_test(test_type: TestType) {
                         0 => {
                             make_request(&mut test_state, "metrics\r\n");
                         }
-                        // Confirm the metrics are returned and pretty-printed.
                         _ => {
-                            assert!(response.contains("=== PER TASK METRICS ==="));
+                            // Confirm the metrics are returned in json format.
+                            if test_state.websocket_controller {
+                                assert!(response.starts_with(r#"{"hash":0,"#));
+                            }
+                            // Confirm the metrics are returned and pretty-printed.
+                            else {
+                                assert!(response.contains("=== PER TASK METRICS ==="));
+                            }
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type);
@@ -556,51 +618,75 @@ fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestStat
             state.command = command.clone();
         }
         // Generate a new prompt.
-        state.telnet_stream.write_all("\r\n".as_bytes()).unwrap();
+        if let Some(stream) = state.telnet_stream.as_mut() {
+            stream.write_all("\r\n".as_bytes()).unwrap();
+        } else {
+            state.websocket_expect_reply = false;
+        }
         state
     } else {
+        // Connect to telnet controller.
         let telnet_stream = match test_type {
-            TestType::Both => "127.0.0.1:5001",
-            TestType::NoWebSocket => "127.0.0.1:5002",
+            TestType::Telnet => Some(TcpStream::connect("127.0.0.1:5116").unwrap()),
+            _ => None,
         };
+
+        // Connect to WebSocket controller.
+        let websocket_controller: bool;
+        let websocket_stream = match test_type {
+            TestType::WebSocket => {
+                let (mut stream, _) = tungstenite::client::connect("ws://127.0.0.1:5117").unwrap();
+                // Send an empty message so the client performs a handshake.
+                stream.write_message(Message::Text("".into())).unwrap();
+                // Ignore the error that comes back.
+                let _ = stream.read_message().unwrap();
+                websocket_controller = true;
+                Some(stream)
+            }
+            TestType::Telnet => {
+                websocket_controller = false;
+                None
+            }
+        };
+
         TestState {
             buf: [0; 2048],
             position: 0,
             step: 0,
             command: commands_to_test.first().unwrap().clone(),
-            // Connect to the TCP Controller.
-            telnet_stream: TcpStream::connect(telnet_stream).unwrap(),
+            telnet_stream,
+            websocket_stream,
+            websocket_expect_reply: false,
+            websocket_controller,
         }
     }
 }
 
 fn make_request(test_state: &mut TestState, command: &str) {
     //println!("making request: {}", command);
-    test_state
-        .telnet_stream
-        .write_all(command.as_bytes())
-        .unwrap();
+    if let Some(stream) = test_state.telnet_stream.as_mut() {
+        stream.write_all(command.as_bytes()).unwrap()
+    } else if let Some(stream) = test_state.websocket_stream.as_mut() {
+        stream
+            .write_message(Message::Text(
+                serde_json::to_string(&GooseControllerWebSocketRequest {
+                    request: command.to_string(),
+                })
+                .unwrap(),
+            ))
+            .unwrap()
+    }
     test_state.step += 1;
 }
 
 #[test]
-// Test controlling a load test with Telnet and WebSockets both.
-fn test_both_controllers() {
-    run_standalone_test(TestType::Both);
-}
-
-#[test]
-// Test controlling a load test with Telnet, when the WebSocket controller is disabled.
+// Test controlling a load test with Telnet.
 fn test_telnet_controller() {
-    run_standalone_test(TestType::NoWebSocket);
+    run_standalone_test(TestType::Telnet);
 }
 
-/*
-#[test]
-// Test controlling a load test with Telnet controller.
 #[test]
 // Test controlling a load test with WebSocket controller.
 fn test_websocket_controller() {
-    run_standalone_test(TestType::NoTelnet);
+    run_standalone_test(TestType::WebSocket);
 }
-*/

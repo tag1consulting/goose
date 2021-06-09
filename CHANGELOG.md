@@ -42,7 +42,7 @@
  - de-duplicate code with traits, gaining compile-time validation that both Controllers are properly handling all defined commands
  - add [`async_trait`](https://docs.rs/async_trait) dependency as stable Rust doesn't otherwise support async traits
  - allow starting Goose without specifying a host if `--no-autostart` is enabled, requiring instead that the host be configured via a Controller before starting a load test
-
+ - add test for telnet and WebSocket Controllers
 
 ## 0.11.1 May 16, 2021
  - update [`rand`](https://docs.rs/rand) dependency to `0.8` branch, update [`gen_range`](https://docs.rs/rand/0.8.*/rand/trait.Rng.html#method.gen_range) method call
