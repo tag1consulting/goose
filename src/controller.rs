@@ -20,7 +20,7 @@ use tungstenite::Message;
 
 /// Goose currently supports two different Controller protocols: telnet and WebSocket.
 #[derive(Clone, Debug)]
-pub enum GooseControllerProtocol {
+pub(crate) enum GooseControllerProtocol {
     /// Allows control of Goose via telnet.
     Telnet,
     /// Allows control of Goose via a WebSocket.
@@ -29,7 +29,7 @@ pub enum GooseControllerProtocol {
 
 /// All commands recognized by the Goose Controllers.
 ///
-/// The steps required to add a new command:
+/// GOOSE DEVELOPER NOTE: The following steps are required to add a new command:
 ///  1) Define the command here in the GooseControllerCommand enum.
 ///  2) Add the regular expression for matching the new command in the `command`
 /// [`regex::RegexSet`](https://docs.rs/regex/*/regex/struct.RegexSet.html) in
@@ -50,13 +50,17 @@ pub enum GooseControllerProtocol {
 ///     succinctly describing success or failure.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GooseControllerCommand {
-    /// Configure the host to load test, for example http://localhost/.
+    /// Configure the host to load test, for example http://localhost/. Goose must be idle to
+    /// process this command.
     Host,
-    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s are launched. Goose
+    /// must be idle to process this command.
     Users,
     /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    /// This can be configured when Goose is idle as well as when a Goose load test is running.
     HatchRate,
-    /// Configure how long the load test should run before stopping.
+    /// Configure how long the load test should run before stopping and returning to an idle state.
+    /// This can be configured when Goose is idle as well as when a Goose load test is running.
     RunTime,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     Config,
@@ -70,17 +74,19 @@ pub enum GooseControllerCommand {
     Help,
     /// Disconnect from the controller.
     Exit,
-    /// Verify that the controller can talk to the parent process.
+    /// Start an idle test. Goose must be idle to process this command.
     Start,
-    /// Stop a running test, putting it into an idle state.
+    /// Stop a running test, putting it into an idle state. Goose must be running to process
+    /// this command.
     Stop,
-    /// Tell the load test to shut down (which will disconnect the controller).
+    /// Tell the load test to shut down (which will disconnect the controller). This command
+    /// can be processed at any time.
     Shutdown,
 }
 
 /// This structure is used to send commands and values to the parent process.
 #[derive(Debug)]
-pub struct GooseControllerRequestMessage {
+pub(crate) struct GooseControllerRequestMessage {
     /// The command that is being sent to the parent.
     pub command: GooseControllerCommand,
     /// An optional value that is being sent to the parent.
@@ -89,7 +95,7 @@ pub struct GooseControllerRequestMessage {
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
 #[derive(Debug)]
-pub enum GooseControllerResponseMessage {
+pub(crate) enum GooseControllerResponseMessage {
     /// A response containing a boolean value.
     Bool(bool),
     /// A response containing the load test configuration.
@@ -98,9 +104,9 @@ pub enum GooseControllerResponseMessage {
     Metrics(Box<GooseMetrics>),
 }
 
-/// The actual request that's passed from the controller to the parent thread.
+/// The request that's passed from the controller to the parent thread.
 #[derive(Debug)]
-pub struct GooseControllerRequest {
+pub(crate) struct GooseControllerRequest {
     /// Optional one-shot channel if a reply is required.
     pub response_channel: Option<tokio::sync::oneshot::Sender<GooseControllerResponse>>,
     /// An integer identifying which controller client is making the request.
@@ -109,9 +115,9 @@ pub struct GooseControllerRequest {
     pub request: GooseControllerRequestMessage,
 }
 
-/// The actual response that's passed from the parent to the controller.
+/// The response that's passed from the parent to the controller.
 #[derive(Debug)]
-pub struct GooseControllerResponse {
+pub(crate) struct GooseControllerResponse {
     /// An integer identifying which controller the parent is responding to.
     pub client_id: u32,
     /// The actual response message.
@@ -152,7 +158,7 @@ type GooseControllerWebSocketSender = futures::stream::SplitSink<
 
 /// This state object is created in the main Controller thread and then passed to the specific
 /// per-client thread.
-pub struct GooseControllerState {
+pub(crate) struct GooseControllerState {
     /// Track which controller-thread this is.
     thread_id: u32,
     /// Track the ip and port of the connected TCP client.
@@ -792,7 +798,7 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
 ///  -  @TODO: optionally limit how many controller connections are allowed
 ///  -  @TODO: optionally require client authentication
 ///  -  @TODO: optionally ssl-encrypt client communication
-pub async fn controller_main(
+pub(crate) async fn controller_main(
     // Expose load test configuration to controller thread.
     configuration: GooseConfiguration,
     // For sending requests to the parent process.

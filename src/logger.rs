@@ -102,7 +102,7 @@ use crate::GooseConfiguration;
 /// Logger thread, opens a log file (if configured) and waits for messages from
 /// [`GooseUser`](../goose/struct.GooseUser.html) threads. This function is not intended
 /// to be invoked manually.
-pub async fn logger_main(
+pub(crate) async fn logger_main(
     configuration: GooseConfiguration,
     log_receiver: flume::Receiver<Option<GooseDebug>>,
 ) {

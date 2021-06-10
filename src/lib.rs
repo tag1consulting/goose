@@ -506,7 +506,7 @@ pub fn get_worker_id() -> usize {
 #[cfg(not(feature = "gaggle"))]
 #[derive(Debug, Clone)]
 /// Socket used for coordinating a Gaggle distributed load test.
-pub struct Socket {}
+pub(crate) struct Socket {}
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
 #[derive(Debug)]

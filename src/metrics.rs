@@ -1098,7 +1098,7 @@ impl GooseErrorMetric {
 }
 
 /// Helper to calculate requests and fails per seconds.
-pub fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
+pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
     let requests_per_second;
     let fails_per_second;
     if duration == 0 {
@@ -1120,7 +1120,7 @@ fn determine_precision(value: f32) -> usize {
 }
 
 /// Format large number in locale appropriate style.
-pub fn format_number(number: usize) -> String {
+pub(crate) fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
 }
 
@@ -1128,7 +1128,7 @@ pub fn format_number(number: usize) -> String {
 ///
 /// Used in `lib.rs` to merge together per-thread times, and in `metrics.rs` to
 /// aggregate all times.
-pub fn merge_times(
+pub(crate) fn merge_times(
     mut global_response_times: BTreeMap<usize, usize>,
     local_response_times: BTreeMap<usize, usize>,
 ) -> BTreeMap<usize, usize> {
@@ -1146,7 +1146,7 @@ pub fn merge_times(
 }
 
 /// A helper function to update the global minimum time based on local time.
-pub fn update_min_time(mut global_min: usize, min: usize) -> usize {
+pub(crate) fn update_min_time(mut global_min: usize, min: usize) -> usize {
     if global_min == 0 || (min > 0 && min < global_min) {
         global_min = min;
     }
@@ -1154,7 +1154,7 @@ pub fn update_min_time(mut global_min: usize, min: usize) -> usize {
 }
 
 /// A helper function to update the global maximum time based on local time.
-pub fn update_max_time(mut global_max: usize, max: usize) -> usize {
+pub(crate) fn update_max_time(mut global_max: usize, max: usize) -> usize {
     if global_max < max {
         global_max = max;
     }
@@ -1162,7 +1162,7 @@ pub fn update_max_time(mut global_max: usize, max: usize) -> usize {
 }
 
 /// Get the response time that a certain number of percent of the requests finished within.
-pub fn calculate_response_time_percentile(
+pub(crate) fn calculate_response_time_percentile(
     response_times: &BTreeMap<usize, usize>,
     total_requests: usize,
     min: usize,
@@ -1193,7 +1193,7 @@ pub fn calculate_response_time_percentile(
 }
 
 /// Helper to count and aggregate seen status codes.
-pub fn prepare_status_codes(
+pub(crate) fn prepare_status_codes(
     status_code_counts: &HashMap<u16, usize>,
     aggregate_counts: &mut Option<&mut HashMap<u16, usize>>,
 ) -> String {
