@@ -119,19 +119,19 @@ pub struct GooseControllerResponse {
 }
 
 /// The required format for any request sent to the WebSocket Controller.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GooseControllerWebSocketRequest {
     /// A valid command string.
-    request: String,
+    pub request: String,
 }
 
 /// The format of all responses returned by the WebSocket Controller.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GooseControllerWebSocketResponse {
     /// The response from the controller.
-    response: String,
+    pub response: String,
     /// Whether the request was successful or not.
-    success: bool,
+    pub success: bool,
 }
 
 /// Return type to indicate whether or not to exit the Controller thread.
@@ -205,7 +205,7 @@ impl GooseControllerState {
                     // Extract the command string in a protocol-specific way.
                     if let Ok(command_string) = self.get_command_string(buf).await {
                         // Extract the command and value in a generic way.
-                        if let Ok(request_message) = self.get_match(&command_string).await {
+                        if let Ok(request_message) = self.get_match(&command_string.trim()).await {
                             // Act on the commmand received.
                             if self.execute_command(&mut socket, request_message).await {
                                 // If execute_command returns true, it's time to exit.
@@ -259,7 +259,7 @@ impl GooseControllerState {
                     // Extract the command string in a protocol-specific way.
                     if let Ok(command_string) = self.get_command_string(data).await {
                         // Extract the command and value in a generic way.
-                        if let Ok(request_message) = self.get_match(&command_string).await {
+                        if let Ok(request_message) = self.get_match(&command_string.trim()).await {
                             if self.execute_command(&mut ws_sender, request_message).await {
                                 // If execute_command() returns true, it's time to exit.
                                 info!(
@@ -445,7 +445,10 @@ impl GooseControllerState {
                 if let GooseControllerResponseMessage::Bool(true) = response {
                     Ok("host configured".to_string())
                 } else {
-                    Err("load test not idle, failed to reconfigure host".to_string())
+                    Err(
+                        "failed to reconfigure host, be sure host is valid and load test is idle"
+                            .to_string(),
+                    )
                 }
             }
             GooseControllerCommand::Users => {
@@ -510,7 +513,7 @@ impl GooseControllerState {
             // This shouldn't work if the load test isn't running.
             GooseControllerCommand::Stop => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("load test stoped".to_string())
+                    Ok("load test stopped".to_string())
                 } else {
                     Err("load test not running, failed to stop".to_string())
                 }

@@ -17,6 +17,7 @@ type WorkerHandles = Vec<std::thread::JoinHandle<()>>;
 ///  --users 1
 ///  --hatch-rate 1
 ///  --run-time 1
+#[allow(dead_code)]
 pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfiguration {
     // Start with an empty configuration.
     let mut configuration: Vec<&str> = vec![];
