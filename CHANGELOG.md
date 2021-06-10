@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.11.2-dev
+## 0.11.2 June 10, 2021
  - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:
     o `help` (and `?`) display help
     o `exit` (and `quit`) exit the telnet Controller
