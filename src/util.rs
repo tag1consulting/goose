@@ -1,3 +1,5 @@
+//! Utility functions used by Goose, and available when writing load tests.
+
 use regex::Regex;
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
@@ -10,7 +12,26 @@ use url::Url;
 use crate::GooseError;
 
 /// Parse a string representing a time span and return the number of seconds.
-/// Valid formats are: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
+///
+/// Can be specified as an integer, indicating seconds. Or can use integers
+/// together with one or more of "h", "m", and "s", in that order, indicating
+/// "hours", "minutes", and "seconds".
+///
+/// Valid formats include: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// // 1 hour 2 minutes and 3 seconds is 3,723 seconds.
+/// assert_eq!(util::parse_timespan("1h2m3s"), 3_723);
+///
+/// // 45 seconds is 45 seconds.
+/// assert_eq!(util::parse_timespan("45"), 45);
+///
+/// // Invalid value is 0 seconds.
+/// assert_eq!(util::parse_timespan("foo"), 0);
+/// ```
 pub fn parse_timespan(time_str: &str) -> usize {
     match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
@@ -48,7 +69,34 @@ pub fn parse_timespan(time_str: &str) -> usize {
     }
 }
 
-/// Sleep for a specified duration, minus an time spent doing other things.
+/// Sleep for a specified duration, minus the time spent doing other things.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// async fn loop_with_delay() {
+///     loop {
+///         // Start drift timer.
+///         let mut drift_timer = tokio::time::Instant::now();
+///
+///         // Do other stuff, in this case sleep 250 milliseconds. This is
+///         // the "drift" that will be subtracted from the sleep time later.
+///         tokio::time::sleep(tokio::time::Duration::from_millis(250));
+///
+///         // Sleep for 1 second minus the time spent doing other stuff.
+///         drift_timer = util::sleep_minus_drift(
+///             tokio::time::Duration::from_secs(1),
+///             drift_timer,
+///         ).await;
+///
+///         // Normally the loop would continue, and the amount of time doing
+///         // other things would vary each time, but the total time to complete
+///         // the loop would remain the same.
+///         break;
+///     }
+/// }
+/// ```
 pub async fn sleep_minus_drift(
     duration: tokio::time::Duration,
     drift: tokio::time::Instant,
@@ -60,8 +108,26 @@ pub async fn sleep_minus_drift(
     tokio::time::Instant::now()
 }
 
-/// Calculate the greatest common divisor using binary GCD (or Stein's) algorithm.
-/// More detail: https://en.wikipedia.org/wiki/Binary_GCD_algorithm
+/// Calculate the greatest common divisor of two integers using binary GCD (or Stein's) algorithm.
+///
+/// More detail on [Wikipedia](https://en.wikipedia.org/wiki/Binary_GCD_algorithm).
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// // 1 and any other integer are only divisible by 1.
+/// assert_eq!(util::gcd(1, 100), 1);
+///
+/// // 9 and 103 are both divisible by 3.
+/// assert_eq!(util::gcd(9, 102), 3);
+///
+/// // 12345 and 67890 are both divisible by 15.
+/// assert_eq!(util::gcd(12345, 67890), 15);
+///
+/// // 2 and 5 are both divisible by 1.
+/// assert_eq!(util::gcd(2, 5), 1);
+/// ```
 pub fn gcd(u: usize, v: usize) -> usize {
     match ((u, v), (u & 1, v & 1)) {
         ((x, y), _) if x == y => x,
@@ -76,6 +142,48 @@ pub fn gcd(u: usize, v: usize) -> usize {
 }
 
 /// Calculate median for a BTreeMap of usizes.
+///
+/// The Median is the "middle" of a sorted list of numbers. In this case, the list is
+/// comprised of two parts: the integer value on the left, and the number of occurrences
+/// of the integer on the right. For example (5, 1) indicates that the integer "5" is
+/// included 1 time.
+///
+/// The function requires three parameters that Goose already has while building the
+/// BTreeMap: the total occurences of all integers, the smallest integer, and the largest
+/// integer in the list: while this could be calculate by the function, the goal is to make
+/// this function as fast as possible as it runs during load tests.
+///
+/// NOTE: Once [`first_entry`](https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.first_entry)
+/// and [`last_entry`](https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.last_entry)
+/// land in Stable Rust ([rust-lang issue #62924](https://github.com/rust-lang/rust/issues/62924))
+/// we can efficiently derive the last two parameters and simplify the calling of this
+/// function a little.
+///
+/// # Example
+/// ```rust
+/// use std::collections::BTreeMap;
+/// use goose::util;
+///
+/// // In this first example, we add one instance of three different integers.
+/// let mut btree: BTreeMap<usize, usize> = BTreeMap::new();
+/// btree.insert(1, 1);
+/// btree.insert(99, 1);
+/// btree.insert(100, 1);
+///
+/// // Median (middle) value in this list of 3 integers is 99.
+/// assert_eq!(util::median(&btree, 3, 1, 100), 99);
+///
+/// // In this next example, we add multiple instance of five different integers.
+/// let mut btree: BTreeMap<usize, usize> = BTreeMap::new();
+/// btree.insert(7, 5);
+/// btree.insert(8, 1);
+/// btree.insert(13, 21);
+/// btree.insert(19, 44);
+/// btree.insert(21, 5);
+///
+/// // Median (middle) value in this list of 76 integers is 19.
+/// assert_eq!(util::median(&btree, 76, 7, 21), 19);
+/// ```
 pub fn median(
     btree: &BTreeMap<usize, usize>,
     total_elements: usize,
@@ -103,6 +211,20 @@ pub fn median(
 }
 
 /// Truncate strings when they're too long to display.
+///
+/// If a string is longer than the specified max length, this function removes extra
+/// the characters and replaces the last two with a double-period ellipsis.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// // All but 7 characters are truncated, with ".." appended.
+/// assert_eq!(util::truncate_string("this is a long string", 9), "this is..");
+///
+/// // All characters are returned as the string is less than 15 characters long.
+/// assert_eq!(util::truncate_string("shorter string", 15), "shorter string");
+/// ```
 pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
     let mut string_to_truncate = str_to_truncate.to_string();
     if string_to_truncate.len() as u64 > max_length {
@@ -113,38 +235,101 @@ pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
     string_to_truncate
 }
 
-/// Determine if timer was set as many or more seconds ago as the timer is
-/// intended to run.
+/// Determine if a timer expired, with second granularity.
+///
+/// If the timer was started more than `run_time` seconds ago return `true`, otherwise
+/// return `false`.
+///
+/// This function accepts started as a
+/// [`std::time::Instant`](https://doc.rust-lang.org/std/time/struct.Instant.html). It
+/// expects `run_time` in seconds.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// let started = std::time::Instant::now();
+/// let mut counter = 0;
+/// loop {
+///     // Track how many times this loop runs.
+///     counter += 1;
+///
+///     // Sleep for a quarter of a second.
+///     std::thread::sleep(std::time::Duration::from_millis(250));
+///
+///     // Do stuff ...
+///
+///     // Loop until the timer expires, then break.
+///     if util::timer_expired(started, 1) {
+///         break
+///     }
+/// }
+///
+/// // It took 4 loops for the timer to expire.
+/// assert_eq!(counter, 4);
+/// ```
 pub fn timer_expired(started: time::Instant, run_time: usize) -> bool {
     run_time > 0 && started.elapsed().as_secs() >= run_time as u64
 }
 
-/// Determine if timer was set as many or more milliseconds ago as the
-/// timer is intended to run.
+/// Determine if a timer expired, with millisecond granularity.
+///
+/// If the timer was started more than `run_time` milliseconds ago return `true`,
+/// otherwise return `false`.
+///
+/// This function accepts started as a
+/// [`std::time::Instant`](https://doc.rust-lang.org/std/time/struct.Instant.html). It
+/// expects `run_time` in milliseconds.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// let started = std::time::Instant::now();
+/// let mut counter = 0;
+/// loop {
+///     // Track how many times this loop runs.
+///     counter += 1;
+///
+///     // Sleep for a quarter of a second.
+///     std::thread::sleep(std::time::Duration::from_millis(100));
+///
+///     // Do stuff ...
+///
+///     // Loop until the timer expires, then break.
+///     if util::ms_timer_expired(started, 750) {
+///         break
+///     }
+/// }
+///
+/// // It took 8 loops for the timer to expire. (Total time in the loop was 800 ms).
+/// assert_eq!(counter, 8);
+/// ```
 pub fn ms_timer_expired(started: time::Instant, elapsed: usize) -> bool {
     elapsed > 0 && started.elapsed().as_millis() >= elapsed as u128
 }
 
-pub fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
-    let caught_ctrlc = canceled.clone();
-    match ctrlc::set_handler(move || {
-        // We've caught a ctrl-c, determine if it's the first time or an additional time.
-        if caught_ctrlc.load(Ordering::SeqCst) {
-            warn!("caught another ctrl-c, exiting immediately...");
-            std::process::exit(1);
-        } else {
-            warn!("caught ctrl-c, stopping...");
-            caught_ctrlc.store(true, Ordering::SeqCst);
-        }
-    }) {
-        Ok(_) => (),
-        Err(e) => {
-            info!("failed to set ctrl-c handler: {}", e);
-        }
-    }
-}
-
-// Convert optional string hatch rate to f32.
+/// Convert optional string to f32, otherwise defaulting to 1.0.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// // No decimal returns a proper float.
+/// assert_eq!(util::get_hatch_rate(Some("1".to_string())), 1.0);
+///
+/// // Leading decimal returns a proper float.
+/// assert_eq!(util::get_hatch_rate(Some(".1".to_string())), 0.1);
+///
+/// // Valid float string returns a proper float.
+/// assert_eq!(util::get_hatch_rate(Some("1.1".to_string())), 1.1);
+///
+/// // Invalid number with too many decimals returns the defaut of 1.0.
+/// assert_eq!(util::get_hatch_rate(Some("1.1.1".to_string())), 1.0);
+///
+/// // No number returns the defaut of 1.0.
+/// assert_eq!(util::get_hatch_rate(None), 1.0);
+/// ```
 pub fn get_hatch_rate(hatch_rate: Option<String>) -> f32 {
     match hatch_rate {
         Some(h) => match h.parse::<f32>() {
@@ -161,14 +346,52 @@ pub fn get_hatch_rate(hatch_rate: Option<String>) -> f32 {
     }
 }
 
-// Helper function to determine if a host can be parsed.
-pub(crate) fn is_valid_host(host: &str) -> Result<bool, GooseError> {
+/// Helper function to determine if a host can be parsed.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// // Hostname is a valid URL.
+/// assert_eq!(util::is_valid_host("http://localhost/").is_ok(), true);
+///
+/// // IP is a valid URL.
+/// assert_eq!(util::is_valid_host("http://127.0.0.1").is_ok(), true);
+///
+/// // URL with path is a valid URL.
+/// assert_eq!(util::is_valid_host("https://example.com/foo").is_ok(), true);
+///
+/// // Protocol is required
+/// assert_eq!(util::is_valid_host("example.com/").is_ok(), false);
+/// ```
+pub fn is_valid_host(host: &str) -> Result<bool, GooseError> {
     Url::parse(host).map_err(|parse_error| GooseError::InvalidHost {
         host: host.to_string(),
         detail: "Invalid host.".to_string(),
         parse_error,
     })?;
     Ok(true)
+}
+
+// Internal helper to configure the control-c handler. Shutdown cleanly on the first
+// ctrl-c. Exit abruptly on the second ctrl-c.
+pub(crate) fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
+    let caught_ctrlc = canceled.clone();
+    match ctrlc::set_handler(move || {
+        // We've caught a ctrl-c, determine if it's the first time or an additional time.
+        if caught_ctrlc.load(Ordering::SeqCst) {
+            warn!("caught another ctrl-c, exiting immediately...");
+            std::process::exit(1);
+        } else {
+            warn!("caught ctrl-c, stopping...");
+            caught_ctrlc.store(true, Ordering::SeqCst);
+        }
+    }) {
+        Ok(_) => (),
+        Err(e) => {
+            info!("failed to set ctrl-c handler: {}", e);
+        }
+    }
 }
 
 #[cfg(test)]

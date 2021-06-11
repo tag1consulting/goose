@@ -1,7 +1,8 @@
 # Changelog
 
-## 0.11.3-dev
- - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library
+## 0.12.0-dev
+ - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library (API change)
+ - expose utility functions used by Goose for use by load tests
 
 ## 0.11.2 June 10, 2021
  - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:

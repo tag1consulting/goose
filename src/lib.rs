@@ -433,7 +433,7 @@ pub mod prelude;
 mod report;
 mod throttle;
 mod user;
-mod util;
+pub mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
