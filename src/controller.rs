@@ -1,4 +1,4 @@
-//! Optionally launches telnet and WebSocket Controllers.
+//! Optional telnet and WebSocket Controller threads.
 //!
 //! By default, Goose launches both a telnet Controller and a WebSocket Controller, allowing
 //! real-time control of the running load test.
@@ -20,7 +20,7 @@ use tungstenite::Message;
 
 /// Goose currently supports two different Controller protocols: telnet and WebSocket.
 #[derive(Clone, Debug)]
-pub enum GooseControllerProtocol {
+pub(crate) enum GooseControllerProtocol {
     /// Allows control of Goose via telnet.
     Telnet,
     /// Allows control of Goose via a WebSocket.
@@ -29,58 +29,164 @@ pub enum GooseControllerProtocol {
 
 /// All commands recognized by the Goose Controllers.
 ///
-/// The steps required to add a new command:
-///  1) Define the command here in the GooseControllerCommand enum.
-///  2) Add the regular expression for matching the new command in the `command`
+/// Commands are not case sensitive. When sending commands to the WebSocket Controller,
+/// they must be formatted as json as defined by
+/// [GooseControllerWebSocketRequest](./struct.GooseControllerWebSocketRequest.html).
+///
+/// GOOSE DEVELOPER NOTE: The following steps are required to add a new command:
+///  1. Define the command here in the GooseControllerCommand enum.
+///  2. Add the regular expression for matching the new command in the `command`
 /// [`regex::RegexSet`](https://docs.rs/regex/*/regex/struct.RegexSet.html) in
-/// [`controller_main()`](./fn.controller_main.html).
-///  2a) If a value needs to be captured, define the regular expression in a variable
-///      outside the set, and add the variable to the top section of the set with the
-///      other regex variables.
-///  2b) In the same function, also add the variable to the `captures` Vector, in the
-///      same order that it was added to the `command` `RegexSet`. Order is important
-///      as this is how the regex is later identified.
-///  3) Check for a match to the new regex in `get_match`, any additional validation
+/// `controller_main()`.
+///      1. If a value needs to be captured, define the regular expression in a variable
+///         outside the set, and add the variable to the top section of the set with the
+///         other regex variables.
+///      2. In the same function, also add the variable to the `captures` Vector, in the
+///         same order that it was added to the `command` `RegexSet`. Order is important
+///         as this is how the regex is later identified.
+///  3. Check for a match to the new regex in `get_match()`, any additional validation
 ///      beyond the regex must be performed here (for example, the regular expression
 ///      for capturing hosts simply confirms that the host starts with http or https,
-///      then in `get_match` it calls `util::is_valid_host()` to be sure it is truly
-///      a valid host before passing it to the parent process).
-///  4) Add any parent process logic for the command to `handle_controller_requests`
-///  5) Handle the response in `process_response`, returning a `Result<String, String>`
+///      then in `get_match()` it calls [`util::is_valid_host()`](../util/fn.is_valid_host.html)
+///      to be sure it is truly a valid host before passing it to the parent process).
+///  4. Add any parent process logic for the command to `handle_controller_requests()`.
+///  5. Handle the response in `process_response()`, returning a `Result<String, String>`
 ///     succinctly describing success or failure.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GooseControllerCommand {
-    /// Configure the host to load test, for example http://localhost/.
+    /// Configure the host to load test.
+    ///
+    /// # Example
+    /// Tells Goose to generate load against http://example.com/.
+    /// ```notest
+    /// host http://example.com/
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
     Host,
     /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    ///
+    /// # Example
+    /// Tells Goose to simulate 100 concurrent users.
+    /// ```notest
+    /// users 100
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
     Users,
     /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    ///
+    /// # Example
+    /// Tells Goose to launch a new user every 1.25 seconds.
+    /// ```notest
+    /// hatchrate 1.25
+    /// ```
+    ///
+    /// Goose can be idle or running when processing this command.
     HatchRate,
-    /// Configure how long the load test should run before stopping.
+    /// Configure how long the load test should run before stopping and returning to an idle state.
+    ///
+    /// # Example
+    /// Tells Goose to run the load test for 1 minute, before automatically stopping.
+    /// ```notest
+    /// runtime 60
+    /// ```
+    ///
+    /// This can be configured when Goose is idle as well as when a Goose load test is running.
     RunTime,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
+    ///
+    /// # Example
+    /// Returns the current Goose configuration.
+    /// ```notest
+    /// config
+    /// ```
     Config,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s in json format.
+    ///
+    /// # Example
+    /// Returns the current Goose configuration in json format.
+    /// ```notest
+    /// configjson
+    /// ```
+    ///
+    /// This command can be run at any time.
     ConfigJson,
     /// Display the current [`GooseMetric`](../metrics/struct.GooseMetrics.html)s.
+    ///
+    /// # Example
+    /// Returns the current Goose metrics.
+    /// ```notest
+    /// metrics
+    /// ```
+    ///
+    /// This command can be run at any time.
     Metrics,
     /// Display the current [`GooseMetric`](../metrics/struct.GooseMetrics.html)s in json format.
+    ///
+    /// # Example
+    /// Returns the current Goose metrics in json format.
+    /// ```notest
+    /// metricsjson
+    /// ```
+    ///
+    /// This command can be run at any time.
     MetricsJson,
-    /// Displays a list of all supported commands.
+    /// Displays a list of all commands supported by the Controller.
+    ///
+    /// # Example
+    /// Returns the a list of all supported Controller commands.
+    /// ```notest
+    /// help
+    /// ```
+    ///
+    /// This command can be run at any time.
     Help,
-    /// Disconnect from the controller.
+    /// Disconnect from the Controller.
+    ///
+    /// # Example
+    /// Disconnects from the Controller.
+    /// ```notest
+    /// exit
+    /// ```
+    ///
+    /// This command can be run at any time.
     Exit,
-    /// Verify that the controller can talk to the parent process.
+    /// Start an idle test.
+    ///
+    /// # Example
+    /// Starts an idle load test.
+    /// ```notest
+    /// start
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
     Start,
     /// Stop a running test, putting it into an idle state.
+    ///
+    /// # Example
+    /// Stops a running (or stating) load test.
+    /// ```notest
+    /// stop
+    /// ```
+    ///
+    /// Goose must be running (or starting) to process this command.
     Stop,
     /// Tell the load test to shut down (which will disconnect the controller).
+    ///
+    /// # Example
+    /// Terminates the Goose process, cleanly shutting down the load test if running.
+    /// ```notest
+    /// shutdown
+    /// ```
+    ///
+    /// Goose can process this command at any time.
     Shutdown,
 }
 
 /// This structure is used to send commands and values to the parent process.
 #[derive(Debug)]
-pub struct GooseControllerRequestMessage {
+pub(crate) struct GooseControllerRequestMessage {
     /// The command that is being sent to the parent.
     pub command: GooseControllerCommand,
     /// An optional value that is being sent to the parent.
@@ -89,7 +195,7 @@ pub struct GooseControllerRequestMessage {
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
 #[derive(Debug)]
-pub enum GooseControllerResponseMessage {
+pub(crate) enum GooseControllerResponseMessage {
     /// A response containing a boolean value.
     Bool(bool),
     /// A response containing the load test configuration.
@@ -98,9 +204,9 @@ pub enum GooseControllerResponseMessage {
     Metrics(Box<GooseMetrics>),
 }
 
-/// The actual request that's passed from the controller to the parent thread.
+/// The request that's passed from the controller to the parent thread.
 #[derive(Debug)]
-pub struct GooseControllerRequest {
+pub(crate) struct GooseControllerRequest {
     /// Optional one-shot channel if a reply is required.
     pub response_channel: Option<tokio::sync::oneshot::Sender<GooseControllerResponse>>,
     /// An integer identifying which controller client is making the request.
@@ -109,23 +215,68 @@ pub struct GooseControllerRequest {
     pub request: GooseControllerRequestMessage,
 }
 
-/// The actual response that's passed from the parent to the controller.
+/// The response that's passed from the parent to the controller.
 #[derive(Debug)]
-pub struct GooseControllerResponse {
+pub(crate) struct GooseControllerResponse {
     /// An integer identifying which controller the parent is responding to.
     pub client_id: u32,
     /// The actual response message.
     pub response: GooseControllerResponseMessage,
 }
 
-/// The required format for any request sent to the WebSocket Controller.
+/// This structure defines the required json format of any request sent to the WebSocket
+/// Controller.
+///
+/// Requests must be made in the following format:
+/// ```json
+/// {
+///     "request": String,
+/// }
+///
+/// ```
+///
+/// The request "String" value must be a valid
+/// [`GooseControllerCommand`](./enum.GooseControllerCommand.html).
+///
+/// # Example
+/// The following request will shut down the load test:
+/// ```json
+/// {
+///     "request": "shutdown",
+/// }
+/// ```
+///
+/// Responses will be formatted as defined in
+/// [GooseControllerWebSocketResponse](./struct.GooseControllerWebSocketResponse.html).
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GooseControllerWebSocketRequest {
     /// A valid command string.
     pub request: String,
 }
 
-/// The format of all responses returned by the WebSocket Controller.
+/// This structure defines the json format of any response returned from the WebSocket
+/// Controller.
+///
+/// Responses are in the following format:
+/// ```json
+/// {
+///     "response": String,
+///     "success": bool,
+/// }
+/// ```
+///
+/// # Example
+/// The following response will be returned when a request is made to shut down the
+/// load test:
+/// ```json
+/// {
+///     "response": "load test shut down",
+///     "success": true
+/// }
+/// ```
+///
+/// Requests must be formatted as defined in
+/// [GooseControllerWebSocketRequest](./struct.GooseControllerWebSocketRequest.html).
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GooseControllerWebSocketResponse {
     /// The response from the controller.
@@ -152,7 +303,7 @@ type GooseControllerWebSocketSender = futures::stream::SplitSink<
 
 /// This state object is created in the main Controller thread and then passed to the specific
 /// per-client thread.
-pub struct GooseControllerState {
+pub(crate) struct GooseControllerState {
     /// Track which controller-thread this is.
     thread_id: u32,
     /// Track the ip and port of the connected TCP client.
@@ -792,7 +943,7 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
 ///  -  @TODO: optionally limit how many controller connections are allowed
 ///  -  @TODO: optionally require client authentication
 ///  -  @TODO: optionally ssl-encrypt client communication
-pub async fn controller_main(
+pub(crate) async fn controller_main(
     // Expose load test configuration to controller thread.
     configuration: GooseConfiguration,
     // For sending requests to the parent process.
@@ -846,11 +997,11 @@ pub async fn controller_main(
         // Display the current load test configuration.
         r"(?i)^config$",
         // Display the current load test configuration in json.
-        r"(?i)^config-json$",
+        r"(?i)^(configjson|config-json)$",
         // Display running metrics for the currently active load test.
         r"(?i)^(metrics|stats)$",
         // Display running metrics for the currently active load test in json.
-        r"(?i)^(metrics-json|stats-json)$",
+        r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$",
         // Provide a list of possible commands.
         r"(?i)^(help|\?)$",
         // Exit/quit the controller connection, does not affect load test.

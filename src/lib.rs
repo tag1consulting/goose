@@ -433,7 +433,7 @@ pub mod prelude;
 mod report;
 mod throttle;
 mod user;
-mod util;
+pub mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
@@ -498,7 +498,11 @@ type DebugLoggerHandle = Option<tokio::task::JoinHandle<()>>;
 /// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
 type DebugLoggerChannel = Option<flume::Sender<Option<GooseDebug>>>;
 
-/// Worker ID to aid in tracing logs when running a Gaggle.
+/// Returns the unique identifier of the running Worker when running in Gaggle mode.
+///
+/// The first Worker to connect to the Manager is assigned an ID of 1. For each
+/// subsequent Worker to connect to the Manager the ID is incremented by 1. This
+/// identifier is primarily an aid in tracing logs.
 pub fn get_worker_id() -> usize {
     WORKER_ID.load(Ordering::Relaxed)
 }
@@ -506,7 +510,7 @@ pub fn get_worker_id() -> usize {
 #[cfg(not(feature = "gaggle"))]
 #[derive(Debug, Clone)]
 /// Socket used for coordinating a Gaggle distributed load test.
-pub struct Socket {}
+pub(crate) struct Socket {}
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
 #[derive(Debug)]
@@ -657,6 +661,11 @@ pub enum AttackPhase {
 #[derive(Clone, Debug, PartialEq)]
 /// Used to define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s and
 /// [`GooseTask`](./goose/struct.GooseTask.html)s are allocated.
+///
+/// In order to configure the scheduler, and to see examples of the different scheduler
+/// variants, review the
+/// [`GooseAttack::set_scheduler`](./struct.GooseAttack.html#method.set_scheduler)
+/// documentation.
 pub enum GooseScheduler {
     /// Allocate one of each available type at a time (default).
     RoundRobin,
@@ -945,7 +954,9 @@ impl GooseAttack {
     }
 
     /// Initialize a [`GooseAttack`](./struct.GooseAttack.html) with an already loaded
-    /// configuration. This should only be called by Worker instances.
+    /// configuration.
+    ///
+    /// This is generally used by Worker instances and tests.
     ///
     /// # Example
     /// ```rust
@@ -4074,8 +4085,9 @@ impl GooseAttack {
     }
 }
 
-/// All run-time options can optionally be configured with custom defaults. For
-/// example, you can optionally configure a default host for the load test. This is
+/// All run-time options can optionally be configured with custom defaults.
+///
+/// For example, you can optionally configure a default host for the load test. This is
 /// used if no per-[`GooseTaskSet`](./goose/struct.GooseTaskSet.html) host is defined,
 /// no `--host` CLI option is configured, and if the
 /// [`GooseTask`](./goose/struct.GooseTask.html) itself doesn't hard-code the host in
@@ -4099,47 +4111,47 @@ impl GooseAttack {
 ///
 /// The following run-time options can be configured with a custom default using a
 /// borrowed string slice (`&str`):
-///  - GooseDefault::Host
-///  - GooseDefault::LogFile
-///  - GooseDefault::RequestsFile
-///  - GooseDefault::RequestsFormat
-///  - GooseDefault::DebugFile
-///  - GooseDefault::DebugFormat
-///  - GooseDefault::TelnetHost
-///  - GooseDefault::WebSocketHost
-///  - GooseDefault::ManagerBindHost
-///  - GooseDefault::ManagerHost
+///  - [GooseDefault::Host](../goose/enum.GooseDefault.html#variant.Host)
+///  - [GooseDefault::LogFile](../goose/enum.GooseDefault.html#variant.LogFile)
+///  - [GooseDefault::RequestsFile](../goose/enum.GooseDefault.html#variant.RequestsFile)
+///  - [GooseDefault::RequestsFormat](../goose/enum.GooseDefault.html#variant.RequestsFormat)
+///  - [GooseDefault::DebugFile](../goose/enum.GooseDefault.html#variant.DebugFile)
+///  - [GooseDefault::DebugFormat](../goose/enum.GooseDefault.html#variant.DebugFormat)
+///  - [GooseDefault::TelnetHost](../goose/enum.GooseDefault.html#variant.TelnetHost)
+///  - [GooseDefault::WebSocketHost](../goose/enum.GooseDefault.html#variant.WebSocketHost)
+///  - [GooseDefault::ManagerBindHost](../goose/enum.GooseDefault.html#variant.ManagerBindHost)
+///  - [GooseDefault::ManagerHost](../goose/enum.GooseDefault.html#variant.ManagerHost)
 ///
 /// The following run-time options can be configured with a custom default using a
 /// `usize` integer:
-///  - GooseDefault::Users
-///  - GooseDefault::HatchRate
-///  - GooseDefault::RunTime
-///  - GooseDefault::RunningMetrics
-///  - GooseDefault::LogLevel
-///  - GooseDefault::Verbose
-///  - GooseDefault::ThrottleRequests
-///  - GooseDefault::ExpectWorkers
-///  - GooseDefault::TelnetPort
-///  - GooseDefault::WebSocketPort
-///  - GooseDefault::ManagerBindPort
-///  - GooseDefault::ManagerPort
+///  - [GooseDefault::Users](../goose/enum.GooseDefault.html#variant.Users)
+///  - [GooseDefault::HatchRate](../goose/enum.GooseDefault.html#variant.HatchRate)
+///  - [GooseDefault::RunTime](../goose/enum.GooseDefault.html#variant.RunTime)
+///  - [GooseDefault::RunningMetrics](../goose/enum.GooseDefault.html#variant.RunningMetrics)
+///  - [GooseDefault::LogLevel](../goose/enum.GooseDefault.html#variant.LogLevel)
+///  - [GooseDefault::Verbose](../goose/enum.GooseDefault.html#variant.Verbose)
+///  - [GooseDefault::ThrottleRequests](../goose/enum.GooseDefault.html#variant.ThrottleRequests)
+///  - [GooseDefault::ExpectWorkers](../goose/enum.GooseDefault.html#variant.ExpectWorkers)
+///  - [GooseDefault::TelnetPort](../goose/enum.GooseDefault.html#variant.TelnetPort)
+///  - [GooseDefault::WebSocketPort](../goose/enum.GooseDefault.html#variant.WebSocketPort)
+///  - [GooseDefault::ManagerBindPort](../goose/enum.GooseDefault.html#variant.ManagerBindPort)
+///  - [GooseDefault::ManagerPort](../goose/enum.GooseDefault.html#variant.ManagerPort)
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// `bool` (and otherwise default to `false`).
-///  - GooseDefault::NoResetMetrics
-///  - GooseDefault::NoMetrics
-///  - GooseDefault::NoTaskMetrics
-///  - GooseDefault::NoErrorSummary
-///  - GooseDefault::NoDebugBody
-///  - GooseDefault::NoTelnet
-///  - GooseDefault::NoWebSocket
-///  - GooseDefault::NoAutoStart
-///  - GooseDefault::StatusCodes
-///  - GooseDefault::StickyFollow
-///  - GooseDefault::Manager
-///  - GooseDefault::NoHashCheck
-///  - GooseDefault::Worker
+///  - [GooseDefault::NoResetMetrics](../goose/enum.GooseDefault.html#variant.NoResetMetrics)
+///  - [GooseDefault::NoMetrics](../goose/enum.GooseDefault.html#variant.NoMetrics)
+///  - [GooseDefault::NoTaskMetrics](../goose/enum.GooseDefault.html#variant.NoTaskMetrics)
+///  - [GooseDefault::NoErrorSummary](../goose/enum.GooseDefault.html#variant.NoErrorSummary)
+///  - [GooseDefault::NoDebugBody](../goose/enum.GooseDefault.html#variant.NoDebugBody)
+///  - [GooseDefault::NoTelnet](../goose/enum.GooseDefault.html#variant.NoTelnet)
+///  - [GooseDefault::NoWebSocket](../goose/enum.GooseDefault.html#variant.NoWebSocket)
+///  - [GooseDefault::NoAutoStart](../goose/enum.GooseDefault.html#variant.NoAutoStart)
+///  - [GooseDefault::StatusCodes](../goose/enum.GooseDefault.html#variant.StatusCodes)
+///  - [GooseDefault::StickyFollow](../goose/enum.GooseDefault.html#variant.StickyFollow)
+///  - [GooseDefault::Manager](../goose/enum.GooseDefault.html#variant.Manager)
+///  - [GooseDefault::NoHashCheck](../goose/enum.GooseDefault.html#variant.NoHashCheck)
+///  - [GooseDefault::Worker](../goose/enum.GooseDefault.html#variant.Worker)
 ///
 /// # Another Example
 /// ```rust
@@ -4147,8 +4159,11 @@ impl GooseAttack {
 ///
 /// fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
+///         // Do not reset the metrics after the load test finishes starting.
 ///         .set_default(GooseDefault::NoResetMetrics, true)?
+///         // Display info level logs while the test runs.
 ///         .set_default(GooseDefault::Verbose, 1)?
+///         // Log all requests made during the test to `./goose-metrics.log`.
 ///         .set_default(GooseDefault::RequestsFile, "goose-metrics.log")?;
 ///
 ///     Ok(())
