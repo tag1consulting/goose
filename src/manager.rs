@@ -7,10 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
-use crate::goose::GooseRequest;
 use crate::metrics::{
-    self, GooseErrorMetric, GooseErrorMetrics, GooseRequestMetrics, GooseTaskMetric,
-    GooseTaskMetrics,
+    self, GooseErrorMetric, GooseErrorMetrics, GooseRequestAggregateMetric, GooseRequestMetrics,
+    GooseTaskAggregateMetric, GooseTaskMetrics,
 };
 use crate::util;
 use crate::worker::GaggleMetrics;
@@ -76,9 +75,9 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
 
 /// Merge per-user task metrics from user thread into global parent metrics
 fn merge_tasks_from_worker(
-    parent_task: &GooseTaskMetric,
-    user_task: &GooseTaskMetric,
-) -> GooseTaskMetric {
+    parent_task: &GooseTaskAggregateMetric,
+    user_task: &GooseTaskAggregateMetric,
+) -> GooseTaskAggregateMetric {
     // Make a mutable copy where we can merge things
     let mut merged_task = parent_task.clone();
     // Iterate over user times, and merge into global time
@@ -100,10 +99,10 @@ fn merge_tasks_from_worker(
 
 /// Merge per-user request metrics from user thread into global parent metrics
 fn merge_requests_from_worker(
-    parent_request: &GooseRequest,
-    user_request: &GooseRequest,
+    parent_request: &GooseRequestAggregateMetric,
+    user_request: &GooseRequestAggregateMetric,
     status_codes: bool,
-) -> GooseRequest {
+) -> GooseRequestAggregateMetric {
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
     // Iterate over user response times, and merge into global response time
