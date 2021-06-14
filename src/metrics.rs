@@ -20,7 +20,7 @@ use crate::GooseConfiguration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
     Request(GooseRawRequest),
-    Task(GooseRawTask),
+    Task(GooseTaskMetric),
     Error(GooseErrorMetric),
 }
 
@@ -28,14 +28,14 @@ pub enum GooseMetric {
 pub type GooseRequestMetrics = HashMap<String, GooseRequest>;
 
 /// Goose optionally tracks metrics about tasks run during a load test.
-pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetric>>;
+pub type GooseTaskMetrics = Vec<Vec<GooseTaskAggregateMetric>>;
 
 /// Goose optionally tracks errors generated during a load test.
 pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetric>;
 
 /// The per-task metrics collected each time a task is invoked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GooseRawTask {
+pub struct GooseTaskMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
     /// An index into GooseAttack.task_sets, indicating which task set this is.
@@ -51,8 +51,8 @@ pub struct GooseRawTask {
     /// Which GooseUser thread processed the request.
     pub user: usize,
 }
-impl GooseRawTask {
-    /// Create a new GooseRawTask metric.
+impl GooseTaskMetric {
+    /// Create a new GooseTaskMetric metric.
     pub fn new(
         elapsed: u128,
         taskset_index: usize,
@@ -60,7 +60,7 @@ impl GooseRawTask {
         name: String,
         user: usize,
     ) -> Self {
-        GooseRawTask {
+        GooseTaskMetric {
             elapsed: elapsed as u64,
             taskset_index,
             task_index,
@@ -71,7 +71,7 @@ impl GooseRawTask {
         }
     }
 
-    /// Update a GooseRawTask metric.
+    /// Update a GooseTaskMetric metric.
     pub fn set_time(&mut self, time: u128, success: bool) {
         self.run_time = time as u64;
         self.success = success;
@@ -80,7 +80,7 @@ impl GooseRawTask {
 
 /// Aggregated per-task metrics updated each time a task is invoked.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseTaskMetric {
+pub struct GooseTaskAggregateMetric {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`,
     /// indicating which task set this is.
     pub taskset_index: usize,
@@ -106,15 +106,15 @@ pub struct GooseTaskMetric {
     /// Total number of times task has failed.
     pub fail_count: usize,
 }
-impl GooseTaskMetric {
-    /// Create a new GooseTaskMetric.
+impl GooseTaskAggregateMetric {
+    /// Create a new GooseTaskAggregateMetric.
     pub fn new(
         taskset_index: usize,
         taskset_name: &str,
         task_index: usize,
         task_name: &str,
     ) -> Self {
-        GooseTaskMetric {
+        GooseTaskAggregateMetric {
             taskset_index,
             taskset_name: taskset_name.to_string(),
             task_index,
@@ -249,7 +249,7 @@ impl GooseMetrics {
             for task_set in task_sets {
                 let mut task_vector = Vec::new();
                 for task in &task_set.tasks {
-                    task_vector.push(GooseTaskMetric::new(
+                    task_vector.push(GooseTaskAggregateMetric::new(
                         task_set.task_sets_index,
                         &task_set.name,
                         task.tasks_index,
