@@ -1,4 +1,4 @@
-//! Optionally collects and aggregates metrics during a load test.
+//! Optional metrics collected and aggregated during a load test.
 //!
 //! By default, Goose collects a large number of metrics while performing a load test.
 //! The metrics collected and the display of these metrics are defined in this file.
@@ -9,13 +9,15 @@ use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
+use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::{f32, fmt};
+use tokio::io::AsyncWriteExt;
 
 use crate::goose::{GooseMethod, GooseTaskSet};
 use crate::util;
-use crate::GooseConfiguration;
+use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 
 /// Each [`GooseUser`](../goose/struct.GooseUser.html) thread pushes these metrics to
 /// the parent for aggregation.
@@ -32,9 +34,32 @@ pub type GooseRequestMetrics = HashMap<String, GooseRequestAggregateMetric>;
 /// Goose optionally tracks metrics about tasks run during a load test.
 pub type GooseTaskMetrics = Vec<Vec<GooseTaskAggregateMetric>>;
 
-/// Goose optionally tracks errors generated during a load test.
+/// All errors tracked during a load test.
+///
+/// By default Goose tracks all errors detected during the load test. Each error is stored
+/// as a [`GooseErrorMetric`](./struct.GooseErrorMetric.html), and they are all stored
+/// together within a `BTreeMap` which is returned by
+/// [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load test
+/// completes.
+///
+/// `GooseErrorMetrics` can be disabled with the `--no-error-summary` run-time option, or with
+/// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
+///
+/// # Example
+/// `GooseErrorMetrics` are displayed in a table:
+/// ```text
+///  === ERRORS ===
+/// ------------------------------------------------------------------------------
+/// Count       | Error
+/// ------------------------------------------------------------------------------
+/// 924           GET (Auth) front page: 503 Service Unavailable: /
+/// 715           POST (Auth) front page: 503 Service Unavailable: /user
+/// 36            GET (Anon) front page: error sending request for url (http://example.com/): connection closed before message completed
+/// ```
 pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetric>;
 
+/// For tracking and counting requests made during a load test.
+///
 /// The request that Goose is making. User threads send this data to the parent thread
 /// when metrics are enabled. This request object must be provided to calls to
 /// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
@@ -435,7 +460,7 @@ pub struct GooseMetrics {
     /// Goose task metrics.
     pub tasks: GooseTaskMetrics,
     /// Error-related metrics.
-    pub errors: BTreeMap<String, GooseErrorMetric>,
+    pub errors: GooseErrorMetrics,
     /// Flag indicating whether or not these are the final metrics. Because we're deriving
     /// Default, this defaults to false.
     pub final_metrics: bool,
@@ -1207,6 +1232,8 @@ impl GooseMetrics {
             return Ok(());
         }
 
+        println!("{:#?}", self.errors);
+
         // Write the errors into a vector which can then be sorted by occurrences.
         let mut errors: Vec<(usize, String)> = Vec::new();
         for error in self.errors.values() {
@@ -1283,7 +1310,33 @@ impl fmt::Display for GooseMetrics {
     }
 }
 
-/// Track and count errors.
+/// For tracking and counting errors detected during a load test.
+///
+/// When a load test completes, by default it will include a summary of all errors that
+/// were detected during the load test. Multiple errors that share the same request method,
+/// the same request name, and the same error text are contained within a single
+/// GooseErrorMetric object, with `occurrences` indicating how many times this error was
+/// seen.
+///
+/// Individual `GooseErrorMetric`s are stored within a
+/// [`GooseErrorMetrics`](./type.GooseErrorMetrics.html) `BTreeMap` with a string key of
+/// `error.method.name`. The `BTreeMap` is what is returned by
+/// [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load test
+/// finishes.
+///
+/// Can be disabled with the `--no-error-summary` run-time option, or with
+/// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
+///
+/// # Example
+/// In this example, requests to load the front page are failing:
+/// ```
+/// GooseErrorMetric {
+///     method: Get,
+///     name: "(Anon) front page",
+///     error: "503 Service Unavailable: /",
+///     occurrences: 4588,
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct GooseErrorMetric {
     /// The method that resulted in an error.
@@ -1303,6 +1356,155 @@ impl GooseErrorMetric {
             error,
             occurrences: 0,
         }
+    }
+}
+
+impl GooseAttack {
+    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
+    // is true all metrics will be received regardless of how long it takes. If flush is
+    // false, metrics will only be received for up to 400 ms before exiting to continue on
+    // the next call to this function.
+    pub(crate) async fn receive_metrics(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        flush: bool,
+    ) -> Result<bool, GooseError> {
+        let mut received_message = false;
+        let mut message = goose_attack_run_state.metrics_rx.try_recv();
+
+        // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
+        let receive_timeout = 400;
+        let receive_started = std::time::Instant::now();
+
+        while message.is_ok() {
+            received_message = true;
+            match message.unwrap() {
+                GooseMetric::Request(raw_request) => {
+                    // Options should appear above, search for formatted_log.
+                    let formatted_log = match self.configuration.requests_format.as_str() {
+                        // Use serde_json to create JSON.
+                        "json" => json!(raw_request).to_string(),
+                        // Manually create CSV, library doesn't support single-row string conversion.
+                        "csv" => GooseAttack::prepare_csv(&raw_request, goose_attack_run_state),
+                        // Raw format is Debug output for GooseRequestMetric structure.
+                        "raw" => format!("{:?}", raw_request),
+                        _ => unreachable!(),
+                    };
+                    if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
+                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!(
+                                    "failed to write metrics to {}: {}",
+                                    // Unwrap is safe as we can't get here unless a requests file path
+                                    // is defined.
+                                    self.get_requests_file_path().unwrap(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+
+                    // If there was an error, store it.
+                    if !raw_request.error.is_empty() {
+                        self.record_error(&raw_request);
+                    }
+
+                    let key = format!("{} {}", raw_request.method, raw_request.name);
+                    let mut merge_request = match self.metrics.requests.get(&key) {
+                        Some(m) => m.clone(),
+                        None => GooseRequestAggregateMetric::new(
+                            &raw_request.name,
+                            raw_request.method,
+                            0,
+                        ),
+                    };
+
+                    // Handle a metrics update.
+                    if raw_request.update {
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                            merge_request.fail_count -= 1;
+                        } else {
+                            merge_request.success_count -= 1;
+                            merge_request.fail_count += 1;
+                        }
+                    }
+                    // Store a new metric.
+                    else {
+                        merge_request.set_response_time(raw_request.response_time);
+                        if self.configuration.status_codes {
+                            merge_request.set_status_code(raw_request.status_code);
+                        }
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                        } else {
+                            merge_request.fail_count += 1;
+                        }
+                    }
+
+                    self.metrics.requests.insert(key.to_string(), merge_request);
+                }
+                GooseMetric::Error(raw_error) => {
+                    // Recreate the string used to uniquely identify errors.
+                    let error_key = format!(
+                        "{}.{}.{}",
+                        raw_error.error, raw_error.method, raw_error.name
+                    );
+                    let mut merge_error = match self.metrics.errors.get(&error_key) {
+                        Some(error) => error.clone(),
+                        None => GooseErrorMetric::new(
+                            raw_error.method.clone(),
+                            raw_error.name.to_string(),
+                            raw_error.error.to_string(),
+                        ),
+                    };
+                    merge_error.occurrences += raw_error.occurrences;
+                    self.metrics
+                        .errors
+                        .insert(error_key.to_string(), merge_error);
+                }
+                GooseMetric::Task(raw_task) => {
+                    // Store a new metric.
+                    self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
+                        .set_time(raw_task.run_time, raw_task.success);
+                }
+            }
+            // Unless flushing all metrics, break out of receive loop after timeout.
+            if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
+                break;
+            }
+            message = goose_attack_run_state.metrics_rx.try_recv();
+        }
+
+        Ok(received_message)
+    }
+
+    /// Update error metrics.
+    pub(crate) fn record_error(&mut self, raw_request: &GooseRequestMetric) {
+        // If the error summary is disabled, return immediately without collecting errors.
+        if self.configuration.no_error_summary {
+            return;
+        }
+
+        // Create a string to uniquely identify errors for tracking metrics.
+        let error_string = format!(
+            "{}.{}.{}",
+            raw_request.error, raw_request.method, raw_request.name
+        );
+
+        let mut error_metrics = match self.metrics.errors.get(&error_string) {
+            // We've seen this error before.
+            Some(m) => m.clone(),
+            // First time we've seen this error.
+            None => GooseErrorMetric::new(
+                raw_request.method.clone(),
+                raw_request.name.to_string(),
+                raw_request.error.to_string(),
+            ),
+        };
+        error_metrics.occurrences += 1;
+        self.metrics.errors.insert(error_string, error_metrics);
     }
 }
 
