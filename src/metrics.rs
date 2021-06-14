@@ -21,13 +21,13 @@ use crate::GooseConfiguration;
 /// the parent for aggregation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
-    Request(GooseRawRequest),
+    Request(GooseRequestMetric),
     Task(GooseTaskMetric),
     Error(GooseErrorMetric),
 }
 
 /// Goose optionally tracks metrics about requests made during a load test.
-pub type GooseRequestMetrics = HashMap<String, GooseRequest>;
+pub type GooseRequestMetrics = HashMap<String, GooseRequestAggregateMetric>;
 
 /// Goose optionally tracks metrics about tasks run during a load test.
 pub type GooseTaskMetrics = Vec<Vec<GooseTaskAggregateMetric>>;
@@ -42,7 +42,7 @@ pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetric>;
 /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
 /// so Goose knows which request is being updated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GooseRawRequest {
+pub struct GooseRequestMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
     /// The method being used (ie, Get, Post, etc).
@@ -68,9 +68,9 @@ pub struct GooseRawRequest {
     /// The optional error caused by this request.
     pub error: String,
 }
-impl GooseRawRequest {
+impl GooseRequestMetric {
     pub fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
-        GooseRawRequest {
+        GooseRequestMetric {
             elapsed: elapsed as u64,
             method,
             name: name.to_string(),
@@ -110,7 +110,7 @@ impl GooseRawRequest {
 
 /// Metrics collected about a path-method pair, (for example `/index`-`GET`).
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseRequest {
+pub struct GooseRequestAggregateMetric {
     /// The path for which metrics are being collected.
     pub path: String,
     /// The method for which metrics are being collected.
@@ -134,11 +134,11 @@ pub struct GooseRequest {
     /// Load test hash.
     pub load_test_hash: u64,
 }
-impl GooseRequest {
-    /// Create a new GooseRequest object.
+impl GooseRequestAggregateMetric {
+    /// Create a new GooseRequestAggregateMetric object.
     pub fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
         trace!("new request");
-        GooseRequest {
+        GooseRequestAggregateMetric {
             path: path.to_string(),
             method,
             response_times: BTreeMap::new(),
@@ -229,14 +229,14 @@ impl GooseRequest {
         debug!("incremented {} counter: {}", status_code, counter);
     }
 }
-/// Implement ordering for GooseRequest.
-impl Ord for GooseRequest {
+/// Implement ordering for GooseRequestAggregateMetric.
+impl Ord for GooseRequestAggregateMetric {
     fn cmp(&self, other: &Self) -> Ordering {
         (&self.method, &self.path).cmp(&(&other.method, &other.path))
     }
 }
-/// Implement partial-ordering for GooseRequest.
-impl PartialOrd for GooseRequest {
+/// Implement partial-ordering for GooseRequestAggregateMetric.
+impl PartialOrd for GooseRequestAggregateMetric {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -1534,8 +1534,41 @@ mod test {
     }
 
     #[test]
+    fn goose_raw_request() {
+        const PATH: &str = "http://127.0.0.1/";
+        let mut raw_request = GooseRequestMetric::new(GooseMethod::Get, "/", PATH, 0, 0);
+        assert_eq!(raw_request.method, GooseMethod::Get);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
+        assert_eq!(raw_request.response_time, 0);
+        assert_eq!(raw_request.status_code, 0);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+
+        let response_time = 123;
+        raw_request.set_response_time(response_time);
+        assert_eq!(raw_request.method, GooseMethod::Get);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
+        assert_eq!(raw_request.response_time, response_time as u64);
+        assert_eq!(raw_request.status_code, 0);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+
+        let status_code = http::StatusCode::OK;
+        raw_request.set_status_code(Some(status_code));
+        assert_eq!(raw_request.method, GooseMethod::Get);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
+        assert_eq!(raw_request.response_time, response_time as u64);
+        assert_eq!(raw_request.status_code, 200);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+    }
+
+    #[test]
     fn goose_request() {
-        let mut request = GooseRequest::new("/", GooseMethod::Get, 0);
+        let mut request = GooseRequestAggregateMetric::new("/", GooseMethod::Get, 0);
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
         assert_eq!(request.response_times.len(), 0);

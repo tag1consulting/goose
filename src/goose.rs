@@ -295,7 +295,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
-use crate::metrics::{GooseMetric, GooseRawRequest};
+use crate::metrics::{GooseMetric, GooseRequestMetric};
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
 /// By default Goose sets the following User-Agent header when making requests.
@@ -332,14 +332,14 @@ pub enum GooseTaskError {
     Url(url::ParseError),
     /// The request failed.
     RequestFailed {
-        /// The [`GooseRawRequest`](./struct.GooseRawRequest.html) that failed.
-        raw_request: GooseRawRequest,
+        /// The [`GooseRequestMetric`](./struct.GooseRequestMetric.html) that failed.
+        raw_request: GooseRequestMetric,
     },
     /// The request was canceled. This happens when the throttle is enabled and the load
     /// test finishes.
     RequestCanceled {
         /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
-        /// a [`GooseRawRequest`](./struct.GooseRawRequest.html) has not yet been constructed.
+        /// a [`GooseRequestMetric`](./struct.GooseRequestMetric.html) has not yet been constructed.
         source: flume::SendError<bool>,
     },
     /// There was an error sending the metrics for a request to the parent thread.
@@ -680,12 +680,12 @@ pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTask
 #[derive(Debug)]
 pub struct GooseResponse {
     /// The request that this is a response to.
-    pub request: GooseRawRequest,
+    pub request: GooseRequestMetric,
     /// The response.
     pub response: Result<Response, reqwest::Error>,
 }
 impl GooseResponse {
-    pub fn new(request: GooseRawRequest, response: Result<Response, reqwest::Error>) -> Self {
+    pub fn new(request: GooseRequestMetric, response: Result<Response, reqwest::Error>) -> Self {
         GooseResponse { request, response }
     }
 }
@@ -697,7 +697,7 @@ pub struct GooseDebug {
     /// String to identify the source of the log message.
     pub tag: String,
     /// Optional request made.
-    pub request: Option<GooseRawRequest>,
+    pub request: Option<GooseRequestMetric>,
     /// Optional headers returned by server.
     pub header: Option<String>,
     /// Optional body text returned by server.
@@ -706,7 +706,7 @@ pub struct GooseDebug {
 impl GooseDebug {
     fn new(
         tag: &str,
-        request: Option<&GooseRawRequest>,
+        request: Option<&GooseRequestMetric>,
         header: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> Self {
@@ -888,7 +888,7 @@ impl GooseUser {
     /// [`goose_send`](./struct.GooseUser.html#method.goose_send) to invoke the request.)
     ///
     /// Calls to `get()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -915,7 +915,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `get_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -951,7 +951,7 @@ impl GooseUser {
     /// then call `goose_send` to invoke the request.)
     ///
     /// Calls to `post()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -978,7 +978,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `post_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1015,7 +1015,7 @@ impl GooseUser {
     /// then call `goose_send` to invoke the request.)
     ///
     /// Calls to `head()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1042,7 +1042,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `head_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1078,7 +1078,7 @@ impl GooseUser {
     /// then call `goose_send` to invoke the request.)
     ///
     /// Calls to `delete()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1105,7 +1105,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `delete_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1314,7 +1314,7 @@ impl GooseUser {
     /// [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html)`<bool>`,
     /// on failure. Failure only happens when `--throttle-requests` is enabled and the load test
     /// completes. The [`GooseResponse`](./struct.GooseResponse.html) object contains a copy of
-    /// the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)), and the
+    /// the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)), and the
     /// response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1362,7 +1362,7 @@ impl GooseUser {
         let request_name = self.get_request_name(&path, request_name);
 
         // Record information about the request.
-        let mut raw_request = GooseRawRequest::new(
+        let mut raw_request = GooseRequestMetric::new(
             method,
             &request_name,
             &request.url().to_string(),
@@ -1482,7 +1482,7 @@ impl GooseUser {
     ///     })
     /// }
     /// ````
-    pub fn set_success(&self, request: &mut GooseRawRequest) -> GooseTaskResult {
+    pub fn set_success(&self, request: &mut GooseRequestMetric) -> GooseTaskResult {
         // Only send update if this was previously not a success.
         if !request.success {
             request.success = true;
@@ -1503,7 +1503,7 @@ impl GooseUser {
     /// Calls to `set_failure` must include four parameters. The first, `tag`, is an
     /// arbitrary string identifying the reason for the failure, used when logging. The
     /// second, `request`, is a mutable reference to the
-    /// ([`GooseRawRequest`](./struct.GooseRawRequest.html)) object of the request being
+    /// ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)) object of the request being
     /// identified as a failure (the contained `success` field will be set to `false`,
     /// and the `update` field will be set to `true`). The last two parameters, `header`
     /// and `body`, are optional and used to provide more detail in logs.
@@ -1551,7 +1551,7 @@ impl GooseUser {
     pub fn set_failure(
         &self,
         tag: &str,
-        request: &mut GooseRawRequest,
+        request: &mut GooseRequestMetric,
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> GooseTaskResult {
@@ -1579,7 +1579,7 @@ impl GooseUser {
     /// This function provides a mechanism for optional debug logging when a load test
     /// is running. This can be especially helpful when writing a load test. Each entry
     /// must include a tag, which is an arbitrary string identifying the debug message.
-    /// It may also optionally include references to the GooseRawRequest made, the headers
+    /// It may also optionally include references to the GooseRequestMetric made, the headers
     /// returned by the server, and the response body returned by the server,
     ///
     /// As the response body can be large, the `--no-debug-body` option (or
@@ -1651,7 +1651,7 @@ impl GooseUser {
     pub fn log_debug(
         &self,
         tag: &str,
-        request: Option<&GooseRawRequest>,
+        request: Option<&GooseRequestMetric>,
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> GooseTaskResult {
@@ -2330,39 +2330,6 @@ mod tests {
         // Sequence field can be changed multiple times.
         task = task.set_sequence(8);
         assert_eq!(task.sequence, 8);
-    }
-
-    #[test]
-    fn goose_raw_request() {
-        const PATH: &str = "http://127.0.0.1/";
-        let mut raw_request = GooseRawRequest::new(GooseMethod::Get, "/", PATH, 0, 0);
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, 0);
-        assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
-
-        let response_time = 123;
-        raw_request.set_response_time(response_time);
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time as u64);
-        assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
-
-        let status_code = http::StatusCode::OK;
-        raw_request.set_status_code(Some(status_code));
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time as u64);
-        assert_eq!(raw_request.status_code, 200);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
     }
 
     #[tokio::test]

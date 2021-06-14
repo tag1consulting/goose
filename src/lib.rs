@@ -464,7 +464,9 @@ use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseDebug, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::metrics::{GooseErrorMetric, GooseMetric, GooseMetrics, GooseRawRequest, GooseRequest};
+use crate::metrics::{
+    GooseErrorMetric, GooseMetric, GooseMetrics, GooseRequestAggregateMetric, GooseRequestMetric,
+};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -2676,7 +2678,7 @@ impl GooseAttack {
 
     /// Helper to create CSV-formatted logs.
     fn prepare_csv(
-        raw_request: &GooseRawRequest,
+        raw_request: &GooseRequestMetric,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> String {
         let body = format!(
@@ -3462,7 +3464,7 @@ impl GooseAttack {
                 let method = format!("{}", request.method);
                 // The request_key is "{method} {name}", so by stripping the "{method} "
                 // prefix we get the name.
-                // @TODO: consider storing the name as a field in GooseRequest.
+                // @TODO: consider storing the name as a field in GooseRequestAggregateMetric.
                 let name = request_key
                     .strip_prefix(&format!("{} ", request.method))
                     .unwrap()
@@ -3675,7 +3677,7 @@ impl GooseAttack {
                     let method = format!("{}", request.method);
                     // The request_key is "{method} {name}", so by stripping the "{method} "
                     // prefix we get the name.
-                    // @TODO: consider storing the name as a field in GooseRequest.
+                    // @TODO: consider storing the name as a field in GooseRequestAggregateMetric.
                     let name = request_key
                         .strip_prefix(&format!("{} ", request.method))
                         .unwrap()
@@ -3964,7 +3966,7 @@ impl GooseAttack {
                         "json" => json!(raw_request).to_string(),
                         // Manually create CSV, library doesn't support single-row string conversion.
                         "csv" => GooseAttack::prepare_csv(&raw_request, goose_attack_run_state),
-                        // Raw format is Debug output for GooseRawRequest structure.
+                        // Raw format is Debug output for GooseRequestMetric structure.
                         "raw" => format!("{:?}", raw_request),
                         _ => unreachable!(),
                     };
@@ -3991,7 +3993,11 @@ impl GooseAttack {
                     let key = format!("{} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.metrics.requests.get(&key) {
                         Some(m) => m.clone(),
-                        None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
+                        None => GooseRequestAggregateMetric::new(
+                            &raw_request.name,
+                            raw_request.method,
+                            0,
+                        ),
                     };
 
                     // Handle a metrics update.
@@ -4055,7 +4061,7 @@ impl GooseAttack {
     }
 
     /// Update error metrics.
-    pub fn record_error(&mut self, raw_request: &GooseRawRequest) {
+    pub fn record_error(&mut self, raw_request: &GooseRequestMetric) {
         // If the error summary is disabled, return immediately without collecting errors.
         if self.configuration.no_error_summary {
             return;
