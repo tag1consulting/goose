@@ -463,11 +463,8 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
-use crate::goose::{
-    GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
-    GooseUserCommand,
-};
-use crate::metrics::{GooseErrorMetric, GooseMetric, GooseMetrics};
+use crate::goose::{GaggleUser, GooseDebug, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::metrics::{GooseErrorMetric, GooseMetric, GooseMetrics, GooseRawRequest, GooseRequest};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
