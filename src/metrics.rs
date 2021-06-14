@@ -19,8 +19,10 @@ use crate::goose::{GooseMethod, GooseTaskSet};
 use crate::util;
 use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 
-/// Each [`GooseUser`](../goose/struct.GooseUser.html) thread pushes these metrics to
-/// the parent for aggregation.
+/// [`GooseUser`](../goose/struct.GooseUser.html) threads push these metrics to the
+/// parent process.
+/// 
+/// The parent aggregates all [`GooseRequestMetric`]s into [`GooseRequestMetricAggregate`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
     Request(GooseRequestMetric),
@@ -29,10 +31,10 @@ pub enum GooseMetric {
 }
 
 /// Goose optionally tracks metrics about requests made during a load test.
-pub type GooseRequestMetrics = HashMap<String, GooseRequestAggregateMetric>;
+pub type GooseRequestMetrics = HashMap<String, GooseRequestMetricAggregate>;
 
 /// Goose optionally tracks metrics about tasks run during a load test.
-pub type GooseTaskMetrics = Vec<Vec<GooseTaskAggregateMetric>>;
+pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 
 /// All errors tracked during a load test.
 ///
@@ -135,7 +137,7 @@ impl GooseRequestMetric {
 
 /// Metrics collected about a path-method pair, (for example `/index`-`GET`).
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseRequestAggregateMetric {
+pub struct GooseRequestMetricAggregate {
     /// The path for which metrics are being collected.
     pub path: String,
     /// The method for which metrics are being collected.
@@ -159,11 +161,11 @@ pub struct GooseRequestAggregateMetric {
     /// Load test hash.
     pub load_test_hash: u64,
 }
-impl GooseRequestAggregateMetric {
-    /// Create a new GooseRequestAggregateMetric object.
+impl GooseRequestMetricAggregate {
+    /// Create a new GooseRequestMetricAggregate object.
     pub fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
         trace!("new request");
-        GooseRequestAggregateMetric {
+        GooseRequestMetricAggregate {
             path: path.to_string(),
             method,
             response_times: BTreeMap::new(),
@@ -254,14 +256,14 @@ impl GooseRequestAggregateMetric {
         debug!("incremented {} counter: {}", status_code, counter);
     }
 }
-/// Implement ordering for GooseRequestAggregateMetric.
-impl Ord for GooseRequestAggregateMetric {
+/// Implement ordering for GooseRequestMetricAggregate.
+impl Ord for GooseRequestMetricAggregate {
     fn cmp(&self, other: &Self) -> Ordering {
         (&self.method, &self.path).cmp(&(&other.method, &other.path))
     }
 }
-/// Implement partial-ordering for GooseRequestAggregateMetric.
-impl PartialOrd for GooseRequestAggregateMetric {
+/// Implement partial-ordering for GooseRequestMetricAggregate.
+impl PartialOrd for GooseRequestMetricAggregate {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -314,7 +316,7 @@ impl GooseTaskMetric {
 
 /// Aggregated per-task metrics updated each time a task is invoked.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseTaskAggregateMetric {
+pub struct GooseTaskMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`,
     /// indicating which task set this is.
     pub taskset_index: usize,
@@ -340,15 +342,15 @@ pub struct GooseTaskAggregateMetric {
     /// Total number of times task has failed.
     pub fail_count: usize,
 }
-impl GooseTaskAggregateMetric {
-    /// Create a new GooseTaskAggregateMetric.
+impl GooseTaskMetricAggregate {
+    /// Create a new GooseTaskMetricAggregate.
     pub fn new(
         taskset_index: usize,
         taskset_name: &str,
         task_index: usize,
         task_name: &str,
     ) -> Self {
-        GooseTaskAggregateMetric {
+        GooseTaskMetricAggregate {
             taskset_index,
             taskset_name: taskset_name.to_string(),
             task_index,
@@ -483,7 +485,7 @@ impl GooseMetrics {
             for task_set in task_sets {
                 let mut task_vector = Vec::new();
                 for task in &task_set.tasks {
-                    task_vector.push(GooseTaskAggregateMetric::new(
+                    task_vector.push(GooseTaskMetricAggregate::new(
                         task_set.task_sets_index,
                         &task_set.name,
                         task.tasks_index,
@@ -1413,7 +1415,7 @@ impl GooseAttack {
                     let key = format!("{} {}", raw_request.method, raw_request.name);
                     let mut merge_request = match self.metrics.requests.get(&key) {
                         Some(m) => m.clone(),
-                        None => GooseRequestAggregateMetric::new(
+                        None => GooseRequestMetricAggregate::new(
                             &raw_request.name,
                             raw_request.method,
                             0,
@@ -1770,7 +1772,7 @@ mod test {
 
     #[test]
     fn goose_request() {
-        let mut request = GooseRequestAggregateMetric::new("/", GooseMethod::Get, 0);
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
         assert_eq!(request.response_times.len(), 0);

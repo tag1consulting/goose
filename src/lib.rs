@@ -3461,7 +3461,7 @@ impl GooseAttack {
                 let method = format!("{}", request.method);
                 // The request_key is "{method} {name}", so by stripping the "{method} "
                 // prefix we get the name.
-                // @TODO: consider storing the name as a field in GooseRequestAggregateMetric.
+                // @TODO: consider storing the name as a field in GooseRequestMetricAggregate.
                 let name = request_key
                     .strip_prefix(&format!("{} ", request.method))
                     .unwrap()
@@ -3674,7 +3674,7 @@ impl GooseAttack {
                     let method = format!("{}", request.method);
                     // The request_key is "{method} {name}", so by stripping the "{method} "
                     // prefix we get the name.
-                    // @TODO: consider storing the name as a field in GooseRequestAggregateMetric.
+                    // @TODO: consider storing the name as a field in GooseRequestMetricAggregate.
                     let name = request_key
                         .strip_prefix(&format!("{} ", request.method))
                         .unwrap()
