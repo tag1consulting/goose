@@ -6,7 +6,7 @@ use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
 use crate::metrics::{GooseMetric, GooseTaskMetric};
 
-pub async fn user_main(
+pub(crate) async fn user_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     thread_user: GooseUser,

@@ -987,7 +987,7 @@ impl GooseAttack {
     ///
     /// This method is invoked by
     /// [`GooseAttack.execute()`](./struct.GooseAttack.html#method.execute).
-    pub fn initialize_logger(&self) {
+    pub(crate) fn initialize_logger(&self) {
         // Allow optionally controlling debug output level
         let debug_level;
         match self.configuration.verbose {

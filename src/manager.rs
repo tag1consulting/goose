@@ -251,7 +251,7 @@ fn merge_error_metrics(goose_attack: &mut GooseAttack, errors: GooseErrorMetrics
 }
 
 /// Main manager loop.
-pub async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
+pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     // Creates a TCP address.
     let address = format!(
         "tcp://{}:{}",

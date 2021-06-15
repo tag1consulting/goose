@@ -3,7 +3,7 @@
 //! By default, Goose collects a large number of metrics while performing a load test.
 //! When [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) completes
 //! it returns a [`GooseMetrics`] object.
-//! 
+//!
 //! When the [`GooseMetrics`] object is viewed with [`std::fmt::Display`], the
 //! contained [`GooseTaskMetrics`], [`GooseRequestMetrics`], and
 //! [`GooseErrorMetrics`] are displayed in tables.
@@ -218,7 +218,13 @@ pub struct GooseRequestMetric {
     pub error: String,
 }
 impl GooseRequestMetric {
-    pub(crate) fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
+    pub(crate) fn new(
+        method: GooseMethod,
+        name: &str,
+        url: &str,
+        elapsed: u128,
+        user: usize,
+    ) -> Self {
         GooseRequestMetric {
             elapsed: elapsed as u64,
             method,
@@ -265,50 +271,50 @@ impl GooseRequestMetric {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequestMetricAggregate {
     /// The request path for which metrics are being collected.
-    /// 
+    ///
     /// For example: "/".
     pub path: String,
     /// The method for which metrics are being collected.
-    /// 
+    ///
     /// For example: [`GooseMethod::Get`].
     pub method: GooseMethod,
     /// Per-response-time counters, tracking how often pages are returned with this response time.
-    /// 
+    ///
     /// All response times between 1 and 100ms are stored without any rounding. Response times between
     /// 100 and 500ms are rounded to the nearest 10ms and then stored. Response times betwee 500 and
     /// 1000ms are rounded to the nearest 100ms. Response times larger than 1000ms are rounded to the
     /// nearest 1000ms.
     pub response_times: BTreeMap<usize, usize>,
     /// The shortest response time seen so far.
-    /// 
+    ///
     /// For example a `min_response_time` of `3` means the quickest response for this method-path
     /// pair returned in 3 milliseconds. This value is not rounded.
     pub min_response_time: usize,
     /// The longest response time seen so far.
-    /// 
+    ///
     /// For example a `max_response_time` of `2013` means the slowest response for this method-path
     /// pair returned in 2013 milliseconds. This value is not rounded.
     pub max_response_time: usize,
     /// Total combined response times seen so far.
-    /// 
+    ///
     /// A running total of all response times returned for this method-path pair.
     pub total_response_time: usize,
     /// Total number of response times seen so far.
-    /// 
+    ///
     /// A count of how many requests have been tracked for this method-path pair.
     pub response_time_counter: usize,
     /// Per-status-code counters, tracking how often each response code was returned for this request.
     pub status_code_counts: HashMap<u16, usize>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
-    /// 
+    ///
     /// A count of how many requests resulted in a 2xx status code.
     pub success_count: usize,
     /// Total number of times this path-method request resulted in a non-successful (non-2xx) status code.
-    /// 
+    ///
     /// A count of how many requests resulted in a non-2xx status code.
     pub fail_count: usize,
     /// Load test hash.
-    /// 
+    ///
     /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
     /// that all Workers are running the same load test plan.
     pub load_test_hash: u64,
