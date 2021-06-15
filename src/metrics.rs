@@ -1508,8 +1508,6 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        println!("{:#?}", self.errors);
-
         // Write the errors into a vector which can then be sorted by occurrences.
         let mut errors: Vec<(usize, String)> = Vec::new();
         for error in self.errors.values() {
