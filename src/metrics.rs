@@ -218,7 +218,7 @@ pub struct GooseRequestMetric {
     pub error: String,
 }
 impl GooseRequestMetric {
-    pub fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
+    pub(crate) fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
         GooseRequestMetric {
             elapsed: elapsed as u64,
             method,
@@ -315,7 +315,7 @@ pub struct GooseRequestMetricAggregate {
 }
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
-    pub fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
+    pub(crate) fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
         trace!("new request");
         GooseRequestMetricAggregate {
             path: path.to_string(),
@@ -333,7 +333,7 @@ impl GooseRequestMetricAggregate {
     }
 
     /// Track response time.
-    pub fn set_response_time(&mut self, response_time: u64) {
+    pub(crate) fn set_response_time(&mut self, response_time: u64) {
         // Perform this conversin only once, then re-use throughout this funciton.
         let response_time_usize = response_time as usize;
 
@@ -391,7 +391,7 @@ impl GooseRequestMetricAggregate {
     }
 
     /// Increment counter for status code, creating new counter if first time seeing status code.
-    pub fn set_status_code(&mut self, status_code: u16) {
+    pub(crate) fn set_status_code(&mut self, status_code: u16) {
         let counter = match self.status_code_counts.get(&status_code) {
             // We've seen this status code before, increment counter.
             Some(c) => {
@@ -426,9 +426,9 @@ impl PartialOrd for GooseRequestMetricAggregate {
 pub struct GooseTaskMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// An index into `GooseAttack.task_sets`, indicating which task set this is.
+    /// An index into [`GooseAttack`]`.task_sets`, indicating which task set this is.
     pub taskset_index: usize,
-    /// An index into `GooseTaskSet.task`, indicating which task this is.
+    /// An index into [`GooseTaskSet`]`.task`, indicating which task this is.
     pub task_index: usize,
     /// The optional name of the task.
     pub name: String,
@@ -441,7 +441,7 @@ pub struct GooseTaskMetric {
 }
 impl GooseTaskMetric {
     /// Create a new GooseTaskMetric metric.
-    pub fn new(
+    pub(crate) fn new(
         elapsed: u128,
         taskset_index: usize,
         task_index: usize,
@@ -460,7 +460,7 @@ impl GooseTaskMetric {
     }
 
     /// Update a GooseTaskMetric metric.
-    pub fn set_time(&mut self, time: u128, success: bool) {
+    pub(crate) fn set_time(&mut self, time: u128, success: bool) {
         self.run_time = time as u64;
         self.success = success;
     }
@@ -500,7 +500,7 @@ pub struct GooseTaskMetricAggregate {
 }
 impl GooseTaskMetricAggregate {
     /// Create a new GooseTaskMetricAggregate.
-    pub fn new(
+    pub(crate) fn new(
         taskset_index: usize,
         taskset_name: &str,
         task_index: usize,
@@ -522,7 +522,7 @@ impl GooseTaskMetricAggregate {
     }
 
     /// Track task function elapsed time in milliseconds.
-    pub fn set_time(&mut self, time: u64, success: bool) {
+    pub(crate) fn set_time(&mut self, time: u64, success: bool) {
         // Perform this conversion only once, then re-use throughout this function.
         let time_usize = time as usize;
 
@@ -1619,7 +1619,7 @@ pub struct GooseErrorMetric {
     pub occurrences: usize,
 }
 impl GooseErrorMetric {
-    pub fn new(method: GooseMethod, name: String, error: String) -> Self {
+    pub(crate) fn new(method: GooseMethod, name: String, error: String) -> Self {
         GooseErrorMetric {
             method,
             name,
