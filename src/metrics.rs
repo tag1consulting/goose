@@ -17,11 +17,13 @@ use tokio::io::AsyncWriteExt;
 
 use crate::goose::{GooseMethod, GooseTaskSet};
 use crate::util;
-use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
+#[cfg(feature = "gaggle")]
+use crate::worker::{self, GaggleMetrics};
+use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 
 /// [`GooseUser`](../goose/struct.GooseUser.html) threads push these metrics to the
 /// parent process.
-/// 
+///
 /// The parent aggregates all [`GooseRequestMetric`]s into [`GooseRequestMetricAggregate`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
@@ -1362,6 +1364,119 @@ impl GooseErrorMetric {
 }
 
 impl GooseAttack {
+    // If metrics are enabled, synchronize metrics from child threads to the parent. If
+    // flush is true all metrics will be received regardless of how long it takes. If
+    // flush is false, metrics will only be received for up to 400 ms before exiting to
+    // continue on the next call to this function.
+    pub(crate) async fn sync_metrics(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        flush: bool,
+    ) -> Result<(), GooseError> {
+        if !self.configuration.no_metrics {
+            // Check if we're displaying running metrics.
+            if let Some(running_metrics) = self.configuration.running_metrics {
+                if self.attack_mode != AttackMode::Worker
+                    && util::timer_expired(
+                        goose_attack_run_state.running_metrics_timer,
+                        running_metrics,
+                    )
+                {
+                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+                    goose_attack_run_state.display_running_metrics = true;
+                }
+            }
+
+            // Load messages from user threads until the receiver queue is empty.
+            let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
+
+            // As worker, push metrics up to manager.
+            if self.attack_mode == AttackMode::Worker && received_message {
+                #[cfg(feature = "gaggle")]
+                {
+                    // Push metrics to manager process.
+                    if !worker::push_metrics_to_manager(
+                        &goose_attack_run_state.socket.clone().unwrap(),
+                        vec![
+                            GaggleMetrics::Requests(self.metrics.requests.clone()),
+                            GaggleMetrics::Tasks(self.metrics.tasks.clone()),
+                        ],
+                        true,
+                    ) {
+                        // GooseUserCommand::Exit received, cancel.
+                        goose_attack_run_state
+                            .canceled
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    // The manager has all our metrics, reset locally.
+                    self.metrics.requests = HashMap::new();
+                    self.metrics
+                        .initialize_task_metrics(&self.task_sets, &self.configuration);
+                }
+            }
+        }
+
+        // If enabled, display running metrics after sync
+        if goose_attack_run_state.display_running_metrics {
+            goose_attack_run_state.display_running_metrics = false;
+            self.update_duration();
+            self.metrics.print_running();
+        }
+
+        Ok(())
+    }
+
+    // When the [`GooseAttack`](./struct.GooseAttack.html) goes from the `Starting`
+    // phase to the `Running` phase, optionally flush metrics.
+    pub(crate) async fn reset_metrics(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        // Flush metrics collected prior to all user threads running
+        if !goose_attack_run_state.all_users_spawned {
+            // Receive metrics before resetting them.
+            self.sync_metrics(goose_attack_run_state, true).await?;
+
+            goose_attack_run_state.all_users_spawned = true;
+            let users = self.configuration.users.clone().unwrap();
+            if !self.configuration.no_reset_metrics {
+                // Display the running metrics collected so far, before resetting them.
+                self.update_duration();
+                self.metrics.print_running();
+                // Reset running_metrics_timer.
+                goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+
+                if self.metrics.display_metrics {
+                    // Users is required here so unwrap() is safe.
+                    if self.metrics.users < users {
+                        println!(
+                            "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
+                        );
+                    } else {
+                        println!(
+                            "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
+                        );
+                    }
+                }
+
+                self.metrics.requests = HashMap::new();
+                self.metrics
+                    .initialize_task_metrics(&self.task_sets, &self.configuration);
+                // Restart the timer now that all threads are launched.
+                self.started = Some(std::time::Instant::now());
+            } else if self.metrics.users < users {
+                println!(
+                    "{} of {} users hatched, timer expired.\n",
+                    self.metrics.users, users
+                );
+            } else {
+                println!("All {} users hatched.\n", self.metrics.users);
+            }
+        }
+
+        Ok(())
+    }
+
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
     // is true all metrics will be received regardless of how long it takes. If flush is
     // false, metrics will only be received for up to 400 ms before exiting to continue on
@@ -1507,6 +1622,15 @@ impl GooseAttack {
         };
         error_metrics.occurrences += 1;
         self.metrics.errors.insert(error_string, error_metrics);
+    }
+
+    // Update metrics showing how long the load test has been running.
+    pub(crate) fn update_duration(&mut self) {
+        if let Some(started) = self.started {
+            self.metrics.duration = started.elapsed().as_secs() as usize;
+        } else {
+            self.metrics.duration = 0;
+        }
     }
 }
 
