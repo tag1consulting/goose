@@ -1,7 +1,12 @@
-//! Optional metrics collected and aggregated during a load test.
+//! Optional metrics collected and aggregated during load tests.
 //!
 //! By default, Goose collects a large number of metrics while performing a load test.
-//! The metrics collected and the display of these metrics are defined in this file.
+//! When [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) completes
+//! it returns a [`GooseMetrics`] object.
+//! 
+//! When the [`GooseMetrics`] object is viewed with [`std::fmt::Display`], the
+//! contained [`GooseTaskMetrics`], [`GooseRequestMetrics`], and
+//! [`GooseErrorMetrics`] are displayed in tables.
 
 use chrono::prelude::*;
 use http::StatusCode;
@@ -21,10 +26,20 @@ use crate::util;
 use crate::worker::{self, GaggleMetrics};
 use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 
-/// [`GooseUser`](../goose/struct.GooseUser.html) threads push these metrics to the
-/// parent process.
+/// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
+/// to the parent Goose process.
 ///
-/// The parent aggregates all [`GooseRequestMetric`]s into [`GooseRequestMetricAggregate`]
+/// [`GooseUser`](../goose/struct.GooseUser.html) threads send these metrics to the
+/// Goose parent process using an
+/// [`unbounded Flume channel`](https://docs.rs/flume/*/flume/fn.unbounded.html).
+///
+/// The parent process will spend up to 80% of its time receiving and aggregating
+/// these metrics. The parent process aggregates [`GooseRequestMetric`]s into
+/// [`GooseRequestMetricAggregate`], and [`GooseTaskMetric`]s into
+/// [`GooseTaskMetricAggregate`]. [`GooseErrorMetric`]s do not require any further
+/// aggregation. Aggregation happens in the parent process so the individual
+/// [`GooseUser`](../goose/struct.GooseUser.html) threads can spend all their time
+/// generating and validating load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
     Request(GooseRequestMetric),
@@ -32,13 +47,117 @@ pub enum GooseMetric {
     Error(GooseErrorMetric),
 }
 
-/// Goose optionally tracks metrics about requests made during a load test.
+/// All requests made during a load test.
+///
+/// Goose optionally tracks metrics about requests made during a load test. The
+/// metrics can be disabled with the `--no-metrics` run-time option, or with
+/// [`GooseDefault::NoMetrics`](../enum.GooseDefault.html#variant.NoMetrics).
+///
+/// Aggregated requests ([`GooseRequestMetricAggregate`]) are stored in a HashMap
+/// with they key `method request-name`, for example `GET /`.
+///
+/// # Example
+/// When viewed with [`std::fmt::Display`], [`GooseRequestMetrics`] are displayed in
+/// a table:
+/// ```text
+/// === PER REQUEST METRICS ===
+/// ------------------------------------------------------------------------------
+/// Name                     |        # reqs |        # fails |    req/s |  fail/s
+/// ------------------------------------------------------------------------------
+/// GET (Anon) front page    |           438 |         0 (0%) |    43.80 |    0.00
+/// GET (Anon) node page     |           296 |         0 (0%) |    29.60 |    0.00
+/// GET (Anon) user page     |            90 |         0 (0%) |     9.00 |    0.00
+/// GET (Auth) comment form  |            19 |         0 (0%) |     1.90 |    0.00
+/// GET (Auth) front page    |           108 |         0 (0%) |    10.80 |    0.00
+/// GET (Auth) node page     |            74 |         0 (0%) |     7.40 |    0.00
+/// GET (Auth) user page     |            19 |         0 (0%) |     1.90 |    0.00
+/// GET static asset         |         3,288 |         0 (0%) |   328.80 |    0.00
+/// POST (Auth) comment form |            20 |         0 (0%) |     2.00 |    0.00
+/// -------------------------+---------------+----------------+----------+--------
+/// Aggregated               |         4,352 |         0 (0%) |   435.20 |    0.00
+/// ------------------------------------------------------------------------------
+/// Name                     |    Avg (ms) |        Min |        Max |      Median
+/// ------------------------------------------------------------------------------
+/// GET (Anon) front page    |       14.22 |          2 |         211 |         14
+/// GET (Anon) node page     |       53.26 |          3 |          96 |         53
+/// GET (Anon) user page     |       32.97 |         17 |         221 |         30
+/// GET (Auth) comment form  |       54.32 |         36 |          88 |         50
+/// GET (Auth) front page    |       39.02 |         25 |         232 |         38
+/// GET (Auth) node page     |       52.08 |         36 |          81 |         51
+/// GET (Auth) user page     |       31.21 |         25 |          40 |         31
+/// GET static asset         |       11.55 |          3 |         217 |          8
+/// POST (Auth) comment form |       54.30 |         41 |          73 |         52
+/// -------------------------+-------------+------------+-------------+-----------
+/// Aggregated               |       16.94 |          2 |         232 |         10
+/// ------------------------------------------------------------------------------
+/// Slowest page load within specified percentile of requests (in ms):
+/// ------------------------------------------------------------------------------
+/// Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+/// ------------------------------------------------------------------------------
+/// GET (Anon) front page    |     14 |     18 |     30 |     43 |    210 |    210
+/// GET (Anon) node page     |     53 |     62 |     78 |     86 |     96 |     96
+/// GET (Anon) user page     |     30 |     33 |     43 |     53 |    220 |    220
+/// GET (Auth) comment form  |     50 |     65 |     88 |     88 |     88 |     88
+/// GET (Auth) front page    |     38 |     43 |     58 |     59 |    230 |    230
+/// GET (Auth) node page     |     51 |     58 |     72 |     72 |     81 |     81
+/// GET (Auth) user page     |     31 |     33 |     40 |     40 |     40 |     40
+/// GET static asset         |      8 |     16 |     30 |     36 |    210 |    210
+/// POST (Auth) comment form |     52 |     59 |     73 |     73 |     73 |     73
+/// -------------------------+--------+--------+--------+--------+--------+-------
+/// Aggregated               |     10 |     20 |     64 |     71 |    210 |    230
+/// ```
 pub type GooseRequestMetrics = HashMap<String, GooseRequestMetricAggregate>;
 
-/// Goose optionally tracks metrics about tasks run during a load test.
+/// All tasks executed during a load test.
+///
+/// Goose optionally tracks metrics about tasks executed during a load test. The
+/// metrics can be disabled with either the `--no-task-metrics` or the `--no-metrics`
+/// run-time option, or with either
+/// [`GooseDefault::NoTaskMetrics`](../enum.GooseDefault.html#variant.NoTaskMetrics) or
+/// [`GooseDefault::NoMetrics`](../enum.GooseDefault.html#variant.NoMetrics).
+///
+/// Aggregated tasks ([`GooseTaskMetricAggregate`]) are stored in a Vector of Vectors
+/// keyed to the order the task is created in the load test.
+///
+/// # Example
+/// When viewed with [`std::fmt::Display`], [`GooseTaskMetrics`] are displayed in
+/// a table:
+/// ```text
+///  === PER TASK METRICS ===
+/// ------------------------------------------------------------------------------
+/// Name                     |   # times run |        # fails |   task/s |  fail/s
+/// ------------------------------------------------------------------------------
+/// 1: AnonBrowsingUser      |
+///   1: (Anon) front page   |           440 |         0 (0%) |    44.00 |    0.00
+///   2: (Anon) node page    |           296 |         0 (0%) |    29.60 |    0.00
+///   3: (Anon) user page    |            90 |         0 (0%) |     9.00 |    0.00
+/// 2: AuthBrowsingUser      |
+///   1: (Auth) login        |             0 |         0 (0%) |     0.00 |    0.00
+///   2: (Auth) front page   |           109 |         0 (0%) |    10.90 |    0.00
+///   3: (Auth) node page    |            74 |         0 (0%) |     7.40 |    0.00
+///   4: (Auth) user page    |            19 |         0 (0%) |     1.90 |    0.00
+///   5: (Auth) comment form |            20 |         0 (0%) |     2.00 |    0.00
+/// -------------------------+---------------+----------------+----------+--------
+/// Aggregated               |         1,048 |         0 (0%) |   104.80 |    0.00
+/// ------------------------------------------------------------------------------
+/// Name                     |    Avg (ms) |        Min |         Max |     Median
+/// ------------------------------------------------------------------------------
+/// 1: AnonBrowsingUser      |
+///   1: (Anon) front page   |       94.41 |         59 |         294 |         88
+///   2: (Anon) node page    |       53.29 |          3 |          96 |         53
+///   3: (Anon) user page    |       33.02 |         17 |         221 |         30
+/// 2: AuthBrowsingUser      |
+///   1: (Auth) login        |        0.00 |          0 |           0 |          0
+///   2: (Auth) front page   |      119.45 |         84 |         307 |        110
+///   3: (Auth) node page    |       52.16 |         37 |          81 |         51
+///   4: (Auth) user page    |       31.21 |         25 |          40 |         31
+///   5: (Auth) comment form |      135.10 |        107 |         175 |        130
+/// -------------------------+-------------+------------+-------------+-----------
+/// Aggregated               |       76.78 |          3 |         307 |         74
+/// ```
 pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 
-/// All errors tracked during a load test.
+/// All errors detected during a load test.
 ///
 /// By default Goose tracks all errors detected during the load test. Each error is stored
 /// as a [`GooseErrorMetric`](./struct.GooseErrorMetric.html), and they are all stored
@@ -50,7 +169,8 @@ pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 /// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
 ///
 /// # Example
-/// `GooseErrorMetrics` are displayed in a table:
+/// When viewed with [`std::fmt::Display`], [`GooseErrorMetrics`] are displayed in
+/// a table:
 /// ```text
 ///  === ERRORS ===
 /// ------------------------------------------------------------------------------
@@ -137,30 +257,60 @@ impl GooseRequestMetric {
     }
 }
 
-/// Metrics collected about a path-method pair, (for example `/index`-`GET`).
+/// Metrics collected about a method-path pair, (for example `GET /index`).
+///
+/// [`GooseRequestMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
+/// threads to the Goose parent process where they are aggregated together into this
+/// structure, and stored in [`GooseMetrics::requests`].
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequestMetricAggregate {
-    /// The path for which metrics are being collected.
+    /// The request path for which metrics are being collected.
+    /// 
+    /// For example: "/".
     pub path: String,
     /// The method for which metrics are being collected.
+    /// 
+    /// For example: [`GooseMethod::Get`].
     pub method: GooseMethod,
     /// Per-response-time counters, tracking how often pages are returned with this response time.
+    /// 
+    /// All response times between 1 and 100ms are stored without any rounding. Response times between
+    /// 100 and 500ms are rounded to the nearest 10ms and then stored. Response times betwee 500 and
+    /// 1000ms are rounded to the nearest 100ms. Response times larger than 1000ms are rounded to the
+    /// nearest 1000ms.
     pub response_times: BTreeMap<usize, usize>,
     /// The shortest response time seen so far.
+    /// 
+    /// For example a `min_response_time` of `3` means the quickest response for this method-path
+    /// pair returned in 3 milliseconds. This value is not rounded.
     pub min_response_time: usize,
     /// The longest response time seen so far.
+    /// 
+    /// For example a `max_response_time` of `2013` means the slowest response for this method-path
+    /// pair returned in 2013 milliseconds. This value is not rounded.
     pub max_response_time: usize,
     /// Total combined response times seen so far.
+    /// 
+    /// A running total of all response times returned for this method-path pair.
     pub total_response_time: usize,
     /// Total number of response times seen so far.
+    /// 
+    /// A count of how many requests have been tracked for this method-path pair.
     pub response_time_counter: usize,
     /// Per-status-code counters, tracking how often each response code was returned for this request.
     pub status_code_counts: HashMap<u16, usize>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
+    /// 
+    /// A count of how many requests resulted in a 2xx status code.
     pub success_count: usize,
     /// Total number of times this path-method request resulted in a non-successful (non-2xx) status code.
+    /// 
+    /// A count of how many requests resulted in a non-2xx status code.
     pub fail_count: usize,
     /// Load test hash.
+    /// 
+    /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
+    /// that all Workers are running the same load test plan.
     pub load_test_hash: u64,
 }
 impl GooseRequestMetricAggregate {
@@ -276,9 +426,9 @@ impl PartialOrd for GooseRequestMetricAggregate {
 pub struct GooseTaskMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// An index into GooseAttack.task_sets, indicating which task set this is.
+    /// An index into `GooseAttack.task_sets`, indicating which task set this is.
     pub taskset_index: usize,
-    /// An index into GooseTaskSet.task, indicating which task this is.
+    /// An index into `GooseTaskSet.task`, indicating which task this is.
     pub task_index: usize,
     /// The optional name of the task.
     pub name: String,
@@ -317,6 +467,10 @@ impl GooseTaskMetric {
 }
 
 /// Aggregated per-task metrics updated each time a task is invoked.
+///
+/// [`GooseTaskMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
+/// threads to the Goose parent process where they are aggregated together into this
+/// structure, and stored in [`GooseMetrics::tasks`].
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseTaskMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`,
@@ -418,7 +572,12 @@ impl GooseTaskMetricAggregate {
     }
 }
 
-/// Metrics collected during a Goose load test.
+/// All metrics optionally collected during a Goose load test.
+///
+/// By default, Goose collects metrics during a load test in a `GooseMetrics` object
+/// that is returned by
+/// [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load
+/// test finishes.
 ///
 /// # Example
 /// ```rust
@@ -439,6 +598,72 @@ impl GooseTaskMetricAggregate {
 ///     // For now, we'll just pretty-print the entire object.
 ///     println!("{:#?}", goose_metrics);
 ///
+///     /**
+///     // For example:
+///     $ cargo run -- -H http://example.com -v -u1 -t1
+///     GooseMetrics {
+///         hash: 0,
+///         started: Some(
+///             2021-06-15T09:32:49.888147+02:00,
+///         ),
+///         duration: 1,
+///         users: 1,
+///         requests: {
+///             "GET /": GooseRequestMetricAggregate {
+///                 path: "/",
+///                 method: Get,
+///                 response_times: {
+///                     3: 14,
+///                     4: 163,
+///                     5: 36,
+///                     6: 8,
+///                 },
+///                 min_response_time: 3,
+///                 max_response_time: 6,
+///                 total_response_time: 922,
+///                 response_time_counter: 221,
+///                 status_code_counts: {},
+///                 success_count: 0,
+///                 fail_count: 221,
+///                 load_test_hash: 0,
+///             },
+///         },
+///         tasks: [
+///             [
+///                 GooseTaskMetricAggregate {
+///                     taskset_index: 0,
+///                     taskset_name: "ExampleUsers",
+///                     task_index: 0,
+///                     task_name: "",
+///                     times: {
+///                         3: 14,
+///                         4: 161,
+///                         5: 38,
+///                         6: 8,
+///                     },
+///                     min_time: 3,
+///                     max_time: 6,
+///                     total_time: 924,
+///                     counter: 221,
+///                     success_count: 221,
+///                     fail_count: 0,
+///                 },
+///             ],
+///         ],
+///         errors: {
+///             "503 Service Unavailable: /.GET./": GooseErrorMetric {
+///                 method: Get,
+///                 name: "/",
+///                 error: "503 Service Unavailable: /",
+///                 occurrences: 221,
+///             },
+///         },
+///         final_metrics: true,
+///         display_status_codes: false,
+///         display_metrics: true,
+///     }
+///     **/
+///
 ///     Ok(())
 /// }
 ///
@@ -450,34 +675,49 @@ impl GooseTaskMetricAggregate {
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct GooseMetrics {
-    /// A hash of the load test, useful to verify if different metrics are from
-    /// the same load test.
+    /// A hash of the load test, primarily used to validate all Workers in a Gaggle
+    /// are running the same load test.
     pub hash: u64,
-    /// The system timestamp of when the load test started.
+    /// An optional system timestamp indicating when the load test started.
     pub started: Option<DateTime<Local>>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
+    ///
+    /// This value may be smaller than what was configured at start time if the test
+    /// didn't run long enough for all configured users to start.
     pub users: usize,
-    /// Goose request metrics.
+    /// Tracks details about each request made during the load test.
+    ///
+    /// Can be disabled with the `--no-metrics` run-time option, or with
+    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
     pub requests: GooseRequestMetrics,
-    /// Goose task metrics.
+    /// Tracks details about each task that is invoked during the load test.
+    ///
+    /// Can be disabled with either the `--no-task-metrics` or `--no-metrics` run-time options,
+    /// or with either the
+    /// [GooseDefault::NoTaskMetrics](../enum.GooseDefault.html#variant.NoTaskMetrics) or
+    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
     pub tasks: GooseTaskMetrics,
-    /// Error-related metrics.
+    /// Tracks and counts each time an error is detected during the load test.
+    ///
+    /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
+    /// or with either the
+    /// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary) or
+    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
     pub errors: GooseErrorMetrics,
-    /// Flag indicating whether or not these are the final metrics. Because we're deriving
-    /// Default, this defaults to false.
-    pub final_metrics: bool,
-    /// Flag indicating whether or not to display status_codes. Because we're deriving Default,
-    /// this defaults to false.
-    pub display_status_codes: bool,
-    /// Flag indicating whether or not to display metrics, set to false on Workers. This
-    /// defaults to false because we're deriving Default.
-    pub display_metrics: bool,
+    /// Flag indicating whether or not these are the final metrics, used to determine
+    /// which metrics should be displayed. Defaults to false.
+    pub(crate) final_metrics: bool,
+    /// Flag indicating whether or not to display status_codes. Defaults to false.
+    pub(crate) display_status_codes: bool,
+    /// Flag indicating whether or not to display metrics. This defaults to false on
+    /// Workers, otherwise true.
+    pub(crate) display_metrics: bool,
 }
 impl GooseMetrics {
     /// Initialize the task_metrics vector.
-    pub fn initialize_task_metrics(
+    pub(crate) fn initialize_task_metrics(
         &mut self,
         task_sets: &[GooseTaskSet],
         config: &GooseConfiguration,
@@ -499,7 +739,7 @@ impl GooseMetrics {
         }
     }
 
-    /// Consumes and display all metrics from a completed load test.
+    /// Consumes and display all enabled metrics from a completed load test.
     ///
     /// # Example
     /// ```rust
@@ -533,8 +773,13 @@ impl GooseMetrics {
         }
     }
 
-    /// Consumes and displays metrics from a running load test.
-    pub fn print_running(&self) {
+    /// Displays metrics while a load test is running.
+    ///
+    /// This function is invoked one time immediately after all GooseUsers are
+    /// started, unless the `--no-reset-metrics` run-time option is enabled. It
+    /// is invoked at regular intervals if the `--running-metrics` run-time
+    /// option is enabled.
+    pub(crate) fn print_running(&self) {
         if self.display_metrics {
             info!(
                 "printing running metrics after {} seconds...",
@@ -547,7 +792,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of requests and fails.
-    pub fn fmt_requests(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_requests(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(());
@@ -671,7 +919,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of tasks.
-    pub fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.tasks.is_empty() || !self.display_metrics {
             return Ok(());
@@ -820,7 +1071,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of task times.
-    pub fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.tasks.is_empty() || !self.display_metrics {
             return Ok(());
@@ -935,7 +1189,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of response times.
-    pub fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(());
@@ -1032,7 +1289,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of slowest response times within several percentiles.
-    pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Only include percentiles when displaying the final metrics report.
         if !self.final_metrics {
             return Ok(());
@@ -1189,7 +1449,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of response status codes.
-    pub fn fmt_status_codes(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_status_codes(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_status_codes {
             return Ok(());
@@ -1229,7 +1492,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of errors.
-    pub fn fmt_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Only include errors when displaying the final metrics report, and if there are
         // errors to display.
         if !self.final_metrics || self.errors.is_empty() {
@@ -1324,16 +1590,16 @@ impl fmt::Display for GooseMetrics {
 ///
 /// Individual `GooseErrorMetric`s are stored within a
 /// [`GooseErrorMetrics`](./type.GooseErrorMetrics.html) `BTreeMap` with a string key of
-/// `error.method.name`. The `BTreeMap` is what is returned by
-/// [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load test
-/// finishes.
+/// `error.method.name`. The `BTreeMap` is found in the `errors` field of what is returned
+/// by [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load
+/// test finishes.
 ///
 /// Can be disabled with the `--no-error-summary` run-time option, or with
 /// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
 ///
 /// # Example
 /// In this example, requests to load the front page are failing:
-/// ```
+/// ```text
 /// GooseErrorMetric {
 ///     method: Get,
 ///     name: "(Anon) front page",
