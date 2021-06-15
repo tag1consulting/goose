@@ -447,7 +447,6 @@ use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
@@ -463,11 +462,8 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
-use crate::goose::{
-    GaggleUser, GooseDebug, GooseRawRequest, GooseRequest, GooseTask, GooseTaskSet, GooseUser,
-    GooseUserCommand,
-};
-use crate::metrics::{GooseErrorMetric, GooseMetric, GooseMetrics};
+use crate::goose::{GaggleUser, GooseDebug, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::metrics::{GooseMetric, GooseMetrics, GooseRequestMetric};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -991,7 +987,7 @@ impl GooseAttack {
     ///
     /// This method is invoked by
     /// [`GooseAttack.execute()`](./struct.GooseAttack.html#method.execute).
-    pub fn initialize_logger(&self) {
+    pub(crate) fn initialize_logger(&self) {
         // Allow optionally controlling debug output level
         let debug_level;
         match self.configuration.verbose {
@@ -2679,7 +2675,7 @@ impl GooseAttack {
 
     /// Helper to create CSV-formatted logs.
     fn prepare_csv(
-        raw_request: &GooseRawRequest,
+        raw_request: &GooseRequestMetric,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> String {
         let body = format!(
@@ -3172,15 +3168,6 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Update metrics showing how long the load test has been running.
-    fn update_duration(&mut self) {
-        if let Some(started) = self.started {
-            self.metrics.duration = started.elapsed().as_secs() as usize;
-        } else {
-            self.metrics.duration = 0;
-        }
-    }
-
     // Let the [`GooseAttack`](./struct.GooseAttack.html) run until the timer expires
     // (or the test is canceled), and then trigger a shut down.
     async fn monitor_attack(
@@ -3297,119 +3284,6 @@ impl GooseAttack {
         Ok(())
     }
 
-    // If metrics are enabled, synchronize metrics from child threads to the parent. If
-    // flush is true all metrics will be received regardless of how long it takes. If
-    // flush is false, metrics will only be received for up to 400 ms before exiting to
-    // continue on the next call to this function.
-    async fn sync_metrics(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-        flush: bool,
-    ) -> Result<(), GooseError> {
-        if !self.configuration.no_metrics {
-            // Check if we're displaying running metrics.
-            if let Some(running_metrics) = self.configuration.running_metrics {
-                if self.attack_mode != AttackMode::Worker
-                    && util::timer_expired(
-                        goose_attack_run_state.running_metrics_timer,
-                        running_metrics,
-                    )
-                {
-                    goose_attack_run_state.running_metrics_timer = time::Instant::now();
-                    goose_attack_run_state.display_running_metrics = true;
-                }
-            }
-
-            // Load messages from user threads until the receiver queue is empty.
-            let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
-
-            // As worker, push metrics up to manager.
-            if self.attack_mode == AttackMode::Worker && received_message {
-                #[cfg(feature = "gaggle")]
-                {
-                    // Push metrics to manager process.
-                    if !worker::push_metrics_to_manager(
-                        &goose_attack_run_state.socket.clone().unwrap(),
-                        vec![
-                            GaggleMetrics::Requests(self.metrics.requests.clone()),
-                            GaggleMetrics::Tasks(self.metrics.tasks.clone()),
-                        ],
-                        true,
-                    ) {
-                        // GooseUserCommand::Exit received, cancel.
-                        goose_attack_run_state
-                            .canceled
-                            .store(true, Ordering::SeqCst);
-                    }
-                    // The manager has all our metrics, reset locally.
-                    self.metrics.requests = HashMap::new();
-                    self.metrics
-                        .initialize_task_metrics(&self.task_sets, &self.configuration);
-                }
-            }
-        }
-
-        // If enabled, display running metrics after sync
-        if goose_attack_run_state.display_running_metrics {
-            goose_attack_run_state.display_running_metrics = false;
-            self.update_duration();
-            self.metrics.print_running();
-        }
-
-        Ok(())
-    }
-
-    // When the [`GooseAttack`](./struct.GooseAttack.html) goes from the `Starting`
-    // phase to the `Running` phase, optionally flush metrics.
-    async fn reset_metrics(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) -> Result<(), GooseError> {
-        // Flush metrics collected prior to all user threads running
-        if !goose_attack_run_state.all_users_spawned {
-            // Receive metrics before resetting them.
-            self.sync_metrics(goose_attack_run_state, true).await?;
-
-            goose_attack_run_state.all_users_spawned = true;
-            let users = self.configuration.users.clone().unwrap();
-            if !self.configuration.no_reset_metrics {
-                // Display the running metrics collected so far, before resetting them.
-                self.update_duration();
-                self.metrics.print_running();
-                // Reset running_metrics_timer.
-                goose_attack_run_state.running_metrics_timer = time::Instant::now();
-
-                if self.metrics.display_metrics {
-                    // Users is required here so unwrap() is safe.
-                    if self.metrics.users < users {
-                        println!(
-                            "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
-                        );
-                    } else {
-                        println!(
-                            "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
-                        );
-                    }
-                }
-
-                self.metrics.requests = HashMap::new();
-                self.metrics
-                    .initialize_task_metrics(&self.task_sets, &self.configuration);
-                // Restart the timer now that all threads are launched.
-                self.started = Some(time::Instant::now());
-            } else if self.metrics.users < users {
-                println!(
-                    "{} of {} users hatched, timer expired.\n",
-                    self.metrics.users, users
-                );
-            } else {
-                println!("All {} users hatched.\n", self.metrics.users);
-            }
-        }
-
-        Ok(())
-    }
-
     // Cleanly shut down the [`GooseAttack`](./struct.GooseAttack.html).
     async fn stop_attack(
         &mut self,
@@ -3465,7 +3339,7 @@ impl GooseAttack {
                 let method = format!("{}", request.method);
                 // The request_key is "{method} {name}", so by stripping the "{method} "
                 // prefix we get the name.
-                // @TODO: consider storing the name as a field in GooseRequest.
+                // @TODO: consider storing the name as a field in GooseRequestMetricAggregate.
                 let name = request_key
                     .strip_prefix(&format!("{} ", request.method))
                     .unwrap()
@@ -3678,7 +3552,7 @@ impl GooseAttack {
                     let method = format!("{}", request.method);
                     // The request_key is "{method} {name}", so by stripping the "{method} "
                     // prefix we get the name.
-                    // @TODO: consider storing the name as a field in GooseRequest.
+                    // @TODO: consider storing the name as a field in GooseRequestMetricAggregate.
                     let name = request_key
                         .strip_prefix(&format!("{} ", request.method))
                         .unwrap()
@@ -3939,149 +3813,6 @@ impl GooseAttack {
         }
 
         Ok(self)
-    }
-
-    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
-    // is true all metrics will be received regardless of how long it takes. If flush is
-    // false, metrics will only be received for up to 400 ms before exiting to continue on
-    // the next call to this function.
-    async fn receive_metrics(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-        flush: bool,
-    ) -> Result<bool, GooseError> {
-        let mut received_message = false;
-        let mut message = goose_attack_run_state.metrics_rx.try_recv();
-
-        // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
-        let receive_timeout = 400;
-        let receive_started = time::Instant::now();
-
-        while message.is_ok() {
-            received_message = true;
-            match message.unwrap() {
-                GooseMetric::Request(raw_request) => {
-                    // Options should appear above, search for formatted_log.
-                    let formatted_log = match self.configuration.requests_format.as_str() {
-                        // Use serde_json to create JSON.
-                        "json" => json!(raw_request).to_string(),
-                        // Manually create CSV, library doesn't support single-row string conversion.
-                        "csv" => GooseAttack::prepare_csv(&raw_request, goose_attack_run_state),
-                        // Raw format is Debug output for GooseRawRequest structure.
-                        "raw" => format!("{:?}", raw_request),
-                        _ => unreachable!(),
-                    };
-                    if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
-                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                            Ok(_) => (),
-                            Err(e) => {
-                                warn!(
-                                    "failed to write metrics to {}: {}",
-                                    // Unwrap is safe as we can't get here unless a requests file path
-                                    // is defined.
-                                    self.get_requests_file_path().unwrap(),
-                                    e
-                                );
-                            }
-                        }
-                    }
-
-                    // If there was an error, store it.
-                    if !raw_request.error.is_empty() {
-                        self.record_error(&raw_request);
-                    }
-
-                    let key = format!("{} {}", raw_request.method, raw_request.name);
-                    let mut merge_request = match self.metrics.requests.get(&key) {
-                        Some(m) => m.clone(),
-                        None => GooseRequest::new(&raw_request.name, raw_request.method, 0),
-                    };
-
-                    // Handle a metrics update.
-                    if raw_request.update {
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                            merge_request.fail_count -= 1;
-                        } else {
-                            merge_request.success_count -= 1;
-                            merge_request.fail_count += 1;
-                        }
-                    }
-                    // Store a new metric.
-                    else {
-                        merge_request.set_response_time(raw_request.response_time);
-                        if self.configuration.status_codes {
-                            merge_request.set_status_code(raw_request.status_code);
-                        }
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                        } else {
-                            merge_request.fail_count += 1;
-                        }
-                    }
-
-                    self.metrics.requests.insert(key.to_string(), merge_request);
-                }
-                GooseMetric::Error(raw_error) => {
-                    // Recreate the string used to uniquely identify errors.
-                    let error_key = format!(
-                        "{}.{}.{}",
-                        raw_error.error, raw_error.method, raw_error.name
-                    );
-                    let mut merge_error = match self.metrics.errors.get(&error_key) {
-                        Some(error) => error.clone(),
-                        None => GooseErrorMetric::new(
-                            raw_error.method.clone(),
-                            raw_error.name.to_string(),
-                            raw_error.error.to_string(),
-                        ),
-                    };
-                    merge_error.occurrences += raw_error.occurrences;
-                    self.metrics
-                        .errors
-                        .insert(error_key.to_string(), merge_error);
-                }
-                GooseMetric::Task(raw_task) => {
-                    // Store a new metric.
-                    self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
-                        .set_time(raw_task.run_time, raw_task.success);
-                }
-            }
-            // Unless flushing all metrics, break out of receive loop after timeout.
-            if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
-                break;
-            }
-            message = goose_attack_run_state.metrics_rx.try_recv();
-        }
-
-        Ok(received_message)
-    }
-
-    /// Update error metrics.
-    pub fn record_error(&mut self, raw_request: &GooseRawRequest) {
-        // If the error summary is disabled, return immediately without collecting errors.
-        if self.configuration.no_error_summary {
-            return;
-        }
-
-        // Create a string to uniquely identify errors for tracking metrics.
-        let error_string = format!(
-            "{}.{}.{}",
-            raw_request.error, raw_request.method, raw_request.name
-        );
-
-        let mut error_metrics = match self.metrics.errors.get(&error_string) {
-            // We've seen this error before.
-            Some(m) => m.clone(),
-            // First time we've seen this error.
-            None => GooseErrorMetric::new(
-                raw_request.method.clone(),
-                raw_request.name.to_string(),
-                raw_request.error.to_string(),
-            ),
-        };
-        error_metrics.occurrences += 1;
-        self.metrics.errors.insert(error_string, error_metrics);
     }
 }
 

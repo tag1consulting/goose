@@ -4,9 +4,9 @@ use std::time;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::metrics::{GooseMetric, GooseRawTask};
+use crate::metrics::{GooseMetric, GooseTaskMetric};
 
-pub async fn user_main(
+pub(crate) async fn user_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
     thread_user: GooseUser,
@@ -150,7 +150,7 @@ async fn invoke_task_function(
     thread_task_name: &str,
 ) {
     let started = time::Instant::now();
-    let mut raw_task = GooseRawTask::new(
+    let mut raw_task = GooseTaskMetric::new(
         thread_user.started.elapsed().as_millis(),
         thread_user.task_sets_index,
         thread_task_index,

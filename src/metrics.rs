@@ -1,46 +1,440 @@
-//! Optionally collects and aggregates metrics during a load test.
+//! Optional metrics collected and aggregated during load tests.
 //!
 //! By default, Goose collects a large number of metrics while performing a load test.
-//! The metrics collected and the display of these metrics are defined in this file.
+//! When [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) completes
+//! it returns a [`GooseMetrics`] object.
+//!
+//! When the [`GooseMetrics`] object is viewed with [`std::fmt::Display`], the
+//! contained [`GooseTaskMetrics`], [`GooseRequestMetrics`], and
+//! [`GooseErrorMetrics`] are displayed in tables.
 
 use chrono::prelude::*;
+use http::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
+use serde_json::json;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::{f32, fmt};
+use tokio::io::AsyncWriteExt;
 
-use crate::goose::{GooseMethod, GooseRawRequest, GooseRequest, GooseTaskSet};
+use crate::goose::{GooseMethod, GooseTaskSet};
 use crate::util;
-use crate::GooseConfiguration;
+#[cfg(feature = "gaggle")]
+use crate::worker::{self, GaggleMetrics};
+use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 
-/// Each [`GooseUser`](../goose/struct.GooseUser.html) thread pushes these metrics to
-/// the parent for aggregation.
+/// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
+/// to the parent Goose process.
+///
+/// [`GooseUser`](../goose/struct.GooseUser.html) threads send these metrics to the
+/// Goose parent process using an
+/// [`unbounded Flume channel`](https://docs.rs/flume/*/flume/fn.unbounded.html).
+///
+/// The parent process will spend up to 80% of its time receiving and aggregating
+/// these metrics. The parent process aggregates [`GooseRequestMetric`]s into
+/// [`GooseRequestMetricAggregate`], and [`GooseTaskMetric`]s into
+/// [`GooseTaskMetricAggregate`]. [`GooseErrorMetric`]s do not require any further
+/// aggregation. Aggregation happens in the parent process so the individual
+/// [`GooseUser`](../goose/struct.GooseUser.html) threads can spend all their time
+/// generating and validating load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
-    Request(GooseRawRequest),
-    Task(GooseRawTask),
+    Request(GooseRequestMetric),
+    Task(GooseTaskMetric),
     Error(GooseErrorMetric),
 }
 
-/// Goose optionally tracks metrics about requests made during a load test.
-pub type GooseRequestMetrics = HashMap<String, GooseRequest>;
+/// All requests made during a load test.
+///
+/// Goose optionally tracks metrics about requests made during a load test. The
+/// metrics can be disabled with the `--no-metrics` run-time option, or with
+/// [`GooseDefault::NoMetrics`](../enum.GooseDefault.html#variant.NoMetrics).
+///
+/// Aggregated requests ([`GooseRequestMetricAggregate`]) are stored in a HashMap
+/// with they key `method request-name`, for example `GET /`.
+///
+/// # Example
+/// When viewed with [`std::fmt::Display`], [`GooseRequestMetrics`] are displayed in
+/// a table:
+/// ```text
+/// === PER REQUEST METRICS ===
+/// ------------------------------------------------------------------------------
+/// Name                     |        # reqs |        # fails |    req/s |  fail/s
+/// ------------------------------------------------------------------------------
+/// GET (Anon) front page    |           438 |         0 (0%) |    43.80 |    0.00
+/// GET (Anon) node page     |           296 |         0 (0%) |    29.60 |    0.00
+/// GET (Anon) user page     |            90 |         0 (0%) |     9.00 |    0.00
+/// GET (Auth) comment form  |            19 |         0 (0%) |     1.90 |    0.00
+/// GET (Auth) front page    |           108 |         0 (0%) |    10.80 |    0.00
+/// GET (Auth) node page     |            74 |         0 (0%) |     7.40 |    0.00
+/// GET (Auth) user page     |            19 |         0 (0%) |     1.90 |    0.00
+/// GET static asset         |         3,288 |         0 (0%) |   328.80 |    0.00
+/// POST (Auth) comment form |            20 |         0 (0%) |     2.00 |    0.00
+/// -------------------------+---------------+----------------+----------+--------
+/// Aggregated               |         4,352 |         0 (0%) |   435.20 |    0.00
+/// ------------------------------------------------------------------------------
+/// Name                     |    Avg (ms) |        Min |        Max |      Median
+/// ------------------------------------------------------------------------------
+/// GET (Anon) front page    |       14.22 |          2 |         211 |         14
+/// GET (Anon) node page     |       53.26 |          3 |          96 |         53
+/// GET (Anon) user page     |       32.97 |         17 |         221 |         30
+/// GET (Auth) comment form  |       54.32 |         36 |          88 |         50
+/// GET (Auth) front page    |       39.02 |         25 |         232 |         38
+/// GET (Auth) node page     |       52.08 |         36 |          81 |         51
+/// GET (Auth) user page     |       31.21 |         25 |          40 |         31
+/// GET static asset         |       11.55 |          3 |         217 |          8
+/// POST (Auth) comment form |       54.30 |         41 |          73 |         52
+/// -------------------------+-------------+------------+-------------+-----------
+/// Aggregated               |       16.94 |          2 |         232 |         10
+/// ------------------------------------------------------------------------------
+/// Slowest page load within specified percentile of requests (in ms):
+/// ------------------------------------------------------------------------------
+/// Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+/// ------------------------------------------------------------------------------
+/// GET (Anon) front page    |     14 |     18 |     30 |     43 |    210 |    210
+/// GET (Anon) node page     |     53 |     62 |     78 |     86 |     96 |     96
+/// GET (Anon) user page     |     30 |     33 |     43 |     53 |    220 |    220
+/// GET (Auth) comment form  |     50 |     65 |     88 |     88 |     88 |     88
+/// GET (Auth) front page    |     38 |     43 |     58 |     59 |    230 |    230
+/// GET (Auth) node page     |     51 |     58 |     72 |     72 |     81 |     81
+/// GET (Auth) user page     |     31 |     33 |     40 |     40 |     40 |     40
+/// GET static asset         |      8 |     16 |     30 |     36 |    210 |    210
+/// POST (Auth) comment form |     52 |     59 |     73 |     73 |     73 |     73
+/// -------------------------+--------+--------+--------+--------+--------+-------
+/// Aggregated               |     10 |     20 |     64 |     71 |    210 |    230
+/// ```
+pub type GooseRequestMetrics = HashMap<String, GooseRequestMetricAggregate>;
 
-/// Goose optionally tracks metrics about tasks run during a load test.
-pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetric>>;
+/// All tasks executed during a load test.
+///
+/// Goose optionally tracks metrics about tasks executed during a load test. The
+/// metrics can be disabled with either the `--no-task-metrics` or the `--no-metrics`
+/// run-time option, or with either
+/// [`GooseDefault::NoTaskMetrics`](../enum.GooseDefault.html#variant.NoTaskMetrics) or
+/// [`GooseDefault::NoMetrics`](../enum.GooseDefault.html#variant.NoMetrics).
+///
+/// Aggregated tasks ([`GooseTaskMetricAggregate`]) are stored in a Vector of Vectors
+/// keyed to the order the task is created in the load test.
+///
+/// # Example
+/// When viewed with [`std::fmt::Display`], [`GooseTaskMetrics`] are displayed in
+/// a table:
+/// ```text
+///  === PER TASK METRICS ===
+/// ------------------------------------------------------------------------------
+/// Name                     |   # times run |        # fails |   task/s |  fail/s
+/// ------------------------------------------------------------------------------
+/// 1: AnonBrowsingUser      |
+///   1: (Anon) front page   |           440 |         0 (0%) |    44.00 |    0.00
+///   2: (Anon) node page    |           296 |         0 (0%) |    29.60 |    0.00
+///   3: (Anon) user page    |            90 |         0 (0%) |     9.00 |    0.00
+/// 2: AuthBrowsingUser      |
+///   1: (Auth) login        |             0 |         0 (0%) |     0.00 |    0.00
+///   2: (Auth) front page   |           109 |         0 (0%) |    10.90 |    0.00
+///   3: (Auth) node page    |            74 |         0 (0%) |     7.40 |    0.00
+///   4: (Auth) user page    |            19 |         0 (0%) |     1.90 |    0.00
+///   5: (Auth) comment form |            20 |         0 (0%) |     2.00 |    0.00
+/// -------------------------+---------------+----------------+----------+--------
+/// Aggregated               |         1,048 |         0 (0%) |   104.80 |    0.00
+/// ------------------------------------------------------------------------------
+/// Name                     |    Avg (ms) |        Min |         Max |     Median
+/// ------------------------------------------------------------------------------
+/// 1: AnonBrowsingUser      |
+///   1: (Anon) front page   |       94.41 |         59 |         294 |         88
+///   2: (Anon) node page    |       53.29 |          3 |          96 |         53
+///   3: (Anon) user page    |       33.02 |         17 |         221 |         30
+/// 2: AuthBrowsingUser      |
+///   1: (Auth) login        |        0.00 |          0 |           0 |          0
+///   2: (Auth) front page   |      119.45 |         84 |         307 |        110
+///   3: (Auth) node page    |       52.16 |         37 |          81 |         51
+///   4: (Auth) user page    |       31.21 |         25 |          40 |         31
+///   5: (Auth) comment form |      135.10 |        107 |         175 |        130
+/// -------------------------+-------------+------------+-------------+-----------
+/// Aggregated               |       76.78 |          3 |         307 |         74
+/// ```
+pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 
-/// Goose optionally tracks errors generated during a load test.
+/// All errors detected during a load test.
+///
+/// By default Goose tracks all errors detected during the load test. Each error is stored
+/// as a [`GooseErrorMetric`](./struct.GooseErrorMetric.html), and they are all stored
+/// together within a `BTreeMap` which is returned by
+/// [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load test
+/// completes.
+///
+/// `GooseErrorMetrics` can be disabled with the `--no-error-summary` run-time option, or with
+/// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
+///
+/// # Example
+/// When viewed with [`std::fmt::Display`], [`GooseErrorMetrics`] are displayed in
+/// a table:
+/// ```text
+///  === ERRORS ===
+/// ------------------------------------------------------------------------------
+/// Count       | Error
+/// ------------------------------------------------------------------------------
+/// 924           GET (Auth) front page: 503 Service Unavailable: /
+/// 715           POST (Auth) front page: 503 Service Unavailable: /user
+/// 36            GET (Anon) front page: error sending request for url (http://example.com/): connection closed before message completed
+/// ```
 pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetric>;
+
+/// For tracking and counting requests made during a load test.
+///
+/// The request that Goose is making. User threads send this data to the parent thread
+/// when metrics are enabled. This request object must be provided to calls to
+/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
+/// or
+/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
+/// so Goose knows which request is being updated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GooseRequestMetric {
+    /// How many milliseconds the load test has been running.
+    pub elapsed: u64,
+    /// The method being used (ie, Get, Post, etc).
+    pub method: GooseMethod,
+    /// The optional name of the request.
+    pub name: String,
+    /// The full URL that was requested.
+    pub url: String,
+    /// The final full URL that was requested, after redirects.
+    pub final_url: String,
+    /// How many milliseconds the request took.
+    pub redirected: bool,
+    /// How many milliseconds the request took.
+    pub response_time: u64,
+    /// The HTTP response code (optional).
+    pub status_code: u16,
+    /// Whether or not the request was successful.
+    pub success: bool,
+    /// Whether or not we're updating a previous request, modifies how the parent thread records it.
+    pub update: bool,
+    /// Which GooseUser thread processed the request.
+    pub user: usize,
+    /// The optional error caused by this request.
+    pub error: String,
+}
+impl GooseRequestMetric {
+    pub(crate) fn new(
+        method: GooseMethod,
+        name: &str,
+        url: &str,
+        elapsed: u128,
+        user: usize,
+    ) -> Self {
+        GooseRequestMetric {
+            elapsed: elapsed as u64,
+            method,
+            name: name.to_string(),
+            url: url.to_string(),
+            final_url: "".to_string(),
+            redirected: false,
+            response_time: 0,
+            status_code: 0,
+            success: true,
+            update: false,
+            user,
+            error: "".to_string(),
+        }
+    }
+
+    // Record the final URL returned.
+    pub(crate) fn set_final_url(&mut self, final_url: &str) {
+        self.final_url = final_url.to_string();
+        if self.final_url != self.url {
+            self.redirected = true;
+        }
+    }
+
+    // Record how long the `response_time` took.
+    pub(crate) fn set_response_time(&mut self, response_time: u128) {
+        self.response_time = response_time as u64;
+    }
+
+    // Record the returned `status_code`.
+    pub(crate) fn set_status_code(&mut self, status_code: Option<StatusCode>) {
+        self.status_code = match status_code {
+            Some(status_code) => status_code.as_u16(),
+            None => 0,
+        };
+    }
+}
+
+/// Metrics collected about a method-path pair, (for example `GET /index`).
+///
+/// [`GooseRequestMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
+/// threads to the Goose parent process where they are aggregated together into this
+/// structure, and stored in [`GooseMetrics::requests`].
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GooseRequestMetricAggregate {
+    /// The request path for which metrics are being collected.
+    ///
+    /// For example: "/".
+    pub path: String,
+    /// The method for which metrics are being collected.
+    ///
+    /// For example: [`GooseMethod::Get`].
+    pub method: GooseMethod,
+    /// Per-response-time counters, tracking how often pages are returned with this response time.
+    ///
+    /// All response times between 1 and 100ms are stored without any rounding. Response times between
+    /// 100 and 500ms are rounded to the nearest 10ms and then stored. Response times betwee 500 and
+    /// 1000ms are rounded to the nearest 100ms. Response times larger than 1000ms are rounded to the
+    /// nearest 1000ms.
+    pub response_times: BTreeMap<usize, usize>,
+    /// The shortest response time seen so far.
+    ///
+    /// For example a `min_response_time` of `3` means the quickest response for this method-path
+    /// pair returned in 3 milliseconds. This value is not rounded.
+    pub min_response_time: usize,
+    /// The longest response time seen so far.
+    ///
+    /// For example a `max_response_time` of `2013` means the slowest response for this method-path
+    /// pair returned in 2013 milliseconds. This value is not rounded.
+    pub max_response_time: usize,
+    /// Total combined response times seen so far.
+    ///
+    /// A running total of all response times returned for this method-path pair.
+    pub total_response_time: usize,
+    /// Total number of response times seen so far.
+    ///
+    /// A count of how many requests have been tracked for this method-path pair.
+    pub response_time_counter: usize,
+    /// Per-status-code counters, tracking how often each response code was returned for this request.
+    pub status_code_counts: HashMap<u16, usize>,
+    /// Total number of times this path-method request resulted in a successful (2xx) status code.
+    ///
+    /// A count of how many requests resulted in a 2xx status code.
+    pub success_count: usize,
+    /// Total number of times this path-method request resulted in a non-successful (non-2xx) status code.
+    ///
+    /// A count of how many requests resulted in a non-2xx status code.
+    pub fail_count: usize,
+    /// Load test hash.
+    ///
+    /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
+    /// that all Workers are running the same load test plan.
+    pub load_test_hash: u64,
+}
+impl GooseRequestMetricAggregate {
+    /// Create a new GooseRequestMetricAggregate object.
+    pub(crate) fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
+        trace!("new request");
+        GooseRequestMetricAggregate {
+            path: path.to_string(),
+            method,
+            response_times: BTreeMap::new(),
+            min_response_time: 0,
+            max_response_time: 0,
+            total_response_time: 0,
+            response_time_counter: 0,
+            status_code_counts: HashMap::new(),
+            success_count: 0,
+            fail_count: 0,
+            load_test_hash,
+        }
+    }
+
+    /// Track response time.
+    pub(crate) fn set_response_time(&mut self, response_time: u64) {
+        // Perform this conversin only once, then re-use throughout this funciton.
+        let response_time_usize = response_time as usize;
+
+        // Update minimum if this one is fastest yet.
+        if self.min_response_time == 0 || response_time_usize < self.min_response_time {
+            self.min_response_time = response_time_usize;
+        }
+
+        // Update maximum if this one is slowest yet.
+        if response_time_usize > self.max_response_time {
+            self.max_response_time = response_time_usize;
+        }
+
+        // Update total_response time, adding in this one.
+        self.total_response_time += response_time_usize;
+
+        // Each time we store a new response time, increment counter by one.
+        self.response_time_counter += 1;
+
+        // Round the response time so we can combine similar times together and
+        // minimize required memory to store and push upstream to the parent.
+        let rounded_response_time: usize;
+
+        // No rounding for 1-100ms response times.
+        if response_time < 100 {
+            rounded_response_time = response_time_usize;
+        }
+        // Round to nearest 10 for 100-500ms response times.
+        else if response_time < 500 {
+            rounded_response_time = ((response_time as f64 / 10.0).round() * 10.0) as usize;
+        }
+        // Round to nearest 100 for 500-1000ms response times.
+        else if response_time < 1000 {
+            rounded_response_time = ((response_time as f64 / 100.0).round() * 100.0) as usize;
+        }
+        // Round to nearest 1000 for all larger response times.
+        else {
+            rounded_response_time = ((response_time as f64 / 1000.0).round() * 1000.0) as usize;
+        }
+
+        let counter = match self.response_times.get(&rounded_response_time) {
+            // We've seen this response_time before, increment counter.
+            Some(c) => {
+                debug!("got {:?} counter: {}", rounded_response_time, c);
+                *c + 1
+            }
+            // First time we've seen this response time, initialize counter.
+            None => {
+                debug!("no match for counter: {}", rounded_response_time);
+                1
+            }
+        };
+        self.response_times.insert(rounded_response_time, counter);
+        debug!("incremented {} counter: {}", rounded_response_time, counter);
+    }
+
+    /// Increment counter for status code, creating new counter if first time seeing status code.
+    pub(crate) fn set_status_code(&mut self, status_code: u16) {
+        let counter = match self.status_code_counts.get(&status_code) {
+            // We've seen this status code before, increment counter.
+            Some(c) => {
+                debug!("got {:?} counter: {}", status_code, c);
+                *c + 1
+            }
+            // First time we've seen this status code, initialize counter.
+            None => {
+                debug!("no match for counter: {}", status_code);
+                1
+            }
+        };
+        self.status_code_counts.insert(status_code, counter);
+        debug!("incremented {} counter: {}", status_code, counter);
+    }
+}
+/// Implement ordering for GooseRequestMetricAggregate.
+impl Ord for GooseRequestMetricAggregate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (&self.method, &self.path).cmp(&(&other.method, &other.path))
+    }
+}
+/// Implement partial-ordering for GooseRequestMetricAggregate.
+impl PartialOrd for GooseRequestMetricAggregate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// The per-task metrics collected each time a task is invoked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GooseRawTask {
+pub struct GooseTaskMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// An index into GooseAttack.task_sets, indicating which task set this is.
+    /// An index into [`GooseAttack`]`.task_sets`, indicating which task set this is.
     pub taskset_index: usize,
-    /// An index into GooseTaskSet.task, indicating which task this is.
+    /// An index into [`GooseTaskSet`]`.task`, indicating which task this is.
     pub task_index: usize,
     /// The optional name of the task.
     pub name: String,
@@ -51,16 +445,16 @@ pub struct GooseRawTask {
     /// Which GooseUser thread processed the request.
     pub user: usize,
 }
-impl GooseRawTask {
-    /// Create a new GooseRawTask metric.
-    pub fn new(
+impl GooseTaskMetric {
+    /// Create a new GooseTaskMetric metric.
+    pub(crate) fn new(
         elapsed: u128,
         taskset_index: usize,
         task_index: usize,
         name: String,
         user: usize,
     ) -> Self {
-        GooseRawTask {
+        GooseTaskMetric {
             elapsed: elapsed as u64,
             taskset_index,
             task_index,
@@ -71,16 +465,20 @@ impl GooseRawTask {
         }
     }
 
-    /// Update a GooseRawTask metric.
-    pub fn set_time(&mut self, time: u128, success: bool) {
+    /// Update a GooseTaskMetric metric.
+    pub(crate) fn set_time(&mut self, time: u128, success: bool) {
         self.run_time = time as u64;
         self.success = success;
     }
 }
 
 /// Aggregated per-task metrics updated each time a task is invoked.
+///
+/// [`GooseTaskMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
+/// threads to the Goose parent process where they are aggregated together into this
+/// structure, and stored in [`GooseMetrics::tasks`].
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseTaskMetric {
+pub struct GooseTaskMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`,
     /// indicating which task set this is.
     pub taskset_index: usize,
@@ -106,15 +504,15 @@ pub struct GooseTaskMetric {
     /// Total number of times task has failed.
     pub fail_count: usize,
 }
-impl GooseTaskMetric {
-    /// Create a new GooseTaskMetric.
-    pub fn new(
+impl GooseTaskMetricAggregate {
+    /// Create a new GooseTaskMetricAggregate.
+    pub(crate) fn new(
         taskset_index: usize,
         taskset_name: &str,
         task_index: usize,
         task_name: &str,
     ) -> Self {
-        GooseTaskMetric {
+        GooseTaskMetricAggregate {
             taskset_index,
             taskset_name: taskset_name.to_string(),
             task_index,
@@ -130,7 +528,7 @@ impl GooseTaskMetric {
     }
 
     /// Track task function elapsed time in milliseconds.
-    pub fn set_time(&mut self, time: u64, success: bool) {
+    pub(crate) fn set_time(&mut self, time: u64, success: bool) {
         // Perform this conversion only once, then re-use throughout this function.
         let time_usize = time as usize;
 
@@ -180,7 +578,12 @@ impl GooseTaskMetric {
     }
 }
 
-/// Metrics collected during a Goose load test.
+/// All metrics optionally collected during a Goose load test.
+///
+/// By default, Goose collects metrics during a load test in a `GooseMetrics` object
+/// that is returned by
+/// [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load
+/// test finishes.
 ///
 /// # Example
 /// ```rust
@@ -201,6 +604,72 @@ impl GooseTaskMetric {
 ///     // For now, we'll just pretty-print the entire object.
 ///     println!("{:#?}", goose_metrics);
 ///
+///     /**
+///     // For example:
+///     $ cargo run -- -H http://example.com -v -u1 -t1
+///     GooseMetrics {
+///         hash: 0,
+///         started: Some(
+///             2021-06-15T09:32:49.888147+02:00,
+///         ),
+///         duration: 1,
+///         users: 1,
+///         requests: {
+///             "GET /": GooseRequestMetricAggregate {
+///                 path: "/",
+///                 method: Get,
+///                 response_times: {
+///                     3: 14,
+///                     4: 163,
+///                     5: 36,
+///                     6: 8,
+///                 },
+///                 min_response_time: 3,
+///                 max_response_time: 6,
+///                 total_response_time: 922,
+///                 response_time_counter: 221,
+///                 status_code_counts: {},
+///                 success_count: 0,
+///                 fail_count: 221,
+///                 load_test_hash: 0,
+///             },
+///         },
+///         tasks: [
+///             [
+///                 GooseTaskMetricAggregate {
+///                     taskset_index: 0,
+///                     taskset_name: "ExampleUsers",
+///                     task_index: 0,
+///                     task_name: "",
+///                     times: {
+///                         3: 14,
+///                         4: 161,
+///                         5: 38,
+///                         6: 8,
+///                     },
+///                     min_time: 3,
+///                     max_time: 6,
+///                     total_time: 924,
+///                     counter: 221,
+///                     success_count: 221,
+///                     fail_count: 0,
+///                 },
+///             ],
+///         ],
+///         errors: {
+///             "503 Service Unavailable: /.GET./": GooseErrorMetric {
+///                 method: Get,
+///                 name: "/",
+///                 error: "503 Service Unavailable: /",
+///                 occurrences: 221,
+///             },
+///         },
+///         final_metrics: true,
+///         display_status_codes: false,
+///         display_metrics: true,
+///     }
+///     **/
+///
 ///     Ok(())
 /// }
 ///
@@ -212,34 +681,49 @@ impl GooseTaskMetric {
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct GooseMetrics {
-    /// A hash of the load test, useful to verify if different metrics are from
-    /// the same load test.
+    /// A hash of the load test, primarily used to validate all Workers in a Gaggle
+    /// are running the same load test.
     pub hash: u64,
-    /// The system timestamp of when the load test started.
+    /// An optional system timestamp indicating when the load test started.
     pub started: Option<DateTime<Local>>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
+    ///
+    /// This value may be smaller than what was configured at start time if the test
+    /// didn't run long enough for all configured users to start.
     pub users: usize,
-    /// Goose request metrics.
+    /// Tracks details about each request made during the load test.
+    ///
+    /// Can be disabled with the `--no-metrics` run-time option, or with
+    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
     pub requests: GooseRequestMetrics,
-    /// Goose task metrics.
+    /// Tracks details about each task that is invoked during the load test.
+    ///
+    /// Can be disabled with either the `--no-task-metrics` or `--no-metrics` run-time options,
+    /// or with either the
+    /// [GooseDefault::NoTaskMetrics](../enum.GooseDefault.html#variant.NoTaskMetrics) or
+    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
     pub tasks: GooseTaskMetrics,
-    /// Error-related metrics.
-    pub errors: BTreeMap<String, GooseErrorMetric>,
-    /// Flag indicating whether or not these are the final metrics. Because we're deriving
-    /// Default, this defaults to false.
-    pub final_metrics: bool,
-    /// Flag indicating whether or not to display status_codes. Because we're deriving Default,
-    /// this defaults to false.
-    pub display_status_codes: bool,
-    /// Flag indicating whether or not to display metrics, set to false on Workers. This
-    /// defaults to false because we're deriving Default.
-    pub display_metrics: bool,
+    /// Tracks and counts each time an error is detected during the load test.
+    ///
+    /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
+    /// or with either the
+    /// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary) or
+    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
+    pub errors: GooseErrorMetrics,
+    /// Flag indicating whether or not these are the final metrics, used to determine
+    /// which metrics should be displayed. Defaults to false.
+    pub(crate) final_metrics: bool,
+    /// Flag indicating whether or not to display status_codes. Defaults to false.
+    pub(crate) display_status_codes: bool,
+    /// Flag indicating whether or not to display metrics. This defaults to false on
+    /// Workers, otherwise true.
+    pub(crate) display_metrics: bool,
 }
 impl GooseMetrics {
     /// Initialize the task_metrics vector.
-    pub fn initialize_task_metrics(
+    pub(crate) fn initialize_task_metrics(
         &mut self,
         task_sets: &[GooseTaskSet],
         config: &GooseConfiguration,
@@ -249,7 +733,7 @@ impl GooseMetrics {
             for task_set in task_sets {
                 let mut task_vector = Vec::new();
                 for task in &task_set.tasks {
-                    task_vector.push(GooseTaskMetric::new(
+                    task_vector.push(GooseTaskMetricAggregate::new(
                         task_set.task_sets_index,
                         &task_set.name,
                         task.tasks_index,
@@ -261,7 +745,7 @@ impl GooseMetrics {
         }
     }
 
-    /// Consumes and display all metrics from a completed load test.
+    /// Consumes and display all enabled metrics from a completed load test.
     ///
     /// # Example
     /// ```rust
@@ -295,8 +779,13 @@ impl GooseMetrics {
         }
     }
 
-    /// Consumes and displays metrics from a running load test.
-    pub fn print_running(&self) {
+    /// Displays metrics while a load test is running.
+    ///
+    /// This function is invoked one time immediately after all GooseUsers are
+    /// started, unless the `--no-reset-metrics` run-time option is enabled. It
+    /// is invoked at regular intervals if the `--running-metrics` run-time
+    /// option is enabled.
+    pub(crate) fn print_running(&self) {
         if self.display_metrics {
             info!(
                 "printing running metrics after {} seconds...",
@@ -309,7 +798,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of requests and fails.
-    pub fn fmt_requests(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_requests(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(());
@@ -433,7 +925,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of tasks.
-    pub fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.tasks.is_empty() || !self.display_metrics {
             return Ok(());
@@ -582,7 +1077,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of task times.
-    pub fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.tasks.is_empty() || !self.display_metrics {
             return Ok(());
@@ -697,7 +1195,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of response times.
-    pub fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_response_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if self.requests.is_empty() {
             return Ok(());
@@ -794,7 +1295,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of slowest response times within several percentiles.
-    pub fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_percentiles(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Only include percentiles when displaying the final metrics report.
         if !self.final_metrics {
             return Ok(());
@@ -951,7 +1455,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of response status codes.
-    pub fn fmt_status_codes(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_status_codes(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
         if !self.display_status_codes {
             return Ok(());
@@ -991,7 +1498,10 @@ impl GooseMetrics {
     }
 
     /// Optionally prepares a table of errors.
-    pub fn fmt_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Only include errors when displaying the final metrics report, and if there are
         // errors to display.
         if !self.final_metrics || self.errors.is_empty() {
@@ -1074,7 +1584,33 @@ impl fmt::Display for GooseMetrics {
     }
 }
 
-/// Track and count errors.
+/// For tracking and counting errors detected during a load test.
+///
+/// When a load test completes, by default it will include a summary of all errors that
+/// were detected during the load test. Multiple errors that share the same request method,
+/// the same request name, and the same error text are contained within a single
+/// GooseErrorMetric object, with `occurrences` indicating how many times this error was
+/// seen.
+///
+/// Individual `GooseErrorMetric`s are stored within a
+/// [`GooseErrorMetrics`](./type.GooseErrorMetrics.html) `BTreeMap` with a string key of
+/// `error.method.name`. The `BTreeMap` is found in the `errors` field of what is returned
+/// by [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load
+/// test finishes.
+///
+/// Can be disabled with the `--no-error-summary` run-time option, or with
+/// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
+///
+/// # Example
+/// In this example, requests to load the front page are failing:
+/// ```text
+/// GooseErrorMetric {
+///     method: Get,
+///     name: "(Anon) front page",
+///     error: "503 Service Unavailable: /",
+///     occurrences: 4588,
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct GooseErrorMetric {
     /// The method that resulted in an error.
@@ -1087,12 +1623,283 @@ pub struct GooseErrorMetric {
     pub occurrences: usize,
 }
 impl GooseErrorMetric {
-    pub fn new(method: GooseMethod, name: String, error: String) -> Self {
+    pub(crate) fn new(method: GooseMethod, name: String, error: String) -> Self {
         GooseErrorMetric {
             method,
             name,
             error,
             occurrences: 0,
+        }
+    }
+}
+
+impl GooseAttack {
+    // If metrics are enabled, synchronize metrics from child threads to the parent. If
+    // flush is true all metrics will be received regardless of how long it takes. If
+    // flush is false, metrics will only be received for up to 400 ms before exiting to
+    // continue on the next call to this function.
+    pub(crate) async fn sync_metrics(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        flush: bool,
+    ) -> Result<(), GooseError> {
+        if !self.configuration.no_metrics {
+            // Check if we're displaying running metrics.
+            if let Some(running_metrics) = self.configuration.running_metrics {
+                if self.attack_mode != AttackMode::Worker
+                    && util::timer_expired(
+                        goose_attack_run_state.running_metrics_timer,
+                        running_metrics,
+                    )
+                {
+                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+                    goose_attack_run_state.display_running_metrics = true;
+                }
+            }
+
+            // Load messages from user threads until the receiver queue is empty.
+            let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
+
+            // As worker, push metrics up to manager.
+            if self.attack_mode == AttackMode::Worker && received_message {
+                #[cfg(feature = "gaggle")]
+                {
+                    // Push metrics to manager process.
+                    if !worker::push_metrics_to_manager(
+                        &goose_attack_run_state.socket.clone().unwrap(),
+                        vec![
+                            GaggleMetrics::Requests(self.metrics.requests.clone()),
+                            GaggleMetrics::Tasks(self.metrics.tasks.clone()),
+                        ],
+                        true,
+                    ) {
+                        // GooseUserCommand::Exit received, cancel.
+                        goose_attack_run_state
+                            .canceled
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    // The manager has all our metrics, reset locally.
+                    self.metrics.requests = HashMap::new();
+                    self.metrics
+                        .initialize_task_metrics(&self.task_sets, &self.configuration);
+                }
+            }
+        }
+
+        // If enabled, display running metrics after sync
+        if goose_attack_run_state.display_running_metrics {
+            goose_attack_run_state.display_running_metrics = false;
+            self.update_duration();
+            self.metrics.print_running();
+        }
+
+        Ok(())
+    }
+
+    // When the [`GooseAttack`](./struct.GooseAttack.html) goes from the `Starting`
+    // phase to the `Running` phase, optionally flush metrics.
+    pub(crate) async fn reset_metrics(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        // Flush metrics collected prior to all user threads running
+        if !goose_attack_run_state.all_users_spawned {
+            // Receive metrics before resetting them.
+            self.sync_metrics(goose_attack_run_state, true).await?;
+
+            goose_attack_run_state.all_users_spawned = true;
+            let users = self.configuration.users.clone().unwrap();
+            if !self.configuration.no_reset_metrics {
+                // Display the running metrics collected so far, before resetting them.
+                self.update_duration();
+                self.metrics.print_running();
+                // Reset running_metrics_timer.
+                goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+
+                if self.metrics.display_metrics {
+                    // Users is required here so unwrap() is safe.
+                    if self.metrics.users < users {
+                        println!(
+                            "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
+                        );
+                    } else {
+                        println!(
+                            "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
+                        );
+                    }
+                }
+
+                self.metrics.requests = HashMap::new();
+                self.metrics
+                    .initialize_task_metrics(&self.task_sets, &self.configuration);
+                // Restart the timer now that all threads are launched.
+                self.started = Some(std::time::Instant::now());
+            } else if self.metrics.users < users {
+                println!(
+                    "{} of {} users hatched, timer expired.\n",
+                    self.metrics.users, users
+                );
+            } else {
+                println!("All {} users hatched.\n", self.metrics.users);
+            }
+        }
+
+        Ok(())
+    }
+
+    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
+    // is true all metrics will be received regardless of how long it takes. If flush is
+    // false, metrics will only be received for up to 400 ms before exiting to continue on
+    // the next call to this function.
+    pub(crate) async fn receive_metrics(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        flush: bool,
+    ) -> Result<bool, GooseError> {
+        let mut received_message = false;
+        let mut message = goose_attack_run_state.metrics_rx.try_recv();
+
+        // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
+        let receive_timeout = 400;
+        let receive_started = std::time::Instant::now();
+
+        while message.is_ok() {
+            received_message = true;
+            match message.unwrap() {
+                GooseMetric::Request(raw_request) => {
+                    // Options should appear above, search for formatted_log.
+                    let formatted_log = match self.configuration.requests_format.as_str() {
+                        // Use serde_json to create JSON.
+                        "json" => json!(raw_request).to_string(),
+                        // Manually create CSV, library doesn't support single-row string conversion.
+                        "csv" => GooseAttack::prepare_csv(&raw_request, goose_attack_run_state),
+                        // Raw format is Debug output for GooseRequestMetric structure.
+                        "raw" => format!("{:?}", raw_request),
+                        _ => unreachable!(),
+                    };
+                    if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
+                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!(
+                                    "failed to write metrics to {}: {}",
+                                    // Unwrap is safe as we can't get here unless a requests file path
+                                    // is defined.
+                                    self.get_requests_file_path().unwrap(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+
+                    // If there was an error, store it.
+                    if !raw_request.error.is_empty() {
+                        self.record_error(&raw_request);
+                    }
+
+                    let key = format!("{} {}", raw_request.method, raw_request.name);
+                    let mut merge_request = match self.metrics.requests.get(&key) {
+                        Some(m) => m.clone(),
+                        None => GooseRequestMetricAggregate::new(
+                            &raw_request.name,
+                            raw_request.method,
+                            0,
+                        ),
+                    };
+
+                    // Handle a metrics update.
+                    if raw_request.update {
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                            merge_request.fail_count -= 1;
+                        } else {
+                            merge_request.success_count -= 1;
+                            merge_request.fail_count += 1;
+                        }
+                    }
+                    // Store a new metric.
+                    else {
+                        merge_request.set_response_time(raw_request.response_time);
+                        if self.configuration.status_codes {
+                            merge_request.set_status_code(raw_request.status_code);
+                        }
+                        if raw_request.success {
+                            merge_request.success_count += 1;
+                        } else {
+                            merge_request.fail_count += 1;
+                        }
+                    }
+
+                    self.metrics.requests.insert(key.to_string(), merge_request);
+                }
+                GooseMetric::Error(raw_error) => {
+                    // Recreate the string used to uniquely identify errors.
+                    let error_key = format!(
+                        "{}.{}.{}",
+                        raw_error.error, raw_error.method, raw_error.name
+                    );
+                    let mut merge_error = match self.metrics.errors.get(&error_key) {
+                        Some(error) => error.clone(),
+                        None => GooseErrorMetric::new(
+                            raw_error.method.clone(),
+                            raw_error.name.to_string(),
+                            raw_error.error.to_string(),
+                        ),
+                    };
+                    merge_error.occurrences += raw_error.occurrences;
+                    self.metrics
+                        .errors
+                        .insert(error_key.to_string(), merge_error);
+                }
+                GooseMetric::Task(raw_task) => {
+                    // Store a new metric.
+                    self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
+                        .set_time(raw_task.run_time, raw_task.success);
+                }
+            }
+            // Unless flushing all metrics, break out of receive loop after timeout.
+            if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
+                break;
+            }
+            message = goose_attack_run_state.metrics_rx.try_recv();
+        }
+
+        Ok(received_message)
+    }
+
+    /// Update error metrics.
+    pub(crate) fn record_error(&mut self, raw_request: &GooseRequestMetric) {
+        // If the error summary is disabled, return immediately without collecting errors.
+        if self.configuration.no_error_summary {
+            return;
+        }
+
+        // Create a string to uniquely identify errors for tracking metrics.
+        let error_string = format!(
+            "{}.{}.{}",
+            raw_request.error, raw_request.method, raw_request.name
+        );
+
+        let mut error_metrics = match self.metrics.errors.get(&error_string) {
+            // We've seen this error before.
+            Some(m) => m.clone(),
+            // First time we've seen this error.
+            None => GooseErrorMetric::new(
+                raw_request.method.clone(),
+                raw_request.name.to_string(),
+                raw_request.error.to_string(),
+            ),
+        };
+        error_metrics.occurrences += 1;
+        self.metrics.errors.insert(error_string, error_metrics);
+    }
+
+    // Update metrics showing how long the load test has been running.
+    pub(crate) fn update_duration(&mut self) {
+        if let Some(started) = self.started {
+            self.metrics.duration = started.elapsed().as_secs() as usize;
+        } else {
+            self.metrics.duration = 0;
         }
     }
 }
@@ -1322,5 +2129,244 @@ mod test {
             per_second_calculations(duration, total, fail);
         assert!((requests_per_second - 10.0).abs() < f32::EPSILON);
         assert!((fails_per_second - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn goose_raw_request() {
+        const PATH: &str = "http://127.0.0.1/";
+        let mut raw_request = GooseRequestMetric::new(GooseMethod::Get, "/", PATH, 0, 0);
+        assert_eq!(raw_request.method, GooseMethod::Get);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
+        assert_eq!(raw_request.response_time, 0);
+        assert_eq!(raw_request.status_code, 0);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+
+        let response_time = 123;
+        raw_request.set_response_time(response_time);
+        assert_eq!(raw_request.method, GooseMethod::Get);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
+        assert_eq!(raw_request.response_time, response_time as u64);
+        assert_eq!(raw_request.status_code, 0);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+
+        let status_code = http::StatusCode::OK;
+        raw_request.set_status_code(Some(status_code));
+        assert_eq!(raw_request.method, GooseMethod::Get);
+        assert_eq!(raw_request.name, "/".to_string());
+        assert_eq!(raw_request.url, PATH.to_string());
+        assert_eq!(raw_request.response_time, response_time as u64);
+        assert_eq!(raw_request.status_code, 200);
+        assert_eq!(raw_request.success, true);
+        assert_eq!(raw_request.update, false);
+    }
+
+    #[test]
+    fn goose_request() {
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        assert_eq!(request.path, "/".to_string());
+        assert_eq!(request.method, GooseMethod::Get);
+        assert_eq!(request.response_times.len(), 0);
+        assert_eq!(request.min_response_time, 0);
+        assert_eq!(request.max_response_time, 0);
+        assert_eq!(request.total_response_time, 0);
+        assert_eq!(request.response_time_counter, 0);
+        assert_eq!(request.status_code_counts.len(), 0);
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+
+        // Tracking a response time updates several fields.
+        request.set_response_time(1);
+        // We've seen only one response time so far.
+        assert_eq!(request.response_times.len(), 1);
+        // We've seen one response time of length 1.
+        assert_eq!(request.response_times[&1], 1);
+        // The minimum response time seen so far is 1.
+        assert_eq!(request.min_response_time, 1);
+        // The maximum response time seen so far is 1.
+        assert_eq!(request.max_response_time, 1);
+        // We've seen a total of 1 ms of response time so far.
+        assert_eq!(request.total_response_time, 1);
+        // We've seen a total of 2 response times so far.
+        assert_eq!(request.response_time_counter, 1);
+        // Nothing else changes.
+        assert_eq!(request.path, "/".to_string());
+        assert_eq!(request.method, GooseMethod::Get);
+        assert_eq!(request.status_code_counts.len(), 0);
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(10);
+        // We've added a new unique response time.
+        assert_eq!(request.response_times.len(), 2);
+        // We've seen the 10 ms response time 1 time.
+        assert_eq!(request.response_times[&10], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum is new response time.
+        assert_eq!(request.max_response_time, 10);
+        // Total combined response times is now 11 ms.
+        assert_eq!(request.total_response_time, 11);
+        // We've seen two response times so far.
+        assert_eq!(request.response_time_counter, 2);
+        // Nothing else changes.
+        assert_eq!(request.path, "/".to_string());
+        assert_eq!(request.method, GooseMethod::Get);
+        assert_eq!(request.status_code_counts.len(), 0);
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(10);
+        // We've incremented the counter of an existing response time.
+        assert_eq!(request.response_times.len(), 2);
+        // We've seen the 10 ms response time 2 times.
+        assert_eq!(request.response_times[&10], 2);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum doesn't change.
+        assert_eq!(request.max_response_time, 10);
+        // Total combined response times is now 21 ms.
+        assert_eq!(request.total_response_time, 21);
+        // We've seen three response times so far.
+        assert_eq!(request.response_time_counter, 3);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(101);
+        // We've added a new response time for the first time.
+        assert_eq!(request.response_times.len(), 3);
+        // The response time was internally rounded to 100, which we've seen once.
+        assert_eq!(request.response_times[&100], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 101);
+        // Total combined response times is now 122 ms.
+        assert_eq!(request.total_response_time, 122);
+        // We've seen four response times so far.
+        assert_eq!(request.response_time_counter, 4);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(102);
+        // Due to rounding, this increments the existing 100 ms response time.
+        assert_eq!(request.response_times.len(), 3);
+        // The response time was internally rounded to 100, which we've now seen twice.
+        assert_eq!(request.response_times[&100], 2);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 102);
+        // Add 102 to the total response time so far.
+        assert_eq!(request.total_response_time, 224);
+        // We've seen five response times so far.
+        assert_eq!(request.response_time_counter, 5);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(155);
+        // Adds a new response time.
+        assert_eq!(request.response_times.len(), 4);
+        // The response time was internally rounded to 160, seen for the first time.
+        assert_eq!(request.response_times[&160], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 155);
+        // Add 155 to the total response time so far.
+        assert_eq!(request.total_response_time, 379);
+        // We've seen six response times so far.
+        assert_eq!(request.response_time_counter, 6);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(2345);
+        // Adds a new response time.
+        assert_eq!(request.response_times.len(), 5);
+        // The response time was internally rounded to 2000, seen for the first time.
+        assert_eq!(request.response_times[&2000], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 2345);
+        // Add 2345 to the total response time so far.
+        assert_eq!(request.total_response_time, 2724);
+        // We've seen seven response times so far.
+        assert_eq!(request.response_time_counter, 7);
+
+        // Tracking another response time updates all related fields.
+        request.set_response_time(987654321);
+        // Adds a new response time.
+        assert_eq!(request.response_times.len(), 6);
+        // The response time was internally rounded to 987654000, seen for the first time.
+        assert_eq!(request.response_times[&987654000], 1);
+        // Minimum doesn't change.
+        assert_eq!(request.min_response_time, 1);
+        // Maximum increases to actual maximum, not rounded maximum.
+        assert_eq!(request.max_response_time, 987654321);
+        // Add 987654321 to the total response time so far.
+        assert_eq!(request.total_response_time, 987657045);
+        // We've seen eight response times so far.
+        assert_eq!(request.response_time_counter, 8);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(200);
+        // We've seen only one status code.
+        assert_eq!(request.status_code_counts.len(), 1);
+        // First time seeing this status code.
+        assert_eq!(request.status_code_counts[&200], 1);
+        // As status code tracking is optional, we don't track success/fail here.
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+        // Nothing else changes.
+        assert_eq!(request.response_times.len(), 6);
+        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.max_response_time, 987654321);
+        assert_eq!(request.total_response_time, 987657045);
+        assert_eq!(request.response_time_counter, 8);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(200);
+        // We've seen only one unique status code.
+        assert_eq!(request.status_code_counts.len(), 1);
+        // Second time seeing this status code.
+        assert_eq!(request.status_code_counts[&200], 2);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(0);
+        // We've seen two unique status codes.
+        assert_eq!(request.status_code_counts.len(), 2);
+        // First time seeing a client-side error.
+        assert_eq!(request.status_code_counts[&0], 1);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(500);
+        // We've seen three unique status codes.
+        assert_eq!(request.status_code_counts.len(), 3);
+        // First time seeing an internal server error.
+        assert_eq!(request.status_code_counts[&500], 1);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(308);
+        // We've seen four unique status codes.
+        assert_eq!(request.status_code_counts.len(), 4);
+        // First time seeing an internal server error.
+        assert_eq!(request.status_code_counts[&308], 1);
+
+        // Tracking status code updates all related fields.
+        request.set_status_code(200);
+        // We've seen four unique status codes.
+        assert_eq!(request.status_code_counts.len(), 4);
+        // Third time seeing this status code.
+        assert_eq!(request.status_code_counts[&200], 3);
+        // Nothing else changes.
+        assert_eq!(request.success_count, 0);
+        assert_eq!(request.fail_count, 0);
+        assert_eq!(request.response_times.len(), 6);
+        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.max_response_time, 987654321);
+        assert_eq!(request.total_response_time, 987657045);
+        assert_eq!(request.response_time_counter, 8);
     }
 }

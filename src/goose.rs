@@ -285,11 +285,8 @@
 //! limitations under the License.
 
 use http::method::Method;
-use http::StatusCode;
 use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{self, AtomicUsize};
@@ -298,7 +295,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
-use crate::metrics::GooseMetric;
+use crate::metrics::{GooseMetric, GooseRequestMetric};
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
 /// By default Goose sets the following User-Agent header when making requests.
@@ -335,14 +332,14 @@ pub enum GooseTaskError {
     Url(url::ParseError),
     /// The request failed.
     RequestFailed {
-        /// The [`GooseRawRequest`](./struct.GooseRawRequest.html) that failed.
-        raw_request: GooseRawRequest,
+        /// The [`GooseRequestMetric`](./struct.GooseRequestMetric.html) that failed.
+        raw_request: GooseRequestMetric,
     },
     /// The request was canceled. This happens when the throttle is enabled and the load
     /// test finishes.
     RequestCanceled {
         /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
-        /// a [`GooseRawRequest`](./struct.GooseRawRequest.html) has not yet been constructed.
+        /// a [`GooseRequestMetric`](./struct.GooseRequestMetric.html) has not yet been constructed.
         source: flume::SendError<bool>,
     },
     /// There was an error sending the metrics for a request to the parent thread.
@@ -679,223 +676,16 @@ pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTask
     })
 }
 
-/// The request that Goose is making. User threads send this data to the parent thread
-/// when metrics are enabled. This request object must be provided to calls to
-/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
-/// or
-/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
-/// so Goose knows which request is being updated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GooseRawRequest {
-    /// How many milliseconds the load test has been running.
-    pub elapsed: u64,
-    /// The method being used (ie, Get, Post, etc).
-    pub method: GooseMethod,
-    /// The optional name of the request.
-    pub name: String,
-    /// The full URL that was requested.
-    pub url: String,
-    /// The final full URL that was requested, after redirects.
-    pub final_url: String,
-    /// How many milliseconds the request took.
-    pub redirected: bool,
-    /// How many milliseconds the request took.
-    pub response_time: u64,
-    /// The HTTP response code (optional).
-    pub status_code: u16,
-    /// Whether or not the request was successful.
-    pub success: bool,
-    /// Whether or not we're updating a previous request, modifies how the parent thread records it.
-    pub update: bool,
-    /// Which GooseUser thread processed the request.
-    pub user: usize,
-    /// The optional error caused by this request.
-    pub error: String,
-}
-impl GooseRawRequest {
-    pub fn new(method: GooseMethod, name: &str, url: &str, elapsed: u128, user: usize) -> Self {
-        GooseRawRequest {
-            elapsed: elapsed as u64,
-            method,
-            name: name.to_string(),
-            url: url.to_string(),
-            final_url: "".to_string(),
-            redirected: false,
-            response_time: 0,
-            status_code: 0,
-            success: true,
-            update: false,
-            user,
-            error: "".to_string(),
-        }
-    }
-
-    // Record the final URL returned.
-    fn set_final_url(&mut self, final_url: &str) {
-        self.final_url = final_url.to_string();
-        if self.final_url != self.url {
-            self.redirected = true;
-        }
-    }
-
-    // Record how long the `response_time` took.
-    fn set_response_time(&mut self, response_time: u128) {
-        self.response_time = response_time as u64;
-    }
-
-    // Record the returned `status_code`.
-    fn set_status_code(&mut self, status_code: Option<StatusCode>) {
-        self.status_code = match status_code {
-            Some(status_code) => status_code.as_u16(),
-            None => 0,
-        };
-    }
-}
-
-/// Metrics collected about a path-method pair, (for example `/index`-`GET`).
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseRequest {
-    /// The path for which metrics are being collected.
-    pub path: String,
-    /// The method for which metrics are being collected.
-    pub method: GooseMethod,
-    /// Per-response-time counters, tracking how often pages are returned with this response time.
-    pub response_times: BTreeMap<usize, usize>,
-    /// The shortest response time seen so far.
-    pub min_response_time: usize,
-    /// The longest response time seen so far.
-    pub max_response_time: usize,
-    /// Total combined response times seen so far.
-    pub total_response_time: usize,
-    /// Total number of response times seen so far.
-    pub response_time_counter: usize,
-    /// Per-status-code counters, tracking how often each response code was returned for this request.
-    pub status_code_counts: HashMap<u16, usize>,
-    /// Total number of times this path-method request resulted in a successful (2xx) status code.
-    pub success_count: usize,
-    /// Total number of times this path-method request resulted in a non-successful (non-2xx) status code.
-    pub fail_count: usize,
-    /// Load test hash.
-    pub load_test_hash: u64,
-}
-impl GooseRequest {
-    /// Create a new GooseRequest object.
-    pub fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
-        trace!("new request");
-        GooseRequest {
-            path: path.to_string(),
-            method,
-            response_times: BTreeMap::new(),
-            min_response_time: 0,
-            max_response_time: 0,
-            total_response_time: 0,
-            response_time_counter: 0,
-            status_code_counts: HashMap::new(),
-            success_count: 0,
-            fail_count: 0,
-            load_test_hash,
-        }
-    }
-
-    /// Track response time.
-    pub fn set_response_time(&mut self, response_time: u64) {
-        // Perform this conversin only once, then re-use throughout this funciton.
-        let response_time_usize = response_time as usize;
-
-        // Update minimum if this one is fastest yet.
-        if self.min_response_time == 0 || response_time_usize < self.min_response_time {
-            self.min_response_time = response_time_usize;
-        }
-
-        // Update maximum if this one is slowest yet.
-        if response_time_usize > self.max_response_time {
-            self.max_response_time = response_time_usize;
-        }
-
-        // Update total_response time, adding in this one.
-        self.total_response_time += response_time_usize;
-
-        // Each time we store a new response time, increment counter by one.
-        self.response_time_counter += 1;
-
-        // Round the response time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        let rounded_response_time: usize;
-
-        // No rounding for 1-100ms response times.
-        if response_time < 100 {
-            rounded_response_time = response_time_usize;
-        }
-        // Round to nearest 10 for 100-500ms response times.
-        else if response_time < 500 {
-            rounded_response_time = ((response_time as f64 / 10.0).round() * 10.0) as usize;
-        }
-        // Round to nearest 100 for 500-1000ms response times.
-        else if response_time < 1000 {
-            rounded_response_time = ((response_time as f64 / 100.0).round() * 100.0) as usize;
-        }
-        // Round to nearest 1000 for all larger response times.
-        else {
-            rounded_response_time = ((response_time as f64 / 1000.0).round() * 1000.0) as usize;
-        }
-
-        let counter = match self.response_times.get(&rounded_response_time) {
-            // We've seen this response_time before, increment counter.
-            Some(c) => {
-                debug!("got {:?} counter: {}", rounded_response_time, c);
-                *c + 1
-            }
-            // First time we've seen this response time, initialize counter.
-            None => {
-                debug!("no match for counter: {}", rounded_response_time);
-                1
-            }
-        };
-        self.response_times.insert(rounded_response_time, counter);
-        debug!("incremented {} counter: {}", rounded_response_time, counter);
-    }
-
-    /// Increment counter for status code, creating new counter if first time seeing status code.
-    pub fn set_status_code(&mut self, status_code: u16) {
-        let counter = match self.status_code_counts.get(&status_code) {
-            // We've seen this status code before, increment counter.
-            Some(c) => {
-                debug!("got {:?} counter: {}", status_code, c);
-                *c + 1
-            }
-            // First time we've seen this status code, initialize counter.
-            None => {
-                debug!("no match for counter: {}", status_code);
-                1
-            }
-        };
-        self.status_code_counts.insert(status_code, counter);
-        debug!("incremented {} counter: {}", status_code, counter);
-    }
-}
-/// Implement ordering for GooseRequest.
-impl Ord for GooseRequest {
-    fn cmp(&self, other: &Self) -> Ordering {
-        (&self.method, &self.path).cmp(&(&other.method, &other.path))
-    }
-}
-/// Implement partial-ordering for GooseRequest.
-impl PartialOrd for GooseRequest {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 /// The response to a GooseRequest
 #[derive(Debug)]
 pub struct GooseResponse {
     /// The request that this is a response to.
-    pub request: GooseRawRequest,
+    pub request: GooseRequestMetric,
     /// The response.
     pub response: Result<Response, reqwest::Error>,
 }
 impl GooseResponse {
-    pub fn new(request: GooseRawRequest, response: Result<Response, reqwest::Error>) -> Self {
+    pub fn new(request: GooseRequestMetric, response: Result<Response, reqwest::Error>) -> Self {
         GooseResponse { request, response }
     }
 }
@@ -907,7 +697,7 @@ pub struct GooseDebug {
     /// String to identify the source of the log message.
     pub tag: String,
     /// Optional request made.
-    pub request: Option<GooseRawRequest>,
+    pub request: Option<GooseRequestMetric>,
     /// Optional headers returned by server.
     pub header: Option<String>,
     /// Optional body text returned by server.
@@ -916,7 +706,7 @@ pub struct GooseDebug {
 impl GooseDebug {
     fn new(
         tag: &str,
-        request: Option<&GooseRawRequest>,
+        request: Option<&GooseRequestMetric>,
         header: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> Self {
@@ -1098,7 +888,7 @@ impl GooseUser {
     /// [`goose_send`](./struct.GooseUser.html#method.goose_send) to invoke the request.)
     ///
     /// Calls to `get()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1125,7 +915,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `get_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1161,7 +951,7 @@ impl GooseUser {
     /// then call `goose_send` to invoke the request.)
     ///
     /// Calls to `post()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1188,7 +978,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `post_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1225,7 +1015,7 @@ impl GooseUser {
     /// then call `goose_send` to invoke the request.)
     ///
     /// Calls to `head()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1252,7 +1042,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `head_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1288,7 +1078,7 @@ impl GooseUser {
     /// then call `goose_send` to invoke the request.)
     ///
     /// Calls to `delete()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1315,7 +1105,7 @@ impl GooseUser {
     /// metrics.
     ///
     /// Calls to `delete_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)),
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1524,7 +1314,7 @@ impl GooseUser {
     /// [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html)`<bool>`,
     /// on failure. Failure only happens when `--throttle-requests` is enabled and the load test
     /// completes. The [`GooseResponse`](./struct.GooseResponse.html) object contains a copy of
-    /// the request you made ([`GooseRawRequest`](./struct.GooseRawRequest.html)), and the
+    /// the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)), and the
     /// response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
@@ -1572,7 +1362,7 @@ impl GooseUser {
         let request_name = self.get_request_name(&path, request_name);
 
         // Record information about the request.
-        let mut raw_request = GooseRawRequest::new(
+        let mut raw_request = GooseRequestMetric::new(
             method,
             &request_name,
             &request.url().to_string(),
@@ -1692,7 +1482,7 @@ impl GooseUser {
     ///     })
     /// }
     /// ````
-    pub fn set_success(&self, request: &mut GooseRawRequest) -> GooseTaskResult {
+    pub fn set_success(&self, request: &mut GooseRequestMetric) -> GooseTaskResult {
         // Only send update if this was previously not a success.
         if !request.success {
             request.success = true;
@@ -1713,7 +1503,7 @@ impl GooseUser {
     /// Calls to `set_failure` must include four parameters. The first, `tag`, is an
     /// arbitrary string identifying the reason for the failure, used when logging. The
     /// second, `request`, is a mutable reference to the
-    /// ([`GooseRawRequest`](./struct.GooseRawRequest.html)) object of the request being
+    /// ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)) object of the request being
     /// identified as a failure (the contained `success` field will be set to `false`,
     /// and the `update` field will be set to `true`). The last two parameters, `header`
     /// and `body`, are optional and used to provide more detail in logs.
@@ -1761,7 +1551,7 @@ impl GooseUser {
     pub fn set_failure(
         &self,
         tag: &str,
-        request: &mut GooseRawRequest,
+        request: &mut GooseRequestMetric,
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> GooseTaskResult {
@@ -1789,7 +1579,7 @@ impl GooseUser {
     /// This function provides a mechanism for optional debug logging when a load test
     /// is running. This can be especially helpful when writing a load test. Each entry
     /// must include a tag, which is an arbitrary string identifying the debug message.
-    /// It may also optionally include references to the GooseRawRequest made, the headers
+    /// It may also optionally include references to the GooseRequestMetric made, the headers
     /// returned by the server, and the response body returned by the server,
     ///
     /// As the response body can be large, the `--no-debug-body` option (or
@@ -1861,7 +1651,7 @@ impl GooseUser {
     pub fn log_debug(
         &self,
         tag: &str,
-        request: Option<&GooseRawRequest>,
+        request: Option<&GooseRequestMetric>,
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> GooseTaskResult {
@@ -2540,245 +2330,6 @@ mod tests {
         // Sequence field can be changed multiple times.
         task = task.set_sequence(8);
         assert_eq!(task.sequence, 8);
-    }
-
-    #[test]
-    fn goose_raw_request() {
-        const PATH: &str = "http://127.0.0.1/";
-        let mut raw_request = GooseRawRequest::new(GooseMethod::Get, "/", PATH, 0, 0);
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, 0);
-        assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
-
-        let response_time = 123;
-        raw_request.set_response_time(response_time);
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time as u64);
-        assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
-
-        let status_code = http::StatusCode::OK;
-        raw_request.set_status_code(Some(status_code));
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time as u64);
-        assert_eq!(raw_request.status_code, 200);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
-    }
-
-    #[test]
-    fn goose_request() {
-        let mut request = GooseRequest::new("/", GooseMethod::Get, 0);
-        assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, GooseMethod::Get);
-        assert_eq!(request.response_times.len(), 0);
-        assert_eq!(request.min_response_time, 0);
-        assert_eq!(request.max_response_time, 0);
-        assert_eq!(request.total_response_time, 0);
-        assert_eq!(request.response_time_counter, 0);
-        assert_eq!(request.status_code_counts.len(), 0);
-        assert_eq!(request.success_count, 0);
-        assert_eq!(request.fail_count, 0);
-
-        // Tracking a response time updates several fields.
-        request.set_response_time(1);
-        // We've seen only one response time so far.
-        assert_eq!(request.response_times.len(), 1);
-        // We've seen one response time of length 1.
-        assert_eq!(request.response_times[&1], 1);
-        // The minimum response time seen so far is 1.
-        assert_eq!(request.min_response_time, 1);
-        // The maximum response time seen so far is 1.
-        assert_eq!(request.max_response_time, 1);
-        // We've seen a total of 1 ms of response time so far.
-        assert_eq!(request.total_response_time, 1);
-        // We've seen a total of 2 response times so far.
-        assert_eq!(request.response_time_counter, 1);
-        // Nothing else changes.
-        assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, GooseMethod::Get);
-        assert_eq!(request.status_code_counts.len(), 0);
-        assert_eq!(request.success_count, 0);
-        assert_eq!(request.fail_count, 0);
-
-        // Tracking another response time updates all related fields.
-        request.set_response_time(10);
-        // We've added a new unique response time.
-        assert_eq!(request.response_times.len(), 2);
-        // We've seen the 10 ms response time 1 time.
-        assert_eq!(request.response_times[&10], 1);
-        // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
-        // Maximum is new response time.
-        assert_eq!(request.max_response_time, 10);
-        // Total combined response times is now 11 ms.
-        assert_eq!(request.total_response_time, 11);
-        // We've seen two response times so far.
-        assert_eq!(request.response_time_counter, 2);
-        // Nothing else changes.
-        assert_eq!(request.path, "/".to_string());
-        assert_eq!(request.method, GooseMethod::Get);
-        assert_eq!(request.status_code_counts.len(), 0);
-        assert_eq!(request.success_count, 0);
-        assert_eq!(request.fail_count, 0);
-
-        // Tracking another response time updates all related fields.
-        request.set_response_time(10);
-        // We've incremented the counter of an existing response time.
-        assert_eq!(request.response_times.len(), 2);
-        // We've seen the 10 ms response time 2 times.
-        assert_eq!(request.response_times[&10], 2);
-        // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
-        // Maximum doesn't change.
-        assert_eq!(request.max_response_time, 10);
-        // Total combined response times is now 21 ms.
-        assert_eq!(request.total_response_time, 21);
-        // We've seen three response times so far.
-        assert_eq!(request.response_time_counter, 3);
-
-        // Tracking another response time updates all related fields.
-        request.set_response_time(101);
-        // We've added a new response time for the first time.
-        assert_eq!(request.response_times.len(), 3);
-        // The response time was internally rounded to 100, which we've seen once.
-        assert_eq!(request.response_times[&100], 1);
-        // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
-        // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 101);
-        // Total combined response times is now 122 ms.
-        assert_eq!(request.total_response_time, 122);
-        // We've seen four response times so far.
-        assert_eq!(request.response_time_counter, 4);
-
-        // Tracking another response time updates all related fields.
-        request.set_response_time(102);
-        // Due to rounding, this increments the existing 100 ms response time.
-        assert_eq!(request.response_times.len(), 3);
-        // The response time was internally rounded to 100, which we've now seen twice.
-        assert_eq!(request.response_times[&100], 2);
-        // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
-        // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 102);
-        // Add 102 to the total response time so far.
-        assert_eq!(request.total_response_time, 224);
-        // We've seen five response times so far.
-        assert_eq!(request.response_time_counter, 5);
-
-        // Tracking another response time updates all related fields.
-        request.set_response_time(155);
-        // Adds a new response time.
-        assert_eq!(request.response_times.len(), 4);
-        // The response time was internally rounded to 160, seen for the first time.
-        assert_eq!(request.response_times[&160], 1);
-        // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
-        // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 155);
-        // Add 155 to the total response time so far.
-        assert_eq!(request.total_response_time, 379);
-        // We've seen six response times so far.
-        assert_eq!(request.response_time_counter, 6);
-
-        // Tracking another response time updates all related fields.
-        request.set_response_time(2345);
-        // Adds a new response time.
-        assert_eq!(request.response_times.len(), 5);
-        // The response time was internally rounded to 2000, seen for the first time.
-        assert_eq!(request.response_times[&2000], 1);
-        // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
-        // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 2345);
-        // Add 2345 to the total response time so far.
-        assert_eq!(request.total_response_time, 2724);
-        // We've seen seven response times so far.
-        assert_eq!(request.response_time_counter, 7);
-
-        // Tracking another response time updates all related fields.
-        request.set_response_time(987654321);
-        // Adds a new response time.
-        assert_eq!(request.response_times.len(), 6);
-        // The response time was internally rounded to 987654000, seen for the first time.
-        assert_eq!(request.response_times[&987654000], 1);
-        // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
-        // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 987654321);
-        // Add 987654321 to the total response time so far.
-        assert_eq!(request.total_response_time, 987657045);
-        // We've seen eight response times so far.
-        assert_eq!(request.response_time_counter, 8);
-
-        // Tracking status code updates all related fields.
-        request.set_status_code(200);
-        // We've seen only one status code.
-        assert_eq!(request.status_code_counts.len(), 1);
-        // First time seeing this status code.
-        assert_eq!(request.status_code_counts[&200], 1);
-        // As status code tracking is optional, we don't track success/fail here.
-        assert_eq!(request.success_count, 0);
-        assert_eq!(request.fail_count, 0);
-        // Nothing else changes.
-        assert_eq!(request.response_times.len(), 6);
-        assert_eq!(request.min_response_time, 1);
-        assert_eq!(request.max_response_time, 987654321);
-        assert_eq!(request.total_response_time, 987657045);
-        assert_eq!(request.response_time_counter, 8);
-
-        // Tracking status code updates all related fields.
-        request.set_status_code(200);
-        // We've seen only one unique status code.
-        assert_eq!(request.status_code_counts.len(), 1);
-        // Second time seeing this status code.
-        assert_eq!(request.status_code_counts[&200], 2);
-
-        // Tracking status code updates all related fields.
-        request.set_status_code(0);
-        // We've seen two unique status codes.
-        assert_eq!(request.status_code_counts.len(), 2);
-        // First time seeing a client-side error.
-        assert_eq!(request.status_code_counts[&0], 1);
-
-        // Tracking status code updates all related fields.
-        request.set_status_code(500);
-        // We've seen three unique status codes.
-        assert_eq!(request.status_code_counts.len(), 3);
-        // First time seeing an internal server error.
-        assert_eq!(request.status_code_counts[&500], 1);
-
-        // Tracking status code updates all related fields.
-        request.set_status_code(308);
-        // We've seen four unique status codes.
-        assert_eq!(request.status_code_counts.len(), 4);
-        // First time seeing an internal server error.
-        assert_eq!(request.status_code_counts[&308], 1);
-
-        // Tracking status code updates all related fields.
-        request.set_status_code(200);
-        // We've seen four unique status codes.
-        assert_eq!(request.status_code_counts.len(), 4);
-        // Third time seeing this status code.
-        assert_eq!(request.status_code_counts[&200], 3);
-        // Nothing else changes.
-        assert_eq!(request.success_count, 0);
-        assert_eq!(request.fail_count, 0);
-        assert_eq!(request.response_times.len(), 6);
-        assert_eq!(request.min_response_time, 1);
-        assert_eq!(request.max_response_time, 987654321);
-        assert_eq!(request.total_response_time, 987657045);
-        assert_eq!(request.response_time_counter, 8);
     }
 
     #[tokio::test]

@@ -2,7 +2,30 @@
 
 ## 0.12.0-dev
  - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library (API change)
+    o `goose::initialize_logger()`, `Socket` reduced to `pub(crate)` scope
+    o `goose::controller::GooseControllerProtocol`, `GooseControllerRequestMessage`, `GooseControllerResponseMessage`, `GooseControllerRequest`, `GooseControllerResponse`, `GooseControllerState`, `::controller_main()` reduced to `pub(crate)` scope
+    o `goose::manager::manager_main()` reduced to `pub(crate)` scope
+    o `goose::metrics::GooseRequestMetric::new()`, `::set_final_url()`, `::set_response_time()`, and `::set_status_code()`, `::per_second_calculations()`, `format_number()`, `merge_times()`, `update_min_time()`, `update_max_time()`, `calculate_response_time_percentile()`, and `prepare_status_codes()` reduced to `pub(crate)` scope
+    o `goose::metrics::GooseRequestMetricAggregate::new()`, `::set_response_time()`, and `::set_status_code()` reduced to `pub(crate)` scope
+    o `goose::metrics::GooseTaskMetric::new()` and `::set_time()` reduced to `pub(crate)` scope
+    o `goose::metrics::GooseMetrics::initialize_task_metrics()` and `::print_running()`, `::fmt_requests()`, `::fmt_tasks()`, `::fmt_task_times()`, `::fmt_response_times()`, `::fmt_percentiles()`, `::fmt_status_codes()` and `::fmt_errors()` reduced to `pub(crate)` scope
+    o from `goose::metrics::GooseMetrics` reduced `final_metrics`, `display_status_codes` and `display_metrics` fields to `pub(crate)` scope
+    o `goose::metrics::GooseErrorMetric::new()` reduced to `pub(crate)` scope
+    o `goose::logger::logger_main()` reduced to `pub(crate)` scope
+    o `goose::user::user_main()` reduced to `pub(crate)` scope
+    o `goose::worker::worker_main()` reduced to `pub(crate)` scope
+ - move all metrics-related stuctures and methods into `metrics.rs`, rename for consistency, and improve documentation (API change)
+    o `goose::GooseRawRequest` changed to `goose::metrics::GooseRequestMetric`
+    o `goose::GooseRequest` changed to `goose::metrics::GooseRequestMetricAggregate`
+    o `goose::GooseRawTask` changed to `goose::metrics::GooseTaskMetric`
+    o `goose::GooseRawTask` changed to `goose::metrics::GooseTaskMetricAggregate`
+    o `goose::update_duration()` changed to `goose::metrics::update_duration()` and reduced to `pub(crate)` scope
+    o `goose::sync_metrics()` changed to `goose::metrics::sync_metrics()` and reduced to `pub(crate)` scope
+    o `goose::reset_metrics()` changed to `goose::metrics::reset_metrics()` and reduced to `pub(crate)` scope
+    o `goose::receive_metrics()` changed to `goose::metrics::receive_metrics()` and reduced to `pub(crate)` scope
+    o `goose::record_error()` changed to `goose::metrics::record_error()` and reduced to `pub(crate)` scope
  - expose utility functions used by Goose for use by load tests
+    o `goose::util::parse_timespan()`, `::gcd()`, `::median()`, `::truncate_string()`, `::timer_expired()`, `::ms_timer_expired()`, `::get_hatch_rate()`, and `::is_valid_host()` were elevated to `pub` scope
 
 ## 0.11.2 June 10, 2021
  - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:

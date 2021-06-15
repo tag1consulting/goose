@@ -49,7 +49,7 @@ pub fn register_shutdown_pipe_handler(manager: &Socket) {
         .expect("failed to set up new pipe handler");
 }
 
-pub async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
+pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // Creates a TCP address.
     let address = format!(
         "tcp://{}:{}",

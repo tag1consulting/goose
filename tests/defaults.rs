@@ -546,6 +546,4 @@ fn test_defaults_no_metrics() {
     assert!(goose_metrics.tasks.is_empty());
     assert!(goose_metrics.users == USERS);
     assert!(goose_metrics.duration == RUN_TIME);
-    assert!(!goose_metrics.display_metrics);
-    assert!(!goose_metrics.display_status_codes);
 }
