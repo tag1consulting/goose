@@ -216,6 +216,8 @@ pub struct GooseRequestMetric {
     pub user: usize,
     /// The optional error caused by this request.
     pub error: String,
+    /// @TODO: This metric was statistically generated, not actually made ...
+    pub coordinated_omission: bool,
 }
 impl GooseRequestMetric {
     pub(crate) fn new(
@@ -238,6 +240,7 @@ impl GooseRequestMetric {
             update: false,
             user,
             error: "".to_string(),
+            coordinated_omission: false,
         }
     }
 
@@ -1747,6 +1750,9 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Store `GooseRequestMetric` in a `GooseRequestMetricAggregate` within the
+    // `GooseMetrics.requests` `HashMap`, merging if already existing, or creating new.
+    // Also writes it to the request_file if enabled.
     async fn record_request_metric(
         &mut self,
         request_metric: &GooseRequestMetric,
@@ -1842,29 +1848,36 @@ impl GooseAttack {
                         self.record_error(&request_metric);
                     }
 
+                    // Store the `GooseRequestMetric` in `GooseMetrics.requests`.
                     let request_metric_aggregate = self
                         .record_request_metric(&request_metric, goose_attack_run_state)
                         .await;
-                    let interval = if request_metric_aggregate.min_response_time as u64 > 0 {
-                        request_metric_aggregate.min_response_time as u64
+
+                    // If coordinated ommission ...
+                    let average_response_time = request_metric_aggregate.total_response_time / request_metric_aggregate.response_time_counter;
+                    let interval = if average_response_time > 0 {
+                        average_response_time as u64
                     } else {
                         1
                     };
 
+                    // If this response took longer than the average response_time for this particular
+                    // request, generate statistically missing requests to address coordinated omission.
                     if request_metric.response_time > interval {
                         let mut coordinated_omission_metric = request_metric;
-                        let mut response_time: i64 =
-                            coordinated_omission_metric.response_time as i64 - interval as i64;
-                        while response_time > 0 {
-                            coordinated_omission_metric.response_time = response_time as u64;
+                        coordinated_omission_metric.response_time -= interval;
+                        // If logging requests, also log that this "request" was statistically generated
+                        // to avoid coordinated ommission.
+                        coordinated_omission_metric.coordinated_omission = true;
+                        while coordinated_omission_metric.response_time > interval {
                             let _ = self
                                 .record_request_metric(
                                     &coordinated_omission_metric,
                                     goose_attack_run_state,
                                 )
                                 .await;
-                            response_time =
-                                coordinated_omission_metric.response_time as i64 - interval as i64;
+                            coordinated_omission_metric.response_time -= interval;
+
                         }
                     }
                 }
