@@ -1747,6 +1747,76 @@ impl GooseAttack {
         Ok(())
     }
 
+    async fn record_request_metric(
+        &mut self,
+        request_metric: &GooseRequestMetric,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> GooseRequestMetricAggregate {
+        let key = format!("{} {}", request_metric.method, request_metric.name);
+        let mut merge_request = match self.metrics.requests.get(&key) {
+            Some(m) => m.clone(),
+            None => GooseRequestMetricAggregate::new(
+                &request_metric.name,
+                request_metric.method.clone(),
+                0,
+            ),
+        };
+
+        // Handle a metrics update.
+        if request_metric.update {
+            if request_metric.success {
+                merge_request.success_count += 1;
+                merge_request.fail_count -= 1;
+            } else {
+                merge_request.success_count -= 1;
+                merge_request.fail_count += 1;
+            }
+        }
+        // Store a new metric.
+        else {
+            merge_request.set_response_time(request_metric.response_time);
+            if self.configuration.status_codes {
+                merge_request.set_status_code(request_metric.status_code);
+            }
+            if request_metric.success {
+                merge_request.success_count += 1;
+            } else {
+                merge_request.fail_count += 1;
+            }
+        }
+
+        self.metrics
+            .requests
+            .insert(key.to_string(), merge_request.clone());
+
+        // Options should appear above, search for formatted_log.
+        let formatted_log = match self.configuration.requests_format.as_str() {
+            // Use serde_json to create JSON.
+            "json" => json!(request_metric).to_string(),
+            // Manually create CSV, library doesn't support single-row string conversion.
+            "csv" => GooseAttack::prepare_csv(&request_metric, goose_attack_run_state),
+            // Raw format is Debug output for GooseRequestMetric structure.
+            "raw" => format!("{:?}", request_metric),
+            _ => unreachable!(),
+        };
+        if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
+            match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                Ok(_) => (),
+                Err(e) => {
+                    warn!(
+                        "failed to write metrics to {}: {}",
+                        // Unwrap is safe as we can't get here unless a requests file path
+                        // is defined.
+                        self.get_requests_file_path().unwrap(),
+                        e
+                    );
+                }
+            }
+        }
+
+        merge_request
+    }
+
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
     // is true all metrics will be received regardless of how long it takes. If flush is
     // false, metrics will only be received for up to 400 ms before exiting to continue on
@@ -1766,71 +1836,37 @@ impl GooseAttack {
         while message.is_ok() {
             received_message = true;
             match message.unwrap() {
-                GooseMetric::Request(raw_request) => {
-                    // Options should appear above, search for formatted_log.
-                    let formatted_log = match self.configuration.requests_format.as_str() {
-                        // Use serde_json to create JSON.
-                        "json" => json!(raw_request).to_string(),
-                        // Manually create CSV, library doesn't support single-row string conversion.
-                        "csv" => GooseAttack::prepare_csv(&raw_request, goose_attack_run_state),
-                        // Raw format is Debug output for GooseRequestMetric structure.
-                        "raw" => format!("{:?}", raw_request),
-                        _ => unreachable!(),
-                    };
-                    if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
-                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                            Ok(_) => (),
-                            Err(e) => {
-                                warn!(
-                                    "failed to write metrics to {}: {}",
-                                    // Unwrap is safe as we can't get here unless a requests file path
-                                    // is defined.
-                                    self.get_requests_file_path().unwrap(),
-                                    e
-                                );
-                            }
-                        }
-                    }
-
+                GooseMetric::Request(request_metric) => {
                     // If there was an error, store it.
-                    if !raw_request.error.is_empty() {
-                        self.record_error(&raw_request);
+                    if !request_metric.error.is_empty() {
+                        self.record_error(&request_metric);
                     }
 
-                    let key = format!("{} {}", raw_request.method, raw_request.name);
-                    let mut merge_request = match self.metrics.requests.get(&key) {
-                        Some(m) => m.clone(),
-                        None => GooseRequestMetricAggregate::new(
-                            &raw_request.name,
-                            raw_request.method,
-                            0,
-                        ),
+                    let request_metric_aggregate = self
+                        .record_request_metric(&request_metric, goose_attack_run_state)
+                        .await;
+                    let interval = if request_metric_aggregate.min_response_time as u64 > 0 {
+                        request_metric_aggregate.min_response_time as u64
+                    } else {
+                        1
                     };
 
-                    // Handle a metrics update.
-                    if raw_request.update {
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                            merge_request.fail_count -= 1;
-                        } else {
-                            merge_request.success_count -= 1;
-                            merge_request.fail_count += 1;
+                    if request_metric.response_time > interval {
+                        let mut coordinated_omission_metric = request_metric;
+                        let mut response_time: i64 =
+                            coordinated_omission_metric.response_time as i64 - interval as i64;
+                        while response_time > 0 {
+                            coordinated_omission_metric.response_time = response_time as u64;
+                            let _ = self
+                                .record_request_metric(
+                                    &coordinated_omission_metric,
+                                    goose_attack_run_state,
+                                )
+                                .await;
+                            response_time =
+                                coordinated_omission_metric.response_time as i64 - interval as i64;
                         }
                     }
-                    // Store a new metric.
-                    else {
-                        merge_request.set_response_time(raw_request.response_time);
-                        if self.configuration.status_codes {
-                            merge_request.set_status_code(raw_request.status_code);
-                        }
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                        } else {
-                            merge_request.fail_count += 1;
-                        }
-                    }
-
-                    self.metrics.requests.insert(key.to_string(), merge_request);
                 }
                 GooseMetric::Error(raw_error) => {
                     // Recreate the string used to uniquely identify errors.
