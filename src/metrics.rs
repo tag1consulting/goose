@@ -12,11 +12,13 @@ use chrono::prelude::*;
 use http::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
+use regex::RegexSet;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 use std::{f32, fmt};
 use tokio::io::AsyncWriteExt;
 
@@ -45,6 +47,68 @@ pub enum GooseMetric {
     Request(GooseRequestMetric),
     Task(GooseTaskMetric),
     Error(GooseErrorMetric),
+}
+
+/// Mitigate the loss of data (coordinated omission) due to stalls on the upstream server.
+///
+/// Stalling can happen for lots of reasons, for example garbage collection, a cache
+/// stampede, even unrelated load affecting the server. Without any mitigation, Goose
+/// would lose statistically relevant information as it is unable to make additional
+/// requests will blocked by an upstream stall. It attempts to mitigate this by
+/// backfilling the requests that would have been made during that time.
+///
+/// By default, Goose assumes that it should expect requests to return in the Median
+/// response_time. However, different server configurations and testing plans could
+/// work on different assumptions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GooseCoordinatedOmissionMitigation {
+    /// Backfill based on the average response_time for this request.
+    Average,
+    /// Backfill based on the maximum response_time for this request.
+    Maximum,
+    /// Backfill based on the median response_time for this request (default).
+    Median,
+    /// Backfill based on the minimum response_time for this request.
+    Minimum,
+    /// Completely disable coordinated omission mitigation.
+    Disabled,
+}
+// Implement [`FromStr`] so `--co-mitigation` accepts a `GooseCoordinatedOmissionMitigation`.
+impl FromStr for GooseCoordinatedOmissionMitigation {
+    type Err = GooseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
+        // returning the appropriate enum value.
+        let co_mitigation = RegexSet::new(&[
+            r"(?i)^(average|ave|aver|avg|mean)$",
+            r"(?i)^(maximum|ma|max|maxi)$",
+            r"(?i)^(median|med|medi)$",
+            r"(?i)^(minimum|mi|min|mini)$",
+            r"(?i)^(disabled|di|dis|none|no)$",
+        ])
+        .expect("failed to compile co_mitigation RegexSet");
+        let matches = co_mitigation.matches(&s);
+        if matches.matched(0) {
+            Ok(GooseCoordinatedOmissionMitigation::Average)
+        } else if matches.matched(1) {
+            Ok(GooseCoordinatedOmissionMitigation::Maximum)
+        } else if matches.matched(2) {
+            Ok(GooseCoordinatedOmissionMitigation::Median)
+        } else if matches.matched(3) {
+            Ok(GooseCoordinatedOmissionMitigation::Minimum)
+        } else if matches.matched(4) {
+            Ok(GooseCoordinatedOmissionMitigation::Disabled)
+        } else {
+            Err(GooseError::InvalidOption {
+                option: format!("GooseCoordinatedOmissionMitigation::{:?}", s),
+                value: s.to_string(),
+                detail:
+                    "Invalid co_mitigation, expected: average, maximum, mean, minimum, or disabled"
+                        .to_string(),
+            })
+        }
+    }
 }
 
 /// All requests made during a load test.
@@ -1823,6 +1887,55 @@ impl GooseAttack {
         merge_request
     }
 
+    // Calculate the coordinated_mitigation_interval based on the configured mitigation
+    // strategy.
+    // @TODO: Explore caching this and only calculating ever n requests or one time after
+    // x requests to avoid pre-request overhead.
+    async fn calculate_coordinated_mitigation_interval(
+        &mut self,
+        request_metric_aggregate: &GooseRequestMetricAggregate,
+    ) -> u64 {
+        // If co_mitigation isn't set, default to Median.
+        if self.configuration.co_mitigation.is_none() {
+            self.configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Median);
+        }
+
+        if let Some(co_mitigation) = self.configuration.co_mitigation.as_ref() {
+            match co_mitigation {
+                // Interval is based on the average response_time.
+                GooseCoordinatedOmissionMitigation::Average => {
+                    let average_response_time = request_metric_aggregate.total_response_time
+                        / request_metric_aggregate.response_time_counter;
+                    if average_response_time > 0 {
+                        average_response_time as u64
+                    } else {
+                        1
+                    }
+                }
+                // Interval is based on the maximum response_time.
+                GooseCoordinatedOmissionMitigation::Maximum => {
+                    request_metric_aggregate.max_response_time as u64
+                }
+                // Interval is based on the median response_time.
+                GooseCoordinatedOmissionMitigation::Median => util::median(
+                    &request_metric_aggregate.response_times,
+                    request_metric_aggregate.total_response_time,
+                    request_metric_aggregate.min_response_time,
+                    request_metric_aggregate.max_response_time,
+                ) as u64,
+                // Interval is based on the minimum response_time.
+                GooseCoordinatedOmissionMitigation::Minimum => {
+                    request_metric_aggregate.min_response_time as u64
+                }
+                // Coordinated omission mitigation is disabled.
+                GooseCoordinatedOmissionMitigation::Disabled => 0,
+            }
+        } else {
+            // Defaults to Median.
+            unreachable!();
+        }
+    }
+
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
     // is true all metrics will be received regardless of how long it takes. If flush is
     // false, metrics will only be received for up to 400 ms before exiting to continue on
@@ -1848,36 +1961,35 @@ impl GooseAttack {
                         self.record_error(&request_metric);
                     }
 
-                    // Store the `GooseRequestMetric` in `GooseMetrics.requests`.
+                    // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
+                    // `GooseMetrics.requests`, and write to the requests log if enabled.
                     let request_metric_aggregate = self
                         .record_request_metric(&request_metric, goose_attack_run_state)
                         .await;
 
-                    // If coordinated ommission ...
-                    let average_response_time = request_metric_aggregate.total_response_time / request_metric_aggregate.response_time_counter;
-                    let interval = if average_response_time > 0 {
-                        average_response_time as u64
-                    } else {
-                        1
-                    };
+                    let co_mitigation_interval: u64 = self
+                        .calculate_coordinated_mitigation_interval(&request_metric_aggregate)
+                        .await;
 
-                    // If this response took longer than the average response_time for this particular
-                    // request, generate statistically missing requests to address coordinated omission.
-                    if request_metric.response_time > interval {
+                    // If co_mitigation_interval is greater than 0, coordinated omission mitigation is
+                    // enabled. If the response took longer than the co_mitigation_interval, backfill
+                    // the data with the configured mitigation strategy.
+                    if co_mitigation_interval > 0
+                        && request_metric.response_time > co_mitigation_interval
+                    {
                         let mut coordinated_omission_metric = request_metric;
-                        coordinated_omission_metric.response_time -= interval;
+                        coordinated_omission_metric.response_time -= co_mitigation_interval;
                         // If logging requests, also log that this "request" was statistically generated
-                        // to avoid coordinated ommission.
+                        // to mitigate coordinated ommission.
                         coordinated_omission_metric.coordinated_omission = true;
-                        while coordinated_omission_metric.response_time > interval {
+                        while coordinated_omission_metric.response_time > co_mitigation_interval {
                             let _ = self
                                 .record_request_metric(
                                     &coordinated_omission_metric,
                                     goose_attack_run_state,
                                 )
                                 .await;
-                            coordinated_omission_metric.response_time -= interval;
-
+                            coordinated_omission_metric.response_time -= co_mitigation_interval;
                         }
                     }
                 }

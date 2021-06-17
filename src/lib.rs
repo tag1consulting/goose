@@ -463,7 +463,9 @@ use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseDebug, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::metrics::{GooseMetric, GooseMetrics, GooseRequestMetric};
+use crate::metrics::{
+    GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetrics, GooseRequestMetric,
+};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -1803,6 +1805,51 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Configure the coordinated omission mitigation strategy.
+    fn set_coordinated_omission(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.coordinated_omission";
+        let mut value = Some(GooseCoordinatedOmissionMitigation::Median);
+
+        if self.configuration.co_mitigation.is_some() {
+            key = "--co-mitigation";
+            value = self.configuration.co_mitigation.clone();
+        }
+
+        /* @TODO: default
+        // Use default for co_mitigation if set and not on Worker.
+        if self.configuration.co_mitigation.is_none() {
+            if let Some(default_co_mitigation) = self.defaults.co_mitigation {
+                // In Gaggles, co_mitigation is only set on Manager.
+                if self.attack_mode != AttackMode::Worker {
+                    key = "set_default(GooseDefault::CoordinatedOmissionMitigation)";
+                    value = default_co_mitigation;
+
+                    self.configuration.co_mitigation = default_co_mitigation;
+                }
+            }
+        }
+        */
+        if self.configuration.co_mitigation.is_none() {
+            self.configuration.co_mitigation = value.clone();
+        }
+
+        if self.configuration.co_mitigation.is_some() {
+            // Setting --co-mitigation with --worker is not allowed.
+            if self.attack_mode == AttackMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: format!("{} can not be set together with the --worker flag.", key),
+                });
+            }
+
+            info!("co_mitigation = {:?}", self.configuration.co_mitigation);
+        }
+
+        Ok(())
+    }
+
     // Configure maximum requests per second if throttle enabled.
     fn set_throttle_requests(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2502,6 +2549,9 @@ impl GooseAttack {
 
         // Determine whether or not to log response body.
         self.set_no_debug_body()?;
+
+        // Configure coordinated ommission mitigation strategy.
+        self.set_coordinated_omission()?;
 
         // Configure throttle if enabled.
         self.set_throttle_requests()?;
@@ -4190,6 +4240,9 @@ pub struct GooseConfiguration {
     /// Doesn't automatically start load test
     #[options(no_short)]
     pub no_autostart: bool,
+    /// Sets coordinated omission mitigation strategy
+    #[options(no_short, meta = "STRATEGY")]
+    pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
