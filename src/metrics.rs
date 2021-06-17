@@ -62,11 +62,11 @@ pub enum GooseMetric {
 /// work on different assumptions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseCoordinatedOmissionMitigation {
-    /// Backfill based on the average response_time for this request.
+    /// Backfill based on the average response_time for this request (default).
     Average,
     /// Backfill based on the maximum response_time for this request.
     Maximum,
-    /// Backfill based on the median response_time for this request (default).
+    /// Backfill based on the median response_time for this request.
     Median,
     /// Backfill based on the minimum response_time for this request.
     Minimum,
@@ -1895,9 +1895,9 @@ impl GooseAttack {
         &mut self,
         request_metric_aggregate: &GooseRequestMetricAggregate,
     ) -> u64 {
-        // If co_mitigation isn't set, default to Median.
+        // If co_mitigation isn't set, default to Average.
         if self.configuration.co_mitigation.is_none() {
-            self.configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Median);
+            self.configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
         }
 
         if let Some(co_mitigation) = self.configuration.co_mitigation.as_ref() {
@@ -1931,7 +1931,7 @@ impl GooseAttack {
                 GooseCoordinatedOmissionMitigation::Disabled => 0,
             }
         } else {
-            // Defaults to Median.
+            // Defaults to Average.
             unreachable!();
         }
     }
