@@ -51,15 +51,16 @@ pub enum GooseMetric {
 
 /// Mitigate the loss of data (coordinated omission) due to stalls on the upstream server.
 ///
-/// Stalling can happen for lots of reasons, for example garbage collection, a cache
-/// stampede, even unrelated load affecting the server. Without any mitigation, Goose
-/// would lose statistically relevant information as it is unable to make additional
-/// requests will blocked by an upstream stall. It attempts to mitigate this by
-/// backfilling the requests that would have been made during that time.
+/// Stalling can happen for many reasons, for example: garbage collection, a cache stampede,
+/// even unrelated load on the same server. Without any mitigation, Goose loses
+/// statistically relevant information as [`GooseUser`] threads are unable to make additional
+/// requests while they are blocked by an upstream stall. Goose mitigates this by backfilling
+/// the requests that would have been made during that time. Backfilled requests show up in
+/// the `--request-file` if enabled, though they were not actually sent to the server.
 ///
-/// By default, Goose assumes that it should expect requests to return in the Median
-/// response_time. However, different server configurations and testing plans could
-/// work on different assumptions.
+/// By default, Goose is configured to backfill based on the Average response time seen for the
+/// stalled request. However, different server configurations and testing plans can work on
+/// different assumptions so the following configurations are supported.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseCoordinatedOmissionMitigation {
     /// Backfill based on the average response_time for this request (default).
@@ -73,19 +74,20 @@ pub enum GooseCoordinatedOmissionMitigation {
     /// Completely disable coordinated omission mitigation.
     Disabled,
 }
-// Implement [`FromStr`] so `--co-mitigation` accepts a `GooseCoordinatedOmissionMitigation`.
+/// Allow `--co-mitigation` from the command line using text variations on supported
+/// `GooseCoorcinatedOmissionMitigation`s by implementing [`FromStr`].
 impl FromStr for GooseCoordinatedOmissionMitigation {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
-        // returning the appropriate enum value.
+        // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
         let co_mitigation = RegexSet::new(&[
             r"(?i)^(average|ave|aver|avg|mean)$",
             r"(?i)^(maximum|ma|max|maxi)$",
             r"(?i)^(median|med|medi)$",
             r"(?i)^(minimum|mi|min|mini)$",
-            r"(?i)^(disabled|di|dis|none|no)$",
+            r"(?i)^(disabled|di|dis|disable|none|no)$",
         ])
         .expect("failed to compile co_mitigation RegexSet");
         let matches = co_mitigation.matches(&s);
@@ -104,7 +106,7 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
                 option: format!("GooseCoordinatedOmissionMitigation::{:?}", s),
                 value: s.to_string(),
                 detail:
-                    "Invalid co_mitigation, expected: average, maximum, mean, minimum, or disabled"
+                    "Invalid co_mitigation, expected: average, disabled, maximum, median, or minimum"
                         .to_string(),
             })
         }
