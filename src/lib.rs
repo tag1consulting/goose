@@ -1830,7 +1830,7 @@ impl GooseAttack {
             }
         }
         */
-        if self.configuration.co_mitigation.is_none() {
+        if self.configuration.co_mitigation.is_none() && self.attack_mode != AttackMode::Worker {
             self.configuration.co_mitigation = value.clone();
         }
 

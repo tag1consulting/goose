@@ -237,6 +237,8 @@ fn test_defaults_gaggle() {
     configuration.users = None;
     configuration.run_time = "".to_string();
     configuration.hatch_rate = None;
+    // @TODO: disable with a GooseDefault.
+    configuration.co_mitigation = None;
     let host = std::mem::take(&mut configuration.host);
 
     // Launch workers in their own threads, storing the thread handle.

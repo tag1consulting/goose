@@ -17,6 +17,7 @@ type WorkerHandles = Vec<std::thread::JoinHandle<()>>;
 ///  --users 1
 ///  --hatch-rate 1
 ///  --run-time 1
+///  --co-mitigation disabled
 #[allow(dead_code)]
 pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfiguration {
     // Start with an empty configuration.
@@ -47,6 +48,11 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
         // Default to running for 1 second if not otherwise configured.
         if !configuration.contains(&"--run-time") {
             configuration.extend_from_slice(&["--run-time", "1"]);
+        }
+
+        // Default to disabling coordinated omission mitigation if not otherwise configured
+        if !configuration.contains(&"--co-mitigation") {
+            configuration.extend_from_slice(&["--co-mitigation", "disabled"]);
         }
     }
 
