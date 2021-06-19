@@ -61,7 +61,7 @@ pub enum GooseMetric {
 /// By default, Goose is configured to backfill based on the Average response time seen for the
 /// stalled request. However, different server configurations and testing plans can work on
 /// different assumptions so the following configurations are supported.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum GooseCoordinatedOmissionMitigation {
     /// Backfill based on the average response_time for this request (default).
     Average,
@@ -75,7 +75,7 @@ pub enum GooseCoordinatedOmissionMitigation {
     Disabled,
 }
 /// Allow `--co-mitigation` from the command line using text variations on supported
-/// `GooseCoorcinatedOmissionMitigation`s by implementing [`FromStr`].
+/// `GooseCoordinatedOmissionMitigation`s by implementing [`FromStr`].
 impl FromStr for GooseCoordinatedOmissionMitigation {
     type Err = GooseError;
 

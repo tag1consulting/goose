@@ -187,6 +187,11 @@ fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::StatusCodes, true)
         .unwrap()
+        .set_default(
+            GooseDefault::CoordinatedOmissionMitigation,
+            GooseCoordinatedOmissionMitigation::Disabled,
+        )
+        .unwrap()
         .set_default(GooseDefault::RunningMetrics, 0)
         .unwrap()
         .set_default(GooseDefault::NoTaskMetrics, true)
@@ -237,7 +242,6 @@ fn test_defaults_gaggle() {
     configuration.users = None;
     configuration.run_time = "".to_string();
     configuration.hatch_rate = None;
-    // @TODO: disable with a GooseDefault.
     configuration.co_mitigation = None;
     let host = std::mem::take(&mut configuration.host);
 
@@ -291,6 +295,11 @@ fn test_defaults_gaggle() {
         .set_default(GooseDefault::RunTime, RUN_TIME)
         .unwrap()
         .set_default(GooseDefault::HatchRate, HATCH_RATE)
+        .unwrap()
+        .set_default(
+            GooseDefault::CoordinatedOmissionMitigation,
+            GooseCoordinatedOmissionMitigation::Disabled,
+        )
         .unwrap()
         .set_default(GooseDefault::StatusCodes, true)
         .unwrap()
