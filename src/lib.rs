@@ -1838,14 +1838,43 @@ impl GooseAttack {
             self.configuration.co_mitigation = value.clone();
         }
 
-        // Setting --co-mitigation with --worker is not allowed.
-        if self.configuration.co_mitigation.is_some() && self.attack_mode == AttackMode::Worker {
-            return Err(GooseError::InvalidOption {
-                option: key.to_string(),
-                value: format!("{:?}", value),
-                detail: format!("{} can not be set together with the --worker flag.", key),
-            });
-        } else {
+        if let Some(co_mitigation) = self.configuration.co_mitigation.as_ref() {
+            // Setting --co-mitigation with --worker is not allowed.
+            if self.attack_mode == AttackMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: format!("{} can not be set together with the --worker flag.", key),
+                });
+            }
+
+            // Setting --co-mitigation with --no-metrics is not allowed.
+            if self.configuration.no_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: format!(
+                        "{} can not be set together with the --no-metrics flag.",
+                        key
+                    ),
+                });
+            }
+
+            if co_mitigation != &GooseCoordinatedOmissionMitigation::Disabled
+                && self.scheduler == GooseScheduler::Random
+            {
+                // Coordinated Omission Mitigation is not possible together with the random scheduler,
+                // as it's impossible to calculate an accurate request cadence.
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: format!(
+                        "{} can not be set together with GooseScheduler::Random.",
+                        key
+                    ),
+                });
+            }
+
             info!("co_mitigation = {:?}", self.configuration.co_mitigation);
         }
 

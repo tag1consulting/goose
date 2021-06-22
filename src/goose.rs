@@ -287,15 +287,16 @@
 use http::method::Method;
 use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{self, AtomicUsize};
+use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
-use crate::metrics::{GooseMetric, GooseRequestMetric};
+use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetric, GooseRequestMetric};
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
 /// By default Goose sets the following User-Agent header when making requests.
@@ -762,6 +763,41 @@ impl GaggleUser {
     }
 }
 
+/// Used internally by Coordinated Omission Mitigation, tracks the cadence between when the same request
+/// is made as Goose loops through a GooseTaskSet.
+#[derive(Debug, Clone)]
+struct GooseRequestCadence {
+    /// The unique key of the request.
+    key: String,
+    /// When this path was last requested.
+    last_seen: std::time::Instant,
+    /// How many milliseconds delay there was following the last GooseTask. It has to be subtracted
+    /// because it can change randomly each time a GooseTask runs.
+    delay_after_last_seen: u64,
+    /// How many times this path has been requested.
+    times_seen: u64,
+    /// The minimum time between this request being made.
+    minimum_cadence: u64,
+    /// The maximum time between this request being made.
+    maximum_cadence: u64,
+    /// Total amount of time spent requesting this path.
+    total_elapsed: u64,
+}
+impl GooseRequestCadence {
+    // Return a new, empty RequestCadence object.
+    fn new(key: &str) -> GooseRequestCadence {
+        GooseRequestCadence {
+            key: key.to_string(),
+            last_seen: std::time::Instant::now(),
+            delay_after_last_seen: 0,
+            times_seen: 0,
+            minimum_cadence: 0,
+            maximum_cadence: 0,
+            total_elapsed: 0,
+        }
+    }
+}
+
 /// An individual user state, repeatedly running all [`GooseTask`](./struct.GooseTask.html)s
 /// in a specific [`GooseTaskSet`](./struct.GooseTaskSet.html).
 #[derive(Debug, Clone)]
@@ -773,8 +809,11 @@ pub struct GooseUser {
     pub task_sets_index: usize,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Arc<Mutex<Client>>,
-    /// Integer value tracking the current task user is running.
+    /// Integer value tracking the current task the user is running.
     pub position: Arc<AtomicUsize>,
+    /// Integer value tracking sequentially which request from the current task is running. This
+    /// is used by Coordinated Omission Mitigation to track the request's cadence.
+    pub request: Arc<AtomicUsize>,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
     /// Minimum amount of time to sleep after running a task.
@@ -804,6 +843,9 @@ pub struct GooseUser {
     pub weighted_on_stop_tasks: WeightedGooseTasks,
     /// Load test hash.
     pub load_test_hash: u64,
+    /// A [`HashMap`] tracking the cadence between all requests made by this user. This information is
+    /// required when Coordinated Omission Mitigation is enabled.
+    requests_cadence: Arc<Mutex<HashMap<String, GooseRequestCadence>>>,
 }
 impl GooseUser {
     /// Create a new user state.
@@ -815,7 +857,7 @@ impl GooseUser {
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Result<Self, GooseError> {
-        trace!("new user");
+        trace!("new GooseUser");
         let client = Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true)
@@ -826,6 +868,7 @@ impl GooseUser {
             task_sets_index,
             client: Arc::new(Mutex::new(client)),
             position: Arc::new(AtomicUsize::new(0)),
+            request: Arc::new(AtomicUsize::new(0)),
             base_url: Arc::new(RwLock::new(base_url)),
             min_wait,
             max_wait,
@@ -840,6 +883,7 @@ impl GooseUser {
             weighted_tasks: Vec::new(),
             weighted_on_stop_tasks: Vec::new(),
             load_test_hash,
+            requests_cadence: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -1362,7 +1406,7 @@ impl GooseUser {
         let request_name = self.get_request_name(&path, request_name);
 
         // Record information about the request.
-        let mut raw_request = GooseRequestMetric::new(
+        let mut request_metric = GooseRequestMetric::new(
             method,
             &request_name,
             &request.url().to_string(),
@@ -1372,7 +1416,7 @@ impl GooseUser {
 
         // Make the actual request.
         let response = self.client.lock().await.execute(request).await;
-        raw_request.set_response_time(started.elapsed().as_millis());
+        request_metric.set_response_time(started.elapsed().as_millis());
 
         match &response {
             Ok(r) => {
@@ -1380,18 +1424,18 @@ impl GooseUser {
                 debug!("{:?}: status_code {}", &path, status_code);
                 // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                 if !status_code.is_success() {
-                    raw_request.success = false;
-                    raw_request.error = format!("{}: {}", status_code, &path);
+                    request_metric.success = false;
+                    request_metric.error = format!("{}: {}", status_code, &path);
                 }
-                raw_request.set_status_code(Some(status_code));
-                raw_request.set_final_url(r.url().as_str());
+                request_metric.set_status_code(Some(status_code));
+                request_metric.set_final_url(r.url().as_str());
 
                 // Load test user was redirected.
-                if self.config.sticky_follow && raw_request.url != raw_request.final_url {
+                if self.config.sticky_follow && request_metric.url != request_metric.final_url {
                     let base_url = self.base_url.read().await.to_string();
                     // Check if the URL redirected started with the load test base_url.
-                    if !raw_request.final_url.starts_with(&base_url) {
-                        let redirected_url = Url::parse(&raw_request.final_url)?;
+                    if !request_metric.final_url.starts_with(&base_url) {
+                        let redirected_url = Url::parse(&request_metric.final_url)?;
                         let redirected_base_url =
                             redirected_url[..url::Position::BeforePath].to_string();
                         info!(
@@ -1407,19 +1451,152 @@ impl GooseUser {
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
                 warn!("{:?}: {}", &path, e);
-                raw_request.success = false;
-                raw_request.set_status_code(None);
-                raw_request.error = e.to_string();
+                request_metric.success = false;
+                request_metric.set_status_code(None);
+                request_metric.error = e.to_string();
             }
         };
 
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
-            self.send_to_parent(GooseMetric::Request(raw_request.clone()))?;
+            self.send_to_parent(GooseMetric::Request(request_metric.clone()))?;
         }
 
-        Ok(GooseResponse::new(raw_request, response))
+        // If enabled, track the cadence between each time the same request is made while
+        // this GooseUser is running. If requests are blocked by the upstream server, this
+        // allows Goose to backfill the requests that should have been made based on
+        // cadence statistics.
+        self.coordinated_omission_mitigation(&request_metric)
+            .await?;
+
+        Ok(GooseResponse::new(request_metric, response))
+    }
+
+    /// If enabled, tracks the amount of time between a given request being run each time the
+    /// GooseUser loops through all GooseTasks. This allows Goose to detect when a server-side
+    /// delay prevents requests from running, and to backfill the request log and GooseMetrics
+    /// with the requests that statistically should have been made.
+    // @TODO: capture and subtract the task-delay (which can change randomly)
+    async fn coordinated_omission_mitigation(
+        &self,
+        request_metric: &GooseRequestMetric,
+    ) -> Result<(), GooseTaskError> {
+        if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
+            // Return immediately if coordinated omission mitigation is disabled.
+            if co_mitigation == &GooseCoordinatedOmissionMitigation::Disabled {
+                return Ok(());
+            }
+
+            // Increment `request` each time a request is made, tracking which request this
+            // is for this GooseTask for this GooseUser. By default Goose schedules tasks
+            // consistently, allowing reliable tracking of the request cadence.
+            let request = self.request.fetch_add(1, Ordering::SeqCst);
+
+            // The `cadence_key` is unique for each `GooseUser` request made.
+            let cadence_key = format!("{}:{}", self.position.load(Ordering::SeqCst), request);
+
+            // Grab the `requests_cadence` mutex to record a new request.
+            let mut requests_cadence = self.requests_cadence.lock().await;
+
+            // Get the previous cadence details for this request if existing, or create a new
+            // one.
+            let mut request_cadence = match requests_cadence.get(&cadence_key) {
+                Some(r) => r.clone(),
+                None => GooseRequestCadence::new(&cadence_key),
+            };
+
+            // Grab timestamp after possibly creating a new GooseRequestCadence, as otherwise
+            // later duration calculation could be negative.
+            let now = std::time::Instant::now();
+
+            // Calculate the expected cadence for this GooseTask request.
+            let cadence = match co_mitigation {
+                // Expected cadence is the average time between requests.
+                GooseCoordinatedOmissionMitigation::Average => {
+                    if request_cadence.times_seen > 0 {
+                        (request_cadence.total_elapsed / request_cadence.times_seen) as u64
+                    } else {
+                        0
+                    }
+                }
+                // Expected cadence is the maximum time between requests.
+                GooseCoordinatedOmissionMitigation::Maximum => request_cadence.maximum_cadence,
+                // Expected cadence is the minimum time between requests.
+                GooseCoordinatedOmissionMitigation::Minimum => request_cadence.minimum_cadence,
+                // This is not possible as we would have exited already if coordinated
+                // omission mitigation was disabled.
+                GooseCoordinatedOmissionMitigation::Disabled => unreachable!(),
+            };
+
+            // How much time passed since the last time this request was made.
+            let current_elapsed = (now - request_cadence.last_seen).as_millis() as u64;
+
+            // Update `minimum_cadence` if this was the fastest seen.
+            if current_elapsed < request_cadence.minimum_cadence
+                || request_cadence.minimum_cadence == 0
+            {
+                request_cadence.minimum_cadence = current_elapsed;
+            // Update `maximum_cadence` if this was the slowest seen.
+            } else if current_elapsed > request_cadence.maximum_cadence {
+                request_cadence.maximum_cadence = current_elapsed;
+            }
+
+            // Update request_cadence metrics based on the timing of the current request.
+            request_cadence.times_seen += 1;
+            request_cadence.total_elapsed += current_elapsed;
+            request_cadence.last_seen = now;
+
+            // Determine now whether or not this request has been seen enough times, as
+            // the record is about to be returned to the `requests_cadence` `HashMap`.
+            let coordinated_omission_mitigation_enabled = request_cadence.times_seen > 10;
+
+            // @TODO: REMOVEME
+            let cadence_key_clone = cadence_key.clone();
+
+            // Store the updated cadence details about this request.
+            requests_cadence.insert(cadence_key, request_cadence);
+
+            // Coordinated omission mitigation is only enabled after a given request has
+            // been seen at least 10 times.
+            if coordinated_omission_mitigation_enabled {
+                // Compare how long the current request took compared to the calculated
+                // cadence.
+                let difference = current_elapsed - cadence;
+                // The difference variable is unsigned, be sure it hasn't wrapped.
+                if difference < current_elapsed &&
+                    // If this request took longer than the calculated cadence, send it to
+                    // the parent process to be recorded as part of coordinated omission
+                    // mitigation: backfill with "requests" that would statistically
+                    // otherwise have been seen.
+                    difference > cadence
+                {
+                    // Base our coordinated omission generated request metric on the actual
+                    // metric that triggered this logic.
+                    let mut coordinated_omission_request_metric = request_metric.clone();
+                    // Record data points specific to coordinated_omission.
+                    coordinated_omission_request_metric.coordinated_omission_elapsed =
+                        current_elapsed;
+                    coordinated_omission_request_metric.coordinated_omission_cadence = cadence;
+                    // Statistically this request should have been seen but something blocked
+                    // requests and increased the cadence.
+                    coordinated_omission_request_metric.response_time = difference;
+                    //coordinated_omission_request_metric.response_time = current_elapsed;
+                    // @TODO: REMOVEME
+                    println!(
+                        "{} - {:?}-{}",
+                        cadence_key_clone, request_metric.method, request_metric.url
+                    );
+                    println!("{:#?}", coordinated_omission_request_metric);
+                    // Send the coordinated omission mitigation generated metrics to the parent.
+                    self.send_to_parent(GooseMetric::Request(coordinated_omission_request_metric))?;
+                }
+            }
+        } else {
+            // A setting for coordinated omission mitigation is required, defaults to Average.
+            unreachable!();
+        }
+        return Ok(());
     }
 
     fn send_to_parent(&self, metric: GooseMetric) -> GooseTaskResult {
@@ -2146,7 +2323,9 @@ mod tests {
     const EMPTY_ARGS: Vec<&str> = vec![];
 
     async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
-        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        // @TODO: should this be automatically set somewhere else?
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
         let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
         GooseUser::single(base_url, &configuration)
     }
