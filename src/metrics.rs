@@ -277,12 +277,9 @@ pub struct GooseRequestMetric {
     pub user: usize,
     /// The optional error caused by this request.
     pub error: String,
-    /// If non-zero, contains the actual interval since this request was seen. Used by Coordinated
-    /// Omission Mitigation, if enabled.
+    /// If non-zero, Coordinated Omission Mitigation detected an abnormally long response time on
+    /// the upstream server, blocking requests from being made.
     pub coordinated_omission_elapsed: u64,
-    /// If non-zero, contains the expected cadence for this request. Used by Coordinated Omission
-    /// Mitigation, if enabled.
-    pub coordinated_omission_cadence: u64,
 }
 impl GooseRequestMetric {
     pub(crate) fn new(
@@ -306,7 +303,6 @@ impl GooseRequestMetric {
             user,
             error: "".to_string(),
             coordinated_omission_elapsed: 0,
-            coordinated_omission_cadence: 0,
         }
     }
 
@@ -1777,7 +1773,7 @@ impl GooseAttack {
             self.sync_metrics(goose_attack_run_state, true).await?;
 
             goose_attack_run_state.all_users_spawned = true;
-            let users = self.configuration.users.clone().unwrap();
+            let users = self.configuration.users.unwrap();
             if !self.configuration.no_reset_metrics {
                 // Display the running metrics collected so far, before resetting them.
                 self.update_duration();
@@ -1910,25 +1906,26 @@ impl GooseAttack {
                         self.record_error(&request_metric);
                     }
 
-                    // If coordinated_omission_cadence is non-zero, this was a statistically
+                    // If coordinated_omission_elapsed is non-zero, this was a statistically
                     // generated "request" to mitigate coordinated omission, loop to backfill
                     // with statistically generated metrics.
-                    if request_metric.coordinated_omission_cadence > 0 {
+                    if request_metric.coordinated_omission_elapsed > 0 {
                         // Build a coordinate_omissiom metric starting with the metric that was
                         // sent by the affected GooseUser.
                         let mut co_metric = request_metric.clone();
-                        // The `response_time` field is unsigned, keep a copy to detect if it wraps
-                        // around from subtracting the cadence too many times. This `response_time`
-                        // is the difference between how long since this request was made, and how
-                        // when we expected to see the request.
-                        let original_response_time = co_metric.response_time;
-                        while co_metric.response_time <= original_response_time
+                        co_metric.response_time = request_metric.coordinated_omission_elapsed;
+                        // Avoid a clippy error by explicitly copying this.
+                        let response_time_high_water = co_metric.response_time;
+
+                        // The `response_time` field is unsigned, to detect if it wraps around from
+                        // subtracting the cadence too many times.
+                        while co_metric.response_time <= response_time_high_water
                             // Backfill until reaching the expected request cadence.
-                            && co_metric.response_time > co_metric.coordinated_omission_cadence
+                            && co_metric.response_time > request_metric.response_time
                         {
                             self.record_request_metric(&co_metric, goose_attack_run_state)
                                 .await;
-                            co_metric.response_time -= co_metric.coordinated_omission_cadence;
+                            co_metric.response_time -= request_metric.coordinated_omission_elapsed;
                         }
                     // Otherwise this is an actual request, record it normally.
                     } else {

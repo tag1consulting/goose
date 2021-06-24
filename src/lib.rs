@@ -3397,7 +3397,7 @@ impl GooseAttack {
         // Only write the report if enabled.
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
             // Prepare report summary variables.
-            let started = self.metrics.started.clone().unwrap();
+            let started = self.metrics.started.unwrap();
             let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
             let end_time = (started + Duration::seconds(self.metrics.duration as i64))
                 .format("%Y-%m-%d %H:%M:%S")

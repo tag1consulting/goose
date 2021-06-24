@@ -50,8 +50,11 @@ pub(crate) async fn user_main(
             // Start at the first task in thread_user.weighted_tasks.
             position = 0;
             thread_user.position.store(position, Ordering::SeqCst);
-            // Each position starts at request 0, which is incremented in `goose_send`.
-            thread_user.request.store(0, Ordering::SeqCst);
+
+            // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
+            // Mitigation is enabled.
+            thread_user.update_request_cadence(thread_number).await;
+
             for (thread_task_index, thread_task_name) in &thread_user.weighted_tasks {
                 // Determine which task we're going to run next.
                 let function = &thread_task_set.tasks[*thread_task_index].function;
@@ -108,8 +111,6 @@ pub(crate) async fn user_main(
                 // Move to the next task in thread_user.weighted_tasks.
                 position += 1;
                 thread_user.position.store(position, Ordering::SeqCst);
-                // Each position starts at request 0, which is incremented in `goose_send`.
-                thread_user.request.store(0, Ordering::SeqCst);
             }
         }
     }
