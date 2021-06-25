@@ -409,7 +409,8 @@ impl GooseRequestMetricAggregate {
         let response_time_usize = response_time as usize;
 
         // Update minimum if this one is fastest yet.
-        if self.min_response_time == 0 || response_time_usize < self.min_response_time {
+        if self.min_response_time == 0 || 
+            (response_time_usize > 0 && response_time_usize < self.min_response_time) {
             self.min_response_time = response_time_usize;
         }
 
@@ -426,24 +427,22 @@ impl GooseRequestMetricAggregate {
 
         // Round the response time so we can combine similar times together and
         // minimize required memory to store and push upstream to the parent.
-        let rounded_response_time: usize;
-
         // No rounding for 1-100ms response times.
-        if response_time < 100 {
-            rounded_response_time = response_time_usize;
+        let rounded_response_time = if response_time < 100 {
+            response_time_usize
         }
         // Round to nearest 10 for 100-500ms response times.
         else if response_time < 500 {
-            rounded_response_time = ((response_time as f64 / 10.0).round() * 10.0) as usize;
+            ((response_time as f64 / 10.0).round() * 10.0) as usize
         }
         // Round to nearest 100 for 500-1000ms response times.
         else if response_time < 1000 {
-            rounded_response_time = ((response_time as f64 / 100.0).round() * 100.0) as usize;
+            ((response_time as f64 / 100.0).round() * 100.0) as usize
         }
         // Round to nearest 1000 for all larger response times.
         else {
-            rounded_response_time = ((response_time as f64 / 1000.0).round() * 1000.0) as usize;
-        }
+            ((response_time as f64 / 1000.0).round() * 1000.0) as usize
+        };
 
         let counter = match self.response_times.get(&rounded_response_time) {
             // We've seen this response_time before, increment counter.

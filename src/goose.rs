@@ -1515,7 +1515,7 @@ impl GooseUser {
             request_cadence.average_cadence =
                 request_cadence.total_elapsed / request_cadence.counter;
 
-            if request_cadence.counter > 10 {
+            if request_cadence.counter > 20 {
                 if request_cadence.coordinated_omission_counter < 0 {
                     info!(
                         "user {} enabled coordinated omission mitigation",
@@ -1538,11 +1538,13 @@ impl GooseUser {
                 if elapsed > (cadence * 2) {
                     // @TODO: move to debug!() level once debugging is complete
                     info!(
-                        "coordinated_omission_mitigation: elapsed({}) > cadence({})",
-                        elapsed, cadence
+                        "user {}: coordinated_omission_mitigation: elapsed({}) > cadence({})",
+                        thread_number, elapsed, cadence
                     );
                     request_cadence.coordinated_omission_counter += 1;
                     request_cadence.coordinated_omission_mitigation = elapsed;
+                } else {
+                    request_cadence.coordinated_omission_mitigation = 0;
                 }
             }
         } else {
