@@ -1520,7 +1520,7 @@ impl GooseUser {
 
             if request_cadence.counter > 20 {
                 if request_cadence.coordinated_omission_counter < 0 {
-                    info!(
+                    debug!(
                         "user {} enabled coordinated omission mitigation",
                         thread_number
                     );
@@ -1539,8 +1539,7 @@ impl GooseUser {
                     GooseCoordinatedOmissionMitigation::Disabled => unreachable!(),
                 };
                 if elapsed > (cadence * 2) {
-                    // @TODO: move to debug!() level once debugging is complete
-                    info!(
+                    debug!(
                         "user {}: coordinated_omission_mitigation: elapsed({}) > cadence({})",
                         thread_number, elapsed, cadence
                     );
