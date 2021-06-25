@@ -280,6 +280,8 @@ pub struct GooseRequestMetric {
     /// If non-zero, Coordinated Omission Mitigation detected an abnormally long response time on
     /// the upstream server, blocking requests from being made.
     pub coordinated_omission_elapsed: u64,
+    /// If non-zero, the expected cadence of looping through all GooseTasks by this GooseUser.
+    pub coordinated_omission_cadence: u64,
 }
 impl GooseRequestMetric {
     pub(crate) fn new(
@@ -303,6 +305,7 @@ impl GooseRequestMetric {
             user,
             error: "".to_string(),
             coordinated_omission_elapsed: 0,
+            coordinated_omission_cadence: 0,
         }
     }
 
@@ -409,8 +412,9 @@ impl GooseRequestMetricAggregate {
         let response_time_usize = response_time as usize;
 
         // Update minimum if this one is fastest yet.
-        if self.min_response_time == 0 || 
-            (response_time_usize > 0 && response_time_usize < self.min_response_time) {
+        if self.min_response_time == 0
+            || (response_time_usize > 0 && response_time_usize < self.min_response_time)
+        {
             self.min_response_time = response_time_usize;
         }
 
@@ -1924,7 +1928,7 @@ impl GooseAttack {
                         {
                             self.record_request_metric(&co_metric, goose_attack_run_state)
                                 .await;
-                            co_metric.response_time -= request_metric.coordinated_omission_elapsed;
+                            co_metric.response_time -= request_metric.coordinated_omission_cadence;
                         }
                     // Otherwise this is an actual request, record it normally.
                     } else {

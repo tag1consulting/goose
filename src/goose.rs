@@ -784,6 +784,8 @@ struct GooseRequestCadence {
     /// If non-zero, the length of the server slowdown detected by the Goose Coordinated
     /// Omission Mitigation in milliseconds.
     coordinated_omission_mitigation: u64,
+    /// If non-zero, the expected cadence to loop through all GooseTasks.
+    coordinated_omission_cadence: u64,
     /// If -1 coordinated_omission_mitigation was never enabled. Otherwise is a counter of how
     /// many times the mitigation triggered.
     coordinated_omission_counter: isize,
@@ -800,6 +802,7 @@ impl GooseRequestCadence {
             average_cadence: 0,
             total_elapsed: 0,
             coordinated_omission_mitigation: 0,
+            coordinated_omission_cadence: 0,
             coordinated_omission_counter: -1,
         }
     }
@@ -1543,8 +1546,10 @@ impl GooseUser {
                     );
                     request_cadence.coordinated_omission_counter += 1;
                     request_cadence.coordinated_omission_mitigation = elapsed;
+                    request_cadence.coordinated_omission_cadence = cadence;
                 } else {
                     request_cadence.coordinated_omission_mitigation = 0;
+                    request_cadence.coordinated_omission_cadence = 0;
                 }
             }
         } else {
@@ -1582,6 +1587,9 @@ impl GooseUser {
                 // Record data points specific to coordinated_omission.
                 coordinated_omission_request_metric.coordinated_omission_elapsed =
                     request_cadence.coordinated_omission_mitigation;
+                // Record data points specific to coordinated_omission.
+                coordinated_omission_request_metric.coordinated_omission_cadence =
+                    request_cadence.coordinated_omission_cadence;
                 // Send the coordinated omission mitigation generated metrics to the parent.
                 self.send_to_parent(GooseMetric::Request(coordinated_omission_request_metric))?;
             }
