@@ -2352,7 +2352,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
         assert_eq!(task_set.tasks.len(), 0);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.weighted_on_start_tasks.len(), 0);
@@ -2366,7 +2366,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Different task can be registered.
         task_set = task_set.register_task(task!(test_function_b));
@@ -2376,7 +2376,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Same task can be registered again.
         task_set = task_set.register_task(task!(test_function_a));
@@ -2386,7 +2386,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Setting weight only affects weight field.
         task_set = task_set.set_weight(50).unwrap();
@@ -2396,7 +2396,7 @@ mod tests {
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Weight can be changed.
         task_set = task_set.set_weight(5).unwrap();
@@ -2447,16 +2447,16 @@ mod tests {
         assert_eq!(task.name, "".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
-        assert_eq!(task.on_start, false);
-        assert_eq!(task.on_stop, false);
+        assert!(!task.on_start);
+        assert!(!task.on_stop);
 
         // Name can be set, without affecting other fields.
         task = task.set_name("foo");
         assert_eq!(task.name, "foo".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
-        assert_eq!(task.on_start, false);
-        assert_eq!(task.on_stop, false);
+        assert!(!task.on_start);
+        assert!(!task.on_stop);
 
         // Name can be set multiple times.
         task = task.set_name("bar");
@@ -2464,34 +2464,34 @@ mod tests {
 
         // On start flag can be set, without affecting other fields.
         task = task.set_on_start();
-        assert_eq!(task.on_start, true);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
-        assert_eq!(task.on_stop, false);
+        assert!(!task.on_stop);
 
         // Setting on start flag twice doesn't change anything.
         task = task.set_on_start();
-        assert_eq!(task.on_start, true);
+        assert!(task.on_start);
 
         // On stop flag can be set, without affecting other fields.
         // It's possible to set both on_start and on_stop for same task.
         task = task.set_on_stop();
-        assert_eq!(task.on_stop, true);
-        assert_eq!(task.on_start, true);
+        assert!(task.on_stop);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
 
         // Setting on stop flag twice doesn't change anything.
         task = task.set_on_stop();
-        assert_eq!(task.on_stop, true);
+        assert!(task.on_stop);
 
         // Setting weight doesn't change anything else.
         task = task.set_weight(2).unwrap();
         assert_eq!(task.weight, 2);
-        assert_eq!(task.on_stop, true);
-        assert_eq!(task.on_start, true);
+        assert!(task.on_stop);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
         assert_eq!(task.sequence, 0);
 
@@ -2503,8 +2503,8 @@ mod tests {
         task = task.set_sequence(4);
         assert_eq!(task.sequence, 4);
         assert_eq!(task.weight, 3);
-        assert_eq!(task.on_stop, true);
-        assert_eq!(task.on_start, true);
+        assert!(task.on_stop);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
 
         // Sequence field can be changed multiple times.
@@ -2632,8 +2632,8 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(goose.request.method, GooseMethod::Get);
         assert_eq!(goose.request.name, INDEX_PATH);
-        assert_eq!(goose.request.success, true);
-        assert_eq!(goose.request.update, false);
+        assert!(goose.request.success);
+        assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
         assert_eq!(index.hits(), 1);
 
@@ -2654,8 +2654,8 @@ mod tests {
         assert_eq!(status, 404);
         assert_eq!(goose.request.method, GooseMethod::Get);
         assert_eq!(goose.request.name, NO_SUCH_PATH);
-        assert_eq!(goose.request.success, false);
-        assert_eq!(goose.request.update, false);
+        assert!(!goose.request.success);
+        assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 404,);
         not_found.assert_hits(1);
 
@@ -2679,8 +2679,8 @@ mod tests {
         assert_eq!(body, "foo");
         assert_eq!(goose.request.method, GooseMethod::Post);
         assert_eq!(goose.request.name, COMMENT_PATH);
-        assert_eq!(goose.request.success, true);
-        assert_eq!(goose.request.update, false);
+        assert!(goose.request.success);
+        assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
         comment.assert_hits(1);
     }

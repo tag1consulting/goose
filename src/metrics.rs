@@ -2246,8 +2246,8 @@ mod test {
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, 0);
         assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
+        assert!(raw_request.success);
+        assert!(!raw_request.update);
 
         let response_time = 123;
         raw_request.set_response_time(response_time);
@@ -2256,8 +2256,8 @@ mod test {
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time as u64);
         assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
+        assert!(raw_request.success);
+        assert!(!raw_request.update);
 
         let status_code = http::StatusCode::OK;
         raw_request.set_status_code(Some(status_code));
@@ -2266,8 +2266,8 @@ mod test {
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time as u64);
         assert_eq!(raw_request.status_code, 200);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
+        assert!(raw_request.success);
+        assert!(!raw_request.update);
     }
 
     #[test]
