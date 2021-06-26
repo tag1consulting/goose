@@ -1567,8 +1567,6 @@ impl GooseUser {
     /// loop through all GooseTasks by the current GooseUser. Through this mechanism, Goose is
     /// able to detect stalls on the upstream server being load tested, backfilling requests based
     /// on what statistically should have happened. Can be disabled with `--co-mitigation disabled`.
-    ///
-    // @TODO: capture and subtract the total task-delays (which can change randomly).
     async fn coordinated_omission_mitigation(
         &self,
         request_metric: &GooseRequestMetric,
@@ -1584,7 +1582,6 @@ impl GooseUser {
             let request_cadence = self.request_cadence.read().await;
 
             // Check if Coordinated Omission Mitigation has been triggered.
-            // @TODO: don't apply to the actual request that was blocked.
             if request_cadence.coordinated_omission_mitigation > 0 {
                 // Base our coordinated omission generated request metric on the actual
                 // metric that triggered this logic.
@@ -2330,7 +2327,6 @@ mod tests {
 
     async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
         let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        // @TODO: should this be automatically set somewhere else?
         configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
         let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
         GooseUser::single(base_url, &configuration)

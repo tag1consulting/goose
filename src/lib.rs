@@ -1875,7 +1875,10 @@ impl GooseAttack {
                 });
             }
 
-            info!("co_mitigation = {:?}", self.configuration.co_mitigation);
+            info!(
+                "co_mitigation = {:?}",
+                self.configuration.co_mitigation.as_ref().unwrap()
+            );
         }
 
         Ok(())
