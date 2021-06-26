@@ -78,6 +78,8 @@ pub(crate) async fn user_main(
 
                 // Wake every second to check if the parent thread has told us to exit.
                 let mut in_sleep_loop = true;
+                // Track the time slept for Coordinated Omission Mitigation.
+                let sleep_timer = time::Instant::now();
                 while in_sleep_loop {
                     let mut message = thread_receiver.try_recv();
                     while message.is_ok() {
@@ -107,6 +109,12 @@ pub(crate) async fn user_main(
                         in_sleep_loop = false;
                     }
                 }
+                // Track how much time the GooseUser sleeps during this loop through all GooseTasks,
+                // used by Coordinated Omission Mitigation.
+                thread_user.slept.fetch_add(
+                    (time::Instant::now() - sleep_timer).as_millis() as u64,
+                    Ordering::SeqCst,
+                );
 
                 // Move to the next task in thread_user.weighted_tasks.
                 position += 1;

@@ -289,7 +289,7 @@ use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{self, AtomicUsize};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{Mutex, RwLock};
@@ -853,6 +853,8 @@ pub struct GooseUser {
     /// Tracks the cadence that this user is looping through all GooseTasks, used by Coordinated
     /// Omission Mitigation.
     request_cadence: Arc<RwLock<GooseRequestCadence>>,
+    /// Tracks how much time is spent sleeping during a loop through all tasks.
+    pub(crate) slept: Arc<AtomicU64>,
 }
 impl GooseUser {
     /// Create a new user state.
@@ -890,6 +892,7 @@ impl GooseUser {
             weighted_on_stop_tasks: Vec::new(),
             load_test_hash,
             request_cadence: Arc::new(RwLock::new(GooseRequestCadence::new())),
+            slept: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -1481,9 +1484,6 @@ impl GooseUser {
 
     /// Tracks the time it takes for the current GooseUser to loop through all GooseTasks
     /// if Coordinated Omission Mitigation is enabled.
-    ///
-    /// @TODO: optimize to only track the counters necessary for the configured mitigation
-    /// strategy.
     pub(crate) async fn update_request_cadence(&self, thread_number: usize) {
         if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
             // Return immediately if coordinated omission mitigation is disabled.
@@ -1499,9 +1499,15 @@ impl GooseUser {
             // time through the loop.
             let now = std::time::Instant::now();
 
+            // Swap out the `slept` counter, which is the total time the GooseUser slept
+            // between tasks, a potentially randomly changing value. Reset to 0 for the
+            // next loop through all GooseTasks.
+            request_cadence.delays_since_last_time = self.slept.swap(0, Ordering::SeqCst);
+
             // How much time passed since the last time this GooseUser looped through all
-            // tasks.
-            let elapsed = (now - request_cadence.last_time).as_millis() as u64;
+            // tasks, accounting for time waiting between GooseTasks due to `set_wait_time`.
+            let elapsed = (now - request_cadence.last_time).as_millis() as u64
+                - request_cadence.delays_since_last_time;
 
             // Update `minimum_cadence` if this was the fastest seen.
             if elapsed < request_cadence.minimum_cadence || request_cadence.minimum_cadence == 0 {
@@ -1518,7 +1524,7 @@ impl GooseUser {
             request_cadence.average_cadence =
                 request_cadence.total_elapsed / request_cadence.counter;
 
-            if request_cadence.counter > 20 {
+            if request_cadence.counter > 3 {
                 if request_cadence.coordinated_omission_counter < 0 {
                     debug!(
                         "user {} enabled coordinated omission mitigation",
@@ -1619,7 +1625,7 @@ impl GooseUser {
             None => {
                 // Otherwise determine if the current GooseTask is named, and if so return
                 // a copy of it.
-                let position = self.position.load(atomic::Ordering::SeqCst);
+                let position = self.position.load(Ordering::SeqCst);
                 if !self.weighted_tasks.is_empty() && !self.weighted_tasks[position].1.is_empty() {
                     self.weighted_tasks[position].1.clone()
                 } else {
