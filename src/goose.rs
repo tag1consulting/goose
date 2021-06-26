@@ -289,13 +289,13 @@ use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{self, AtomicUsize};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
-use crate::metrics::{GooseMetric, GooseRequestMetric};
+use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetric, GooseRequestMetric};
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
 /// By default Goose sets the following User-Agent header when making requests.
@@ -762,6 +762,52 @@ impl GaggleUser {
     }
 }
 
+/// Used internally by Coordinated Omission Mitigation, tracks the cadence between when the same request
+/// is made as Goose loops through a GooseTaskSet.
+#[derive(Debug, Clone)]
+struct GooseRequestCadence {
+    /// The last time this GooseUser lopped through its GooseTasks.
+    last_time: std::time::Instant,
+    /// Total milliseconds of delays followed each GooseTask. This has to be substracted out as it's
+    /// not impacted by the upstream server and it can change randomly affecting the cadence.
+    delays_since_last_time: u64,
+    /// How many times this GooseUser has looped through all of its GooseTasks.
+    counter: u64,
+    /// The minimum time taken to loop through all GooseTasks.
+    minimum_cadence: u64,
+    /// The maximum time taken to loop through all GooseTasks.
+    maximum_cadence: u64,
+    /// Average amount of time taken to loop through all GooseTasks.
+    average_cadence: u64,
+    /// Total amount of time spent processing GooseTasks.
+    total_elapsed: u64,
+    /// If non-zero, the length of the server slowdown detected by the Goose Coordinated
+    /// Omission Mitigation in milliseconds.
+    coordinated_omission_mitigation: u64,
+    /// If non-zero, the expected cadence to loop through all GooseTasks.
+    coordinated_omission_cadence: u64,
+    /// If -1 coordinated_omission_mitigation was never enabled. Otherwise is a counter of how
+    /// many times the mitigation triggered.
+    coordinated_omission_counter: isize,
+}
+impl GooseRequestCadence {
+    // Return a new, empty RequestCadence object.
+    fn new() -> GooseRequestCadence {
+        GooseRequestCadence {
+            last_time: std::time::Instant::now(),
+            delays_since_last_time: 0,
+            counter: 0,
+            minimum_cadence: 0,
+            maximum_cadence: 0,
+            average_cadence: 0,
+            total_elapsed: 0,
+            coordinated_omission_mitigation: 0,
+            coordinated_omission_cadence: 0,
+            coordinated_omission_counter: -1,
+        }
+    }
+}
+
 /// An individual user state, repeatedly running all [`GooseTask`](./struct.GooseTask.html)s
 /// in a specific [`GooseTaskSet`](./struct.GooseTaskSet.html).
 #[derive(Debug, Clone)]
@@ -773,7 +819,7 @@ pub struct GooseUser {
     pub task_sets_index: usize,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Arc<Mutex<Client>>,
-    /// Integer value tracking the current task user is running.
+    /// Integer value tracking the current task the user is running.
     pub position: Arc<AtomicUsize>,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
@@ -804,6 +850,11 @@ pub struct GooseUser {
     pub weighted_on_stop_tasks: WeightedGooseTasks,
     /// Load test hash.
     pub load_test_hash: u64,
+    /// Tracks the cadence that this user is looping through all GooseTasks, used by Coordinated
+    /// Omission Mitigation.
+    request_cadence: Arc<RwLock<GooseRequestCadence>>,
+    /// Tracks how much time is spent sleeping during a loop through all tasks.
+    pub(crate) slept: Arc<AtomicU64>,
 }
 impl GooseUser {
     /// Create a new user state.
@@ -815,7 +866,7 @@ impl GooseUser {
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Result<Self, GooseError> {
-        trace!("new user");
+        trace!("new GooseUser");
         let client = Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true)
@@ -840,6 +891,8 @@ impl GooseUser {
             weighted_tasks: Vec::new(),
             weighted_on_stop_tasks: Vec::new(),
             load_test_hash,
+            request_cadence: Arc::new(RwLock::new(GooseRequestCadence::new())),
+            slept: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -1362,7 +1415,7 @@ impl GooseUser {
         let request_name = self.get_request_name(&path, request_name);
 
         // Record information about the request.
-        let mut raw_request = GooseRequestMetric::new(
+        let mut request_metric = GooseRequestMetric::new(
             method,
             &request_name,
             &request.url().to_string(),
@@ -1372,7 +1425,7 @@ impl GooseUser {
 
         // Make the actual request.
         let response = self.client.lock().await.execute(request).await;
-        raw_request.set_response_time(started.elapsed().as_millis());
+        request_metric.set_response_time(started.elapsed().as_millis());
 
         match &response {
             Ok(r) => {
@@ -1380,18 +1433,18 @@ impl GooseUser {
                 debug!("{:?}: status_code {}", &path, status_code);
                 // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                 if !status_code.is_success() {
-                    raw_request.success = false;
-                    raw_request.error = format!("{}: {}", status_code, &path);
+                    request_metric.success = false;
+                    request_metric.error = format!("{}: {}", status_code, &path);
                 }
-                raw_request.set_status_code(Some(status_code));
-                raw_request.set_final_url(r.url().as_str());
+                request_metric.set_status_code(Some(status_code));
+                request_metric.set_final_url(r.url().as_str());
 
                 // Load test user was redirected.
-                if self.config.sticky_follow && raw_request.url != raw_request.final_url {
+                if self.config.sticky_follow && request_metric.url != request_metric.final_url {
                     let base_url = self.base_url.read().await.to_string();
                     // Check if the URL redirected started with the load test base_url.
-                    if !raw_request.final_url.starts_with(&base_url) {
-                        let redirected_url = Url::parse(&raw_request.final_url)?;
+                    if !request_metric.final_url.starts_with(&base_url) {
+                        let redirected_url = Url::parse(&request_metric.final_url)?;
                         let redirected_base_url =
                             redirected_url[..url::Position::BeforePath].to_string();
                         info!(
@@ -1407,19 +1460,146 @@ impl GooseUser {
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
                 warn!("{:?}: {}", &path, e);
-                raw_request.success = false;
-                raw_request.set_status_code(None);
-                raw_request.error = e.to_string();
+                request_metric.success = false;
+                request_metric.set_status_code(None);
+                request_metric.error = e.to_string();
             }
         };
 
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
-            self.send_to_parent(GooseMetric::Request(raw_request.clone()))?;
+            self.send_to_parent(GooseMetric::Request(request_metric.clone()))?;
         }
 
-        Ok(GooseResponse::new(raw_request, response))
+        // If enabled, track the cadence between each time the same request is made while
+        // this GooseUser is running. If requests are blocked by the upstream server, this
+        // allows Goose to backfill the requests that should have been made based on
+        // cadence statistics.
+        self.coordinated_omission_mitigation(&request_metric)
+            .await?;
+
+        Ok(GooseResponse::new(request_metric, response))
+    }
+
+    /// Tracks the time it takes for the current GooseUser to loop through all GooseTasks
+    /// if Coordinated Omission Mitigation is enabled.
+    pub(crate) async fn update_request_cadence(&self, thread_number: usize) {
+        if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
+            // Return immediately if coordinated omission mitigation is disabled.
+            if co_mitigation == &GooseCoordinatedOmissionMitigation::Disabled {
+                return;
+            }
+
+            // Grab a read/write-copy of the `requests_cadence` object to update the
+            // current request cadence.
+            let mut request_cadence = self.request_cadence.write().await;
+
+            // Grab the current timestamp to calculate the difference since the last
+            // time through the loop.
+            let now = std::time::Instant::now();
+
+            // Swap out the `slept` counter, which is the total time the GooseUser slept
+            // between tasks, a potentially randomly changing value. Reset to 0 for the
+            // next loop through all GooseTasks.
+            request_cadence.delays_since_last_time = self.slept.swap(0, Ordering::SeqCst);
+
+            // How much time passed since the last time this GooseUser looped through all
+            // tasks, accounting for time waiting between GooseTasks due to `set_wait_time`.
+            let elapsed = (now - request_cadence.last_time).as_millis() as u64
+                - request_cadence.delays_since_last_time;
+
+            // Update `minimum_cadence` if this was the fastest seen.
+            if elapsed < request_cadence.minimum_cadence || request_cadence.minimum_cadence == 0 {
+                request_cadence.minimum_cadence = elapsed;
+            // Update `maximum_cadence` if this was the slowest seen.
+            } else if elapsed > request_cadence.maximum_cadence {
+                request_cadence.maximum_cadence = elapsed;
+            }
+
+            // Update request_cadence metrics based on the timing of the current request.
+            request_cadence.counter += 1;
+            request_cadence.total_elapsed += elapsed;
+            request_cadence.last_time = now;
+            request_cadence.average_cadence =
+                request_cadence.total_elapsed / request_cadence.counter;
+
+            if request_cadence.counter > 3 {
+                if request_cadence.coordinated_omission_counter < 0 {
+                    debug!(
+                        "user {} enabled coordinated omission mitigation",
+                        thread_number
+                    );
+                    request_cadence.coordinated_omission_counter += 1;
+                }
+                // Calculate the expected cadence for this GooseTask request.
+                let cadence = match co_mitigation {
+                    // Expected cadence is the average time between requests.
+                    GooseCoordinatedOmissionMitigation::Average => request_cadence.average_cadence,
+                    // Expected cadence is the maximum time between requests.
+                    GooseCoordinatedOmissionMitigation::Maximum => request_cadence.maximum_cadence,
+                    // Expected cadence is the minimum time between requests.
+                    GooseCoordinatedOmissionMitigation::Minimum => request_cadence.minimum_cadence,
+                    // This is not possible as we would have exited already if coordinated
+                    // omission mitigation was disabled.
+                    GooseCoordinatedOmissionMitigation::Disabled => unreachable!(),
+                };
+                if elapsed > (cadence * 2) {
+                    debug!(
+                        "user {}: coordinated_omission_mitigation: elapsed({}) > cadence({})",
+                        thread_number, elapsed, cadence
+                    );
+                    request_cadence.coordinated_omission_counter += 1;
+                    request_cadence.coordinated_omission_mitigation = elapsed;
+                    request_cadence.coordinated_omission_cadence = cadence;
+                } else {
+                    request_cadence.coordinated_omission_mitigation = 0;
+                    request_cadence.coordinated_omission_cadence = 0;
+                }
+            }
+        } else {
+            // Coordinated Omission Mitigation defaults to average.
+            unreachable!();
+        }
+    }
+
+    /// If Coordinated Omission Mitigation is enabled, compares how long has passed since the last
+    /// loop through all GooseTasks by the current GooseUser. Through this mechanism, Goose is
+    /// able to detect stalls on the upstream server being load tested, backfilling requests based
+    /// on what statistically should have happened. Can be disabled with `--co-mitigation disabled`.
+    async fn coordinated_omission_mitigation(
+        &self,
+        request_metric: &GooseRequestMetric,
+    ) -> Result<(), GooseTaskError> {
+        if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
+            // Return immediately if coordinated omission mitigation is disabled.
+            if co_mitigation == &GooseCoordinatedOmissionMitigation::Disabled {
+                return Ok(());
+            }
+
+            // Grab a read-only copy of the `requests_cadence` object to view the current
+            // request cadence.
+            let request_cadence = self.request_cadence.read().await;
+
+            // Check if Coordinated Omission Mitigation has been triggered.
+            if request_cadence.coordinated_omission_mitigation > 0 {
+                // Base our coordinated omission generated request metric on the actual
+                // metric that triggered this logic.
+                let mut coordinated_omission_request_metric = request_metric.clone();
+                // Record data points specific to coordinated_omission.
+                coordinated_omission_request_metric.coordinated_omission_elapsed =
+                    request_cadence.coordinated_omission_mitigation;
+                // Record data points specific to coordinated_omission.
+                coordinated_omission_request_metric.coordinated_omission_cadence =
+                    request_cadence.coordinated_omission_cadence;
+                // Send the coordinated omission mitigation generated metrics to the parent.
+                self.send_to_parent(GooseMetric::Request(coordinated_omission_request_metric))?;
+            }
+        } else {
+            // A setting for coordinated omission mitigation is required, defaults to Average.
+            unreachable!();
+        }
+        Ok(())
     }
 
     fn send_to_parent(&self, metric: GooseMetric) -> GooseTaskResult {
@@ -1442,7 +1622,7 @@ impl GooseUser {
             None => {
                 // Otherwise determine if the current GooseTask is named, and if so return
                 // a copy of it.
-                let position = self.position.load(atomic::Ordering::SeqCst);
+                let position = self.position.load(Ordering::SeqCst);
                 if !self.weighted_tasks.is_empty() && !self.weighted_tasks[position].1.is_empty() {
                     self.weighted_tasks[position].1.clone()
                 } else {
@@ -2146,7 +2326,8 @@ mod tests {
     const EMPTY_ARGS: Vec<&str> = vec![];
 
     async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
-        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
         let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
         GooseUser::single(base_url, &configuration)
     }
@@ -2172,7 +2353,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
         assert_eq!(task_set.tasks.len(), 0);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.weighted_on_start_tasks.len(), 0);
@@ -2186,7 +2367,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Different task can be registered.
         task_set = task_set.register_task(task!(test_function_b));
@@ -2196,7 +2377,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Same task can be registered again.
         task_set = task_set.register_task(task!(test_function_a));
@@ -2206,7 +2387,7 @@ mod tests {
         assert_eq!(task_set.weight, 1);
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Setting weight only affects weight field.
         task_set = task_set.set_weight(50).unwrap();
@@ -2216,7 +2397,7 @@ mod tests {
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.min_wait, 0);
         assert_eq!(task_set.max_wait, 0);
-        assert_eq!(task_set.host, None);
+        assert!(task_set.host.is_none());
 
         // Weight can be changed.
         task_set = task_set.set_weight(5).unwrap();
@@ -2267,16 +2448,16 @@ mod tests {
         assert_eq!(task.name, "".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
-        assert_eq!(task.on_start, false);
-        assert_eq!(task.on_stop, false);
+        assert!(!task.on_start);
+        assert!(!task.on_stop);
 
         // Name can be set, without affecting other fields.
         task = task.set_name("foo");
         assert_eq!(task.name, "foo".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
-        assert_eq!(task.on_start, false);
-        assert_eq!(task.on_stop, false);
+        assert!(!task.on_start);
+        assert!(!task.on_stop);
 
         // Name can be set multiple times.
         task = task.set_name("bar");
@@ -2284,34 +2465,34 @@ mod tests {
 
         // On start flag can be set, without affecting other fields.
         task = task.set_on_start();
-        assert_eq!(task.on_start, true);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
-        assert_eq!(task.on_stop, false);
+        assert!(!task.on_stop);
 
         // Setting on start flag twice doesn't change anything.
         task = task.set_on_start();
-        assert_eq!(task.on_start, true);
+        assert!(task.on_start);
 
         // On stop flag can be set, without affecting other fields.
         // It's possible to set both on_start and on_stop for same task.
         task = task.set_on_stop();
-        assert_eq!(task.on_stop, true);
-        assert_eq!(task.on_start, true);
+        assert!(task.on_stop);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
         assert_eq!(task.weight, 1);
         assert_eq!(task.sequence, 0);
 
         // Setting on stop flag twice doesn't change anything.
         task = task.set_on_stop();
-        assert_eq!(task.on_stop, true);
+        assert!(task.on_stop);
 
         // Setting weight doesn't change anything else.
         task = task.set_weight(2).unwrap();
         assert_eq!(task.weight, 2);
-        assert_eq!(task.on_stop, true);
-        assert_eq!(task.on_start, true);
+        assert!(task.on_stop);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
         assert_eq!(task.sequence, 0);
 
@@ -2323,8 +2504,8 @@ mod tests {
         task = task.set_sequence(4);
         assert_eq!(task.sequence, 4);
         assert_eq!(task.weight, 3);
-        assert_eq!(task.on_stop, true);
-        assert_eq!(task.on_start, true);
+        assert!(task.on_stop);
+        assert!(task.on_start);
         assert_eq!(task.name, "bar".to_string());
 
         // Sequence field can be changed multiple times.
@@ -2452,8 +2633,8 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(goose.request.method, GooseMethod::Get);
         assert_eq!(goose.request.name, INDEX_PATH);
-        assert_eq!(goose.request.success, true);
-        assert_eq!(goose.request.update, false);
+        assert!(goose.request.success);
+        assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
         assert_eq!(index.hits(), 1);
 
@@ -2474,8 +2655,8 @@ mod tests {
         assert_eq!(status, 404);
         assert_eq!(goose.request.method, GooseMethod::Get);
         assert_eq!(goose.request.name, NO_SUCH_PATH);
-        assert_eq!(goose.request.success, false);
-        assert_eq!(goose.request.update, false);
+        assert!(!goose.request.success);
+        assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 404,);
         not_found.assert_hits(1);
 
@@ -2499,8 +2680,8 @@ mod tests {
         assert_eq!(body, "foo");
         assert_eq!(goose.request.method, GooseMethod::Post);
         assert_eq!(goose.request.name, COMMENT_PATH);
-        assert_eq!(goose.request.success, true);
-        assert_eq!(goose.request.update, false);
+        assert!(goose.request.success);
+        assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
         comment.assert_hits(1);
     }

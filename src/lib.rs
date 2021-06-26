@@ -463,7 +463,9 @@ use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseDebug, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::metrics::{GooseMetric, GooseMetrics, GooseRequestMetric};
+use crate::metrics::{
+    GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetrics, GooseRequestMetric,
+};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -716,6 +718,8 @@ pub struct GooseDefaults {
     no_websocket: Option<bool>,
     /// An optional default for not auto-starting the load test.
     no_autostart: Option<bool>,
+    /// An optional default for coordinated omission mitigation.
+    co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     /// An optional default to track additional status code metrics.
     status_codes: Option<bool>,
     /// An optional default maximum requests per second.
@@ -791,6 +795,8 @@ pub enum GooseDefault {
     NoTelnet,
     /// An optional default for not enabling WebSocket Controller thread.
     NoWebSocket,
+    /// An optional default for coordinated omission mitigation.
+    CoordinatedOmissionMitigation,
     /// An optional default for not automatically starting load test.
     NoAutoStart,
     /// An optional default to track additional status code metrics.
@@ -1803,6 +1809,81 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Configure the coordinated omission mitigation strategy.
+    fn set_coordinated_omission(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.coordinated_omission";
+        let mut value = Some(GooseCoordinatedOmissionMitigation::Average);
+
+        if self.configuration.co_mitigation.is_some() {
+            key = "--co-mitigation";
+            value = self.configuration.co_mitigation.clone();
+        }
+
+        // Use default for co_mitigation if set and not on Worker.
+        if self.configuration.co_mitigation.is_none() {
+            if let Some(default_co_mitigation) = self.defaults.co_mitigation.as_ref() {
+                // In Gaggles, co_mitigation is only set on Manager.
+                if self.attack_mode != AttackMode::Worker {
+                    key = "set_default(GooseDefault::CoordinatedOmissionMitigation)";
+                    value = Some(default_co_mitigation.clone());
+
+                    self.configuration.co_mitigation = Some(default_co_mitigation.clone());
+                }
+            }
+        }
+
+        // Otherwise default to GooseCoordinaatedOmissionMitigation::Average.
+        if self.configuration.co_mitigation.is_none() && self.attack_mode != AttackMode::Worker {
+            self.configuration.co_mitigation = value.clone();
+        }
+
+        if let Some(co_mitigation) = self.configuration.co_mitigation.as_ref() {
+            // Setting --co-mitigation with --worker is not allowed.
+            if self.attack_mode == AttackMode::Worker {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: format!("{} can not be set together with the --worker flag.", key),
+                });
+            }
+
+            // Setting --co-mitigation with --no-metrics is not allowed.
+            if self.configuration.no_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: format!(
+                        "{} can not be set together with the --no-metrics flag.",
+                        key
+                    ),
+                });
+            }
+
+            if co_mitigation != &GooseCoordinatedOmissionMitigation::Disabled
+                && self.scheduler == GooseScheduler::Random
+            {
+                // Coordinated Omission Mitigation is not possible together with the random scheduler,
+                // as it's impossible to calculate an accurate request cadence.
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: format!(
+                        "{} can not be set together with GooseScheduler::Random.",
+                        key
+                    ),
+                });
+            }
+
+            info!(
+                "co_mitigation = {:?}",
+                self.configuration.co_mitigation.as_ref().unwrap()
+            );
+        }
+
+        Ok(())
+    }
+
     // Configure maximum requests per second if throttle enabled.
     fn set_throttle_requests(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2502,6 +2583,9 @@ impl GooseAttack {
 
         // Determine whether or not to log response body.
         self.set_no_debug_body()?;
+
+        // Configure coordinated ommission mitigation strategy.
+        self.set_coordinated_omission()?;
 
         // Configure throttle if enabled.
         self.set_throttle_requests()?;
@@ -3316,7 +3400,7 @@ impl GooseAttack {
         // Only write the report if enabled.
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
             // Prepare report summary variables.
-            let started = self.metrics.started.clone().unwrap();
+            let started = self.metrics.started.unwrap();
             let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
             let end_time = (started + Duration::seconds(self.metrics.duration as i64))
                 .format("%Y-%m-%d %H:%M:%S")
@@ -3964,6 +4048,16 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
+            GooseDefault::CoordinatedOmissionMitigation => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected GooseCoordinatedOmissionMitigation value, received &str",
+                        key, value
+                    ),
+                });
+            }
         }
         Ok(Box::new(self))
     }
@@ -4026,6 +4120,16 @@ impl GooseDefaultType<usize> for GooseAttack {
                     ),
                 })
             }
+            GooseDefault::CoordinatedOmissionMitigation => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected GooseCoordinatedOmissionMitigation value, received usize",
+                        key, value
+                    ),
+                });
+            }
         }
         Ok(Box::new(self))
     }
@@ -4084,6 +4188,92 @@ impl GooseDefaultType<bool> for GooseAttack {
                     value: format!("{}", value),
                     detail: format!(
                         "set_default(GooseDefault::{:?}, {}) expected usize value, received bool",
+                        key, value
+                    ),
+                })
+            }
+            GooseDefault::CoordinatedOmissionMitigation => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {}) expected GooseCoordinatedOmissionMitigation value, received bool",
+                        key, value
+                    ),
+                });
+            }
+        }
+        Ok(Box::new(self))
+    }
+}
+impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
+    fn set_default(
+        mut self,
+        key: GooseDefault,
+        value: GooseCoordinatedOmissionMitigation,
+    ) -> Result<Box<Self>, GooseError> {
+        match key {
+            GooseDefault::CoordinatedOmissionMitigation => self.defaults.co_mitigation = Some(value),
+            // Otherwise display a helpful and explicit error.
+            GooseDefault::NoResetMetrics
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoErrorSummary
+            | GooseDefault::NoDebugBody
+            | GooseDefault::NoTelnet
+            | GooseDefault::NoWebSocket
+            | GooseDefault::NoAutoStart
+            | GooseDefault::StatusCodes
+            | GooseDefault::StickyFollow
+            | GooseDefault::Manager
+            | GooseDefault::NoHashCheck
+            | GooseDefault::Worker => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{:?}", value),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {:?}) expected bool value, received GooseCoordinatedOmissionMitigation",
+                        key, value
+                    ),
+                })
+            }
+            GooseDefault::Host
+            | GooseDefault::LogFile
+            | GooseDefault::ReportFile
+            | GooseDefault::RequestsFile
+            | GooseDefault::RequestsFormat
+            | GooseDefault::RunningMetrics
+            | GooseDefault::DebugFile
+            | GooseDefault::DebugFormat
+            | GooseDefault::TelnetHost
+            | GooseDefault::WebSocketHost
+            | GooseDefault::ManagerBindHost
+            | GooseDefault::ManagerHost => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{:?}", value),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {:?}) expected &str value, received GooseCoordinatedOmissionMitigation",
+                        key, value
+                    ),
+                })
+            }
+            GooseDefault::Users
+            | GooseDefault::HatchRate
+            | GooseDefault::RunTime
+            | GooseDefault::LogLevel
+            | GooseDefault::Verbose
+            | GooseDefault::ThrottleRequests
+            | GooseDefault::ExpectWorkers
+            | GooseDefault::TelnetPort
+            | GooseDefault::WebSocketPort
+            | GooseDefault::ManagerBindPort
+            | GooseDefault::ManagerPort => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{:?}", key),
+                    value: format!("{:?}", value),
+                    detail: format!(
+                        "set_default(GooseDefault::{:?}, {:?}) expected usize value, received GooseCoordinatedOmissionMitigation",
                         key, value
                     ),
                 })
@@ -4190,6 +4380,9 @@ pub struct GooseConfiguration {
     /// Doesn't automatically start load test
     #[options(no_short)]
     pub no_autostart: bool,
+    /// Sets coordinated omission mitigation strategy
+    #[options(no_short, meta = "STRATEGY")]
+    pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
@@ -4550,6 +4743,11 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::StatusCodes, true)
             .unwrap()
+            .set_default(
+                GooseDefault::CoordinatedOmissionMitigation,
+                GooseCoordinatedOmissionMitigation::Disabled,
+            )
+            .unwrap()
             .set_default(GooseDefault::ThrottleRequests, throttle_requests)
             .unwrap()
             .set_default(GooseDefault::StickyFollow, true)
@@ -4593,6 +4791,10 @@ mod test {
         assert!(goose_attack.defaults.debug_file == Some(debug_file));
         assert!(goose_attack.defaults.debug_format == Some(debug_format));
         assert!(goose_attack.defaults.status_codes == Some(true));
+        assert!(
+            goose_attack.defaults.co_mitigation
+                == Some(GooseCoordinatedOmissionMitigation::Disabled)
+        );
         assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
         assert!(goose_attack.defaults.sticky_follow == Some(true));
         assert!(goose_attack.defaults.manager == Some(true));

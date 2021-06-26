@@ -95,7 +95,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
 // the same to simplify reuse, accepting the MockServer but not using it.
 fn common_build_configuration(_server: &MockServer, custom: &mut Vec<&str>) -> GooseConfiguration {
     // Common elements in all our tests.
-    let mut configuration: Vec<&str> = vec!["--no-autostart"];
+    let mut configuration: Vec<&str> = vec!["--no-autostart", "--co-mitigation", "disabled"];
 
     // Custom elements in some tests.
     configuration.append(custom);
@@ -172,8 +172,8 @@ fn run_standalone_test(test_type: TestType) {
 
     // Create a new thread from which to test the Controller.
     let _controller_handle = thread::spawn(move || {
-        // Sleep a quarter of a second allowing the GooseAttack to start.
-        thread::sleep(time::Duration::from_millis(250));
+        // Sleep a half a second allowing the GooseAttack to start.
+        thread::sleep(time::Duration::from_millis(500));
 
         // Initiailize the state engine.
         let mut test_state = update_state(None, &test_type);

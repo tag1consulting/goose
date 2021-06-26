@@ -12,11 +12,13 @@ use chrono::prelude::*;
 use http::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
+use regex::RegexSet;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 use std::{f32, fmt};
 use tokio::io::AsyncWriteExt;
 
@@ -45,6 +47,65 @@ pub enum GooseMetric {
     Request(GooseRequestMetric),
     Task(GooseTaskMetric),
     Error(GooseErrorMetric),
+}
+
+/// Mitigate the loss of data (coordinated omission) due to stalls on the upstream server.
+///
+/// Stalling can happen for many reasons, for example: garbage collection, a cache stampede,
+/// even unrelated load on the same server. Without any mitigation, Goose loses
+/// statistically relevant information as [`GooseUser`] threads are unable to make additional
+/// requests while they are blocked by an upstream stall. Goose mitigates this by backfilling
+/// the requests that would have been made during that time. Backfilled requests show up in
+/// the `--request-file` if enabled, though they were not actually sent to the server.
+///
+/// By default, Goose is configured to backfill based on the Average response time seen for the
+/// stalled request. However, different server configurations and testing plans can work on
+/// different assumptions so the following configurations are supported.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum GooseCoordinatedOmissionMitigation {
+    /// Backfill based on the average response_time for this request (default).
+    Average,
+    /// Backfill based on the maximum response_time for this request.
+    Maximum,
+    /// Backfill based on the minimum response_time for this request.
+    Minimum,
+    /// Completely disable coordinated omission mitigation.
+    Disabled,
+}
+/// Allow `--co-mitigation` from the command line using text variations on supported
+/// `GooseCoordinatedOmissionMitigation`s by implementing [`FromStr`].
+impl FromStr for GooseCoordinatedOmissionMitigation {
+    type Err = GooseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
+        // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
+        let co_mitigation = RegexSet::new(&[
+            r"(?i)^(average|ave|aver|avg|mean)$",
+            r"(?i)^(maximum|ma|max|maxi)$",
+            r"(?i)^(minimum|mi|min|mini)$",
+            r"(?i)^(disabled|di|dis|disable|none|no)$",
+        ])
+        .expect("failed to compile co_mitigation RegexSet");
+        let matches = co_mitigation.matches(&s);
+        if matches.matched(0) {
+            Ok(GooseCoordinatedOmissionMitigation::Average)
+        } else if matches.matched(1) {
+            Ok(GooseCoordinatedOmissionMitigation::Maximum)
+        } else if matches.matched(2) {
+            Ok(GooseCoordinatedOmissionMitigation::Minimum)
+        } else if matches.matched(3) {
+            Ok(GooseCoordinatedOmissionMitigation::Disabled)
+        } else {
+            Err(GooseError::InvalidOption {
+                option: format!("GooseCoordinatedOmissionMitigation::{:?}", s),
+                value: s.to_string(),
+                detail:
+                    "Invalid co_mitigation, expected: average, disabled, maximum, median, or minimum"
+                        .to_string(),
+            })
+        }
+    }
 }
 
 /// All requests made during a load test.
@@ -216,6 +277,11 @@ pub struct GooseRequestMetric {
     pub user: usize,
     /// The optional error caused by this request.
     pub error: String,
+    /// If non-zero, Coordinated Omission Mitigation detected an abnormally long response time on
+    /// the upstream server, blocking requests from being made.
+    pub coordinated_omission_elapsed: u64,
+    /// If non-zero, the expected cadence of looping through all GooseTasks by this GooseUser.
+    pub coordinated_omission_cadence: u64,
 }
 impl GooseRequestMetric {
     pub(crate) fn new(
@@ -238,6 +304,8 @@ impl GooseRequestMetric {
             update: false,
             user,
             error: "".to_string(),
+            coordinated_omission_elapsed: 0,
+            coordinated_omission_cadence: 0,
         }
     }
 
@@ -344,7 +412,9 @@ impl GooseRequestMetricAggregate {
         let response_time_usize = response_time as usize;
 
         // Update minimum if this one is fastest yet.
-        if self.min_response_time == 0 || response_time_usize < self.min_response_time {
+        if self.min_response_time == 0
+            || (response_time_usize > 0 && response_time_usize < self.min_response_time)
+        {
             self.min_response_time = response_time_usize;
         }
 
@@ -361,24 +431,22 @@ impl GooseRequestMetricAggregate {
 
         // Round the response time so we can combine similar times together and
         // minimize required memory to store and push upstream to the parent.
-        let rounded_response_time: usize;
-
         // No rounding for 1-100ms response times.
-        if response_time < 100 {
-            rounded_response_time = response_time_usize;
+        let rounded_response_time = if response_time < 100 {
+            response_time_usize
         }
         // Round to nearest 10 for 100-500ms response times.
         else if response_time < 500 {
-            rounded_response_time = ((response_time as f64 / 10.0).round() * 10.0) as usize;
+            ((response_time as f64 / 10.0).round() * 10.0) as usize
         }
         // Round to nearest 100 for 500-1000ms response times.
         else if response_time < 1000 {
-            rounded_response_time = ((response_time as f64 / 100.0).round() * 100.0) as usize;
+            ((response_time as f64 / 100.0).round() * 100.0) as usize
         }
         // Round to nearest 1000 for all larger response times.
         else {
-            rounded_response_time = ((response_time as f64 / 1000.0).round() * 1000.0) as usize;
-        }
+            ((response_time as f64 / 1000.0).round() * 1000.0) as usize
+        };
 
         let counter = match self.response_times.get(&rounded_response_time) {
             // We've seen this response_time before, increment counter.
@@ -1708,7 +1776,7 @@ impl GooseAttack {
             self.sync_metrics(goose_attack_run_state, true).await?;
 
             goose_attack_run_state.all_users_spawned = true;
-            let users = self.configuration.users.clone().unwrap();
+            let users = self.configuration.users.unwrap();
             if !self.configuration.no_reset_metrics {
                 // Display the running metrics collected so far, before resetting them.
                 self.update_duration();
@@ -1747,6 +1815,75 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Store `GooseRequestMetric` in a `GooseRequestMetricAggregate` within the
+    // `GooseMetrics.requests` `HashMap`, merging if already existing, or creating new.
+    // Also writes it to the request_file if enabled.
+    async fn record_request_metric(
+        &mut self,
+        request_metric: &GooseRequestMetric,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) {
+        let key = format!("{} {}", request_metric.method, request_metric.name);
+        let mut merge_request = match self.metrics.requests.get(&key) {
+            Some(m) => m.clone(),
+            None => GooseRequestMetricAggregate::new(
+                &request_metric.name,
+                request_metric.method.clone(),
+                0,
+            ),
+        };
+
+        // Handle a metrics update.
+        if request_metric.update {
+            if request_metric.success {
+                merge_request.success_count += 1;
+                merge_request.fail_count -= 1;
+            } else {
+                merge_request.success_count -= 1;
+                merge_request.fail_count += 1;
+            }
+        }
+        // Store a new metric.
+        else {
+            merge_request.set_response_time(request_metric.response_time);
+            if self.configuration.status_codes {
+                merge_request.set_status_code(request_metric.status_code);
+            }
+            if request_metric.success {
+                merge_request.success_count += 1;
+            } else {
+                merge_request.fail_count += 1;
+            }
+        }
+
+        // Options should appear above, search for formatted_log.
+        let formatted_log = match self.configuration.requests_format.as_str() {
+            // Use serde_json to create JSON.
+            "json" => json!(request_metric).to_string(),
+            // Manually create CSV, library doesn't support single-row string conversion.
+            "csv" => GooseAttack::prepare_csv(&request_metric, goose_attack_run_state),
+            // Raw format is Debug output for GooseRequestMetric structure.
+            "raw" => format!("{:?}", request_metric),
+            _ => unreachable!(),
+        };
+        if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
+            match file.write(format!("{}\n", formatted_log).as_ref()).await {
+                Ok(_) => (),
+                Err(e) => {
+                    warn!(
+                        "failed to write metrics to {}: {}",
+                        // Unwrap is safe as we can't get here unless a requests file path
+                        // is defined.
+                        self.get_requests_file_path().unwrap(),
+                        e
+                    );
+                }
+            }
+        }
+
+        self.metrics.requests.insert(key.to_string(), merge_request);
+    }
+
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
     // is true all metrics will be received regardless of how long it takes. If flush is
     // false, metrics will only be received for up to 400 ms before exiting to continue on
@@ -1766,71 +1903,43 @@ impl GooseAttack {
         while message.is_ok() {
             received_message = true;
             match message.unwrap() {
-                GooseMetric::Request(raw_request) => {
-                    // Options should appear above, search for formatted_log.
-                    let formatted_log = match self.configuration.requests_format.as_str() {
-                        // Use serde_json to create JSON.
-                        "json" => json!(raw_request).to_string(),
-                        // Manually create CSV, library doesn't support single-row string conversion.
-                        "csv" => GooseAttack::prepare_csv(&raw_request, goose_attack_run_state),
-                        // Raw format is Debug output for GooseRequestMetric structure.
-                        "raw" => format!("{:?}", raw_request),
-                        _ => unreachable!(),
-                    };
-                    if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
-                        match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                            Ok(_) => (),
-                            Err(e) => {
-                                warn!(
-                                    "failed to write metrics to {}: {}",
-                                    // Unwrap is safe as we can't get here unless a requests file path
-                                    // is defined.
-                                    self.get_requests_file_path().unwrap(),
-                                    e
-                                );
+                GooseMetric::Request(request_metric) => {
+                    // If there was an error, store it.
+                    if !request_metric.error.is_empty() {
+                        self.record_error(&request_metric);
+                    }
+
+                    // If coordinated_omission_elapsed is non-zero, this was a statistically
+                    // generated "request" to mitigate coordinated omission, loop to backfill
+                    // with statistically generated metrics.
+                    if request_metric.coordinated_omission_elapsed > 0
+                        && request_metric.coordinated_omission_cadence > 0
+                    {
+                        // Build a statistically generated coordinated_omissiom metric starting
+                        // with the metric that was sent by the affected GooseUser.
+                        let mut co_metric = request_metric.clone();
+
+                        // Use a signed integer as this value can drop below zero.
+                        let mut response_time = request_metric.coordinated_omission_elapsed as i64;
+
+                        loop {
+                            // Backfill until reaching the expected request cadence.
+                            if response_time > request_metric.response_time as i64 {
+                                co_metric.response_time = response_time as u64;
+                                self.record_request_metric(&co_metric, goose_attack_run_state)
+                                    .await;
+                                response_time -= request_metric.coordinated_omission_cadence as i64;
+                            } else {
+                                break;
                             }
                         }
+                    // Otherwise this is an actual request, record it normally.
+                    } else {
+                        // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
+                        // `GooseMetrics.requests`, and write to the requests log if enabled.
+                        self.record_request_metric(&request_metric, goose_attack_run_state)
+                            .await;
                     }
-
-                    // If there was an error, store it.
-                    if !raw_request.error.is_empty() {
-                        self.record_error(&raw_request);
-                    }
-
-                    let key = format!("{} {}", raw_request.method, raw_request.name);
-                    let mut merge_request = match self.metrics.requests.get(&key) {
-                        Some(m) => m.clone(),
-                        None => GooseRequestMetricAggregate::new(
-                            &raw_request.name,
-                            raw_request.method,
-                            0,
-                        ),
-                    };
-
-                    // Handle a metrics update.
-                    if raw_request.update {
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                            merge_request.fail_count -= 1;
-                        } else {
-                            merge_request.success_count -= 1;
-                            merge_request.fail_count += 1;
-                        }
-                    }
-                    // Store a new metric.
-                    else {
-                        merge_request.set_response_time(raw_request.response_time);
-                        if self.configuration.status_codes {
-                            merge_request.set_status_code(raw_request.status_code);
-                        }
-                        if raw_request.success {
-                            merge_request.success_count += 1;
-                        } else {
-                            merge_request.fail_count += 1;
-                        }
-                    }
-
-                    self.metrics.requests.insert(key.to_string(), merge_request);
                 }
                 GooseMetric::Error(raw_error) => {
                     // Recreate the string used to uniquely identify errors.
@@ -2140,8 +2249,8 @@ mod test {
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, 0);
         assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
+        assert!(raw_request.success);
+        assert!(!raw_request.update);
 
         let response_time = 123;
         raw_request.set_response_time(response_time);
@@ -2150,8 +2259,8 @@ mod test {
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time as u64);
         assert_eq!(raw_request.status_code, 0);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
+        assert!(raw_request.success);
+        assert!(!raw_request.update);
 
         let status_code = http::StatusCode::OK;
         raw_request.set_status_code(Some(status_code));
@@ -2160,8 +2269,8 @@ mod test {
         assert_eq!(raw_request.url, PATH.to_string());
         assert_eq!(raw_request.response_time, response_time as u64);
         assert_eq!(raw_request.status_code, 200);
-        assert_eq!(raw_request.success, true);
-        assert_eq!(raw_request.update, false);
+        assert!(raw_request.success);
+        assert!(!raw_request.update);
     }
 
     #[test]

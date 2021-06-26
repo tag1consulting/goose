@@ -518,19 +518,16 @@ mod tests {
         let started = time::Instant::now();
 
         // 60 second timer has not expired.
-        let expired = timer_expired(started, 60);
-        assert_eq!(expired, false);
+        assert!(!timer_expired(started, 60));
 
         // Timer is disabled.
-        let expired = timer_expired(started, 0);
-        assert_eq!(expired, false);
+        assert!(!timer_expired(started, 0));
 
         let sleep_duration = time::Duration::from_secs(1);
         thread::sleep(sleep_duration);
 
         // Timer is now expired.
-        let expired = timer_expired(started, 1);
-        assert_eq!(expired, true);
+        assert!(timer_expired(started, 1));
     }
 
     #[test]
@@ -552,24 +549,18 @@ mod tests {
 
     #[test]
     fn valid_host() {
-        assert_eq!(is_valid_host("http://example.com").is_ok(), true);
-        assert_eq!(is_valid_host("example.com").is_ok(), false);
-        assert_eq!(is_valid_host("http://example.com/").is_ok(), true);
-        assert_eq!(is_valid_host("example.com/").is_ok(), false);
-        assert_eq!(
-            is_valid_host("https://www.example.com/and/with/path").is_ok(),
-            true
-        );
-        assert_eq!(
-            is_valid_host("www.example.com/and/with/path").is_ok(),
-            false
-        );
-        assert_eq!(is_valid_host("foo://example.com").is_ok(), true);
-        assert_eq!(is_valid_host("file:///path/to/file").is_ok(), true);
-        assert_eq!(is_valid_host("/path/to/file").is_ok(), false);
-        assert_eq!(is_valid_host("http://").is_ok(), false);
-        assert_eq!(is_valid_host("http://foo").is_ok(), true);
-        assert_eq!(is_valid_host("http:///example.com").is_ok(), true);
-        assert_eq!(is_valid_host("http:// example.com").is_ok(), false);
+        assert!(is_valid_host("http://example.com").is_ok());
+        assert!(!is_valid_host("example.com").is_ok());
+        assert!(is_valid_host("http://example.com/").is_ok());
+        assert!(!is_valid_host("example.com/").is_ok());
+        assert!(is_valid_host("https://www.example.com/and/with/path").is_ok());
+        assert!(!is_valid_host("www.example.com/and/with/path").is_ok());
+        assert!(is_valid_host("foo://example.com").is_ok());
+        assert!(is_valid_host("file:///path/to/file").is_ok());
+        assert!(!is_valid_host("/path/to/file").is_ok());
+        assert!(!is_valid_host("http://").is_ok());
+        assert!(is_valid_host("http://foo").is_ok());
+        assert!(is_valid_host("http:///example.com").is_ok());
+        assert!(!is_valid_host("http:// example.com").is_ok());
     }
 }
