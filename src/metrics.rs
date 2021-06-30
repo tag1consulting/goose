@@ -1347,17 +1347,6 @@ impl GooseMetrics {
             };
             let raw_average_precision = determine_precision(raw_average);
 
-            if raw_average < request.raw_data.minimum_time as f32 {
-                error!(
-                    "{} is less than the minimum time of {}",
-                    raw_average, request.raw_data.minimum_time
-                );
-                println!(
-                    "average({}) total_time({}) counter({})",
-                    raw_average, request.raw_data.total_time, request.raw_data.counter
-                );
-            }
-
             // Merge in all times from this request into an aggregate.
             aggregate_raw_times = merge_times(aggregate_raw_times, request.raw_data.times.clone());
             // Increment total response time counter.
@@ -1388,14 +1377,14 @@ impl GooseMetrics {
             )?;
         }
 
+        let raw_average = match aggregate_raw_counter {
+            0 => 0.0,
+            _ => aggregate_raw_total_time as f32 / aggregate_raw_counter as f32,
+        };
+        let raw_average_precision = determine_precision(raw_average);
+
         // Display aggregated data if there was more than one request.
         if self.requests.len() > 1 {
-            let raw_average = match aggregate_raw_counter {
-                0 => 0.0,
-                _ => aggregate_raw_total_time as f32 / aggregate_raw_counter as f32,
-            };
-            let raw_average_precision = determine_precision(raw_average);
-
             writeln!(
                 fmt,
                 " -------------------------+-------------+------------+-------------+-----------"
@@ -1454,9 +1443,9 @@ impl GooseMetrics {
             let co_minimum;
             let co_maximum;
             if let Some(co_data) = request.coordinated_omission_data.as_ref() {
-                let raw_average = match aggregate_raw_counter {
+                let raw_average = match request.raw_data.counter {
                     0 => 0.0,
-                    _ => aggregate_raw_total_time as f32 / aggregate_raw_counter as f32,
+                    _ => request.raw_data.total_time as f32 / request.raw_data.counter as f32,
                 };
                 co_average = match co_data.counter {
                     0 => 0.0,
@@ -1487,7 +1476,7 @@ impl GooseMetrics {
             if let Some(co_data) = request.coordinated_omission_data.as_ref() {
                 writeln!(
                     fmt,
-                    " {:<24} | {:>11.co_avg_precision$} | {:>10.std_dev_precision$} | {:>11} | {:>10}",
+                    " {:<24} | {:>11.co_avg_precision$} | {:>10.sd_precision$} | {:>11} | {:>10}",
                     util::truncate_string(&request_key, 24),
                     co_average,
                     standard_deviation,
@@ -1499,7 +1488,7 @@ impl GooseMetrics {
                         co_maximum,
                     )),
                     co_avg_precision = co_average_precision,
-                    std_dev_precision = standard_deviation_precision,
+                    sd_precision = standard_deviation_precision,
                 )?;
             } else {
                 writeln!(
@@ -1521,6 +1510,8 @@ impl GooseMetrics {
                 _ => aggregate_co_total_time as f32 / aggregate_co_counter as f32,
             };
             let co_average_precision = determine_precision(co_average);
+            let standard_deviation = calculate_standard_deviation(raw_average, co_average);
+            let standard_deviation_precision = determine_precision(standard_deviation);
 
             writeln!(
                 fmt,
@@ -1529,10 +1520,10 @@ impl GooseMetrics {
 
             writeln!(
                 fmt,
-                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
+                " {:<24} | {:>11.avg_precision$} | {:>10.sd_precision$} | {:>11} | {:>10}",
                 "Aggregated",
                 co_average,
-                format_number(aggregate_co_min_time),
+                standard_deviation,
                 format_number(aggregate_co_max_time),
                 format_number(util::median(
                     &aggregate_co_times,
@@ -1541,6 +1532,7 @@ impl GooseMetrics {
                     aggregate_co_max_time
                 )),
                 avg_precision = co_average_precision,
+                sd_precision = standard_deviation_precision,
             )?;
         }
 
@@ -2593,8 +2585,8 @@ fn calculate_standard_deviation(raw_average: f32, co_average: f32) -> f32 {
     // Determine the mean (average) between the two numbers.
     let mean = (raw_average + co_average) / 2.0;
     // Get the difference between the mean and each number.
-    let raw_difference = mean - raw_average;
-    let co_difference = mean - co_average;
+    let raw_difference = raw_average - mean;
+    let co_difference = co_average - mean;
     // Add together the square of both differences to get the variance.
     let variance = raw_difference * raw_difference + co_difference * co_difference;
     // Final calculate the standard deviation, the square root of the variance.
