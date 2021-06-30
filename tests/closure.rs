@@ -180,7 +180,7 @@ fn validate_closer_test(
         let status_code: u16 = item.status_code;
 
         assert!(
-            endpoint_metrics.response_time_counter == mock_endpoint.hits(),
+            endpoint_metrics.raw_data.counter == mock_endpoint.hits(),
             "response_time_counter != hits() for item: {:#?}",
             &item
         );

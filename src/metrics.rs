@@ -23,6 +23,7 @@ use std::{f32, fmt};
 use tokio::io::AsyncWriteExt;
 
 use crate::goose::{GooseMethod, GooseTaskSet};
+use crate::report;
 use crate::util;
 #[cfg(feature = "gaggle")]
 use crate::worker::{self, GaggleMetrics};
@@ -2192,7 +2193,6 @@ impl GooseAttack {
         }
     }
 
-    /*
     // Write an HTML-formatted report, if enabled.
     pub(crate) async fn write_html_report(
         &mut self,
@@ -2203,7 +2203,7 @@ impl GooseAttack {
             // Prepare report summary variables.
             let started = self.metrics.started.unwrap();
             let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
-            let end_time = (started + Duration::seconds(self.metrics.duration as i64))
+            let end_time = (started + chrono::Duration::seconds(self.metrics.duration as i64))
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             let host = match self.get_configuration_host() {
@@ -2229,7 +2229,7 @@ impl GooseAttack {
                     .unwrap()
                     .to_string();
                 let total_request_count = request.success_count + request.fail_count;
-                let (requests_per_second, failures_per_second) = metrics::per_second_calculations(
+                let (requests_per_second, failures_per_second) = per_second_calculations(
                     self.metrics.duration,
                     total_request_count,
                     request.fail_count,
@@ -2242,10 +2242,10 @@ impl GooseAttack {
                     number_of_failures: request.fail_count,
                     response_time_average: format!(
                         "{:.2}",
-                        request.total_response_time as f32 / request.response_time_counter as f32
+                        request.raw_data.total_time as f32 / request.raw_data.counter as f32
                     ),
-                    response_time_minimum: request.min_response_time,
-                    response_time_maximum: request.max_response_time,
+                    response_time_minimum: request.raw_data.minimum_time,
+                    response_time_maximum: request.raw_data.maximum_time,
                     requests_per_second: format!("{:.2}", requests_per_second),
                     failures_per_second: format!("{:.2}", failures_per_second),
                 });
@@ -2254,31 +2254,31 @@ impl GooseAttack {
                 response_metrics.push(report::get_response_metric(
                     &method,
                     &name,
-                    &request.response_times,
-                    request.response_time_counter,
-                    request.min_response_time,
-                    request.max_response_time,
+                    &request.raw_data.times,
+                    request.raw_data.counter,
+                    request.raw_data.minimum_time,
+                    request.raw_data.maximum_time,
                 ));
 
                 // Collect aggregated request and response metrics.
                 aggregate_total_count += total_request_count;
                 aggregate_fail_count += request.fail_count;
-                aggregate_response_time_counter += request.total_response_time;
-                aggregate_response_time_minimum = metrics::update_min_time(
+                aggregate_response_time_counter += request.raw_data.total_time;
+                aggregate_response_time_minimum = update_min_time(
                     aggregate_response_time_minimum,
-                    request.min_response_time,
+                    request.raw_data.minimum_time,
                 );
-                aggregate_response_time_maximum = metrics::update_max_time(
+                aggregate_response_time_maximum = update_max_time(
                     aggregate_response_time_maximum,
-                    request.max_response_time,
+                    request.raw_data.maximum_time,
                 );
                 aggregate_response_times =
-                    metrics::merge_times(aggregate_response_times, request.response_times.clone());
+                    merge_times(aggregate_response_times, request.raw_data.times.clone());
             }
 
             // Prepare aggregate per-request metrics.
             let (aggregate_requests_per_second, aggregate_failures_per_second) =
-                metrics::per_second_calculations(
+                per_second_calculations(
                     self.metrics.duration,
                     aggregate_total_count,
                     aggregate_fail_count,
@@ -2348,12 +2348,11 @@ impl GooseAttack {
                             });
                         }
                         let total_run_count = task.success_count + task.fail_count;
-                        let (requests_per_second, failures_per_second) =
-                            metrics::per_second_calculations(
-                                self.metrics.duration,
-                                total_run_count,
-                                task.fail_count,
-                            );
+                        let (requests_per_second, failures_per_second) = per_second_calculations(
+                            self.metrics.duration,
+                            total_run_count,
+                            task.fail_count,
+                        );
                         let average = match task.counter {
                             0 => 0.00,
                             _ => task.total_time as f32 / task.counter as f32,
@@ -2374,17 +2373,17 @@ impl GooseAttack {
                         aggregate_total_count += total_run_count;
                         aggregate_fail_count += task.fail_count;
                         aggregate_task_times =
-                            metrics::merge_times(aggregate_task_times, task.times.clone());
+                            merge_times(aggregate_task_times, task.times.clone());
                         aggregate_task_time_counter += &task.counter;
                         aggregate_task_time_minimum =
-                            metrics::update_min_time(aggregate_task_time_minimum, task.min_time);
+                            update_min_time(aggregate_task_time_minimum, task.min_time);
                         aggregate_task_time_maximum =
-                            metrics::update_max_time(aggregate_task_time_maximum, task.max_time);
+                            update_max_time(aggregate_task_time_maximum, task.max_time);
                     }
                 }
 
                 let (aggregate_requests_per_second, aggregate_failures_per_second) =
-                    metrics::per_second_calculations(
+                    per_second_calculations(
                         self.metrics.duration,
                         aggregate_total_count,
                         aggregate_fail_count,
@@ -2443,7 +2442,7 @@ impl GooseAttack {
                         .to_string();
 
                     // Build a list of status codes, and update the aggregate record.
-                    let codes = metrics::prepare_status_codes(
+                    let codes = prepare_status_codes(
                         &request.status_code_counts,
                         &mut Some(&mut aggregated_status_code_counts),
                     );
@@ -2458,7 +2457,7 @@ impl GooseAttack {
 
                 // Build a list of aggregate status codes.
                 let aggregated_codes =
-                    metrics::prepare_status_codes(&aggregated_status_code_counts, &mut None);
+                    prepare_status_codes(&aggregated_status_code_counts, &mut None);
 
                 // Add a final row of aggregate data for the status code table.
                 status_code_metrics.push(report::StatusCodeMetric {
@@ -2514,7 +2513,6 @@ impl GooseAttack {
 
         Ok(())
     }
-    */
 }
 
 /// Helper to calculate requests and fails per seconds.
@@ -2789,35 +2787,34 @@ mod test {
         assert!(!raw_request.update);
     }
 
-    /*
     #[test]
     fn goose_request() {
         let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
-        assert_eq!(request.response_times.len(), 0);
-        assert_eq!(request.min_response_time, 0);
-        assert_eq!(request.max_response_time, 0);
-        assert_eq!(request.total_response_time, 0);
-        assert_eq!(request.response_time_counter, 0);
+        assert_eq!(request.raw_data.times.len(), 0);
+        assert_eq!(request.raw_data.minimum_time, 0);
+        assert_eq!(request.raw_data.maximum_time, 0);
+        assert_eq!(request.raw_data.total_time, 0);
+        assert_eq!(request.raw_data.counter, 0);
         assert_eq!(request.status_code_counts.len(), 0);
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
 
         // Tracking a response time updates several fields.
-        request.set_response_time(1);
+        request.record_time(1, false);
         // We've seen only one response time so far.
-        assert_eq!(request.response_times.len(), 1);
+        assert_eq!(request.raw_data.times.len(), 1);
         // We've seen one response time of length 1.
-        assert_eq!(request.response_times[&1], 1);
+        assert_eq!(request.raw_data.times[&1], 1);
         // The minimum response time seen so far is 1.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // The maximum response time seen so far is 1.
-        assert_eq!(request.max_response_time, 1);
+        assert_eq!(request.raw_data.maximum_time, 1);
         // We've seen a total of 1 ms of response time so far.
-        assert_eq!(request.total_response_time, 1);
+        assert_eq!(request.raw_data.total_time, 1);
         // We've seen a total of 2 response times so far.
-        assert_eq!(request.response_time_counter, 1);
+        assert_eq!(request.raw_data.counter, 1);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
@@ -2826,19 +2823,19 @@ mod test {
         assert_eq!(request.fail_count, 0);
 
         // Tracking another response time updates all related fields.
-        request.set_response_time(10);
+        request.record_time(10, false);
         // We've added a new unique response time.
-        assert_eq!(request.response_times.len(), 2);
+        assert_eq!(request.raw_data.times.len(), 2);
         // We've seen the 10 ms response time 1 time.
-        assert_eq!(request.response_times[&10], 1);
+        assert_eq!(request.raw_data.times[&10], 1);
         // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // Maximum is new response time.
-        assert_eq!(request.max_response_time, 10);
+        assert_eq!(request.raw_data.maximum_time, 10);
         // Total combined response times is now 11 ms.
-        assert_eq!(request.total_response_time, 11);
+        assert_eq!(request.raw_data.total_time, 11);
         // We've seen two response times so far.
-        assert_eq!(request.response_time_counter, 2);
+        assert_eq!(request.raw_data.counter, 2);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
@@ -2847,94 +2844,94 @@ mod test {
         assert_eq!(request.fail_count, 0);
 
         // Tracking another response time updates all related fields.
-        request.set_response_time(10);
+        request.record_time(10, false);
         // We've incremented the counter of an existing response time.
-        assert_eq!(request.response_times.len(), 2);
+        assert_eq!(request.raw_data.times.len(), 2);
         // We've seen the 10 ms response time 2 times.
-        assert_eq!(request.response_times[&10], 2);
+        assert_eq!(request.raw_data.times[&10], 2);
         // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // Maximum doesn't change.
-        assert_eq!(request.max_response_time, 10);
+        assert_eq!(request.raw_data.maximum_time, 10);
         // Total combined response times is now 21 ms.
-        assert_eq!(request.total_response_time, 21);
+        assert_eq!(request.raw_data.total_time, 21);
         // We've seen three response times so far.
-        assert_eq!(request.response_time_counter, 3);
+        assert_eq!(request.raw_data.counter, 3);
 
         // Tracking another response time updates all related fields.
-        request.set_response_time(101);
+        request.record_time(101, false);
         // We've added a new response time for the first time.
-        assert_eq!(request.response_times.len(), 3);
+        assert_eq!(request.raw_data.times.len(), 3);
         // The response time was internally rounded to 100, which we've seen once.
-        assert_eq!(request.response_times[&100], 1);
+        assert_eq!(request.raw_data.times[&100], 1);
         // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 101);
+        assert_eq!(request.raw_data.maximum_time, 101);
         // Total combined response times is now 122 ms.
-        assert_eq!(request.total_response_time, 122);
+        assert_eq!(request.raw_data.total_time, 122);
         // We've seen four response times so far.
-        assert_eq!(request.response_time_counter, 4);
+        assert_eq!(request.raw_data.counter, 4);
 
         // Tracking another response time updates all related fields.
-        request.set_response_time(102);
+        request.record_time(102, false);
         // Due to rounding, this increments the existing 100 ms response time.
-        assert_eq!(request.response_times.len(), 3);
+        assert_eq!(request.raw_data.times.len(), 3);
         // The response time was internally rounded to 100, which we've now seen twice.
-        assert_eq!(request.response_times[&100], 2);
+        assert_eq!(request.raw_data.times[&100], 2);
         // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 102);
+        assert_eq!(request.raw_data.maximum_time, 102);
         // Add 102 to the total response time so far.
-        assert_eq!(request.total_response_time, 224);
+        assert_eq!(request.raw_data.total_time, 224);
         // We've seen five response times so far.
-        assert_eq!(request.response_time_counter, 5);
+        assert_eq!(request.raw_data.counter, 5);
 
         // Tracking another response time updates all related fields.
-        request.set_response_time(155);
+        request.record_time(155, false);
         // Adds a new response time.
-        assert_eq!(request.response_times.len(), 4);
+        assert_eq!(request.raw_data.times.len(), 4);
         // The response time was internally rounded to 160, seen for the first time.
-        assert_eq!(request.response_times[&160], 1);
+        assert_eq!(request.raw_data.times[&160], 1);
         // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 155);
+        assert_eq!(request.raw_data.maximum_time, 155);
         // Add 155 to the total response time so far.
-        assert_eq!(request.total_response_time, 379);
+        assert_eq!(request.raw_data.total_time, 379);
         // We've seen six response times so far.
-        assert_eq!(request.response_time_counter, 6);
+        assert_eq!(request.raw_data.counter, 6);
 
         // Tracking another response time updates all related fields.
-        request.set_response_time(2345);
+        request.record_time(2345, false);
         // Adds a new response time.
-        assert_eq!(request.response_times.len(), 5);
+        assert_eq!(request.raw_data.times.len(), 5);
         // The response time was internally rounded to 2000, seen for the first time.
-        assert_eq!(request.response_times[&2000], 1);
+        assert_eq!(request.raw_data.times[&2000], 1);
         // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 2345);
+        assert_eq!(request.raw_data.maximum_time, 2345);
         // Add 2345 to the total response time so far.
-        assert_eq!(request.total_response_time, 2724);
+        assert_eq!(request.raw_data.total_time, 2724);
         // We've seen seven response times so far.
-        assert_eq!(request.response_time_counter, 7);
+        assert_eq!(request.raw_data.counter, 7);
 
         // Tracking another response time updates all related fields.
-        request.set_response_time(987654321);
+        request.record_time(987654321, false);
         // Adds a new response time.
-        assert_eq!(request.response_times.len(), 6);
+        assert_eq!(request.raw_data.times.len(), 6);
         // The response time was internally rounded to 987654000, seen for the first time.
-        assert_eq!(request.response_times[&987654000], 1);
+        assert_eq!(request.raw_data.times[&987654000], 1);
         // Minimum doesn't change.
-        assert_eq!(request.min_response_time, 1);
+        assert_eq!(request.raw_data.minimum_time, 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.max_response_time, 987654321);
+        assert_eq!(request.raw_data.maximum_time, 987654321);
         // Add 987654321 to the total response time so far.
-        assert_eq!(request.total_response_time, 987657045);
+        assert_eq!(request.raw_data.total_time, 987657045);
         // We've seen eight response times so far.
-        assert_eq!(request.response_time_counter, 8);
+        assert_eq!(request.raw_data.counter, 8);
 
         // Tracking status code updates all related fields.
         request.set_status_code(200);
@@ -2946,11 +2943,11 @@ mod test {
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
         // Nothing else changes.
-        assert_eq!(request.response_times.len(), 6);
-        assert_eq!(request.min_response_time, 1);
-        assert_eq!(request.max_response_time, 987654321);
-        assert_eq!(request.total_response_time, 987657045);
-        assert_eq!(request.response_time_counter, 8);
+        assert_eq!(request.raw_data.times.len(), 6);
+        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.maximum_time, 987654321);
+        assert_eq!(request.raw_data.total_time, 987657045);
+        assert_eq!(request.raw_data.counter, 8);
 
         // Tracking status code updates all related fields.
         request.set_status_code(200);
@@ -2989,11 +2986,10 @@ mod test {
         // Nothing else changes.
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
-        assert_eq!(request.response_times.len(), 6);
-        assert_eq!(request.min_response_time, 1);
-        assert_eq!(request.max_response_time, 987654321);
-        assert_eq!(request.total_response_time, 987657045);
-        assert_eq!(request.response_time_counter, 8);
+        assert_eq!(request.raw_data.times.len(), 6);
+        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.maximum_time, 987654321);
+        assert_eq!(request.raw_data.total_time, 987657045);
+        assert_eq!(request.raw_data.counter, 8);
     }
-    */
 }

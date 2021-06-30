@@ -3531,7 +3531,7 @@ impl GooseAttack {
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
                     // Write an html report, if enabled.
-                    //self.write_html_report(&mut goose_attack_run_state).await?;
+                    self.write_html_report(&mut goose_attack_run_state).await?;
                     // Shutdown Goose or go into an idle waiting state.
                     if goose_attack_run_state.shutdown_after_stop {
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Shutdown);

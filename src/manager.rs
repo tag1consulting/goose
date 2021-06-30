@@ -106,23 +106,23 @@ fn merge_requests_from_worker(
     // Make a mutable copy where we can merge things
     let mut merged_request = parent_request.clone();
     // Iterate over user response times, and merge into global response time
-    merged_request.response_times = metrics::merge_times(
-        merged_request.response_times,
-        user_request.response_times.clone(),
+    merged_request.raw_data.times = metrics::merge_times(
+        merged_request.raw_data.times,
+        user_request.raw_data.times.clone(),
     );
     // Increment total response time counter.
-    merged_request.total_response_time += &user_request.total_response_time;
+    merged_request.raw_data.total_time += &user_request.raw_data.total_time;
     // Increment count of how many response counters we've seen.
-    merged_request.response_time_counter += &user_request.response_time_counter;
+    merged_request.raw_data.counter += &user_request.raw_data.counter;
     // If user had new fastest response time, update global fastest response time.
-    merged_request.min_response_time = metrics::update_min_time(
-        merged_request.min_response_time,
-        user_request.min_response_time,
+    merged_request.raw_data.minimum_time = metrics::update_min_time(
+        merged_request.raw_data.minimum_time,
+        user_request.raw_data.minimum_time,
     );
     // If user had new slowest response time, update global slowest response time.
-    merged_request.max_response_time = metrics::update_max_time(
-        merged_request.max_response_time,
-        user_request.max_response_time,
+    merged_request.raw_data.maximum_time = metrics::update_max_time(
+        merged_request.raw_data.maximum_time,
+        user_request.raw_data.maximum_time,
     );
     // Increment total success counter.
     merged_request.success_count += &user_request.success_count;
