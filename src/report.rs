@@ -10,8 +10,10 @@ use serde::Serialize;
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
 pub struct GooseReportTemplates<'a> {
-    pub requests_template: &'a str,
-    pub responses_template: &'a str,
+    pub raw_requests_template: &'a str,
+    pub raw_responses_template: &'a str,
+    pub co_requests_template: &'a str,
+    pub co_responses_template: &'a str,
     pub tasks_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
@@ -29,6 +31,16 @@ pub struct RequestMetric {
     pub response_time_maximum: usize,
     pub requests_per_second: String,
     pub failures_per_second: String,
+}
+
+/// Defines the metrics reported about Coordinated Omission requests.
+#[derive(Debug, Clone, Serialize)]
+pub struct CORequestMetric {
+    pub method: String,
+    pub name: String,
+    pub response_time_average: String,
+    pub response_time_standard_deviation: String,
+    pub response_time_maximum: usize,
 }
 
 /// Defines the metrics reported about responses.
@@ -104,8 +116,8 @@ pub fn get_response_metric(
     }
 }
 
-/// Build an individual row of request metrics in the html report.
-pub fn request_metrics_row(metric: RequestMetric) -> String {
+/// Build an individual row of raw request metrics in the html report.
+pub fn raw_request_metrics_row(metric: RequestMetric) -> String {
     format!(
         r#"<tr>
         <td>{method}</td>
@@ -127,6 +139,24 @@ pub fn request_metrics_row(metric: RequestMetric) -> String {
         response_time_maximum = metric.response_time_maximum,
         requests_per_second = metric.requests_per_second,
         failures_per_second = metric.failures_per_second,
+    )
+}
+
+/// Build an individual row of coordinated omission back-filled request metrics in the html report.
+pub fn co_request_metrics_row(metric: CORequestMetric) -> String {
+    format!(
+        r#"<tr>
+        <td>{method}</td>
+        <td>{name}</td>
+        <td>{response_time_average}</td>
+        <td>{response_time_standard_deviation}</td>
+        <td>{response_time_maximum}</td>
+    </tr>"#,
+        method = metric.method,
+        name = metric.name,
+        response_time_average = metric.response_time_average,
+        response_time_standard_deviation = metric.response_time_standard_deviation,
+        response_time_maximum = metric.response_time_maximum,
     )
 }
 
@@ -300,7 +330,7 @@ pub fn build_report(
         r#"<!DOCTYPE html>
 <html>
 <head>
-    <title>Test Report</title>
+    <title>Goose Attack Report</title>
     <style>
         .container {{
             width: 1000px;
@@ -382,7 +412,7 @@ pub fn build_report(
                     </tr>
                 </thead>
                 <tbody>
-                    {requests_template}
+                    {raw_requests_template}
                 </tbody>
             </table>
         </div>
@@ -405,7 +435,48 @@ pub fn build_report(
                     </tr>
                 </thead>
                 <tbody>
-                    {responses_template}
+                    {raw_responses_template}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="requests">
+            <h2>Request Metrics With Coordinated Omission Mitigation</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Method</th>
+                        <th>Name</th>
+                        <th>Average (ms)</th>
+                        <th>Standard deviation (ms)</th>
+                        <th>Max (ms)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {co_requests_template}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="responses">
+            <h2>Response Time Metrics With Coordinated Omission Mitigation</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Method</th>
+                        <th>Name</th>
+                        <th>50%ile (ms)</th>
+                        <th>60%ile (ms)</th>
+                        <th>70%ile (ms)</th>
+                        <th>80%ile (ms)</th>
+                        <th>90%ile (ms)</th>
+                        <th>95%ile (ms)</th>
+                        <th>99%ile (ms)</th>
+                        <th>100%ile (ms)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {co_responses_template}
                 </tbody>
             </table>
         </div>
@@ -422,8 +493,10 @@ pub fn build_report(
         start_time = start_time,
         end_time = end_time,
         host = host,
-        requests_template = templates.requests_template,
-        responses_template = templates.responses_template,
+        raw_requests_template = templates.raw_requests_template,
+        raw_responses_template = templates.raw_responses_template,
+        co_requests_template = templates.co_requests_template,
+        co_responses_template = templates.co_responses_template,
         tasks_template = templates.tasks_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,

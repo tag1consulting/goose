@@ -2212,15 +2212,26 @@ impl GooseAttack {
             };
 
             // Prepare requests and responses variables.
-            let mut request_metrics = Vec::new();
-            let mut response_metrics = Vec::new();
-            let mut aggregate_total_count = 0;
-            let mut aggregate_fail_count = 0;
-            let mut aggregate_response_time_counter: usize = 0;
-            let mut aggregate_response_time_minimum: usize = 0;
-            let mut aggregate_response_time_maximum: usize = 0;
-            let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+            let mut raw_request_metrics = Vec::new();
+            let mut co_request_metrics = Vec::new();
+            let mut raw_response_metrics = Vec::new();
+            let mut co_response_metrics = Vec::new();
+            let mut raw_aggregate_total_count = 0;
+            let mut co_aggregate_total_count = 0;
+            let mut raw_aggregate_fail_count = 0;
+            let mut raw_aggregate_response_time_counter: usize = 0;
+            let mut raw_aggregate_response_time_minimum: usize = 0;
+            let mut raw_aggregate_response_time_maximum: usize = 0;
+            let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+            let mut co_aggregate_response_time_counter: usize = 0;
+            let mut co_aggregate_response_time_maximum: usize = 0;
+            let mut co_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+            let mut co_data = false;
             for (request_key, request) in self.metrics.requests.iter().sorted() {
+                // Determine whether or not to include Coordinated Omission data.
+                if !co_data && request.coordinated_omission_data.is_some() {
+                    co_data = true;
+                }
                 let method = format!("{}", request.method);
                 // The request_key is "{method} {name}", so by stripping the "{method} "
                 // prefix we get the name.
@@ -2235,7 +2246,7 @@ impl GooseAttack {
                     request.fail_count,
                 );
                 // Prepare per-request metrics.
-                request_metrics.push(report::RequestMetric {
+                raw_request_metrics.push(report::RequestMetric {
                     method: method.to_string(),
                     name: name.to_string(),
                     number_of_requests: total_request_count,
@@ -2251,7 +2262,7 @@ impl GooseAttack {
                 });
 
                 // Prepare per-response metrics.
-                response_metrics.push(report::get_response_metric(
+                raw_response_metrics.push(report::get_response_metric(
                     &method,
                     &name,
                     &request.raw_data.times,
@@ -2261,63 +2272,156 @@ impl GooseAttack {
                 ));
 
                 // Collect aggregated request and response metrics.
-                aggregate_total_count += total_request_count;
-                aggregate_fail_count += request.fail_count;
-                aggregate_response_time_counter += request.raw_data.total_time;
-                aggregate_response_time_minimum = update_min_time(
-                    aggregate_response_time_minimum,
+                raw_aggregate_total_count += total_request_count;
+                raw_aggregate_fail_count += request.fail_count;
+                raw_aggregate_response_time_counter += request.raw_data.total_time;
+                raw_aggregate_response_time_minimum = update_min_time(
+                    raw_aggregate_response_time_minimum,
                     request.raw_data.minimum_time,
                 );
-                aggregate_response_time_maximum = update_max_time(
-                    aggregate_response_time_maximum,
+                raw_aggregate_response_time_maximum = update_max_time(
+                    raw_aggregate_response_time_maximum,
                     request.raw_data.maximum_time,
                 );
-                aggregate_response_times =
-                    merge_times(aggregate_response_times, request.raw_data.times.clone());
+                raw_aggregate_response_times =
+                    merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
             }
 
             // Prepare aggregate per-request metrics.
-            let (aggregate_requests_per_second, aggregate_failures_per_second) =
+            let (raw_aggregate_requests_per_second, raw_aggregate_failures_per_second) =
                 per_second_calculations(
                     self.metrics.duration,
-                    aggregate_total_count,
-                    aggregate_fail_count,
+                    raw_aggregate_total_count,
+                    raw_aggregate_fail_count,
                 );
-            request_metrics.push(report::RequestMetric {
+            raw_request_metrics.push(report::RequestMetric {
                 method: "".to_string(),
                 name: "Aggregated".to_string(),
-                number_of_requests: aggregate_total_count,
-                number_of_failures: aggregate_fail_count,
+                number_of_requests: raw_aggregate_total_count,
+                number_of_failures: raw_aggregate_fail_count,
                 response_time_average: format!(
                     "{:.2}",
-                    aggregate_response_time_counter as f32 / aggregate_total_count as f32
+                    raw_aggregate_response_time_counter as f32 / raw_aggregate_total_count as f32
                 ),
-                response_time_minimum: aggregate_response_time_minimum,
-                response_time_maximum: aggregate_response_time_maximum,
-                requests_per_second: format!("{:.2}", aggregate_requests_per_second),
-                failures_per_second: format!("{:.2}", aggregate_failures_per_second),
+                response_time_minimum: raw_aggregate_response_time_minimum,
+                response_time_maximum: raw_aggregate_response_time_maximum,
+                requests_per_second: format!("{:.2}", raw_aggregate_requests_per_second),
+                failures_per_second: format!("{:.2}", raw_aggregate_failures_per_second),
             });
 
             // Prepare aggregate per-response metrics.
-            response_metrics.push(report::get_response_metric(
+            raw_response_metrics.push(report::get_response_metric(
                 "",
                 "Aggregated",
-                &aggregate_response_times,
-                aggregate_total_count,
-                aggregate_response_time_minimum,
-                aggregate_response_time_maximum,
+                &raw_aggregate_response_times,
+                raw_aggregate_total_count,
+                raw_aggregate_response_time_minimum,
+                raw_aggregate_response_time_maximum,
             ));
 
             // Compile the request metrics template.
-            let mut requests_rows = Vec::new();
-            for metric in request_metrics {
-                requests_rows.push(report::request_metrics_row(metric));
+            let mut raw_requests_rows = Vec::new();
+            for metric in raw_request_metrics {
+                raw_requests_rows.push(report::raw_request_metrics_row(metric));
             }
 
             // Compile the response metrics template.
-            let mut responses_rows = Vec::new();
-            for metric in response_metrics {
-                responses_rows.push(report::response_metrics_row(metric));
+            let mut raw_responses_rows = Vec::new();
+            for metric in raw_response_metrics {
+                raw_responses_rows.push(report::response_metrics_row(metric));
+            }
+
+            if co_data {
+                for (request_key, request) in self.metrics.requests.iter().sorted() {
+                    if let Some(coordinated_omission_data) =
+                        request.coordinated_omission_data.as_ref()
+                    {
+                        let method = format!("{}", request.method);
+                        // The request_key is "{method} {name}", so by stripping the "{method} "
+                        // prefix we get the name.
+                        let name = request_key
+                            .strip_prefix(&format!("{} ", request.method))
+                            .unwrap()
+                            .to_string();
+                        let raw_average =
+                            request.raw_data.total_time as f32 / request.raw_data.counter as f32;
+                        let co_average = coordinated_omission_data.total_time as f32
+                            / coordinated_omission_data.counter as f32;
+                        // Prepare per-request metrics.
+                        co_request_metrics.push(report::CORequestMetric {
+                            method: method.to_string(),
+                            name: name.to_string(),
+                            response_time_average: format!("{:.2}", co_average,),
+                            response_time_standard_deviation: format!(
+                                "{:.2}",
+                                calculate_standard_deviation(raw_average, co_average)
+                            ),
+                            response_time_maximum: request.raw_data.maximum_time,
+                        });
+
+                        // Prepare per-response metrics.
+                        co_response_metrics.push(report::get_response_metric(
+                            &method,
+                            &name,
+                            &coordinated_omission_data.times,
+                            coordinated_omission_data.counter,
+                            coordinated_omission_data.minimum_time,
+                            coordinated_omission_data.maximum_time,
+                        ));
+
+                        // Collect aggregated request and response metrics.
+                        co_aggregate_response_time_counter += coordinated_omission_data.total_time;
+                        co_aggregate_response_time_maximum = update_max_time(
+                            co_aggregate_response_time_maximum,
+                            request.raw_data.maximum_time,
+                        );
+                        co_aggregate_response_times = merge_times(
+                            co_aggregate_response_times,
+                            coordinated_omission_data.times.clone(),
+                        );
+                    }
+                    let total_request_count = request.success_count + request.fail_count;
+                    co_aggregate_total_count += total_request_count;
+                }
+                let co_average =
+                    co_aggregate_response_time_counter as f32 / co_aggregate_total_count as f32;
+                let raw_average =
+                    raw_aggregate_response_time_counter as f32 / raw_aggregate_total_count as f32;
+                co_request_metrics.push(report::CORequestMetric {
+                    method: "".to_string(),
+                    name: "Aggregated".to_string(),
+                    response_time_average: format!(
+                        "{:.2}",
+                        co_aggregate_response_time_counter as f32 / co_aggregate_total_count as f32
+                    ),
+                    response_time_standard_deviation: format!(
+                        "{:.2}",
+                        calculate_standard_deviation(raw_average, co_average),
+                    ),
+                    response_time_maximum: co_aggregate_response_time_maximum,
+                });
+
+                // Prepare aggregate per-response metrics.
+                co_response_metrics.push(report::get_response_metric(
+                    "",
+                    "Aggregated",
+                    &raw_aggregate_response_times,
+                    raw_aggregate_total_count,
+                    raw_aggregate_response_time_minimum,
+                    raw_aggregate_response_time_maximum,
+                ));
+            }
+
+            // Compile the request metrics template.
+            let mut co_requests_rows = Vec::new();
+            for metric in co_request_metrics {
+                co_requests_rows.push(report::co_request_metrics_row(metric));
+            }
+
+            // Compile the response metrics template.
+            let mut co_responses_rows = Vec::new();
+            for metric in co_response_metrics {
+                co_responses_rows.push(report::response_metrics_row(metric));
             }
 
             // Only build the tasks template if --no-task-metrics isn't enabled.
@@ -2396,7 +2500,7 @@ impl GooseAttack {
                     number_of_failures: aggregate_fail_count,
                     response_time_average: format!(
                         "{:.2}",
-                        aggregate_response_time_counter as f32 / aggregate_total_count as f32
+                        raw_aggregate_response_time_counter as f32 / aggregate_total_count as f32
                     ),
                     response_time_minimum: aggregate_task_time_minimum,
                     response_time_maximum: aggregate_task_time_maximum,
@@ -2435,7 +2539,6 @@ impl GooseAttack {
                     let method = format!("{}", request.method);
                     // The request_key is "{method} {name}", so by stripping the "{method} "
                     // prefix we get the name.
-                    // @TODO: consider storing the name as a field in GooseRequestMetricAggregate.
                     let name = request_key
                         .strip_prefix(&format!("{} ", request.method))
                         .unwrap()
@@ -2486,8 +2589,11 @@ impl GooseAttack {
                 &end_time,
                 &host,
                 report::GooseReportTemplates {
-                    requests_template: &requests_rows.join("\n"),
-                    responses_template: &responses_rows.join("\n"),
+                    raw_requests_template: &raw_requests_rows.join("\n"),
+                    raw_responses_template: &raw_responses_rows.join("\n"),
+                    // @TODO: make these optional, CO does not always kick in.
+                    co_requests_template: &co_requests_rows.join("\n"),
+                    co_responses_template: &co_responses_rows.join("\n"),
                     tasks_template: &tasks_template,
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
