@@ -2351,12 +2351,12 @@ impl GooseAttack {
                         co_request_metrics.push(report::CORequestMetric {
                             method: method.to_string(),
                             name: name.to_string(),
-                            response_time_average: format!("{:.2}", co_average,),
+                            response_time_average: format!("{:.2}", co_average),
                             response_time_standard_deviation: format!(
                                 "{:.2}",
                                 calculate_standard_deviation(raw_average, co_average)
                             ),
-                            response_time_maximum: request.raw_data.maximum_time,
+                            response_time_maximum: coordinated_omission_data.maximum_time,
                         });
 
                         // Prepare per-response metrics.
@@ -2373,7 +2373,7 @@ impl GooseAttack {
                         co_aggregate_response_time_counter += coordinated_omission_data.total_time;
                         co_aggregate_response_time_maximum = update_max_time(
                             co_aggregate_response_time_maximum,
-                            request.raw_data.maximum_time,
+                            coordinated_omission_data.maximum_time,
                         );
                         co_aggregate_response_times = merge_times(
                             co_aggregate_response_times,
@@ -2405,10 +2405,10 @@ impl GooseAttack {
                 co_response_metrics.push(report::get_response_metric(
                     "",
                     "Aggregated",
-                    &raw_aggregate_response_times,
-                    raw_aggregate_total_count,
+                    &co_aggregate_response_times,
+                    co_aggregate_total_count,
                     raw_aggregate_response_time_minimum,
-                    raw_aggregate_response_time_maximum,
+                    co_aggregate_response_time_maximum,
                 ));
             }
 
