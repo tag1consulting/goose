@@ -1550,11 +1550,11 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut aggregate_total_response_time: usize = 0;
-        let mut aggregate_response_time_counter: usize = 0;
-        let mut aggregate_min_response_time: usize = 0;
-        let mut aggregate_max_response_time: usize = 0;
+        let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut raw_aggregate_total_response_time: usize = 0;
+        let mut raw_aggregate_response_time_counter: usize = 0;
+        let mut raw_aggregate_min_response_time: usize = 0;
+        let mut raw_aggregate_max_response_time: usize = 0;
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
@@ -1576,24 +1576,34 @@ impl GooseMetrics {
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
+        // Track whether or not Coordinated Omission Mitigation kicked in.
+        let mut co_data = false;
         for (request_key, request) in self.requests.iter().sorted() {
+            if !co_data && request.coordinated_omission_data.is_some() {
+                co_data = true;
+            }
+
             // Iterate over user response times, and merge into global response times.
-            aggregate_response_times =
-                merge_times(aggregate_response_times, request.raw_data.times.clone());
+            raw_aggregate_response_times =
+                merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
 
             // Increment total response time counter.
-            aggregate_total_response_time += &request.raw_data.total_time;
+            raw_aggregate_total_response_time += &request.raw_data.total_time;
 
             // Increment counter tracking individual response times seen.
-            aggregate_response_time_counter += &request.raw_data.counter;
+            raw_aggregate_response_time_counter += &request.raw_data.counter;
 
             // If user had new fastest response time, update global fastest response time.
-            aggregate_min_response_time =
-                update_min_time(aggregate_min_response_time, request.raw_data.minimum_time);
+            raw_aggregate_min_response_time = update_min_time(
+                raw_aggregate_min_response_time,
+                request.raw_data.minimum_time,
+            );
 
             // If user had new slowest response time, update global slowest response time.
-            aggregate_max_response_time =
-                update_max_time(aggregate_max_response_time, request.raw_data.maximum_time);
+            raw_aggregate_max_response_time = update_max_time(
+                raw_aggregate_max_response_time,
+                request.raw_data.maximum_time,
+            );
             // Sort response times so we can calculate a mean.
             writeln!(
                 fmt,
@@ -1639,7 +1649,7 @@ impl GooseMetrics {
                     request.raw_data.counter,
                     request.raw_data.minimum_time,
                     request.raw_data.maximum_time,
-                    0.999
+                    0.9999
                 ),
             )?;
         }
@@ -1653,45 +1663,216 @@ impl GooseMetrics {
                 " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                 "Aggregated",
                 calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_response_time_counter,
-                    aggregate_min_response_time,
-                    aggregate_max_response_time,
+                    &raw_aggregate_response_times,
+                    raw_aggregate_response_time_counter,
+                    raw_aggregate_min_response_time,
+                    raw_aggregate_max_response_time,
                     0.5
                 ),
                 calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_response_time_counter,
-                    aggregate_min_response_time,
-                    aggregate_max_response_time,
+                    &raw_aggregate_response_times,
+                    raw_aggregate_response_time_counter,
+                    raw_aggregate_min_response_time,
+                    raw_aggregate_max_response_time,
                     0.75
                 ),
                 calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_response_time_counter,
-                    aggregate_min_response_time,
-                    aggregate_max_response_time,
+                    &raw_aggregate_response_times,
+                    raw_aggregate_response_time_counter,
+                    raw_aggregate_min_response_time,
+                    raw_aggregate_max_response_time,
                     0.98
                 ),
                 calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_response_time_counter,
-                    aggregate_min_response_time,
-                    aggregate_max_response_time,
+                    &raw_aggregate_response_times,
+                    raw_aggregate_response_time_counter,
+                    raw_aggregate_min_response_time,
+                    raw_aggregate_max_response_time,
                     0.99
                 ),
                 calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_response_time_counter,
-                    aggregate_min_response_time,
-                    aggregate_max_response_time,
+                    &raw_aggregate_response_times,
+                    raw_aggregate_response_time_counter,
+                    raw_aggregate_min_response_time,
+                    raw_aggregate_max_response_time,
                     0.999
                 ),
                 calculate_response_time_percentile(
-                    &aggregate_response_times,
-                    aggregate_response_time_counter,
-                    aggregate_min_response_time,
-                    aggregate_max_response_time,
+                    &raw_aggregate_response_times,
+                    raw_aggregate_response_time_counter,
+                    raw_aggregate_min_response_time,
+                    raw_aggregate_max_response_time,
+                    0.9999
+                ),
+            )?;
+        }
+
+        // If there's no Coordinated Omission Mitigation data to display, exit.
+        if !co_data {
+            return Ok(());
+        }
+
+        let mut co_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut co_aggregate_total_response_time: usize = 0;
+        let mut co_aggregate_response_time_counter: usize = 0;
+        let mut co_aggregate_min_response_time: usize = 0;
+        let mut co_aggregate_max_response_time: usize = 0;
+
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        writeln!(fmt, " Adjusted for Coordinated Omission:")?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        writeln!(
+            fmt,
+            " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+            "Name", "50%", "75%", "98%", "99%", "99.9%", "99.99%"
+        )?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        for (request_key, request) in self.requests.iter().sorted() {
+            if let Some(coordinated_omission_data) = request.coordinated_omission_data.as_ref() {
+                // Iterate over user response times, and merge into global response times.
+                co_aggregate_response_times = merge_times(
+                    co_aggregate_response_times,
+                    coordinated_omission_data.times.clone(),
+                );
+
+                // Increment total response time counter.
+                co_aggregate_total_response_time += &coordinated_omission_data.total_time;
+
+                // Increment counter tracking individual response times seen.
+                co_aggregate_response_time_counter += &coordinated_omission_data.counter;
+
+                // If user had new fastest response time, update global fastest response time.
+                co_aggregate_min_response_time = update_min_time(
+                    co_aggregate_min_response_time,
+                    coordinated_omission_data.minimum_time,
+                );
+
+                // If user had new slowest response time, update global slowest response time.
+                co_aggregate_max_response_time = update_max_time(
+                    co_aggregate_max_response_time,
+                    coordinated_omission_data.maximum_time,
+                );
+
+                // Sort response times so we can calculate a mean.
+                writeln!(
+                    fmt,
+                    " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+                    util::truncate_string(&request_key, 24),
+                    calculate_response_time_percentile(
+                        &coordinated_omission_data.times,
+                        coordinated_omission_data.counter,
+                        coordinated_omission_data.minimum_time,
+                        coordinated_omission_data.maximum_time,
+                        0.5
+                    ),
+                    calculate_response_time_percentile(
+                        &coordinated_omission_data.times,
+                        coordinated_omission_data.counter,
+                        coordinated_omission_data.minimum_time,
+                        coordinated_omission_data.maximum_time,
+                        0.75
+                    ),
+                    calculate_response_time_percentile(
+                        &coordinated_omission_data.times,
+                        coordinated_omission_data.counter,
+                        coordinated_omission_data.minimum_time,
+                        coordinated_omission_data.maximum_time,
+                        0.98
+                    ),
+                    calculate_response_time_percentile(
+                        &coordinated_omission_data.times,
+                        coordinated_omission_data.counter,
+                        coordinated_omission_data.minimum_time,
+                        coordinated_omission_data.maximum_time,
+                        0.99
+                    ),
+                    calculate_response_time_percentile(
+                        &coordinated_omission_data.times,
+                        coordinated_omission_data.counter,
+                        coordinated_omission_data.minimum_time,
+                        coordinated_omission_data.maximum_time,
+                        0.999
+                    ),
+                    calculate_response_time_percentile(
+                        &coordinated_omission_data.times,
+                        coordinated_omission_data.counter,
+                        coordinated_omission_data.minimum_time,
+                        coordinated_omission_data.maximum_time,
+                        0.9999
+                    ),
+                )?;
+            } else {
+                writeln!(
+                    fmt,
+                    " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+                    util::truncate_string(&request_key, 24),
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-"
+                )?;
+            }
+        }
+        if self.requests.len() > 1 {
+            writeln!(
+                fmt,
+                " -------------------------+--------+--------+--------+--------+--------+-------"
+            )?;
+            writeln!(
+                fmt,
+                " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+                "Aggregated",
+                calculate_response_time_percentile(
+                    &co_aggregate_response_times,
+                    co_aggregate_response_time_counter,
+                    co_aggregate_min_response_time,
+                    co_aggregate_max_response_time,
+                    0.5
+                ),
+                calculate_response_time_percentile(
+                    &co_aggregate_response_times,
+                    co_aggregate_response_time_counter,
+                    co_aggregate_min_response_time,
+                    co_aggregate_max_response_time,
+                    0.75
+                ),
+                calculate_response_time_percentile(
+                    &co_aggregate_response_times,
+                    co_aggregate_response_time_counter,
+                    co_aggregate_min_response_time,
+                    co_aggregate_max_response_time,
+                    0.98
+                ),
+                calculate_response_time_percentile(
+                    &co_aggregate_response_times,
+                    co_aggregate_response_time_counter,
+                    co_aggregate_min_response_time,
+                    co_aggregate_max_response_time,
+                    0.99
+                ),
+                calculate_response_time_percentile(
+                    &co_aggregate_response_times,
+                    co_aggregate_response_time_counter,
+                    co_aggregate_min_response_time,
+                    co_aggregate_max_response_time,
+                    0.999
+                ),
+                calculate_response_time_percentile(
+                    &co_aggregate_response_times,
+                    co_aggregate_response_time_counter,
+                    co_aggregate_min_response_time,
+                    co_aggregate_max_response_time,
                     0.9999
                 ),
             )?;
