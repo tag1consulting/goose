@@ -85,9 +85,9 @@ fn validate_test(
         .unwrap();
 
     // Confirm that Goose and the server saw the same number of page loads.
-    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.response_time_counter);
+    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.counter);
     mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
-    mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.response_time_counter);
+    mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.raw_data.counter);
     mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.success_count);
     assert!(index_metrics.fail_count == 0);
     assert!(about_metrics.fail_count == 0);

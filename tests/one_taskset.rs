@@ -113,17 +113,17 @@ fn validate_one_taskset(
             // Statistics were reset after all users were started, so Goose should report
             // fewer page loads than the server actually saw.
             println!(
-                "response_time_counter: {}, mock_endpoint_called: {}",
-                index_metrics.response_time_counter,
+                "raw_data.counter: {}, mock_endpoint_called: {}",
+                index_metrics.raw_data.counter,
                 mock_endpoints[INDEX_KEY].hits()
             );
 
-            assert!(index_metrics.response_time_counter < mock_endpoints[INDEX_KEY].hits());
+            assert!(index_metrics.raw_data.counter < mock_endpoints[INDEX_KEY].hits());
             assert!(
                 index_metrics.status_code_counts[&status_code] < mock_endpoints[INDEX_KEY].hits()
             );
             assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].hits());
-            assert!(about_metrics.response_time_counter < mock_endpoints[ABOUT_KEY].hits());
+            assert!(about_metrics.raw_data.counter < mock_endpoints[ABOUT_KEY].hits());
             assert!(
                 about_metrics.status_code_counts[&status_code] < mock_endpoints[ABOUT_KEY].hits()
             );
@@ -132,10 +132,10 @@ fn validate_one_taskset(
         TestType::NoResetMetrics => {
             // Statistics were not reset, so Goose should report the same number of page
             // loads as the server actually saw.
-            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.response_time_counter);
+            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.counter);
             mock_endpoints[INDEX_KEY].assert_hits(index_metrics.status_code_counts[&status_code]);
             mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
-            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.response_time_counter);
+            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.raw_data.counter);
             mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.status_code_counts[&status_code]);
             mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.success_count);
         }

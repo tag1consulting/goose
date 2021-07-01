@@ -10,8 +10,10 @@ use serde::Serialize;
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
 pub struct GooseReportTemplates<'a> {
-    pub requests_template: &'a str,
-    pub responses_template: &'a str,
+    pub raw_requests_template: &'a str,
+    pub raw_responses_template: &'a str,
+    pub co_requests_template: &'a str,
+    pub co_responses_template: &'a str,
     pub tasks_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
@@ -29,6 +31,16 @@ pub struct RequestMetric {
     pub response_time_maximum: usize,
     pub requests_per_second: String,
     pub failures_per_second: String,
+}
+
+/// Defines the metrics reported about Coordinated Omission requests.
+#[derive(Debug, Clone, Serialize)]
+pub struct CORequestMetric {
+    pub method: String,
+    pub name: String,
+    pub response_time_average: String,
+    pub response_time_standard_deviation: String,
+    pub response_time_maximum: usize,
 }
 
 /// Defines the metrics reported about responses.
@@ -104,8 +116,8 @@ pub fn get_response_metric(
     }
 }
 
-/// Build an individual row of request metrics in the html report.
-pub fn request_metrics_row(metric: RequestMetric) -> String {
+/// Build an individual row of raw request metrics in the html report.
+pub fn raw_request_metrics_row(metric: RequestMetric) -> String {
     format!(
         r#"<tr>
         <td>{method}</td>
@@ -132,6 +144,109 @@ pub fn request_metrics_row(metric: RequestMetric) -> String {
 
 /// Build an individual row of response metrics in the html report.
 pub fn response_metrics_row(metric: ResponseMetric) -> String {
+    format!(
+        r#"<tr>
+            <td>{method}</td>
+            <td>{name}</td>
+            <td>{percentile_50}</td>
+            <td>{percentile_60}</td>
+            <td>{percentile_70}</td>
+            <td>{percentile_80}</td>
+            <td>{percentile_90}</td>
+            <td>{percentile_95}</td>
+            <td>{percentile_99}</td>
+            <td>{percentile_100}</td>
+        </tr>"#,
+        method = metric.method,
+        name = metric.name,
+        percentile_50 = metric.percentile_50,
+        percentile_60 = metric.percentile_60,
+        percentile_70 = metric.percentile_70,
+        percentile_80 = metric.percentile_80,
+        percentile_90 = metric.percentile_90,
+        percentile_95 = metric.percentile_95,
+        percentile_99 = metric.percentile_99,
+        percentile_100 = metric.percentile_100,
+    )
+}
+
+/// If Coordinated Omission Mitigation is triggered, add a relevant request table to the
+/// html report.
+pub fn coordinated_omission_request_metrics_template(co_requests_rows: &str) -> String {
+    format!(
+        r#"<div class="CO requests">
+        <h2>Request Metrics With Coordinated Omission Mitigation</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Name</th>
+                    <th>Average (ms)</th>
+                    <th>Standard deviation (ms)</th>
+                    <th>Max (ms)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {co_requests_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        co_requests_rows = co_requests_rows,
+    )
+}
+
+/// Build an individual row of Coordinated Omission Mitigation request metrics in
+/// the html report.
+pub fn coordinated_omission_request_metrics_row(metric: CORequestMetric) -> String {
+    format!(
+        r#"<tr>
+            <td>{method}</td>
+            <td>{name}</td>
+            <td>{average})</td>
+            <td>{standard_deviation}</td>
+            <td>{maximum}</td>
+        </tr>"#,
+        method = metric.method,
+        name = metric.name,
+        average = metric.response_time_average,
+        standard_deviation = metric.response_time_standard_deviation,
+        maximum = metric.response_time_maximum,
+    )
+}
+
+/// If Coordinated Omission Mitigation is triggered, add a relevant response table to the
+/// html report.
+pub fn coordinated_omission_response_metrics_template(co_responses_rows: &str) -> String {
+    format!(
+        r#"<div class="responses">
+        <h2>Response Time Metrics With Coordinated Omission Mitigation</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Name</th>
+                    <th>50%ile (ms)</th>
+                    <th>60%ile (ms)</th>
+                    <th>70%ile (ms)</th>
+                    <th>80%ile (ms)</th>
+                    <th>90%ile (ms)</th>
+                    <th>95%ile (ms)</th>
+                    <th>99%ile (ms)</th>
+                    <th>100%ile (ms)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {co_responses_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        co_responses_rows = co_responses_rows,
+    )
+}
+
+/// Build an individual row of Coordinated Omission Mitigation request metrics in
+/// the html report.
+pub fn coordinated_omission_response_metrics_row(metric: ResponseMetric) -> String {
     format!(
         r#"<tr>
             <td>{method}</td>
@@ -300,7 +415,7 @@ pub fn build_report(
         r#"<!DOCTYPE html>
 <html>
 <head>
-    <title>Test Report</title>
+    <title>Goose Attack Report</title>
     <style>
         .container {{
             width: 1000px;
@@ -358,7 +473,7 @@ pub fn build_report(
 </head>
 <body>
     <div class="container">
-        <h1>Goose Test Report</h1>
+        <h1>Goose Attack Report</h1>
 
         <div class="info">
             <p>During: <span>{start_time} - {end_time}</span></p>
@@ -382,10 +497,12 @@ pub fn build_report(
                     </tr>
                 </thead>
                 <tbody>
-                    {requests_template}
+                    {raw_requests_template}
                 </tbody>
             </table>
         </div>
+
+        {co_requests_template}
 
         <div class="responses">
             <h2>Response Time Metrics</h2>
@@ -405,10 +522,12 @@ pub fn build_report(
                     </tr>
                 </thead>
                 <tbody>
-                    {responses_template}
+                    {raw_responses_template}
                 </tbody>
             </table>
         </div>
+
+        {co_responses_template}
 
         {status_codes_template}
 
@@ -422,8 +541,10 @@ pub fn build_report(
         start_time = start_time,
         end_time = end_time,
         host = host,
-        requests_template = templates.requests_template,
-        responses_template = templates.responses_template,
+        raw_requests_template = templates.raw_requests_template,
+        raw_responses_template = templates.raw_responses_template,
+        co_requests_template = templates.co_requests_template,
+        co_responses_template = templates.co_responses_template,
         tasks_template = templates.tasks_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
