@@ -1452,7 +1452,7 @@ impl GooseMetrics {
                     0 => 0.0,
                     _ => co_data.total_time as f32 / co_data.counter as f32,
                 };
-                standard_deviation = calculate_standard_deviation(raw_average, co_average);
+                standard_deviation = util::standard_deviation(raw_average, co_average);
                 aggregate_co_times = merge_times(aggregate_co_times, co_data.times.clone());
                 aggregate_co_counter += co_data.counter;
                 // If user had new fastest response time, update global fastest response time.
@@ -1511,7 +1511,7 @@ impl GooseMetrics {
                 _ => aggregate_co_total_time as f32 / aggregate_co_counter as f32,
             };
             let co_average_precision = determine_precision(co_average);
-            let standard_deviation = calculate_standard_deviation(raw_average, co_average);
+            let standard_deviation = util::standard_deviation(raw_average, co_average);
             let standard_deviation_precision = determine_precision(standard_deviation);
 
             writeln!(
@@ -2539,7 +2539,7 @@ impl GooseAttack {
                             response_time_average: format!("{:.2}", co_average),
                             response_time_standard_deviation: format!(
                                 "{:.2}",
-                                calculate_standard_deviation(raw_average, co_average)
+                                util::standard_deviation(raw_average, co_average)
                             ),
                             response_time_maximum: coordinated_omission_data.maximum_time,
                         });
@@ -2581,7 +2581,7 @@ impl GooseAttack {
                     ),
                     response_time_standard_deviation: format!(
                         "{:.2}",
-                        calculate_standard_deviation(raw_average, co_average),
+                        util::standard_deviation(raw_average, co_average),
                     ),
                     response_time_maximum: co_aggregate_response_time_maximum,
                 });
@@ -2882,18 +2882,6 @@ pub(crate) fn update_max_time(mut global_max: usize, max: usize) -> usize {
         global_max = max;
     }
     global_max
-}
-
-fn calculate_standard_deviation(raw_average: f32, co_average: f32) -> f32 {
-    // Determine the mean (average) between the two numbers.
-    let mean = (raw_average + co_average) / 2.0;
-    // Get the difference between the mean and each number.
-    let raw_difference = raw_average - mean;
-    let co_difference = co_average - mean;
-    // Add together the square of both differences to get the variance.
-    let variance = raw_difference * raw_difference + co_difference * co_difference;
-    // Final calculate the standard deviation, the square root of the variance.
-    variance.sqrt()
 }
 
 /// Get the response time that a certain number of percent of the requests finished within.

@@ -141,6 +141,30 @@ pub fn gcd(u: usize, v: usize) -> usize {
     }
 }
 
+/// Calculate the standard deviation between two f32 numbers.
+///
+/// Standard deviation is the average variability between numbers. It indicates, on average,
+/// how far from the mean each value is. A high standard deviation suggests that values are
+/// generally far from the mean, while a low standard deviation suggests that values are
+/// close to the mean.
+///
+/// Standard deviation is calculated with the following steps:
+///  1) determine the average of the two numbers
+///  2) subtract the mean from each number, calculating two values (one positive, one negative)
+///  3) square each value and add them together (this is the "variance")
+///  4) return the square root of this value (this is the "standard deviation")
+pub fn standard_deviation(raw_average: f32, co_average: f32) -> f32 {
+    // Determine the mean (average) between the two numbers.
+    let mean = (raw_average + co_average) / 2.0;
+    // Get the difference between the mean and each number.
+    let raw_difference = raw_average - mean;
+    let co_difference = co_average - mean;
+    // Add together the square of both differences to get the variance.
+    let variance = raw_difference * raw_difference + co_difference * co_difference;
+    // Finally, calculate the standard deviation, which is the square root of the variance.
+    variance.sqrt()
+}
+
 /// Calculate median for a BTreeMap of usizes.
 ///
 /// The Median is the "middle" of a sorted list of numbers. In this case, the list is
