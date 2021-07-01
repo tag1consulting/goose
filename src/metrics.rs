@@ -2282,7 +2282,9 @@ impl GooseAttack {
                         let mut co_metric = request_metric.clone();
 
                         // Use a signed integer as this value can drop below zero.
-                        let mut response_time = request_metric.coordinated_omission_elapsed as i64;
+                        let mut response_time = request_metric.coordinated_omission_elapsed as i64
+                            - request_metric.coordinated_omission_cadence as i64
+                            - request_metric.response_time as i64;
 
                         loop {
                             // Backfill until reaching the expected request cadence.

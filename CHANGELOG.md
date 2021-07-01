@@ -28,6 +28,7 @@
     o `goose::util::parse_timespan()`, `::gcd()`, `::median()`, `::truncate_string()`, `::timer_expired()`, `::ms_timer_expired()`, `::get_hatch_rate()`, and `::is_valid_host()` were elevated to `pub` scope
  - introduce (enabled by default) Coordinated Omission Mitigation, configured through `--co-mitigation` with the following options: "disabled" (earlier default, pre-0.12.0), "average" (current default), "minimum", "maximum"; (or with `GooseDefault::CoordinatedOmissionMitigation`)
   - Coordinated Omission Mitigation tracks the cadence that a GooseUser loops through all GooseTasks, (also accounting for time spent sleeping due to `.set_wait_time()`); it detects stalls (network or upstream server) that block and prevent other requests from running, and backfills the metrics to mitigate this loss of data ([based on the general implementation found in HdrHistogram](https://github.com/HdrHistogram/HdrHistogram_rust/blob/9c09314ac91848fd696b699892414cb337d9abce/src/lib.rs#L916)
+  - When displaying metrics (via the cli and the html report) show both "raw" (actual) metrics and "coordinated omission mitigation" (back-filled with statistically generated) metrics, and the standard deviation between the average times for each
 
 ## 0.11.2 June 10, 2021
  - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:
