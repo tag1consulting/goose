@@ -142,26 +142,111 @@ pub fn raw_request_metrics_row(metric: RequestMetric) -> String {
     )
 }
 
-/// Build an individual row of coordinated omission back-filled request metrics in the html report.
-pub fn co_request_metrics_row(metric: CORequestMetric) -> String {
+/// Build an individual row of response metrics in the html report.
+pub fn response_metrics_row(metric: ResponseMetric) -> String {
     format!(
         r#"<tr>
-        <td>{method}</td>
-        <td>{name}</td>
-        <td>{response_time_average}</td>
-        <td>{response_time_standard_deviation}</td>
-        <td>{response_time_maximum}</td>
-    </tr>"#,
+            <td>{method}</td>
+            <td>{name}</td>
+            <td>{percentile_50}</td>
+            <td>{percentile_60}</td>
+            <td>{percentile_70}</td>
+            <td>{percentile_80}</td>
+            <td>{percentile_90}</td>
+            <td>{percentile_95}</td>
+            <td>{percentile_99}</td>
+            <td>{percentile_100}</td>
+        </tr>"#,
         method = metric.method,
         name = metric.name,
-        response_time_average = metric.response_time_average,
-        response_time_standard_deviation = metric.response_time_standard_deviation,
-        response_time_maximum = metric.response_time_maximum,
+        percentile_50 = metric.percentile_50,
+        percentile_60 = metric.percentile_60,
+        percentile_70 = metric.percentile_70,
+        percentile_80 = metric.percentile_80,
+        percentile_90 = metric.percentile_90,
+        percentile_95 = metric.percentile_95,
+        percentile_99 = metric.percentile_99,
+        percentile_100 = metric.percentile_100,
     )
 }
 
-/// Build an individual row of response metrics in the html report.
-pub fn response_metrics_row(metric: ResponseMetric) -> String {
+/// If Coordinated Omission Mitigation is triggered, add a relevant request table to the
+/// html report.
+pub fn coordinated_omission_request_metrics_template(co_requests_rows: &str) -> String {
+    format!(
+        r#"<div class="CO requests">
+        <h2>Request Metrics With Coordinated Omission Mitigation</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Name</th>
+                    <th>Average (ms)</th>
+                    <th>Standard deviation (ms)</th>
+                    <th>Max (ms)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {co_requests_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        co_requests_rows = co_requests_rows,
+    )
+}
+
+/// Build an individual row of Coordinated Omission Mitigation request metrics in
+/// the html report.
+pub fn coordinated_omission_request_metrics_row(metric: CORequestMetric) -> String {
+    format!(
+        r#"<tr>
+            <td>{method}</td>
+            <td>{name}</td>
+            <td>{average})</td>
+            <td>{standard_deviation}</td>
+            <td>{maximum}</td>
+        </tr>"#,
+        method = metric.method,
+        name = metric.name,
+        average = metric.response_time_average,
+        standard_deviation = metric.response_time_standard_deviation,
+        maximum = metric.response_time_maximum,
+    )
+}
+
+/// If Coordinated Omission Mitigation is triggered, add a relevant response table to the
+/// html report.
+pub fn coordinated_omission_response_metrics_template(co_responses_rows: &str) -> String {
+    format!(
+        r#"<div class="responses">
+        <h2>Response Time Metrics With Coordinated Omission Mitigation</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Name</th>
+                    <th>50%ile (ms)</th>
+                    <th>60%ile (ms)</th>
+                    <th>70%ile (ms)</th>
+                    <th>80%ile (ms)</th>
+                    <th>90%ile (ms)</th>
+                    <th>95%ile (ms)</th>
+                    <th>99%ile (ms)</th>
+                    <th>100%ile (ms)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {co_responses_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        co_responses_rows = co_responses_rows,
+    )
+}
+
+/// Build an individual row of Coordinated Omission Mitigation request metrics in
+/// the html report.
+pub fn coordinated_omission_response_metrics_row(metric: ResponseMetric) -> String {
     format!(
         r#"<tr>
             <td>{method}</td>
@@ -388,7 +473,7 @@ pub fn build_report(
 </head>
 <body>
     <div class="container">
-        <h1>Goose Test Report</h1>
+        <h1>Goose Attack Report</h1>
 
         <div class="info">
             <p>During: <span>{start_time} - {end_time}</span></p>
@@ -417,6 +502,8 @@ pub fn build_report(
             </table>
         </div>
 
+        {co_requests_template}
+
         <div class="responses">
             <h2>Response Time Metrics</h2>
             <table>
@@ -440,46 +527,7 @@ pub fn build_report(
             </table>
         </div>
 
-        <div class="requests">
-            <h2>Request Metrics With Coordinated Omission Mitigation</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Method</th>
-                        <th>Name</th>
-                        <th>Average (ms)</th>
-                        <th>Standard deviation (ms)</th>
-                        <th>Max (ms)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {co_requests_template}
-                </tbody>
-            </table>
-        </div>
-
-        <div class="responses">
-            <h2>Response Time Metrics With Coordinated Omission Mitigation</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Method</th>
-                        <th>Name</th>
-                        <th>50%ile (ms)</th>
-                        <th>60%ile (ms)</th>
-                        <th>70%ile (ms)</th>
-                        <th>80%ile (ms)</th>
-                        <th>90%ile (ms)</th>
-                        <th>95%ile (ms)</th>
-                        <th>99%ile (ms)</th>
-                        <th>100%ile (ms)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {co_responses_template}
-                </tbody>
-            </table>
-        </div>
+        {co_responses_template}
 
         {status_codes_template}
 

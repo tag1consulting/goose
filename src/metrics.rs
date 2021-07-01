@@ -2331,6 +2331,8 @@ impl GooseAttack {
                 raw_responses_rows.push(report::response_metrics_row(metric));
             }
 
+            let co_requests_template: String;
+            let co_responses_template: String;
             if co_data {
                 for (request_key, request) in self.metrics.requests.iter().sorted() {
                     if let Some(coordinated_omission_data) =
@@ -2410,18 +2412,33 @@ impl GooseAttack {
                     raw_aggregate_response_time_minimum,
                     co_aggregate_response_time_maximum,
                 ));
-            }
 
-            // Compile the request metrics template.
-            let mut co_requests_rows = Vec::new();
-            for metric in co_request_metrics {
-                co_requests_rows.push(report::co_request_metrics_row(metric));
-            }
+                // Compile the co_request metrics rows.
+                let mut co_request_rows = Vec::new();
+                for metric in co_request_metrics {
+                    co_request_rows.push(report::coordinated_omission_request_metrics_row(metric));
+                }
 
-            // Compile the response metrics template.
-            let mut co_responses_rows = Vec::new();
-            for metric in co_response_metrics {
-                co_responses_rows.push(report::response_metrics_row(metric));
+                // Compile the status_code metrics template.
+                co_requests_template = report::coordinated_omission_request_metrics_template(
+                    &co_request_rows.join("\n"),
+                );
+
+                // Compile the co_request metrics rows.
+                let mut co_response_rows = Vec::new();
+                for metric in co_response_metrics {
+                    co_response_rows
+                        .push(report::coordinated_omission_response_metrics_row(metric));
+                }
+
+                // Compile the status_code metrics template.
+                co_responses_template = report::coordinated_omission_response_metrics_template(
+                    &co_response_rows.join("\n"),
+                );
+            } else {
+                // If --status-codes is not enabled, return an empty template.
+                co_requests_template = "".to_string();
+                co_responses_template = "".to_string();
             }
 
             // Only build the tasks template if --no-task-metrics isn't enabled.
@@ -2591,9 +2608,8 @@ impl GooseAttack {
                 report::GooseReportTemplates {
                     raw_requests_template: &raw_requests_rows.join("\n"),
                     raw_responses_template: &raw_responses_rows.join("\n"),
-                    // @TODO: make these optional, CO does not always kick in.
-                    co_requests_template: &co_requests_rows.join("\n"),
-                    co_responses_template: &co_responses_rows.join("\n"),
+                    co_requests_template: &co_requests_template,
+                    co_responses_template: &co_responses_template,
                     tasks_template: &tasks_template,
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
