@@ -1466,18 +1466,19 @@ impl GooseUser {
             }
         };
 
+        // If enabled, track the cadence between each time the same request is made while
+        // this GooseUser is running. If requests are blocked by the upstream server, this
+        // allows Goose to backfill the requests that should have been made based on
+        // cadence statistics.
+        request_metric.coordinated_omission_cadence = self
+            .coordinated_omission_mitigation(&request_metric)
+            .await?;
+
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
             self.send_to_parent(GooseMetric::Request(request_metric.clone()))?;
         }
-
-        // If enabled, track the cadence between each time the same request is made while
-        // this GooseUser is running. If requests are blocked by the upstream server, this
-        // allows Goose to backfill the requests that should have been made based on
-        // cadence statistics.
-        self.coordinated_omission_mitigation(&request_metric)
-            .await?;
 
         Ok(GooseResponse::new(request_metric, response))
     }
@@ -1570,11 +1571,11 @@ impl GooseUser {
     async fn coordinated_omission_mitigation(
         &self,
         request_metric: &GooseRequestMetric,
-    ) -> Result<(), GooseTaskError> {
+    ) -> Result<u64, GooseTaskError> {
         if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
             // Return immediately if coordinated omission mitigation is disabled.
             if co_mitigation == &GooseCoordinatedOmissionMitigation::Disabled {
-                return Ok(());
+                return Ok(0);
             }
 
             // Grab a read-only copy of the `requests_cadence` object to view the current
@@ -1598,7 +1599,8 @@ impl GooseUser {
                     "".to_string()
                 };
                 info!(
-                    "coordinated omission alert: \"{} {}\" [{}] took abnormally long ({} ms){}",
+                    "coordinated omission alert {:.3}s into goose attack: \"{} {}\" [{}] took abnormally long ({} ms){}",
+                    request_metric.elapsed as f64 / 1_000.0,
                     request_metric.method,
                     request_metric.url,
                     request_metric.status_code,
@@ -1621,11 +1623,11 @@ impl GooseUser {
                 // Send the coordinated omission mitigation generated metrics to the parent.
                 self.send_to_parent(GooseMetric::Request(coordinated_omission_request_metric))?;
             }
+            Ok(request_cadence.coordinated_omission_cadence)
         } else {
             // A setting for coordinated omission mitigation is required, defaults to Average.
             unreachable!();
         }
-        Ok(())
     }
 
     fn send_to_parent(&self, metric: GooseMetric) -> GooseTaskResult {
