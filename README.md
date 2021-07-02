@@ -527,9 +527,27 @@ If something causes the response to a request to take abnormally long, raw Goose
 
 ### Mitigation
 
-Goose attempts to mitigate Coordinated Omission by back-filling the metrics with the statistically expected requests. To do this, it tracks the normal "cadence" of each `GooseUser`, timing how long it takes to loop through all `GooseTasks` in the assigned `GooseTaskSet`. By default, Goose will trigger Coordinated Omission Mitigation if the time to loop through a `GooseTaskSet` takes more than twice as long as the average time of all previous loops. In this case, on the next loop through the `GooseTaskSet` when tracking the actual metrics for each subsequent request in all `GooseTasks` it will also add in statistically generated "requests" with a `response_time` starting at the unexpectedly long request time, then again with that `response_time` minus the normal "cadence", continuing to generate a metric then subtract the normal "cadence" until arriving at the expected "respone_time". In this way, Goose is able to estimate the actual effect of a slowdown.
+Goose attempts to mitigate Coordinated Omission by back-filling the metrics with the statistically expected requests. To do this, it tracks the normal "cadence" of each `GooseUser`, timing how long it takes to loop through all `GooseTasks` in the assigned `GooseTaskSet`. By default, Goose will trigger Coordinated Omission Mitigation if the time to loop through a `GooseTaskSet` takes more than twice as long as the average time of all previous loops. In this case, on the next loop through the `GooseTaskSet` when tracking the actual metrics for each subsequent request in all `GooseTasks` it will also add in statistically generated "requests" with a `response_time` starting at the unexpectedly long request time, then again with that `response_time` minus the normal "cadence", continuing to generate a metric then subtract the normal "cadence" until arriving at the expected `response_time`. In this way, Goose is able to estimate the actual effect of a slowdown.
 
-If the `--requests-file` is enabled, requests back-filled by Coordinated Omission Mitigation show up in the generated log file, even though they were not actually sent to the server. In the following example, Coordinated Omission Mitigation was triggered when the server took 11,965 milliseconds to loop through all requests, instead of the average cadence of 3,162 milliseconds. This causes it to backfill a block of requests that statistically should have happened, with a `response_time` decreasing by the expected request cadence.
+When Coordinated Omission Mitigation detects an abnormally slow request, Goose will generate an INFO level message (which will be visible if Goose was started with the `-v` run time flag, or written to the log if started with the `-g` run time flag and `--log-file` is configured). For example:
+
+```
+10:10:02 [INFO] coordinated omission alert 6.957s into goose attack: "GET http://apache/node/8848" [200] took abnormally long (2932 ms), task name: "(Anon) node page"
+10:10:02 [INFO] coordinated omission alert 7.019s into goose attack: "GET http://apache/node/1960" [200] took abnormally long (2873 ms), task name: "(Anon) node page"
+10:10:02 [INFO] coordinated omission alert 7.314s into goose attack: "GET http://apache/node/1297" [200] took abnormally long (2578 ms), task name: "(Anon) node page"
+```
+
+If the `--requests-file` is enabled, you can get more details, in this case by looking for elapsed times matching the above messages, specifically 6957, 7019, and 7314 respectively:
+
+```
+{"coordinated_omission_cadence":1651,"coordinated_omission_elapsed":0,"elapsed":6957,"error":"","final_url":"http://apache/node/8848","method":"Get","name":"(Anon) node page","redirected":false,"response_time":2932,"status_code":200,"success":true,"update":false,"url":"http://apache/node/8848","user":2}
+{"coordinated_omission_cadence":1439,"coordinated_omission_elapsed":0,"elapsed":7019,"error":"","final_url":"http://apache/node/1960","method":"Get","name":"(Anon) node page","redirected":false,"response_time":2873,"status_code":200,"success":true,"update":false,"url":"http://apache/node/1960","user":0}
+{"coordinated_omission_cadence":1812,"coordinated_omission_elapsed":0,"elapsed":7314,"error":"","final_url":"http://apache/node/1297","method":"Get","name":"(Anon) node page","redirected":false,"response_time":2578,"status_code":200,"success":true,"update":false,"url":"http://apache/node/1297","user":3}
+```
+
+In the requests file, you can see that three different user threads triggered Coordinated Omission Mitigation, specifically threads 2, 0, and 3. All `GooseUser` threads were loading the same `GooseTask` as due to task weighting this is the task loaded the most frequently. Each `GooseUser` thread loops through all `GooseTasks` in a similar amount of time: thread 2 takes on average 1.651 seconds, thread 0 takes on average 1.439 seconds, and thread 3 takes on average 1.812 seconds.
+
+Also if the `--requests-file` is enabled, requests back-filled by Coordinated Omission Mitigation show up in the generated log file, even though they were not actually sent to the server. In the following example, Coordinated Omission Mitigation was triggered when the server took 11,965 milliseconds to loop through all requests, instead of the average cadence of 3,162 milliseconds. This causes it to backfill a block of requests that statistically should have happened, with a `response_time` decreasing by the expected request cadence.
 
 ```json
 {"coordinated_omission_cadence":3161,"coordinated_omission_elapsed":11965,"elapsed":185835,"error":"","final_url":"http://example.com/misc/jquery.js?v=1.4.4","method":"Get","name":"static asset","redirected":false,"response_time":11965,"status_code":200,"success":true,"update":false,"url":"http://example.com/misc/jquery.js?v=1.4.4","user":2}
@@ -538,7 +556,7 @@ If the `--requests-file` is enabled, requests back-filled by Coordinated Omissio
 {"coordinated_omission_cadence":3161,"coordinated_omission_elapsed":11965,"elapsed":185835,"error":"","final_url":"http://example.com/misc/jquery.js?v=1.4.4","method":"Get","name":"static asset","redirected":false,"response_time":2482,"status_code":200,"success":true,"update":false,"url":"http://example.com/misc/jquery.js?v=1.4.4","user":2}
 ```
 
-Normal requests not generated by Coordinated Omission Mitigation have a `coordinated_omission_cadence` and `coordinated_omission_elapsed` of 0.
+Normal requests not generated by Coordinated Omission Mitigation have a `coordinated_omission_elapsed` of 0.
 
 Coordinated Omission Mitigation can be disabled by setting `--co-mitigation disabled` when starting Goose. By default it uses the average cadence when backfilling, but it can also be configured to use the `minimum` or `maximum` cadence to allow for different server configuration and testing plans operating on different assumptions.
 
