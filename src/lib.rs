@@ -440,6 +440,7 @@ mod worker;
 use chrono::prelude::*;
 use gumdrop::Options;
 use lazy_static::lazy_static;
+use logger::GooseLogger;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use rand::seq::SliceRandom;
@@ -490,7 +491,7 @@ type UnsequencedGooseTasks = Vec<GooseTask>;
 type SequencedGooseTasks = BTreeMap<usize, Vec<GooseTask>>;
 
 /// Optional unbounded receiver for logger thread, if debug logger is enabled.
-type DebugLoggerHandle = Option<tokio::task::JoinHandle<()>>;
+type DebugLoggerHandle = Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
 /// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
 type DebugLoggerChannel = Option<flume::Sender<Option<GooseDebug>>>;
 
@@ -515,6 +516,9 @@ pub enum GooseError {
     Io(io::Error),
     /// Wraps a [`reqwest::Error`](https://docs.rs/reqwest/*/reqwest/struct.Error.html).
     Reqwest(reqwest::Error),
+    /// Wraps a ['tokio::task::JoinError'](TODO)
+    Tokio(tokio::task::JoinError),
+    //std::convert::From<tokio::task::JoinError>
     /// Failed attempt to use code that requires a compile-time feature be enabled.
     FeatureNotEnabled {
         /// The missing compile-time feature.
@@ -568,6 +572,7 @@ impl GooseError {
         match *self {
             GooseError::Io(_) => "io::Error",
             GooseError::Reqwest(_) => "reqwest::Error",
+            GooseError::Tokio(_) => "tokio::task::JoinError",
             GooseError::FeatureNotEnabled { .. } => "required compile-time feature not enabled",
             GooseError::InvalidHost { .. } => "failed to parse hostname",
             GooseError::InvalidOption { .. } => "invalid option or value specified",
@@ -587,6 +592,9 @@ impl fmt::Display for GooseError {
             GooseError::Reqwest(ref source) => {
                 write!(f, "GooseError: {} ({})", self.describe(), source)
             }
+            GooseError::Tokio(ref source) => {
+                write!(f, "GooseError: {} ({})", self.describe(), source)
+            }
             GooseError::InvalidHost {
                 ref parse_error, ..
             } => write!(f, "GooseError: {} ({})", self.describe(), parse_error),
@@ -601,6 +609,7 @@ impl std::error::Error for GooseError {
         match *self {
             GooseError::Io(ref source) => Some(source),
             GooseError::Reqwest(ref source) => Some(source),
+            GooseError::Tokio(ref source) => Some(source),
             GooseError::InvalidHost {
                 ref parse_error, ..
             } => Some(parse_error),
@@ -620,6 +629,13 @@ impl From<reqwest::Error> for GooseError {
 impl From<io::Error> for GooseError {
     fn from(err: io::Error) -> GooseError {
         GooseError::Io(err)
+    }
+}
+
+/// Auto-convert Tokio errors.
+impl From<tokio::task::JoinError> for GooseError {
+    fn from(err: tokio::task::JoinError) -> GooseError {
+        GooseError::Tokio(err)
     }
 }
 
@@ -2799,7 +2815,9 @@ impl GooseAttack {
     }
 
     // Helper to spawn a logger thread if configured.
-    fn setup_debug_logger(&mut self) -> (DebugLoggerHandle, DebugLoggerChannel) {
+    async fn setup_debug_logger(
+        &mut self,
+    ) -> Result<(DebugLoggerHandle, DebugLoggerChannel), GooseError> {
         // Set configuration from default if available, making it available to
         // GooseUser threads.
         self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path() {
@@ -2809,7 +2827,7 @@ impl GooseAttack {
         };
         // If the logger isn't configured, return immediately.
         if self.configuration.debug_file.is_empty() {
-            return (None, None);
+            return Ok((None, None));
         }
 
         // Create an unbounded channel allowing GooseUser threads to log errors.
@@ -2818,11 +2836,10 @@ impl GooseAttack {
             flume::Receiver<Option<GooseDebug>>,
         ) = flume::unbounded();
         // Launch a new thread for logging.
-        let logger_thread = tokio::spawn(logger::logger_main(
-            self.configuration.clone(),
-            logger_receiver,
-        ));
-        (Some(logger_thread), Some(all_threads_debug_logger))
+        let configuration = self.configuration.clone();
+        let logger_thread =
+            tokio::spawn(async move { configuration.logger_main(logger_receiver).await });
+        Ok((Some(logger_thread), Some(all_threads_debug_logger)))
     }
 
     // Helper to spawn a throttle thread if configured. The throttle thread opens
@@ -3425,7 +3442,7 @@ impl GooseAttack {
         goose_attack_run_state.all_users_spawned = false;
 
         // If enabled, spawn a logger thread.
-        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger();
+        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger().await?;
         goose_attack_run_state.debug_logger = debug_logger;
         goose_attack_run_state.all_threads_debug_logger_tx = all_threads_debug_logger_tx;
 
