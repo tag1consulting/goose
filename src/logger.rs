@@ -125,28 +125,39 @@
 //! about the request (when available), and all server response headers (when available).
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufWriter;
 
 use crate::goose::GooseDebug;
+use crate::metrics::{GooseRequestMetric, GooseTaskMetric};
 use crate::{GooseConfiguration, GooseError};
 
-#[async_trait]
-pub(crate) trait GooseLogger<T> {
-    async fn logger_main(self, receiver: flume::Receiver<Option<T>>) -> Result<(), GooseError>;
+/// OR: what about a single Logger thread that can write to all the log files: receiving messages
+/// via an enum...?
+
+/// If enabled, the logger thread can accept any of the following types of messages, and will
+/// write them to the correct log file.
+#[derive(Debug, Deserialize, Serialize)]
+pub enum GooseLog {
+    Debug(GooseDebug),
+    Request(GooseRequestMetric),
+    Task(GooseTaskMetric),
 }
+
 #[async_trait]
-impl GooseLogger<GooseDebug> for GooseConfiguration {
+pub(crate) trait GooseLogger<T> {}
+
+impl GooseConfiguration {
     /// Logger thread, opens a log file (if configured) and waits for messages from
-    /// [`GooseUser`](../goose/struct.GooseUser.html) threads. This function is not intended
-    /// to be invoked manually.
-    async fn logger_main(
+    /// [`GooseUser`](../goose/struct.GooseUser.html) threads.
+    pub(crate) async fn logger_main(
         self: GooseConfiguration,
-        receiver: flume::Receiver<Option<GooseDebug>>,
+        receiver: flume::Receiver<Option<GooseLog>>,
     ) -> Result<(), GooseError> {
-        // Determine if a debug file has been configured.
+        // Determine which log files have been configured.
         let mut debug_file_path: Option<String> = None;
         if !self.debug_file.is_empty() {
             debug_file_path = Some(self.debug_file.clone());

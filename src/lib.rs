@@ -440,7 +440,6 @@ mod worker;
 use chrono::prelude::*;
 use gumdrop::Options;
 use lazy_static::lazy_static;
-use logger::GooseLogger;
 #[cfg(feature = "gaggle")]
 use nng::Socket;
 use rand::seq::SliceRandom;
@@ -461,7 +460,8 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
-use crate::goose::{GaggleUser, GooseDebug, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::logger::GooseLog;
 use crate::metrics::{
     GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetrics, GooseRequestMetric,
 };
@@ -491,9 +491,9 @@ type UnsequencedGooseTasks = Vec<GooseTask>;
 type SequencedGooseTasks = BTreeMap<usize, Vec<GooseTask>>;
 
 /// Optional unbounded receiver for logger thread, if debug logger is enabled.
-type DebugLoggerHandle = Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
+type LoggerHandle = Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
 /// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
-type DebugLoggerChannel = Option<flume::Sender<Option<GooseDebug>>>;
+type LoggerChannel = Option<flume::Sender<Option<GooseLog>>>;
 
 /// Returns the unique identifier of the running Worker when running in Gaggle mode.
 ///
@@ -868,10 +868,10 @@ struct GooseAttackRunState {
     /// [`GooseUser`](./goose/struct.GooseUser.html)s.
     metrics_rx: flume::Receiver<GooseMetric>,
     /// Optional unbounded receiver for logger thread, if enabled.
-    debug_logger: DebugLoggerHandle,
+    logger: LoggerHandle,
     /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
     /// to logger thread, if enabled.
-    all_threads_debug_logger_tx: DebugLoggerChannel,
+    all_threads_logger_tx: LoggerChannel,
     /// Optional receiver for all [`GooseUser`](./goose/struct.GooseUser.html)s from
     /// throttle thread, if enabled.
     throttle_threads_tx: Option<flume::Sender<bool>>,
@@ -2815,9 +2815,7 @@ impl GooseAttack {
     }
 
     // Helper to spawn a logger thread if configured.
-    async fn setup_debug_logger(
-        &mut self,
-    ) -> Result<(DebugLoggerHandle, DebugLoggerChannel), GooseError> {
+    async fn setup_debug_logger(&mut self) -> Result<(LoggerHandle, LoggerChannel), GooseError> {
         // Set configuration from default if available, making it available to
         // GooseUser threads.
         self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path() {
@@ -2832,8 +2830,8 @@ impl GooseAttack {
 
         // Create an unbounded channel allowing GooseUser threads to log errors.
         let (all_threads_debug_logger, logger_receiver): (
-            flume::Sender<Option<GooseDebug>>,
-            flume::Receiver<Option<GooseDebug>>,
+            flume::Sender<Option<GooseLog>>,
+            flume::Receiver<Option<GooseLog>>,
         ) = flume::unbounded();
         // Launch a new thread for logging.
         let configuration = self.configuration.clone();
@@ -3074,8 +3072,8 @@ impl GooseAttack {
             drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
             metrics_rx,
-            debug_logger: None,
-            all_threads_debug_logger_tx: None,
+            logger: None,
+            all_threads_logger_tx: None,
             throttle_threads_tx: None,
             parent_to_throttle_tx: None,
             controller_channel_rx,
@@ -3167,14 +3165,14 @@ impl GooseAttack {
 
             if self.get_debug_file_path().is_some() {
                 // Copy the GooseUser-to-logger sender channel, used by all threads.
-                thread_user.debug_logger = Some(
+                thread_user.logger = Some(
                     goose_attack_run_state
-                        .all_threads_debug_logger_tx
+                        .all_threads_logger_tx
                         .clone()
                         .unwrap(),
                 );
             } else {
-                thread_user.debug_logger = None;
+                thread_user.logger = None;
             }
 
             // Copy the GooseUser-throttle receiver channel, used by all threads.
@@ -3340,7 +3338,7 @@ impl GooseAttack {
         if self.get_debug_file_path().is_some() {
             // Tell logger thread to flush and exit.
             if let Err(e) = goose_attack_run_state
-                .all_threads_debug_logger_tx
+                .all_threads_logger_tx
                 .clone()
                 .unwrap()
                 .send(None)
@@ -3348,11 +3346,11 @@ impl GooseAttack {
                 warn!("unexpected error telling logger thread to exit: {}", e);
             };
             // If the debug logger is enabled, wait for thread to flush and exit.
-            if goose_attack_run_state.debug_logger.is_some() {
+            if goose_attack_run_state.logger.is_some() {
                 // Take debug_logger out of the GooseAttackRunState object so it can be
                 // consumed by tokio::join!().
-                let debug_logger = std::mem::take(&mut goose_attack_run_state.debug_logger);
-                let _ = tokio::join!(debug_logger.unwrap());
+                let logger = std::mem::take(&mut goose_attack_run_state.logger);
+                let _ = tokio::join!(logger.unwrap());
             }
         }
 
@@ -3442,9 +3440,9 @@ impl GooseAttack {
         goose_attack_run_state.all_users_spawned = false;
 
         // If enabled, spawn a logger thread.
-        let (debug_logger, all_threads_debug_logger_tx) = self.setup_debug_logger().await?;
-        goose_attack_run_state.debug_logger = debug_logger;
-        goose_attack_run_state.all_threads_debug_logger_tx = all_threads_debug_logger_tx;
+        let (logger, all_threads_logger_tx) = self.setup_debug_logger().await?;
+        goose_attack_run_state.logger = logger;
+        goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
 
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
