@@ -15,7 +15,6 @@ use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
-use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
@@ -2177,11 +2176,7 @@ impl GooseAttack {
     // Store `GooseRequestMetric` in a `GooseRequestMetricAggregate` within the
     // `GooseMetrics.requests` `HashMap`, merging if already existing, or creating new.
     // Also writes it to the request_file if enabled.
-    async fn record_request_metric(
-        &mut self,
-        request_metric: &GooseRequestMetric,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) {
+    async fn record_request_metric(&mut self, request_metric: &GooseRequestMetric) {
         let key = format!("{} {}", request_metric.method, request_metric.name);
         let mut merge_request = match self.metrics.requests.get(&key) {
             Some(m) => m.clone(),
@@ -2218,32 +2213,7 @@ impl GooseAttack {
             }
         }
 
-        // Options should appear above, search for formatted_log.
-        let formatted_log = match self.configuration.requests_format.as_str() {
-            // Use serde_json to create JSON.
-            "json" => json!(request_metric).to_string(),
-            // Manually create CSV, library doesn't support single-row string conversion.
-            "csv" => GooseAttack::prepare_csv(&request_metric, goose_attack_run_state),
-            // Raw format is Debug output for GooseRequestMetric structure.
-            "raw" => format!("{:?}", request_metric),
-            _ => unreachable!(),
-        };
-        if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
-            match file.write(format!("{}\n", formatted_log).as_ref()).await {
-                Ok(_) => (),
-                Err(e) => {
-                    warn!(
-                        "failed to write metrics to {}: {}",
-                        // Unwrap is safe as we can't get here unless a requests file path
-                        // is defined.
-                        self.get_requests_file_path().unwrap(),
-                        e
-                    );
-                }
-            }
-        }
-
-        self.metrics.requests.insert(key.to_string(), merge_request);
+        self.metrics.requests.insert(key, merge_request);
     }
 
     // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
@@ -2290,8 +2260,7 @@ impl GooseAttack {
                             // Backfill until reaching the expected request cadence.
                             if response_time > request_metric.response_time as i64 {
                                 co_metric.response_time = response_time as u64;
-                                self.record_request_metric(&co_metric, goose_attack_run_state)
-                                    .await;
+                                self.record_request_metric(&co_metric).await;
                                 response_time -= request_metric.coordinated_omission_cadence as i64;
                             } else {
                                 break;
@@ -2301,8 +2270,7 @@ impl GooseAttack {
                     } else {
                         // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
                         // `GooseMetrics.requests`, and write to the requests log if enabled.
-                        self.record_request_metric(&request_metric, goose_attack_run_state)
-                            .await;
+                        self.record_request_metric(&request_metric).await;
                     }
                 }
                 GooseMetric::Error(raw_error) => {

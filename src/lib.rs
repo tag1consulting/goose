@@ -456,15 +456,12 @@ use std::sync::{
 };
 use std::{fmt, io, time};
 use tokio::fs::File;
-use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::logger::GooseLog;
-use crate::metrics::{
-    GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetrics, GooseRequestMetric,
-};
+use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
+use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -489,11 +486,6 @@ type WeightedGooseTasks = Vec<(usize, String)>;
 type UnsequencedGooseTasks = Vec<GooseTask>;
 /// Internal representation of sequenced tasks.
 type SequencedGooseTasks = BTreeMap<usize, Vec<GooseTask>>;
-
-/// Optional unbounded receiver for logger thread, if debug logger is enabled.
-type LoggerHandle = Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
-/// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
-type LoggerChannel = Option<flume::Sender<Option<GooseLog>>>;
 
 /// Returns the unique identifier of the running Worker when running in Gaggle mode.
 ///
@@ -868,10 +860,10 @@ struct GooseAttackRunState {
     /// [`GooseUser`](./goose/struct.GooseUser.html)s.
     metrics_rx: flume::Receiver<GooseMetric>,
     /// Optional unbounded receiver for logger thread, if enabled.
-    logger: LoggerHandle,
+    logger_handle: GooseLoggerJoinHandle,
     /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
     /// to logger thread, if enabled.
-    all_threads_logger_tx: LoggerChannel,
+    all_threads_logger_tx: GooseLoggerTx,
     /// Optional receiver for all [`GooseUser`](./goose/struct.GooseUser.html)s from
     /// throttle thread, if enabled.
     throttle_threads_tx: Option<flume::Sender<bool>>,
@@ -879,8 +871,6 @@ struct GooseAttackRunState {
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
     /// Optional channel allowing controller thread to make requests, if not disabled.
     controller_channel_rx: Option<flume::Receiver<GooseControllerRequest>>,
-    /// Optional buffered writer for requests log file, if enabled.
-    requests_file: Option<BufWriter<File>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
     report_file: Option<File>,
     /// A flag tracking whether or not the header has been written when the metrics
@@ -1451,7 +1441,7 @@ impl GooseAttack {
                 });
             }
 
-            if self.get_debug_file_path().is_some() {
+            if !self.configuration.debug_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--debug-file".to_string(),
                     value: self.configuration.debug_file.clone(),
@@ -2280,28 +2270,6 @@ impl GooseAttack {
         None
     }
 
-    // If enabled, returns the path of the requests_file, otherwise returns None.
-    fn get_requests_file_path(&mut self) -> Option<&str> {
-        // If metrics are disabled, or running in Manager mode, there is no
-        // requests file, exit immediately.
-        if self.configuration.no_metrics || self.attack_mode == AttackMode::Manager {
-            return None;
-        }
-
-        // If --requests-file is set, return it.
-        if !self.configuration.requests_file.is_empty() {
-            return Some(&self.configuration.requests_file);
-        }
-
-        // If GooseDefault::MetricFile is set, return it.
-        if let Some(default_requests_file) = &self.defaults.requests_file {
-            return Some(default_requests_file);
-        }
-
-        // Otherwise there is no requests file.
-        None
-    }
-
     // Configure requests log format.
     fn set_requests_format(&mut self) -> Result<(), GooseError> {
         if self.configuration.requests_format.is_empty() {
@@ -2320,7 +2288,7 @@ impl GooseAttack {
                 });
             }
             // Log format isn't relevant if log not enabled.
-            else if self.get_requests_file_path().is_none() {
+            else if self.configuration.requests_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "--requests-format".to_string(),
                     value: self.configuration.requests_format.clone(),
@@ -2342,27 +2310,6 @@ impl GooseAttack {
         }
 
         Ok(())
-    }
-
-    // If enabled, returns the path of the debug_file, otherwise returns None.
-    fn get_debug_file_path(&self) -> Option<&str> {
-        // If running in Manager mode there is no debug file, exit immediately.
-        if self.attack_mode == AttackMode::Manager {
-            return None;
-        }
-
-        // If --debug-file is set, return it.
-        if !self.configuration.debug_file.is_empty() {
-            return Some(&self.configuration.debug_file);
-        }
-
-        // If GooseDefault::DebugFile is set, return it.
-        if let Some(default_debug_file) = &self.defaults.debug_file {
-            return Some(default_debug_file);
-        }
-
-        // Otherwise there is no debug file.
-        None
     }
 
     // Configure debug log format.
@@ -2558,6 +2505,9 @@ impl GooseAttack {
             }
             std::process::exit(0);
         }
+
+        // Configure loggers.
+        self.configuration.configure_loggers(&self.defaults);
 
         // Initialize logger.
         self.initialize_logger();
@@ -2771,75 +2721,6 @@ impl GooseAttack {
         }
     }
 
-    /// Helper to create CSV-formatted logs.
-    fn prepare_csv(
-        raw_request: &GooseRequestMetric,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) -> String {
-        let body = format!(
-            // Put quotes around name, url and final_url as they are strings.
-            "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
-            raw_request.elapsed,
-            raw_request.method,
-            raw_request.name,
-            raw_request.url,
-            raw_request.final_url,
-            raw_request.redirected,
-            raw_request.response_time,
-            raw_request.status_code,
-            raw_request.success,
-            raw_request.update,
-            raw_request.user
-        );
-        // Concatenate the header before the body one time.
-        if !goose_attack_run_state.metrics_header_displayed {
-            goose_attack_run_state.metrics_header_displayed = true;
-            format!(
-                // No quotes needed in header.
-                "{},{},{},{},{},{},{},{},{},{},{}\n",
-                "elapsed",
-                "method",
-                "name",
-                "url",
-                "final_url",
-                "redirected",
-                "response_time",
-                "status_code",
-                "success",
-                "update",
-                "user"
-            ) + &body
-        } else {
-            body
-        }
-    }
-
-    // Spawn a logger thread if one or more logs are enabled.
-    async fn setup_logger(&mut self) -> Result<(LoggerHandle, LoggerChannel), GooseError> {
-        // Set configuration from default if available, making it available to
-        // GooseUser threads.
-        self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path() {
-            debug_file.to_string()
-        } else {
-            "".to_string()
-        };
-        // If the logger isn't configured, return immediately.
-        if self.configuration.debug_file.is_empty() {
-            return Ok((None, None));
-        }
-
-        // Create an unbounded channel allowing GooseUser threads to log errors.
-        let (all_threads_debug_logger, logger_receiver): (
-            flume::Sender<Option<GooseLog>>,
-            flume::Receiver<Option<GooseLog>>,
-        ) = flume::unbounded();
-        // Launch a new thread for logging.
-        let configuration = self.configuration.clone();
-        let logger_thread =
-            tokio::spawn(async move { configuration.logger_main(logger_receiver).await });
-        Ok((Some(logger_thread), Some(all_threads_debug_logger)))
-    }
-
     // Helper to spawn a throttle thread if configured. The throttle thread opens
     // a bounded channel to control how quickly [`GooseUser`](./goose/struct.GooseUser.html)
     // threads can make requests.
@@ -2980,17 +2861,6 @@ impl GooseAttack {
         }
     }
 
-    // Prepare an asynchronous buffered file writer for `requests_file` (if enabled).
-    async fn prepare_requests_file(&mut self) -> Result<Option<BufWriter<File>>, GooseError> {
-        if let Some(requests_file_path) = self.get_requests_file_path() {
-            Ok(Some(BufWriter::new(
-                File::create(&requests_file_path).await?,
-            )))
-        } else {
-            Ok(None)
-        }
-    }
-
     // Invoke `test_start` tasks if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
@@ -3072,13 +2942,12 @@ impl GooseAttack {
             drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
             metrics_rx,
-            logger: None,
+            logger_handle: None,
             all_threads_logger_tx: None,
             throttle_threads_tx: None,
             parent_to_throttle_tx: None,
             controller_channel_rx,
             report_file: None,
-            requests_file: None,
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
@@ -3163,17 +3032,8 @@ impl GooseAttack {
             ) = flume::unbounded();
             goose_attack_run_state.user_channels.push(parent_sender);
 
-            if self.get_debug_file_path().is_some() {
-                // Copy the GooseUser-to-logger sender channel, used by all threads.
-                thread_user.logger = Some(
-                    goose_attack_run_state
-                        .all_threads_logger_tx
-                        .clone()
-                        .unwrap(),
-                );
-            } else {
-                thread_user.logger = None;
-            }
+            // Clone the logger_tx if enabled, otherwise is None.
+            thread_user.logger = goose_attack_run_state.all_threads_logger_tx.clone();
 
             // Copy the GooseUser-throttle receiver channel, used by all threads.
             thread_user.throttle = if self.configuration.throttle_requests > 0 {
@@ -3335,8 +3195,8 @@ impl GooseAttack {
         futures::future::join_all(users).await;
         debug!("all users exited");
 
-        if self.get_debug_file_path().is_some() {
-            // Tell logger thread to flush and exit.
+        // If the logger thread is enabled, tell it to flush and exit.
+        if goose_attack_run_state.logger_handle.is_some() {
             if let Err(e) = goose_attack_run_state
                 .all_threads_logger_tx
                 .clone()
@@ -3345,13 +3205,10 @@ impl GooseAttack {
             {
                 warn!("unexpected error telling logger thread to exit: {}", e);
             };
-            // If the debug logger is enabled, wait for thread to flush and exit.
-            if goose_attack_run_state.logger.is_some() {
-                // Take debug_logger out of the GooseAttackRunState object so it can be
-                // consumed by tokio::join!().
-                let logger = std::mem::take(&mut goose_attack_run_state.logger);
-                let _ = tokio::join!(logger.unwrap());
-            }
+            // Take logger out of the GooseAttackRunState object so it can be
+            // consumed by tokio::join!().
+            let logger = std::mem::take(&mut goose_attack_run_state.logger_handle);
+            let _ = tokio::join!(logger.unwrap());
         }
 
         // If we're printing metrics, collect the final metrics received from users.
@@ -3382,23 +3239,10 @@ impl GooseAttack {
     }
 
     // Cleanly shut down the [`GooseAttack`](./struct.GooseAttack.html).
-    async fn stop_attack(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) -> Result<(), GooseError> {
+    async fn stop_attack(&mut self) -> Result<(), GooseError> {
         // Run any configured test_stop() functions.
         self.run_test_stop().await?;
 
-        // If requests logging is enabled, flush all metrics before we exit.
-        if let Some(file) = goose_attack_run_state.requests_file.as_mut() {
-            info!(
-                "flushing requests_file: {}",
-                // Unwrap is safe as we can't get here unless a requests file path
-                // is defined.
-                self.get_requests_file_path().unwrap()
-            );
-            let _ = file.flush().await;
-        };
         // Percentile and errors are only displayed when the load test is finished.
         self.metrics.final_metrics = true;
 
@@ -3440,8 +3284,9 @@ impl GooseAttack {
         goose_attack_run_state.all_users_spawned = false;
 
         // If enabled, spawn a logger thread.
-        let (logger, all_threads_logger_tx) = self.setup_logger().await?;
-        goose_attack_run_state.logger = logger;
+        let (logger_handle, all_threads_logger_tx) =
+            self.configuration.setup_loggers(&self.defaults).await?;
+        goose_attack_run_state.logger_handle = logger_handle;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
 
         // If enabled, spawn a throttle thread.
@@ -3457,18 +3302,6 @@ impl GooseAttack {
                     option: "--report-file".to_string(),
                     value: self.get_report_file_path().unwrap(),
                     detail: format!("Failed to create report file: {}", e),
-                })
-            }
-        };
-
-        // If enabled, create a requests file and confirm access.
-        goose_attack_run_state.requests_file = match self.prepare_requests_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
-                    option: "--requests-file".to_string(),
-                    value: self.get_requests_file_path().unwrap().to_string(),
-                    detail: format!("Failed to create request file: {}", e),
                 })
             }
         };
@@ -3542,7 +3375,7 @@ impl GooseAttack {
                     // Tell all running GooseUsers to stop.
                     self.stop_running_users(&mut goose_attack_run_state).await?;
                     // Stop any running GooseUser threads.
-                    self.stop_attack(&mut goose_attack_run_state).await?;
+                    self.stop_attack().await?;
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
                     // Write an html report, if enabled.

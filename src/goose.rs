@@ -1481,6 +1481,13 @@ impl GooseUser {
             self.send_to_parent(GooseMetric::Request(request_metric.clone()))?;
         }
 
+        // If requests-file is enabled, send a copy of the raw request to the logger thread.
+        if !self.config.requests_file.is_empty() {
+            if let Some(logger) = self.logger.as_ref() {
+                logger.send(Some(GooseLog::Request(request_metric.clone())))?;
+            }
+        }
+
         Ok(GooseResponse::new(request_metric, response))
     }
 

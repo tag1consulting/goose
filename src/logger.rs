@@ -131,10 +131,13 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseRequestMetric, GooseTaskMetric};
-use crate::{GooseConfiguration, GooseError};
+use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
-/// OR: what about a single Logger thread that can write to all the log files: receiving messages
-/// via an enum...?
+/// Optional unbounded receiver for logger thread, if debug logger is enabled.
+pub(crate) type GooseLoggerJoinHandle =
+    Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
+/// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
+pub(crate) type GooseLoggerTx = Option<flume::Sender<Option<GooseLog>>>;
 
 /// If enabled, the logger thread can accept any of the following types of messages, and will
 /// write them to the correct log file.
@@ -142,7 +145,7 @@ use crate::{GooseConfiguration, GooseError};
 pub enum GooseLog {
     Debug(GooseDebug),
     Request(GooseRequestMetric),
-    Task(GooseTaskMetric),
+    //Task(GooseTaskMetric),
 }
 
 pub(crate) trait GooseLogger<T> {
@@ -164,6 +167,9 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
         match self.debug_format.as_str() {
             // Use serde_json to create JSON.
             "json" => json!(message).to_string(),
+            // Manually create CSV, library doesn't support single-row string conversion.
+            // @TODO: handle header
+            "csv" => prepare_csv(&message, false),
             // Raw format is Debug output for GooseRawRequest structure.
             "raw" => format!("{:?}", message),
             _ => unreachable!(),
@@ -182,38 +188,94 @@ impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
     }
 }
 
-impl GooseConfiguration {
-    /*
-    fn get_logger_path(&self, log_type: &GooseLog) -> Option<&str> {
-        match log_type {
-            GooseLog::Debug(_) => {
-                if !self.debug_file.is_empty() {
-                    Some(&self.debug_file)
-                } else {
-                    None
-                }
-            }
-            GooseLog::Request(_) => {
-                if !self.requests_file.is_empty() {
-                    Some(&self.requests_file)
-                } else {
-                    None
-                }
-            }
-            GooseLog::Task(_) => None,
-        }
+/// Helper to create CSV-formatted logs.
+fn prepare_csv(raw_request: &GooseRequestMetric, display_header: bool) -> String {
+    let body = format!(
+        // Put quotes around name, url and final_url as they are strings.
+        "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
+        raw_request.elapsed,
+        raw_request.method,
+        raw_request.name,
+        raw_request.url,
+        raw_request.final_url,
+        raw_request.redirected,
+        raw_request.response_time,
+        raw_request.status_code,
+        raw_request.success,
+        raw_request.update,
+        raw_request.user
+    );
+    // Concatenate the header before the body one time.
+    if display_header {
+        format!(
+            // No quotes needed in header.
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
+            "elapsed",
+            "method",
+            "name",
+            "url",
+            "final_url",
+            "redirected",
+            "response_time",
+            "status_code",
+            "success",
+            "update",
+            "user"
+        ) + &body
+    } else {
+        body
     }
-    */
+}
 
-    /*
-    pub(crate) fn enable_logger(self: GooseConfiguration, path: Option<&str>) -> String {
-        if let Some(file) = path {
-            file.to_string()
-        } else {
-            "".to_string()
+impl GooseConfiguration {
+    pub(crate) fn configure_loggers(&mut self, defaults: &GooseDefaults) {
+        // If running in Manager mode, no logger is configured.
+        if self.manager {
+            return;
+        }
+
+        // Configure debug_file path if enabled.
+        if self.debug_file.is_empty() {
+            // Set default, if configured.
+            if let Some(default_debug_file) = defaults.debug_file.clone() {
+                self.debug_file = default_debug_file;
+            }
+        }
+        // Configure requests_file path if enabled.
+        if self.requests_file.is_empty() {
+            // Set default, if configured.
+            if let Some(default_requests_file) = defaults.requests_file.clone() {
+                self.requests_file = default_requests_file;
+            }
         }
     }
-    */
+
+    pub(crate) async fn setup_loggers(
+        &mut self,
+        defaults: &GooseDefaults,
+    ) -> Result<(GooseLoggerJoinHandle, GooseLoggerTx), GooseError> {
+        // If running in Manager mode, no logger thread is started.
+        if self.manager {
+            return Ok((None, None));
+        }
+
+        self.configure_loggers(defaults);
+
+        // If no longger is enabled, return immediately without launching logger thread.
+        if self.debug_file.is_empty() && self.requests_file.is_empty() {
+            return Ok((None, None));
+        }
+
+        // Create an unbounded channel allowing GooseUser threads to log errors.
+        let (all_threads_logger_tx, logger_rx): (
+            flume::Sender<Option<GooseLog>>,
+            flume::Receiver<Option<GooseLog>>,
+        ) = flume::unbounded();
+        // Launch a new thread for logging.
+        let configuration = self.clone();
+        let logger_handle = tokio::spawn(async move { configuration.logger_main(logger_rx).await });
+        Ok((Some(logger_handle), Some(all_threads_logger_tx)))
+    }
 
     async fn open_log_file(
         &self,
@@ -265,11 +327,6 @@ impl GooseConfiguration {
             .open_log_file(&self.requests_file, "requests file", 64 * 1024)
             .await;
 
-        // @TODO: If tasks log is enabled, allocate buffer.
-        let mut tasks_file = self
-            .open_log_file(&self.requests_file, "tasks file", 64 * 1024)
-            .await;
-
         // Loop waiting for and writing error logs from GooseUser threads.
         while let Ok(received_message) = receiver.recv_async().await {
             if let Some(message) = received_message {
@@ -282,10 +339,6 @@ impl GooseConfiguration {
                     GooseLog::Request(request_message) => {
                         formatted_message = self.format_message(request_message).to_string();
                         requests_file.as_mut()
-                    }
-                    GooseLog::Task(task_message) => {
-                        formatted_message = self.format_message(task_message).to_string();
-                        tasks_file.as_mut()
                     }
                 } {
                     // Start with a line feed instead of ending with a line feed to more gracefully
@@ -301,7 +354,7 @@ impl GooseConfiguration {
                     }
                 } else {
                     // Do not accept messages for disabled loggers as it's unnecessary overhead.
-                    unreachable!();
+                    warn!("received message for disabled logger!");
                 }
             } else {
                 // Empty message means it's time to exit.
@@ -310,13 +363,13 @@ impl GooseConfiguration {
         }
 
         // Cleanup and flush all logs to disk.
-        if let Some(log_file) = debug_file.as_mut() {
+        if let Some(debug_log_file) = debug_file.as_mut() {
             info!("flushing debug_file: {}", &self.debug_file);
-            let _ = log_file.flush().await;
+            let _ = debug_log_file.flush().await;
         };
-        if let Some(log_file) = requests_file.as_mut() {
+        if let Some(requests_log_file) = requests_file.as_mut() {
             info!("flushing requests_file: {}", &self.requests_file);
-            let _ = log_file.flush().await;
+            let _ = requests_log_file.flush().await;
         }
         /*
         if let Some(log_file) = tasks_file.as_mut() {
