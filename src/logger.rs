@@ -124,12 +124,10 @@
 //! configuration option. The debug logger will still record any custom messages, details
 //! about the request (when available), and all server response headers (when available).
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
-use tokio::io::BufWriter;
+use tokio::io::{AsyncWriteExt, BufWriter};
 
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseRequestMetric, GooseTaskMetric};
@@ -147,65 +145,164 @@ pub enum GooseLog {
     Task(GooseTaskMetric),
 }
 
-#[async_trait]
-pub(crate) trait GooseLogger<T> {}
+pub(crate) trait GooseLogger<T> {
+    fn format_message(&self, message: T) -> String;
+}
+impl GooseLogger<GooseDebug> for GooseConfiguration {
+    fn format_message(&self, message: GooseDebug) -> String {
+        match self.debug_format.as_str() {
+            // Use serde_json to create JSON.
+            "json" => json!(message).to_string(),
+            // Raw format is Debug output for GooseRawRequest structure.
+            "raw" => format!("{:?}", message),
+            _ => unreachable!(),
+        }
+    }
+}
+impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
+    fn format_message(&self, message: GooseRequestMetric) -> String {
+        match self.debug_format.as_str() {
+            // Use serde_json to create JSON.
+            "json" => json!(message).to_string(),
+            // Raw format is Debug output for GooseRawRequest structure.
+            "raw" => format!("{:?}", message),
+            _ => unreachable!(),
+        }
+    }
+}
+impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
+    fn format_message(&self, message: GooseTaskMetric) -> String {
+        match self.debug_format.as_str() {
+            // Use serde_json to create JSON.
+            "json" => json!(message).to_string(),
+            // Raw format is Debug output for GooseRawRequest structure.
+            "raw" => format!("{:?}", message),
+            _ => unreachable!(),
+        }
+    }
+}
 
 impl GooseConfiguration {
+    /*
+    fn get_logger_path(&self, log_type: &GooseLog) -> Option<&str> {
+        match log_type {
+            GooseLog::Debug(_) => {
+                if !self.debug_file.is_empty() {
+                    Some(&self.debug_file)
+                } else {
+                    None
+                }
+            }
+            GooseLog::Request(_) => {
+                if !self.requests_file.is_empty() {
+                    Some(&self.requests_file)
+                } else {
+                    None
+                }
+            }
+            GooseLog::Task(_) => None,
+        }
+    }
+    */
+
+    /*
+    pub(crate) fn enable_logger(self: GooseConfiguration, path: Option<&str>) -> String {
+        if let Some(file) = path {
+            file.to_string()
+        } else {
+            "".to_string()
+        }
+    }
+    */
+
+    async fn open_log_file(
+        &self,
+        log_file_path: &str,
+        log_file_type: &str,
+        buffer_capacity: usize,
+    ) -> std::option::Option<tokio::io::BufWriter<tokio::fs::File>> {
+        if log_file_path.is_empty() {
+            None
+        } else {
+            match File::create(log_file_path).await {
+                Ok(f) => {
+                    info!("writing {} to: {}", log_file_type, log_file_path);
+                    Some(BufWriter::with_capacity(buffer_capacity, f))
+                }
+                Err(e) => {
+                    panic!(
+                        "failed to create {} ({}): {}",
+                        log_file_type, log_file_path, e
+                    );
+                }
+            }
+        }
+    }
+
     /// Logger thread, opens a log file (if configured) and waits for messages from
     /// [`GooseUser`](../goose/struct.GooseUser.html) threads.
     pub(crate) async fn logger_main(
         self: GooseConfiguration,
         receiver: flume::Receiver<Option<GooseLog>>,
     ) -> Result<(), GooseError> {
-        // Determine which log files have been configured.
-        let mut debug_file_path: Option<String> = None;
-        if !self.debug_file.is_empty() {
-            debug_file_path = Some(self.debug_file.clone());
-        }
+        // If the debug_file is enabled, allocate a buffer and open the file.
+        let mut debug_file = self
+            .open_log_file(
+                &self.debug_file,
+                "debug file",
+                if self.no_debug_body {
+                    // Allocate a smaller 64K buffer if not logging response body.
+                    64 * 1024
+                } else {
+                    // Allocate a larger 8M buffer if logging response body.
+                    8 * 1024 * 1024
+                },
+            )
+            .await;
 
-        // If debug file is configured, prepare an asynchronous buffered file writer.
-        let mut debug_file = None;
-        if let Some(file_path) = debug_file_path {
-            // Allocate a smaller buffer (64K) when not logging response bodies.
-            let buffer_capacity = if self.no_debug_body {
-                64 * 1024
-            // Allocate a bigger buffer (8M) when logging response bodies.
-            } else {
-                8 * 1024 * 1024
-            };
-            debug_file = match File::create(&file_path).await {
-                Ok(f) => {
-                    info!("writing errors to debug_file: {}", &file_path);
-                    Some(BufWriter::with_capacity(buffer_capacity, f))
-                }
-                Err(e) => {
-                    panic!("failed to create debug_file ({}): {}", file_path, e);
-                }
-            }
-        }
+        // If the requests_file is enabled, allocate a buffer and open the file.
+        let mut requests_file = self
+            .open_log_file(&self.requests_file, "requests file", 64 * 1024)
+            .await;
+
+        // @TODO: If tasks log is enabled, allocate buffer.
+        let mut tasks_file = self
+            .open_log_file(&self.requests_file, "tasks file", 64 * 1024)
+            .await;
 
         // Loop waiting for and writing error logs from GooseUser threads.
-        while let Ok(message) = receiver.recv_async().await {
-            if let Some(goose_debug) = message {
-                // All Options are defined above, search for formatted_log.
-                if let Some(file) = debug_file.as_mut() {
-                    let formatted_log = match self.debug_format.as_str() {
-                        // Use serde_json to create JSON.
-                        "json" => json!(goose_debug).to_string(),
-                        // Raw format is Debug output for GooseRawRequest structure.
-                        "raw" => format!("{:?}", goose_debug).to_string(),
-                        _ => unreachable!(),
-                    };
-
+        while let Ok(received_message) = receiver.recv_async().await {
+            if let Some(message) = received_message {
+                let formatted_message;
+                if let Some(log_file) = match message {
+                    GooseLog::Debug(debug_message) => {
+                        formatted_message = self.format_message(debug_message).to_string();
+                        debug_file.as_mut()
+                    }
+                    GooseLog::Request(request_message) => {
+                        formatted_message = self.format_message(request_message).to_string();
+                        requests_file.as_mut()
+                    }
+                    GooseLog::Task(task_message) => {
+                        formatted_message = self.format_message(task_message).to_string();
+                        tasks_file.as_mut()
+                    }
+                } {
                     // Start with a line feed instead of ending with a line feed to more gracefully
                     // handle pages too large to fit in the BufWriter.
-                    match file.write(format!("\n{}", formatted_log).as_ref()).await {
+                    match log_file
+                        .write(format!("\n{}", formatted_message).as_ref())
+                        .await
+                    {
                         Ok(_) => (),
                         Err(e) => {
                             warn!("failed to write to {}: {}", &self.debug_file, e);
                         }
                     }
-                };
+                } else {
+                    // Do not accept messages for disabled loggers as it's unnecessary overhead.
+                    unreachable!();
+                }
             } else {
                 // Empty message means it's time to exit.
                 break;
@@ -213,10 +310,20 @@ impl GooseConfiguration {
         }
 
         // Cleanup and flush all logs to disk.
-        if let Some(file) = debug_file.as_mut() {
+        if let Some(log_file) = debug_file.as_mut() {
             info!("flushing debug_file: {}", &self.debug_file);
-            let _ = file.flush().await;
+            let _ = log_file.flush().await;
         };
+        if let Some(log_file) = requests_file.as_mut() {
+            info!("flushing requests_file: {}", &self.requests_file);
+            let _ = log_file.flush().await;
+        }
+        /*
+        if let Some(log_file) = tasks_file.as_mut() {
+            info!("flushing tasks_file: {}", &self.tasks_file);
+            let _ = log_file.flush().await;
+        }
+        */
 
         Ok(())
     }

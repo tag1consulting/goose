@@ -2814,8 +2814,8 @@ impl GooseAttack {
         }
     }
 
-    // Helper to spawn a logger thread if configured.
-    async fn setup_debug_logger(&mut self) -> Result<(LoggerHandle, LoggerChannel), GooseError> {
+    // Spawn a logger thread if one or more logs are enabled.
+    async fn setup_logger(&mut self) -> Result<(LoggerHandle, LoggerChannel), GooseError> {
         // Set configuration from default if available, making it available to
         // GooseUser threads.
         self.configuration.debug_file = if let Some(debug_file) = self.get_debug_file_path() {
@@ -3440,7 +3440,7 @@ impl GooseAttack {
         goose_attack_run_state.all_users_spawned = false;
 
         // If enabled, spawn a logger thread.
-        let (logger, all_threads_logger_tx) = self.setup_debug_logger().await?;
+        let (logger, all_threads_logger_tx) = self.setup_logger().await?;
         goose_attack_run_state.logger = logger;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
 
