@@ -124,8 +124,10 @@
 //! configuration option. The debug logger will still record any custom messages, details
 //! about the request (when available), and all server response headers (when available).
 
+use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::str::FromStr;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
@@ -148,82 +150,181 @@ pub enum GooseLog {
     Task(GooseTaskMetric),
 }
 
+/// Defines the formats logs can be written to file.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum GooseLogFormat {
+    Csv,
+    Json,
+    Raw,
+}
+/// Allow setting log formats from the command line by impleenting [`FromStr`].
+impl FromStr for GooseLogFormat {
+    type Err = GooseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
+        // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
+        let log_format = RegexSet::new(&[r"(?i)^csv$", r"(?i)^(json|jsn)$", r"(?i)^raw$"])
+            .expect("failed to compile log_format RegexSet");
+        let matches = log_format.matches(&s);
+        if matches.matched(0) {
+            Ok(GooseLogFormat::Csv)
+        } else if matches.matched(1) {
+            Ok(GooseLogFormat::Json)
+        } else if matches.matched(2) {
+            Ok(GooseLogFormat::Raw)
+        } else {
+            Err(GooseError::InvalidOption {
+                option: format!("GooseLogFormat::{:?}", s),
+                value: s.to_string(),
+                detail: "Invalid log_format, expected: csv, json, or raw".to_string(),
+            })
+        }
+    }
+}
+
 pub(crate) trait GooseLogger<T> {
     fn format_message(&self, message: T) -> String;
+    fn prepare_csv(&self, message: Option<&T>) -> String;
 }
 impl GooseLogger<GooseDebug> for GooseConfiguration {
     fn format_message(&self, message: GooseDebug) -> String {
-        match self.debug_format.as_str() {
-            // Use serde_json to create JSON.
-            "json" => json!(message).to_string(),
-            // Raw format is Debug output for GooseRawRequest structure.
-            "raw" => format!("{:?}", message),
-            _ => unreachable!(),
+        if let Some(debug_format) = self.debug_format.as_ref() {
+            match debug_format {
+                // Use serde_json to create JSON.
+                GooseLogFormat::Json => json!(message).to_string(),
+                // Raw format is Debug output for GooseRawRequest structure.
+                GooseLogFormat::Raw => format!("{:?}", message),
+                // Not yet implemented.
+                GooseLogFormat::Csv => self.prepare_csv(Some(&message)),
+            }
+        } else {
+            // A log format is required.
+            unreachable!()
+        }
+    }
+
+    fn prepare_csv(&self, raw_debug: Option<&GooseDebug>) -> String {
+        if let Some(debug) = raw_debug {
+            format!(
+                // Put quotes around all fields, as they are all strings.
+                // @TODO: properly handle Option<>
+                "\"{}\",\"{:?}\",\"{:?}\",\"{:?}\"",
+                debug.tag,
+                debug.request,
+                debug.header,
+                debug.body
+            )
+        } else {
+            format!(
+                // No quotes needed in header.
+                "{},{},{},{}",
+                "tag",
+                "request",
+                "header",
+                "body",
+            )
         }
     }
 }
 impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
     fn format_message(&self, message: GooseRequestMetric) -> String {
-        match self.debug_format.as_str() {
-            // Use serde_json to create JSON.
-            "json" => json!(message).to_string(),
-            // Manually create CSV, library doesn't support single-row string conversion.
-            // @TODO: handle header
-            "csv" => prepare_csv(&message, false),
-            // Raw format is Debug output for GooseRawRequest structure.
-            "raw" => format!("{:?}", message),
-            _ => unreachable!(),
+        if let Some(requests_format) = self.requests_format.as_ref() {
+            match requests_format {
+                // Use serde_json to create JSON.
+                GooseLogFormat::Json => json!(message).to_string(),
+                // Raw format is Debug output for GooseRawRequest structure.
+                GooseLogFormat::Raw => format!("{:?}", message),
+                // Not yet implemented.
+                GooseLogFormat::Csv => self.prepare_csv(Some(&message)),
+            }
+        } else {
+            // A log format is required.
+            unreachable!()
+        }
+    }
+
+    /// Helper to create CSV-formatted logs.
+    fn prepare_csv(&self, raw_request: Option<&GooseRequestMetric>) -> String {
+        if let Some(request) = raw_request {
+            format!(
+                // Put quotes around name, url and final_url as they are strings.
+                "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
+                request.elapsed,
+                request.method,
+                request.name,
+                request.url,
+                request.final_url,
+                request.redirected,
+                request.response_time,
+                request.status_code,
+                request.success,
+                request.update,
+                request.user
+            )
+        } else {
+            format!(
+                // No quotes needed in header.
+                "{},{},{},{},{},{},{},{},{},{},{}\n",
+                "elapsed",
+                "method",
+                "name",
+                "url",
+                "final_url",
+                "redirected",
+                "response_time",
+                "status_code",
+                "success",
+                "update",
+                "user"
+            )
         }
     }
 }
 impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
     fn format_message(&self, message: GooseTaskMetric) -> String {
-        match self.debug_format.as_str() {
-            // Use serde_json to create JSON.
-            "json" => json!(message).to_string(),
-            // Raw format is Debug output for GooseRawRequest structure.
-            "raw" => format!("{:?}", message),
-            _ => unreachable!(),
+        if let Some(tasks_format) = self.tasks_format.as_ref() {
+            match tasks_format {
+                // Use serde_json to create JSON.
+                GooseLogFormat::Json => json!(message).to_string(),
+                // Raw format is Debug output for GooseRawRequest structure.
+                GooseLogFormat::Raw => format!("{:?}", message),
+                // Not yet implemented.
+                GooseLogFormat::Csv => self.prepare_csv(Some(&message)),
+            }
+        } else {
+            // A log format is required.
+            unreachable!()
         }
     }
-}
 
-/// Helper to create CSV-formatted logs.
-fn prepare_csv(raw_request: &GooseRequestMetric, display_header: bool) -> String {
-    let body = format!(
-        // Put quotes around name, url and final_url as they are strings.
-        "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{}",
-        raw_request.elapsed,
-        raw_request.method,
-        raw_request.name,
-        raw_request.url,
-        raw_request.final_url,
-        raw_request.redirected,
-        raw_request.response_time,
-        raw_request.status_code,
-        raw_request.success,
-        raw_request.update,
-        raw_request.user
-    );
-    // Concatenate the header before the body one time.
-    if display_header {
-        format!(
-            // No quotes needed in header.
-            "{},{},{},{},{},{},{},{},{},{},{}\n",
-            "elapsed",
-            "method",
-            "name",
-            "url",
-            "final_url",
-            "redirected",
-            "response_time",
-            "status_code",
-            "success",
-            "update",
-            "user"
-        ) + &body
-    } else {
-        body
+    /// Helper to create CSV-formatted logs.
+    fn prepare_csv(&self, raw_request: Option<&GooseTaskMetric>) -> String {
+        if let Some(request) = raw_request {
+            format!(
+                // Put quotes around name as it is a string.
+                "{},{},{},\"{}\",{},{},{}",
+                request.elapsed,
+                request.taskset_index,
+                request.task_index,
+                request.name,
+                request.run_time,
+                request.success,
+                request.user,
+            )
+        } else {
+            format!(
+                // No quotes needed in header.
+                "{},{},{},{},{},{},{}",
+                "elapsed",
+                "taskset_index",
+                "task_index",
+                "name",
+                "run_time",
+                "success",
+                "user",
+            )
+        }
     }
 }
 
@@ -246,6 +347,13 @@ impl GooseConfiguration {
             // Set default, if configured.
             if let Some(default_requests_file) = defaults.requests_file.clone() {
                 self.requests_file = default_requests_file;
+            }
+        }
+        // Configure tasks_file path if enabled.
+        if self.tasks_file.is_empty() {
+            // Set default, if configured.
+            if let Some(default_tasks_file) = defaults.tasks_file.clone() {
+                self.tasks_file = default_tasks_file;
             }
         }
     }

@@ -227,13 +227,13 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         goose_attack.configuration.requests_file.to_string();
     // The requests_format option is configured on the Worker.
     worker_goose_attack.configuration.requests_format =
-        goose_attack.configuration.requests_format.to_string();
+        goose_attack.configuration.requests_format.clone();
     // The debug_file option is configured on the Worker.
     worker_goose_attack.configuration.debug_file =
         goose_attack.configuration.debug_file.to_string();
     // The debug_format option is configured on the Worker.
     worker_goose_attack.configuration.debug_format =
-        goose_attack.configuration.debug_format.to_string();
+        goose_attack.configuration.debug_format.clone();
     // The throttle_requests option is set on the Worker.
     worker_goose_attack.configuration.throttle_requests =
         goose_attack.configuration.throttle_requests;

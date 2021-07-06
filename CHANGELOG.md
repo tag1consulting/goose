@@ -31,6 +31,7 @@
   - When displaying metrics (via the cli and the html report) show both "raw" (actual) metrics and "coordinated omission mitigation" (back-filled with statistically generated) metrics, and the standard deviation between the average times for each
   - introduce `GooseLog` enum for sending `GooseDebug`, `GooseRequestMetric` and `GooseTaskMetric` objects to the Logger thread for logging to file
   - introduce `--tasks-file` run-time option for logging `GooseTaskMetric`s to file
+  - introduce `GooseLogFormat` enum for formatting all logs; add `--task-format` using new enum, update `--requests-format` and `--debug-format`.
 
 ## 0.11.2 June 10, 2021
  - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:

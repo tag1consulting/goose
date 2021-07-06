@@ -3,6 +3,7 @@ use serial_test::serial;
 
 mod common;
 
+use goose::logger::GooseLogFormat;
 use goose::prelude::*;
 
 // Paths used in load tests performed during these tests.
@@ -20,7 +21,7 @@ const HATCH_RATE: &str = "10";
 const LOG_LEVEL: usize = 0;
 const METRICS_FILE: &str = "metrics-test.log";
 const DEBUG_FILE: &str = "debug-test.log";
-const LOG_FORMAT: &str = "raw";
+const LOG_FORMAT: GooseLogFormat = GooseLogFormat::Raw;
 const THROTTLE_REQUESTS: usize = 10;
 const EXPECT_WORKERS: usize = 2;
 
@@ -372,11 +373,11 @@ fn test_no_defaults() {
             "--requests-file",
             &requests_file,
             "--requests-format",
-            LOG_FORMAT,
+            &format!("{:?}", LOG_FORMAT),
             "--debug-file",
             &debug_file,
             "--debug-format",
-            LOG_FORMAT,
+            &format!("{:?}", LOG_FORMAT),
             "--no-debug-body",
             "--throttle-requests",
             &THROTTLE_REQUESTS.to_string(),
@@ -444,11 +445,11 @@ fn test_no_defaults_gaggle() {
                 "--requests-file",
                 &worker_requests_file,
                 "--requests-format",
-                LOG_FORMAT,
+                &format!("{:?}", LOG_FORMAT),
                 "--debug-file",
                 &worker_debug_file,
                 "--debug-format",
-                LOG_FORMAT,
+                &format!("{:?}", LOG_FORMAT),
                 "--no-debug-body",
                 "--throttle-requests",
                 &THROTTLE_REQUESTS.to_string(),
