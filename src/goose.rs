@@ -1478,14 +1478,7 @@ impl GooseUser {
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
-            self.send_to_parent(GooseMetric::Request(request_metric.clone()))?;
-        }
-
-        // If requests-file is enabled, send a copy of the raw request to the logger thread.
-        if !self.config.requests_file.is_empty() {
-            if let Some(logger) = self.logger.as_ref() {
-                logger.send(Some(GooseLog::Request(request_metric.clone())))?;
-            }
+            self.send_request_metric_to_parent(request_metric.clone())?;
         }
 
         Ok(GooseResponse::new(request_metric, response))
@@ -1629,7 +1622,7 @@ impl GooseUser {
                 coordinated_omission_request_metric.coordinated_omission_cadence =
                     request_cadence.coordinated_omission_cadence;
                 // Send the coordinated omission mitigation generated metrics to the parent.
-                self.send_to_parent(GooseMetric::Request(coordinated_omission_request_metric))?;
+                self.send_request_metric_to_parent(coordinated_omission_request_metric)?;
             }
             Ok(request_cadence.coordinated_omission_cadence)
         } else {
@@ -1638,12 +1631,19 @@ impl GooseUser {
         }
     }
 
-    fn send_to_parent(&self, metric: GooseMetric) -> GooseTaskResult {
+    fn send_request_metric_to_parent(&self, request_metric: GooseRequestMetric) -> GooseTaskResult {
+        // If requests-file is enabled, send a copy of the raw request to the logger thread.
+        if !self.config.requests_file.is_empty() {
+            if let Some(logger) = self.logger.as_ref() {
+                logger.send(Some(GooseLog::Request(request_metric.clone())))?;
+            }
+        }
+
         // Parent is not defined when running
         // [`test_start`](../struct.GooseAttack.html#method.test_start),
         // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
         if let Some(parent) = self.channel_to_parent.clone() {
-            parent.send(metric)?;
+            parent.send(GooseMetric::Request(request_metric))?;
         }
 
         Ok(())
@@ -1703,7 +1703,7 @@ impl GooseUser {
         if !request.success {
             request.success = true;
             request.update = true;
-            self.send_to_parent(GooseMetric::Request(request.clone()))?;
+            self.send_request_metric_to_parent(request.clone())?;
         }
 
         Ok(())
@@ -1776,7 +1776,7 @@ impl GooseUser {
             request.success = false;
             request.update = true;
             request.error = tag.to_string();
-            self.send_to_parent(GooseMetric::Request(request.clone()))?;
+            self.send_request_metric_to_parent(request.clone())?;
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;

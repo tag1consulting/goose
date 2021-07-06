@@ -3869,6 +3869,9 @@ pub struct GooseConfiguration {
     /// Sets requests log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
     pub requests_format: String,
+    /// Sets tasks log file name
+    #[options(meta = "NAME")]
+    pub tasks_file: String,
     /// Sets debug log file name
     #[options(short = "d", meta = "NAME")]
     pub debug_file: String,

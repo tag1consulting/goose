@@ -145,7 +145,7 @@ pub(crate) type GooseLoggerTx = Option<flume::Sender<Option<GooseLog>>>;
 pub enum GooseLog {
     Debug(GooseDebug),
     Request(GooseRequestMetric),
-    //Task(GooseTaskMetric),
+    Task(GooseTaskMetric),
 }
 
 pub(crate) trait GooseLogger<T> {
@@ -262,7 +262,8 @@ impl GooseConfiguration {
         self.configure_loggers(defaults);
 
         // If no longger is enabled, return immediately without launching logger thread.
-        if self.debug_file.is_empty() && self.requests_file.is_empty() {
+        if self.debug_file.is_empty() && self.requests_file.is_empty() && self.tasks_file.is_empty()
+        {
             return Ok((None, None));
         }
 
@@ -327,6 +328,11 @@ impl GooseConfiguration {
             .open_log_file(&self.requests_file, "requests file", 64 * 1024)
             .await;
 
+        // If the tasks_file is enabled, allocate a buffer and open the file.
+        let mut tasks_file = self
+            .open_log_file(&self.tasks_file, "tasks file", 64 * 1024)
+            .await;
+
         // Loop waiting for and writing error logs from GooseUser threads.
         while let Ok(received_message) = receiver.recv_async().await {
             if let Some(message) = received_message {
@@ -339,6 +345,10 @@ impl GooseConfiguration {
                     GooseLog::Request(request_message) => {
                         formatted_message = self.format_message(request_message).to_string();
                         requests_file.as_mut()
+                    }
+                    GooseLog::Task(task_message) => {
+                        formatted_message = self.format_message(task_message).to_string();
+                        tasks_file.as_mut()
                     }
                 } {
                     // Start with a line feed instead of ending with a line feed to more gracefully
@@ -371,12 +381,10 @@ impl GooseConfiguration {
             info!("flushing requests_file: {}", &self.requests_file);
             let _ = requests_log_file.flush().await;
         }
-        /*
         if let Some(log_file) = tasks_file.as_mut() {
             info!("flushing tasks_file: {}", &self.tasks_file);
             let _ = log_file.flush().await;
         }
-        */
 
         Ok(())
     }

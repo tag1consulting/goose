@@ -4,6 +4,7 @@ use std::time;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::logger::GooseLog;
 use crate::metrics::{GooseMetric, GooseTaskMetric};
 
 pub(crate) async fn user_main(
@@ -38,8 +39,9 @@ pub(crate) async fn user_main(
                 thread_number, thread_task_name, thread_task_set.name
             );
             // Invoke the task function.
-            invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
-                .await;
+            let _todo =
+                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                    .await;
         }
     }
 
@@ -63,8 +65,13 @@ pub(crate) async fn user_main(
                     thread_task_name, thread_task_set.name
                 );
                 // Invoke the task function.
-                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
-                    .await;
+                let _todo = invoke_task_function(
+                    function,
+                    &thread_user,
+                    *thread_task_index,
+                    thread_task_name,
+                )
+                .await;
 
                 // Prepare to sleep for a random value from min_wait to max_wait.
                 let wait_time = if thread_user.max_wait > 0 {
@@ -134,8 +141,9 @@ pub(crate) async fn user_main(
                 thread_number, thread_task_name, thread_task_set.name
             );
             // Invoke the task function.
-            invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
-                .await;
+            let _todo =
+                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                    .await;
         }
     }
 
@@ -161,7 +169,7 @@ async fn invoke_task_function(
     thread_user: &GooseUser,
     thread_task_index: usize,
     thread_task_name: &str,
-) {
+) -> Result<(), flume::SendError<Option<GooseLog>>> {
     let started = time::Instant::now();
     let mut raw_task = GooseTaskMetric::new(
         thread_user.started.elapsed().as_millis(),
@@ -175,7 +183,14 @@ async fn invoke_task_function(
 
     // Exit if all metrics or task metrics are disabled.
     if thread_user.config.no_metrics || thread_user.config.no_task_metrics {
-        return;
+        return Ok(());
+    }
+
+    // If tasks-file is enabled, send a copy of the raw task metric to the logger thread.
+    if !thread_user.config.tasks_file.is_empty() {
+        if let Some(logger) = thread_user.logger.as_ref() {
+            logger.send(Some(GooseLog::Task(raw_task.clone())))?;
+        }
     }
 
     // Otherwise send metrics to parent.
@@ -183,4 +198,6 @@ async fn invoke_task_function(
         // Best effort metrics.
         let _ = parent.send(GooseMetric::Task(raw_task));
     }
+
+    Ok(())
 }
