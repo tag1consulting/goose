@@ -295,6 +295,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
+use crate::logger::GooseLog;
 use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetric, GooseRequestMetric};
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
@@ -352,7 +353,7 @@ pub enum GooseTaskError {
     LoggerFailed {
         /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
         /// which contains the [`GooseDebug`](./struct.GooseDebug.html) that wasn't sent.
-        source: flume::SendError<Option<GooseDebug>>,
+        source: flume::SendError<Option<GooseLog>>,
     },
     /// Attempted an unrecognized HTTP request method.
     InvalidMethod {
@@ -449,8 +450,8 @@ impl From<flume::SendError<GooseMetric>> for GooseTaskError {
 }
 
 /// Attempt to send logs to the logger thread failed.
-impl From<flume::SendError<Option<GooseDebug>>> for GooseTaskError {
-    fn from(source: flume::SendError<Option<GooseDebug>>) -> GooseTaskError {
+impl From<flume::SendError<Option<GooseLog>>> for GooseTaskError {
+    fn from(source: flume::SendError<Option<GooseLog>>) -> GooseTaskError {
         GooseTaskError::LoggerFailed { source }
     }
 }
@@ -692,7 +693,7 @@ impl GooseResponse {
 
 /// Object created by [`log_debug()`](struct.GooseUser.html#method.log_debug) and written
 /// to log to assist in debugging.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GooseDebug {
     /// String to identify the source of the log message.
     pub tag: String,
@@ -830,7 +831,7 @@ pub struct GooseUser {
     /// A local copy of the global [`GooseConfiguration`](../struct.GooseConfiguration.html).
     pub config: GooseConfiguration,
     /// Channel to logger.
-    pub debug_logger: Option<flume::Sender<Option<GooseDebug>>>,
+    pub logger: Option<flume::Sender<Option<GooseLog>>>,
     /// Channel to throttle.
     pub throttle: Option<flume::Sender<bool>>,
     /// Normal tasks are optionally throttled,
@@ -881,7 +882,7 @@ impl GooseUser {
             min_wait,
             max_wait,
             config: configuration.clone(),
-            debug_logger: None,
+            logger: None,
             throttle: None,
             is_throttled: true,
             channel_to_parent: None,
@@ -1477,7 +1478,7 @@ impl GooseUser {
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
-            self.send_to_parent(GooseMetric::Request(request_metric.clone()))?;
+            self.send_request_metric_to_parent(request_metric.clone())?;
         }
 
         Ok(GooseResponse::new(request_metric, response))
@@ -1621,7 +1622,7 @@ impl GooseUser {
                 coordinated_omission_request_metric.coordinated_omission_cadence =
                     request_cadence.coordinated_omission_cadence;
                 // Send the coordinated omission mitigation generated metrics to the parent.
-                self.send_to_parent(GooseMetric::Request(coordinated_omission_request_metric))?;
+                self.send_request_metric_to_parent(coordinated_omission_request_metric)?;
             }
             Ok(request_cadence.coordinated_omission_cadence)
         } else {
@@ -1630,12 +1631,19 @@ impl GooseUser {
         }
     }
 
-    fn send_to_parent(&self, metric: GooseMetric) -> GooseTaskResult {
+    fn send_request_metric_to_parent(&self, request_metric: GooseRequestMetric) -> GooseTaskResult {
+        // If requests-file is enabled, send a copy of the raw request to the logger thread.
+        if !self.config.requests_file.is_empty() {
+            if let Some(logger) = self.logger.as_ref() {
+                logger.send(Some(GooseLog::Request(request_metric.clone())))?;
+            }
+        }
+
         // Parent is not defined when running
         // [`test_start`](../struct.GooseAttack.html#method.test_start),
         // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
         if let Some(parent) = self.channel_to_parent.clone() {
-            parent.send(metric)?;
+            parent.send(GooseMetric::Request(request_metric))?;
         }
 
         Ok(())
@@ -1695,7 +1703,7 @@ impl GooseUser {
         if !request.success {
             request.success = true;
             request.update = true;
-            self.send_to_parent(GooseMetric::Request(request.clone()))?;
+            self.send_request_metric_to_parent(request.clone())?;
         }
 
         Ok(())
@@ -1768,7 +1776,7 @@ impl GooseUser {
             request.success = false;
             request.update = true;
             request.error = tag.to_string();
-            self.send_to_parent(GooseMetric::Request(request.clone()))?;
+            self.send_request_metric_to_parent(request.clone())?;
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;
@@ -1867,11 +1875,15 @@ impl GooseUser {
             // Logger is not defined when running
             // [`test_start`](../struct.GooseAttack.html#method.test_start),
             // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
-            if let Some(debug_logger) = self.debug_logger.clone() {
+            if let Some(logger) = self.logger.clone() {
                 if self.config.no_debug_body {
-                    debug_logger.send(Some(GooseDebug::new(tag, request, headers, None)))?;
+                    logger.send(Some(GooseLog::Debug(GooseDebug::new(
+                        tag, request, headers, None,
+                    ))))?;
                 } else {
-                    debug_logger.send(Some(GooseDebug::new(tag, request, headers, body)))?;
+                    logger.send(Some(GooseLog::Debug(GooseDebug::new(
+                        tag, request, headers, body,
+                    ))))?;
                 }
             }
         }

@@ -219,19 +219,21 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // Use the run_time from the Manager so Worker can shut down in a timely manner.
     worker_goose_attack.run_time = run_time;
     worker_goose_attack.weighted_users = weighted_users;
+    // This is a Worker instance, not a Manager instance.
+    worker_goose_attack.configuration.manager = false;
     worker_goose_attack.configuration.worker = true;
     // The requests_file option is configured on the Worker.
     worker_goose_attack.configuration.requests_file =
         goose_attack.configuration.requests_file.to_string();
     // The requests_format option is configured on the Worker.
     worker_goose_attack.configuration.requests_format =
-        goose_attack.configuration.requests_format.to_string();
+        goose_attack.configuration.requests_format.clone();
     // The debug_file option is configured on the Worker.
     worker_goose_attack.configuration.debug_file =
         goose_attack.configuration.debug_file.to_string();
     // The debug_format option is configured on the Worker.
     worker_goose_attack.configuration.debug_format =
-        goose_attack.configuration.debug_format.to_string();
+        goose_attack.configuration.debug_format.clone();
     // The throttle_requests option is set on the Worker.
     worker_goose_attack.configuration.throttle_requests =
         goose_attack.configuration.throttle_requests;
