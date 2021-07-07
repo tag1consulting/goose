@@ -191,13 +191,56 @@ impl FromStr for GooseLogFormat {
     }
 }
 
+// @TODO this should be automatically derived from the structure.
+fn debug_csv_header() -> String {
+    // No quotes needed in header.
+    format!("{},{},{},{}", "tag", "request", "header", "body")
+}
+
+// @TODO this should be automatically derived from the structure.
+fn requests_csv_header() -> String {
+    // No quotes needed in header.
+    format!(
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "elapsed",
+        "method",
+        "name",
+        "url",
+        "final_url",
+        "redirected",
+        "response_time",
+        "status_code",
+        "success",
+        "update",
+        "user",
+        "error",
+        "coordinated_omission_elapsed",
+        "coordinated_omission_cadence",
+    )
+}
+
+// @TODO this should be automatically derived from the structure.
+fn tasks_csv_header() -> String {
+    format!(
+        // No quotes needed in header.
+        "{},{},{},{},{},{},{}",
+        "elapsed",
+        "taskset_index",
+        "task_index",
+        "name",
+        "run_time",
+        "success",
+        "user",
+    )
+}
+
 /// Two traits that must be implemented by all loggers provided through this thread.
 pub(crate) trait GooseLogger<T> {
     /// Converts a rust structure to a formatted string.
     /// @TODO: rework with .to_string()
     fn format_message(&self, message: T) -> String;
     /// Helper that makes a best-effort to convert a supported rust structure to a CSV row.
-    fn prepare_csv(&self, message: Option<&T>) -> String;
+    fn prepare_csv(&self, message: &T) -> String;
 }
 /// Traits for GooseDebug logs.
 impl GooseLogger<GooseDebug> for GooseConfiguration {
@@ -210,7 +253,7 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
                 // Raw format is Debug output for GooseRawRequest structure.
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(Some(&message)),
+                GooseLogFormat::Csv => self.prepare_csv(&message),
             }
         } else {
             // A log format is required.
@@ -219,18 +262,13 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
     }
 
     /// Converts a GooseDebug structure to a CSV row.
-    fn prepare_csv(&self, raw_debug: Option<&GooseDebug>) -> String {
-        if let Some(debug) = raw_debug {
-            // Put quotes around all fields, as they are all strings.
-            // @TODO: properly handle Option<>; also, escape inner quotes etc.
-            format!(
-                "\"{}\",\"{:?}\",\"{:?}\",\"{:?}\"",
-                debug.tag, debug.request, debug.header, debug.body
-            )
-        } else {
-            // No quotes needed in header.
-            format!("{},{},{},{}", "tag", "request", "header", "body")
-        }
+    fn prepare_csv(&self, debug: &GooseDebug) -> String {
+        // Put quotes around all fields, as they are all strings.
+        // @TODO: properly handle Option<>; also, escape inner quotes etc.
+        format!(
+            "\"{}\",\"{:?}\",\"{:?}\",\"{:?}\"",
+            debug.tag, debug.request, debug.header, debug.body
+        )
     }
 }
 /// Traits for GooseRequestMetric logs.
@@ -244,7 +282,7 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                 // Raw format is Debug output for GooseRequestMetric structure.
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(Some(&message)),
+                GooseLogFormat::Csv => self.prepare_csv(&message),
             }
         } else {
             // A log format is required.
@@ -253,46 +291,25 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
     }
 
     /// Converts a GooseRequestMetric structure to a CSV row.
-    fn prepare_csv(&self, raw_request: Option<&GooseRequestMetric>) -> String {
-        if let Some(request) = raw_request {
-            format!(
-                // Put quotes around name, url and final_url as they are strings.
-                "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}",
-                request.elapsed,
-                request.method,
-                request.name,
-                request.url,
-                request.final_url,
-                request.redirected,
-                request.response_time,
-                request.status_code,
-                request.success,
-                request.update,
-                request.user,
-                request.error,
-                request.coordinated_omission_elapsed,
-                request.coordinated_omission_cadence,
-            )
-        } else {
-            format!(
-                // No quotes needed in header.
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-                "elapsed",
-                "method",
-                "name",
-                "url",
-                "final_url",
-                "redirected",
-                "response_time",
-                "status_code",
-                "success",
-                "update",
-                "user",
-                "error",
-                "coordinated_omission_elapsed",
-                "coordinated_omission_cadence",
-            )
-        }
+    fn prepare_csv(&self, request: &GooseRequestMetric) -> String {
+        format!(
+            // Put quotes around name, url and final_url as they are strings.
+            "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}",
+            request.elapsed,
+            request.method,
+            request.name,
+            request.url,
+            request.final_url,
+            request.redirected,
+            request.response_time,
+            request.status_code,
+            request.success,
+            request.update,
+            request.user,
+            request.error,
+            request.coordinated_omission_elapsed,
+            request.coordinated_omission_cadence,
+        )
     }
 }
 /// Traits for GooseTaskMetric logs.
@@ -306,7 +323,7 @@ impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
                 // Raw format is Debug output for GooseTaskMetric structure.
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(Some(&message)),
+                GooseLogFormat::Csv => self.prepare_csv(&message),
             }
         } else {
             // A log format is required.
@@ -315,32 +332,18 @@ impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
     }
 
     /// Converts a GooseTaskMetric structure to a CSV row.
-    fn prepare_csv(&self, raw_request: Option<&GooseTaskMetric>) -> String {
-        if let Some(request) = raw_request {
-            format!(
-                // Put quotes around name as it is a string.
-                "{},{},{},\"{}\",{},{},{}",
-                request.elapsed,
-                request.taskset_index,
-                request.task_index,
-                request.name,
-                request.run_time,
-                request.success,
-                request.user,
-            )
-        } else {
-            format!(
-                // No quotes needed in header.
-                "{},{},{},{},{},{},{}",
-                "elapsed",
-                "taskset_index",
-                "task_index",
-                "name",
-                "run_time",
-                "success",
-                "user",
-            )
-        }
+    fn prepare_csv(&self, request: &GooseTaskMetric) -> String {
+        format!(
+            // Put quotes around name as it is a string.
+            "{},{},{},\"{}\",{},{},{}",
+            request.elapsed,
+            request.taskset_index,
+            request.task_index,
+            request.name,
+            request.run_time,
+            request.success,
+            request.user,
+        )
     }
 }
 
@@ -407,7 +410,7 @@ impl GooseConfiguration {
         Ok((Some(logger_handle), Some(all_threads_logger_tx)))
     }
 
-    /// A helper used to open any/all log files.
+    /// A helper used to open any/all log files, deleting any file that already exists.
     async fn open_log_file(
         &self,
         log_file_path: &str,
@@ -423,14 +426,33 @@ impl GooseConfiguration {
                     Some(BufWriter::with_capacity(buffer_capacity, f))
                 }
                 Err(e) => {
-                    // @TODO: Don't panic, generate an error that can be caught instead.
-                    panic!(
+                    error!(
                         "failed to create {} ({}): {}",
                         log_file_type, log_file_path, e
                     );
+                    None
                 }
             }
         }
+    }
+
+    /// Helper to write a line to the log file.
+    async fn write_to_log_file(
+        &self,
+        log_file: &mut tokio::io::BufWriter<tokio::fs::File>,
+        formatted_message: String,
+    ) -> Result<(), ()> {
+        match log_file
+            .write(format!("{}\n", formatted_message).as_ref())
+            .await
+        {
+            Ok(_) => (),
+            Err(e) => {
+                warn!("failed to write to {}: {}", &self.debug_file, e);
+            }
+        }
+
+        Ok(())
     }
 
     /// Logger thread, opens a log file (if configured) and waits for messages from
@@ -453,16 +475,39 @@ impl GooseConfiguration {
                 },
             )
             .await;
+        // If the debug_file is a CSV, write the header.
+        if self.debug_format == Some(GooseLogFormat::Csv) {
+            if let Some(log_file) = debug_file.as_mut() {
+                // @TODO: error handling when writing to log fails.
+                let _ = self.write_to_log_file(log_file, debug_csv_header()).await;
+            }
+        }
 
         // If the requests_file is enabled, allocate a buffer and open the file.
         let mut requests_file = self
             .open_log_file(&self.requests_file, "requests file", 64 * 1024)
             .await;
+        // If the requests_file is a CSV, write the header.
+        if self.requests_format == Some(GooseLogFormat::Csv) {
+            if let Some(log_file) = requests_file.as_mut() {
+                // @TODO: error handling when writing to log fails.
+                let _ = self
+                    .write_to_log_file(log_file, requests_csv_header())
+                    .await;
+            }
+        }
 
         // If the tasks_file is enabled, allocate a buffer and open the file.
         let mut tasks_file = self
             .open_log_file(&self.tasks_file, "tasks file", 64 * 1024)
             .await;
+        // If the tasks_file is a CSV, write the header.
+        if self.tasks_format == Some(GooseLogFormat::Csv) {
+            if let Some(log_file) = tasks_file.as_mut() {
+                // @TODO: error handling when writing to log fails.
+                let _ = self.write_to_log_file(log_file, tasks_csv_header()).await;
+            }
+        }
 
         // Loop waiting for and writing error logs from GooseUser threads.
         while let Ok(received_message) = receiver.recv_async().await {
@@ -482,20 +527,8 @@ impl GooseConfiguration {
                         tasks_file.as_mut()
                     }
                 } {
-                    // Start with a line feed instead of ending with a line feed to more gracefully
-                    // handle pages too large to fit in the BufWriter.
-                    match log_file
-                        .write(format!("\n{}", formatted_message).as_ref())
-                        .await
-                    {
-                        Ok(_) => (),
-                        Err(e) => {
-                            warn!("failed to write to {}: {}", &self.debug_file, e);
-                        }
-                    }
-                } else {
-                    // Do not accept messages for disabled loggers as it's unnecessary overhead.
-                    warn!("received message for disabled logger!");
+                    // @TODO: error handling when writing to log fails.
+                    let _ = self.write_to_log_file(log_file, formatted_message).await;
                 }
             } else {
                 // Empty message means it's time to exit.

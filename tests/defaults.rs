@@ -107,8 +107,7 @@ fn validate_test(
     let mut metrics_lines = 0;
     for requests_file in requests_files {
         assert!(std::path::Path::new(requests_file).exists());
-        // Subtract the extra blank line at the start of the file.
-        metrics_lines += common::file_length(requests_file) - 1;
+        metrics_lines += common::file_length(requests_file);
     }
     assert!(metrics_lines == mock_endpoints[INDEX_KEY].hits() + mock_endpoints[ABOUT_KEY].hits());
 
