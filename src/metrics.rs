@@ -53,10 +53,11 @@ pub enum GooseMetric {
 ///
 /// Stalling can happen for many reasons, for example: garbage collection, a cache stampede,
 /// even unrelated load on the same server. Without any mitigation, Goose loses
-/// statistically relevant information as [`GooseUser`] threads are unable to make additional
-/// requests while they are blocked by an upstream stall. Goose mitigates this by backfilling
-/// the requests that would have been made during that time. Backfilled requests show up in
-/// the `--request-file` if enabled, though they were not actually sent to the server.
+/// statistically relevant information as [`GooseUser`](../goose/struct.GooseUser.html)
+/// threads are unable to make additional requests while they are blocked by an upstream stall.
+/// Goose mitigates this by backfilling the requests that would have been made during that time.
+/// Backfilled requests show up in the `--request-file` if enabled, though they were not actually
+/// sent to the server.
 ///
 /// By default, Goose is configured to backfill based on the Average response time seen for the
 /// stalled request. However, different server configurations and testing plans can work on

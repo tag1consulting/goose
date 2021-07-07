@@ -226,8 +226,10 @@ Metrics:
   -R, --report-file NAME     Create an html-formatted report
   -m, --requests-file NAME   Sets requests log file name
   --requests-format FORMAT   Sets requests log format (csv, json, raw)
+  -T, --tasks-file NAME      Sets tasks log file name
+  --tasks-format FORMAT      Sets tasks log format (csv, json, raw)
   -d, --debug-file NAME      Sets debug log file name
-  --debug-format FORMAT      Sets debug log format (json, raw)
+  --debug-format FORMAT      Sets debug log format (csv, json, raw)
   --no-debug-body            Do not include the response body in the debug log
   --status-codes             Tracks additional status code metrics
 
@@ -731,43 +733,65 @@ In this example, Goose will launch 100 GooseUser threads, but the throttle will 
 
 ## Logging Load Test Requests
 
-Goose can optionally log details about all load test requests to a file. To enable, add the `--requests-file=foo` command line option, where `foo` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all load test requests to a file. To enable, add the `--requests-file=requests.log` command line option, where `requests.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
-When operating in Gaggle-mode, the `--requests--file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+When operating in Gaggle-mode, the `--requests-file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
 
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":30,"final_url":"http://local.dev/user/42","method":"POST","name":"/login","redirected":true,"response_time":220,"status_code":200,"success":true,"update":false,"url":"http://local.dev/login","user":0}
-{"elapsed":251,"final_url":"http://local.dev/","method":"GET","name":"/","redirected":false,"response_time":3,"status_code":200,"success":true,"update":false,"url":"http://local.dev/","user":0}
-{"elapsed":1027,"final_url":"http://local.dev/user/13","method":"POST","name":"/login","redirected":true,"response_time":266,"status_code":200,"success":true,"update":false,"url":"http://local.dev/login","user":1}
-{"elapsed":1294,"final_url":"http://local.dev/","method":"GET","name":"/","redirected":false,"response_time":4,"status_code":200,"success":true,"update":false,"url":"http://local.dev/","user":1}
+{"coordinated_omission_cadence":3361,"coordinated_omission_elapsed":0,"elapsed":24172,"error":"","final_url":"http://local.dev/misc/feed.png","method":"Get","name":"static asset","redirected":false,"response_time":4,"status_code":200,"success":true,"update":false,"url":"http://local.dev/misc/feed.png","user":7}
+{"coordinated_omission_cadence":2183,"coordinated_omission_elapsed":0,"elapsed":24149,"error":"","final_url":"http://local.dev/user/4816","method":"Get","name":"(Anon) user page","redirected":false,"response_time":28,"status_code":200,"success":true,"update":false,"url":"http://local.dev/user/4816","user":2}
+{"coordinated_omission_cadence":2738,"coordinated_omission_elapsed":0,"elapsed":24168,"error":"","final_url":"http://local.dev/themes/bartik/logo.png","method":"Get","name":"static asset","redirected":false,"response_time":14,"status_code":200,"success":true,"update":false,"url":"http://local.dev/themes/bartik/logo.png","user":1}
+{"coordinated_omission_cadence":2514,"coordinated_omission_elapsed":0,"elapsed":24171,"error":"","final_url":"http://local.dev/themes/bartik/logo.png","method":"Get","name":"static asset","redirected":false,"response_time":11,"status_code":200,"success":true,"update":false,"url":"http://local.dev/themes/bartik/logo.png","user":4}
 ```
 
-Logs include the entire `GooseRawRequest` object as defined in `src/goose.rs`, which are created on all requests. This object includes the following fields:
- - `elapsed`: total milliseconds between when the `GooseUser` thread started and this request was made;
- - `method`: the type of HTTP request made;
- - `name`: the name of the request;
- - `url`: the URL that was requested;
- - `final_url`: the URL that was returned (may be different if the request was redirected);
- - `redirected`: true or false if the request was redirected;
- - `response_time`: how many milliseconds the request took;
- - `status_code`: the HTTP response code returned for this request;
- - `success`: true or false if this was a successful request;
- - `update`: true or false if this is a recurrence of a previous log entry, but with `success` toggling between `true` and `false`. This happens when a load test calls `set_success()` on a request that Goose previously interpreted as a failure, or `set_failure()` on a request previously interpreted as a success;
- - `user`: an integer value indicating which `GooseUser` thread made this request.
+Logs include the entire [`GooseRequestMetric`] object as defined in `src/goose.rs`, which are created on all requests. This object includes the following fields:
 
-In the first line of the above example, `GooseUser` thread 0 made a `POST` request to `/login` and was successfully redirected to `/user/42` in 220 milliseconds. The second line is the same `GooseUser` thread which then made a `GET` request to `/` in 3 milliseconds. The third and fourth lines are a second `GooseUser` thread doing the same thing, first logging in and then loading the front page.
+In the first line of the above example, `GooseUser` thread 7 made a successful `GET` request for `/misc/feed.png`, which takes 4 milliseconds. The second line is `GooseUser` thread 2 making a successful `GET` request for `/user/4816`, which takes 28 milliseconds.
 
-By default Goose logs requests in JSON Lines format. The `--metrics-log-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire `GooseRawRequest` object.
+By default Goose logs requests in JSON Lines format. The `--requests-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`] object.
 
-For example, `csv` output of the same requests logged above would look like:
+For example, `csv` output of similar requests as those logged above would like like:
 ```csv
-elapsed,method,name,url,final_url,redirected,response_time,status_code,success,update,user
-30,POST,"/login","http://local.dev/login","http://local.dev/user/42",true,30,200,true,false,0
-251,GET,"/","http://local.dev/","http://local.dev/",false,3,200,true,false,0
-1027,POST,"/login","http://local.dev/login","http://local.dev/user/13",true,266,200,true,false,1
-1294,GET,"/","http://local.dev/","http://local.dev/",false,4,200,true,false,1
+elapsed,method,name,url,final_url,redirected,response_time,status_code,success,update,user,error,coordinated_omission_elapsed,coordinated_omission_cadence
+22116,GET,"(Auth) node page","http://apache/node/3891","http://apache/node/3891",false,45,200,true,false,6,,0,3106
+22158,GET,"static asset","http://apache/misc/feed.png","http://apache/misc/feed.png",false,3,200,true,false,1,,0,2477
+22146,GET,"static asset","http://apache/misc/drupal.js?q9apdy","http://apache/misc/drupal.js?q9apdy",false,15,200,true,false,0,,0,1751
+22160,GET,"static asset","http://apache/misc/jquery.js?v=1.4.4","http://apache/misc/jquery.js?v=1.4.4",false,5,200,true,false,5,,0,2293
+22141,GET,"(Anon) node page","http://apache/node/9581","http://apache/node/9581",false,28,200,true,false,3,,0,2072
+```
+
+## Logging Load Test Tasks
+
+Goose can optionally log details about all load test tasks to a file. To enable, add the `--tasks-file=tasks.log` command line option, where `tasks.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+
+When operating in Gaggle-mode, the `--tasks-file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+
+By default, logs are written in JSON Lines format. For example:
+
+```json
+{"elapsed":22060,"name":"(Anon) front page","run_time":97,"success":true,"task_index":0,"taskset_index":0,"user":0}
+{"elapsed":22118,"name":"(Anon) node page","run_time":41,"success":true,"task_index":1,"taskset_index":0,"user":5}
+{"elapsed":22157,"name":"(Anon) node page","run_time":6,"success":true,"task_index":1,"taskset_index":0,"user":0}
+{"elapsed":22078,"name":"(Auth) front page","run_time":109,"success":true,"task_index":1,"taskset_index":1,"user":6}
+{"elapsed":22157,"name":"(Anon) user page","run_time":35,"success":true,"task_index":2,"taskset_index":0,"user":4}
+```
+
+Logs include the entire [`GooseTaskMetric`] object as defined in `src/goose.rs`, which are created each time any task is run.
+
+In the first line of the above example, `GooseUser` thread 0 succesfully ran the `(Anon) front page` task in 97 milliseconds. In the second line `GooseUser` thread 5 succesfully ran the `(Anon) node page` task in 41 milliseconds.
+
+By default Goose logs tass in JSON Lines format. The `--tasks-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseTaskMetric`] object.
+
+For example, `csv` output of similar tasks as those logged above would like like:
+```csv
+elapsed,taskset_index,task_index,name,run_time,success,user
+21936,0,0,"(Anon) front page",83,true,0
+21990,1,3,"(Auth) user page",34,true,1
+21954,0,0,"(Anon) front page",84,true,5
+22009,0,1,"(Anon) node page",34,true,2
+21952,0,0,"(Anon) front page",95,true,7
 ```
 
 ## Load Test Debug Logging

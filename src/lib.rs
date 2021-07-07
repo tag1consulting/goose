@@ -508,8 +508,8 @@ pub enum GooseError {
     Io(io::Error),
     /// Wraps a [`reqwest::Error`](https://docs.rs/reqwest/*/reqwest/struct.Error.html).
     Reqwest(reqwest::Error),
-    /// Wraps a ['tokio::task::JoinError'](TODO)
-    Tokio(tokio::task::JoinError),
+    /// Wraps a ['tokio::task::JoinError'](https://tokio-rs.github.io/tokio/doc/tokio/task/struct.JoinError.html).
+    TokioJoin(tokio::task::JoinError),
     //std::convert::From<tokio::task::JoinError>
     /// Failed attempt to use code that requires a compile-time feature be enabled.
     FeatureNotEnabled {
@@ -564,7 +564,7 @@ impl GooseError {
         match *self {
             GooseError::Io(_) => "io::Error",
             GooseError::Reqwest(_) => "reqwest::Error",
-            GooseError::Tokio(_) => "tokio::task::JoinError",
+            GooseError::TokioJoin(_) => "tokio::task::JoinError",
             GooseError::FeatureNotEnabled { .. } => "required compile-time feature not enabled",
             GooseError::InvalidHost { .. } => "failed to parse hostname",
             GooseError::InvalidOption { .. } => "invalid option or value specified",
@@ -584,7 +584,7 @@ impl fmt::Display for GooseError {
             GooseError::Reqwest(ref source) => {
                 write!(f, "GooseError: {} ({})", self.describe(), source)
             }
-            GooseError::Tokio(ref source) => {
+            GooseError::TokioJoin(ref source) => {
                 write!(f, "GooseError: {} ({})", self.describe(), source)
             }
             GooseError::InvalidHost {
@@ -601,7 +601,7 @@ impl std::error::Error for GooseError {
         match *self {
             GooseError::Io(ref source) => Some(source),
             GooseError::Reqwest(ref source) => Some(source),
-            GooseError::Tokio(ref source) => Some(source),
+            GooseError::TokioJoin(ref source) => Some(source),
             GooseError::InvalidHost {
                 ref parse_error, ..
             } => Some(parse_error),
@@ -624,10 +624,10 @@ impl From<io::Error> for GooseError {
     }
 }
 
-/// Auto-convert Tokio errors.
+/// Auto-convert TokioJoin errors.
 impl From<tokio::task::JoinError> for GooseError {
     fn from(err: tokio::task::JoinError) -> GooseError {
-        GooseError::Tokio(err)
+        GooseError::TokioJoin(err)
     }
 }
 
@@ -2326,6 +2326,54 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Configure tasks log format.
+    fn set_tasks_format(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.tasks_format";
+        let mut value = Some(GooseLogFormat::Json);
+
+        if self.configuration.tasks_format.is_some() {
+            key = "--tasks-format";
+            value = self.configuration.tasks_format.clone();
+        } else if let Some(default_tasks_format) = self.defaults.tasks_format.as_ref() {
+            // In Gaggles, tasks_format is only set on Worker.
+            if self.attack_mode != AttackMode::Manager {
+                key = "set_default(GooseDefault::TasksFormat)";
+                value = Some(default_tasks_format.clone());
+                self.configuration.tasks_format = Some(default_tasks_format.clone());
+            }
+        }
+
+        // Otherwise default to GooseLogFormat::Json.
+        if !self.configuration.tasks_file.is_empty()
+            && self.configuration.tasks_format.is_none()
+            && self.attack_mode != AttackMode::Manager
+        {
+            self.configuration.tasks_format = value.clone();
+        }
+
+        if self.configuration.tasks_format.is_some() {
+            // Log format isn't relevant if metrics aren't enabled.
+            if self.configuration.no_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-metrics".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --tasks-format option.".to_string(),
+                });
+            }
+            // Log format isn't relevant if log not enabled.
+            else if self.configuration.tasks_file.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: "The --tasks-file option must be set together with the --tasks-format option.".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     // Configure debug log format.
     fn set_debug_format(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2561,6 +2609,9 @@ impl GooseAttack {
 
         // Configure the requests log format.
         self.set_requests_format()?;
+
+        // Configure the tasks log format.
+        self.set_tasks_format()?;
 
         // Configure the debug log format.
         self.set_debug_format()?;
