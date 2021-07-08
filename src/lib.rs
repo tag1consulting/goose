@@ -460,7 +460,7 @@ use tokio::runtime::Runtime;
 
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
-use crate::logger::{GooseLog, GooseLogFormat, GooseLoggerJoinHandle, GooseLoggerTx};
+use crate::logger::{GooseLogFormat, GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
@@ -557,12 +557,6 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
-    /// There was an error sending debug information to the logger thread.
-    LoggerFailed {
-        /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
-        /// which contains the [`GooseDebug`](./struct.GooseDebug.html) that wasn't sent.
-        source: flume::SendError<Option<GooseLog>>,
-    },
 }
 /// Implement a helper to provide a text description of all possible types of errors.
 impl GooseError {
@@ -577,7 +571,6 @@ impl GooseError {
             GooseError::InvalidWaitTime { .. } => "invalid wait_time specified",
             GooseError::InvalidWeight { .. } => "invalid weight specified",
             GooseError::NoTaskSets { .. } => "no task sets defined",
-            GooseError::LoggerFailed { .. } => "failed to send log message to logger thread",
         }
     }
 }
@@ -597,9 +590,6 @@ impl fmt::Display for GooseError {
             GooseError::InvalidHost {
                 ref parse_error, ..
             } => write!(f, "GooseError: {} ({})", self.describe(), parse_error),
-            GooseError::LoggerFailed { ref source } => {
-                write!(f, "GooseError: {} ({})", self.describe(), source)
-            }
             _ => write!(f, "GooseError: {}", self.describe()),
         }
     }
@@ -615,7 +605,6 @@ impl std::error::Error for GooseError {
             GooseError::InvalidHost {
                 ref parse_error, ..
             } => Some(parse_error),
-            GooseError::LoggerFailed { ref source } => Some(source),
             _ => None,
         }
     }
@@ -639,13 +628,6 @@ impl From<io::Error> for GooseError {
 impl From<tokio::task::JoinError> for GooseError {
     fn from(err: tokio::task::JoinError) -> GooseError {
         GooseError::TokioJoin(err)
-    }
-}
-
-/// Auto-convert flume errors when failing to send logs to the logger thread.
-impl From<flume::SendError<Option<GooseLog>>> for GooseError {
-    fn from(source: flume::SendError<Option<GooseLog>>) -> GooseError {
-        GooseError::LoggerFailed { source }
     }
 }
 

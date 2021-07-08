@@ -420,6 +420,13 @@ impl GooseConfiguration {
                 self.debug_file = default_debug_file;
             }
         }
+        // Configure error_file path if enabled.
+        if self.error_file.is_empty() {
+            // Set default, if configured.
+            if let Some(default_error_file) = defaults.error_file.clone() {
+                self.error_file = default_error_file;
+            }
+        }
         // Configure requests_file path if enabled.
         if self.requests_file.is_empty() {
             // Set default, if configured.
@@ -450,7 +457,10 @@ impl GooseConfiguration {
         self.configure_loggers(defaults);
 
         // If no longger is enabled, return immediately without launching logger thread.
-        if self.debug_file.is_empty() && self.requests_file.is_empty() && self.tasks_file.is_empty()
+        if self.debug_file.is_empty()
+            && self.requests_file.is_empty()
+            && self.tasks_file.is_empty()
+            && self.error_file.is_empty()
         {
             return Ok((None, None));
         }
@@ -614,12 +624,6 @@ impl GooseConfiguration {
             let _ = debug_log_file.flush().await;
         };
 
-        // Flush error logs to disk if enabled.
-        if let Some(error_log_file) = error_file.as_mut() {
-            info!("flushing error_file: {}", &self.error_file);
-            let _ = error_log_file.flush().await;
-        };
-
         // Flush requests log to disk if enabled.
         if let Some(requests_log_file) = requests_file.as_mut() {
             info!("flushing requests_file: {}", &self.requests_file);
@@ -627,10 +631,16 @@ impl GooseConfiguration {
         }
 
         // Flush tasks log to disk if enabled.
-        if let Some(log_file) = tasks_file.as_mut() {
+        if let Some(tasks_log_file) = tasks_file.as_mut() {
             info!("flushing tasks_file: {}", &self.tasks_file);
-            let _ = log_file.flush().await;
+            let _ = tasks_log_file.flush().await;
         }
+
+        // Flush error logs to disk if enabled.
+        if let Some(error_log_file) = error_file.as_mut() {
+            info!("flushing error_file: {}", &self.error_file);
+            let _ = error_log_file.flush().await;
+        };
 
         Ok(())
     }

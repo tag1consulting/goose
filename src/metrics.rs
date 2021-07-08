@@ -2270,7 +2270,7 @@ impl GooseAttack {
                 GooseMetric::Request(request_metric) => {
                     // If there was an error, store it.
                     if !request_metric.error.is_empty() {
-                        self.record_error(&request_metric, goose_attack_run_state)?;
+                        self.record_error(&request_metric, goose_attack_run_state);
                     }
 
                     // If coordinated_omission_elapsed is non-zero, this was a statistically
@@ -2326,12 +2326,14 @@ impl GooseAttack {
         &mut self,
         raw_request: &GooseRequestMetric,
         goose_attack_run_state: &mut GooseAttackRunState,
-    ) -> Result<(), GooseError> {
+    ) {
         // If error-file is enabled, convert the raw request to a GooseErrorMetric and send it
         // to the logger thread.
         if !self.configuration.error_file.is_empty() {
             if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
-                logger.send(Some(GooseLog::Error(GooseErrorMetric {
+                // This is a best effort logger attempt, if the logger has alrady shut down it
+                // will fail which we ignore.
+                let _ = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
                     method: raw_request.method.clone(),
                     name: raw_request.name.clone(),
@@ -2342,13 +2344,13 @@ impl GooseAttack {
                     status_code: raw_request.status_code,
                     user: raw_request.user,
                     error: raw_request.error.clone(),
-                })))?;
+                })));
             }
         }
 
         // If the error summary is disabled, return without collecting errors.
         if self.configuration.no_error_summary {
-            return Ok(());
+            return;
         }
 
         // Create a string to uniquely identify errors for tracking metrics.
@@ -2369,7 +2371,6 @@ impl GooseAttack {
         };
         error_metrics.occurrences += 1;
         self.metrics.errors.insert(error_string, error_metrics);
-        Ok(())
     }
 
     // Update metrics showing how long the load test has been running.
