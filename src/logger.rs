@@ -234,7 +234,7 @@ fn requests_csv_header() -> String {
         "user",
         "error",
         "coordinated_omission_elapsed",
-        "coordinated_omission_cadence",
+        "user_cadence",
     )
 }
 
@@ -364,7 +364,7 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
             request.user,
             request.error,
             request.coordinated_omission_elapsed,
-            request.coordinated_omission_cadence,
+            request.user_cadence,
         )
     }
 }

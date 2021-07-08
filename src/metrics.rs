@@ -281,7 +281,7 @@ pub struct GooseRequestMetric {
     /// the upstream server, blocking requests from being made.
     pub coordinated_omission_elapsed: u64,
     /// If non-zero, the expected cadence of looping through all GooseTasks by this GooseUser.
-    pub coordinated_omission_cadence: u64,
+    pub user_cadence: u64,
 }
 impl GooseRequestMetric {
     pub(crate) fn new(
@@ -305,7 +305,7 @@ impl GooseRequestMetric {
             user,
             error: "".to_string(),
             coordinated_omission_elapsed: 0,
-            coordinated_omission_cadence: 0,
+            user_cadence: 0,
         }
     }
 
@@ -2277,7 +2277,7 @@ impl GooseAttack {
                     // generated "request" to mitigate coordinated omission, loop to backfill
                     // with statistically generated metrics.
                     if request_metric.coordinated_omission_elapsed > 0
-                        && request_metric.coordinated_omission_cadence > 0
+                        && request_metric.user_cadence > 0
                     {
                         // Build a statistically generated coordinated_omissiom metric starting
                         // with the metric that was sent by the affected GooseUser.
@@ -2285,7 +2285,7 @@ impl GooseAttack {
 
                         // Use a signed integer as this value can drop below zero.
                         let mut response_time = request_metric.coordinated_omission_elapsed as i64
-                            - request_metric.coordinated_omission_cadence as i64
+                            - request_metric.user_cadence as i64
                             - request_metric.response_time as i64;
 
                         loop {
@@ -2293,7 +2293,7 @@ impl GooseAttack {
                             if response_time > request_metric.response_time as i64 {
                                 co_metric.response_time = response_time as u64;
                                 self.record_request_metric(&co_metric).await;
-                                response_time -= request_metric.coordinated_omission_cadence as i64;
+                                response_time -= request_metric.user_cadence as i64;
                             } else {
                                 break;
                             }

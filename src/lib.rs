@@ -1833,7 +1833,7 @@ impl GooseAttack {
     fn set_coordinated_omission(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
         let mut key = "configuration.coordinated_omission";
-        let mut value = Some(GooseCoordinatedOmissionMitigation::Average);
+        let mut value = Some(GooseCoordinatedOmissionMitigation::Disabled);
 
         if self.configuration.co_mitigation.is_some() {
             key = "--co-mitigation";

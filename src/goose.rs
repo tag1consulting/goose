@@ -786,7 +786,7 @@ struct GooseRequestCadence {
     /// Omission Mitigation in milliseconds.
     coordinated_omission_mitigation: u64,
     /// The expected cadence to loop through all GooseTasks.
-    coordinated_omission_cadence: u64,
+    user_cadence: u64,
     /// If -1 coordinated_omission_mitigation was never enabled. Otherwise is a counter of how
     /// many times the mitigation triggered.
     coordinated_omission_counter: isize,
@@ -803,7 +803,7 @@ impl GooseRequestCadence {
             average_cadence: 0,
             total_elapsed: 0,
             coordinated_omission_mitigation: 0,
-            coordinated_omission_cadence: 0,
+            user_cadence: 0,
             coordinated_omission_counter: -1,
         }
     }
@@ -1471,7 +1471,7 @@ impl GooseUser {
         // this GooseUser is running. If requests are blocked by the upstream server, this
         // allows Goose to backfill the requests that should have been made based on
         // cadence statistics.
-        request_metric.coordinated_omission_cadence = self
+        request_metric.user_cadence = self
             .coordinated_omission_mitigation(&request_metric)
             .await?;
 
@@ -1557,7 +1557,7 @@ impl GooseUser {
                     request_cadence.coordinated_omission_mitigation = 0;
                 }
                 // Always track the expected cadence.
-                request_cadence.coordinated_omission_cadence = cadence;
+                request_cadence.user_cadence = cadence;
             }
         } else {
             // Coordinated Omission Mitigation defaults to average.
@@ -1587,7 +1587,7 @@ impl GooseUser {
             // cadence, as that means this specific request will likely trigger Coordinated
             // Omission Mitigation.
             if request_cadence.counter > 3
-                && request_metric.response_time > request_cadence.coordinated_omission_cadence
+                && request_metric.response_time > request_cadence.user_cadence
             {
                 let task_name = if !self.weighted_tasks.is_empty() {
                     let position = self.position.load(Ordering::SeqCst);
@@ -1600,7 +1600,7 @@ impl GooseUser {
                     "".to_string()
                 };
                 info!(
-                    "coordinated omission alert {:.3}s into goose attack: \"{} {}\" [{}] took abnormally long ({} ms){}",
+                    "{:.3}s into goose attack: \"{} {}\" [{}] took abnormally long ({} ms){}",
                     request_metric.elapsed as f64 / 1_000.0,
                     request_metric.method,
                     request_metric.url,
@@ -1619,12 +1619,11 @@ impl GooseUser {
                 coordinated_omission_request_metric.coordinated_omission_elapsed =
                     request_cadence.coordinated_omission_mitigation;
                 // Record data points specific to coordinated_omission.
-                coordinated_omission_request_metric.coordinated_omission_cadence =
-                    request_cadence.coordinated_omission_cadence;
+                coordinated_omission_request_metric.user_cadence = request_cadence.user_cadence;
                 // Send the coordinated omission mitigation generated metrics to the parent.
                 self.send_request_metric_to_parent(coordinated_omission_request_metric)?;
             }
-            Ok(request_cadence.coordinated_omission_cadence)
+            Ok(request_cadence.user_cadence)
         } else {
             // A setting for coordinated omission mitigation is required, defaults to Average.
             unreachable!();
