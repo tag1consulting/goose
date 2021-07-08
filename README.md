@@ -213,9 +213,9 @@ Optional arguments:
   -u, --users USERS          Sets concurrent users (default: number of CPUs)
   -r, --hatch-rate RATE      Sets per-second user hatch rate (default: 1)
   -t, --run-time TIME        Stops after (30s, 20m, 3h, 1h30m, etc)
-  -g, --log-level            Sets log level (-g, -gg, etc)
-  -L, --log-file NAME        Enables log file and sets name
-  -v, --verbose              Sets debug level (-v, -vv, etc)
+  -G, --goose-log NAME       Enables Goose log file and sets name
+  -g, --log-level            Sets Goose log level (-g, -gg, etc)
+  -v, --verbose              Sets Goose verbosity (-v, -vv, etc)
 
 Metrics:
   --running-metrics TIME     How often to optionally print running metrics
@@ -224,13 +224,13 @@ Metrics:
   --no-task-metrics          Doesn't track task metrics
   --no-error-summary         Doesn't display an error summary
   --report-file NAME         Create an html-formatted report
-  -R, --requests-file NAME   Sets requests log file name
-  --requests-format FORMAT   Sets requests log format (csv, json, raw)
-  -T, --tasks-file NAME      Sets tasks log file name
-  --tasks-format FORMAT      Sets tasks log format (csv, json, raw)
-  -E, --error-file NAME      Sets error log file name
+  -R, --request-log NAME     Sets request log file name
+  --request-format FORMAT    Sets request log format (csv, json, raw)
+  -T, --task-log NAME        Sets task log file name
+  --task-format FORMAT       Sets task log format (csv, json, raw)
+  -E, --error-log NAME       Sets error log file name
   --error-format FORMAT      Sets error log format (csv, json, raw)
-  -D, --debug-file NAME      Sets debug log file name
+  -D, --debug-log NAME       Sets debug log file name
   --debug-format FORMAT      Sets debug log format (csv, json, raw)
   --no-debug-body            Do not include the response body in the debug log
   --status-codes             Tracks additional status code metrics
@@ -533,7 +533,7 @@ If something causes the response to a request to take abnormally long, raw Goose
 
 Goose attempts to mitigate Coordinated Omission by back-filling the metrics with the statistically expected requests. To do this, it tracks the normal "cadence" of each `GooseUser`, timing how long it takes to loop through all `GooseTasks` in the assigned `GooseTaskSet`. By default, Goose will trigger Coordinated Omission Mitigation if the time to loop through a `GooseTaskSet` takes more than twice as long as the average time of all previous loops. In this case, on the next loop through the `GooseTaskSet` when tracking the actual metrics for each subsequent request in all `GooseTasks` it will also add in statistically generated "requests" with a `response_time` starting at the unexpectedly long request time, then again with that `response_time` minus the normal "cadence", continuing to generate a metric then subtract the normal "cadence" until arriving at the expected `response_time`. In this way, Goose is able to estimate the actual effect of a slowdown.
 
-When Coordinated Omission Mitigation detects an abnormally slow request, Goose will generate an INFO level message (which will be visible if Goose was started with the `-v` run time flag, or written to the log if started with the `-g` run time flag and `--log-file` is configured). For example:
+When Coordinated Omission Mitigation detects an abnormally slow request, Goose will generate an INFO level message (which will be visible if Goose was started with the `-v` run time flag, or written to the log if started with the `-g` run time flag and `--goose-log` is configured). For example:
 
 ```
 10:10:02 [INFO] coordinated omission alert 6.957s into goose attack: "GET http://apache/node/8848" [200] took abnormally long (2932 ms), task name: "(Anon) node page"
@@ -541,7 +541,7 @@ When Coordinated Omission Mitigation detects an abnormally slow request, Goose w
 10:10:02 [INFO] coordinated omission alert 7.314s into goose attack: "GET http://apache/node/1297" [200] took abnormally long (2578 ms), task name: "(Anon) node page"
 ```
 
-If the `--requests-file` is enabled, you can get more details, in this case by looking for elapsed times matching the above messages, specifically 6957, 7019, and 7314 respectively:
+If the `--request-log` is enabled, you can get more details, in this case by looking for elapsed times matching the above messages, specifically 6957, 7019, and 7314 respectively:
 
 ```
 {"coordinated_omission_cadence":1651,"coordinated_omission_elapsed":0,"elapsed":6957,"error":"","final_url":"http://apache/node/8848","method":"Get","name":"(Anon) node page","redirected":false,"response_time":2932,"status_code":200,"success":true,"update":false,"url":"http://apache/node/8848","user":2}
@@ -551,7 +551,7 @@ If the `--requests-file` is enabled, you can get more details, in this case by l
 
 In the requests file, you can see that three different user threads triggered Coordinated Omission Mitigation, specifically threads 2, 0, and 3. All `GooseUser` threads were loading the same `GooseTask` as due to task weighting this is the task loaded the most frequently. Each `GooseUser` thread loops through all `GooseTasks` in a similar amount of time: thread 2 takes on average 1.651 seconds, thread 0 takes on average 1.439 seconds, and thread 3 takes on average 1.812 seconds.
 
-Also if the `--requests-file` is enabled, requests back-filled by Coordinated Omission Mitigation show up in the generated log file, even though they were not actually sent to the server. In the following example, Coordinated Omission Mitigation was triggered when the server took 11,965 milliseconds to loop through all requests, instead of the average cadence of 3,162 milliseconds. This causes it to backfill a block of requests that statistically should have happened, with a `response_time` decreasing by the expected request cadence.
+Also if the `--request-log` is enabled, requests back-filled by Coordinated Omission Mitigation show up in the generated log file, even though they were not actually sent to the server. In the following example, Coordinated Omission Mitigation was triggered when the server took 11,965 milliseconds to loop through all requests, instead of the average cadence of 3,162 milliseconds. This causes it to backfill a block of requests that statistically should have happened, with a `response_time` decreasing by the expected request cadence.
 
 ```json
 {"coordinated_omission_cadence":3161,"coordinated_omission_elapsed":11965,"elapsed":185835,"error":"","final_url":"http://example.com/misc/jquery.js?v=1.4.4","method":"Get","name":"static asset","redirected":false,"response_time":11965,"status_code":200,"success":true,"update":false,"url":"http://example.com/misc/jquery.js?v=1.4.4","user":2}
@@ -714,7 +714,7 @@ foo
 {"request": "foo"}
 {"response":"unrecognized command, see Goose README.md","success":false}
 {"request": "config"}
-{"response":"{\"help\":false,\"version\":false,\"list\":false,\"host\":\"http://apache/\",\"users\":5,\"hatch_rate\":\".5\",\"run_time\":\"\",\"log_level\":0,\"log_file\":\"\",\"verbose\":1,\"running_metrics\":null,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_task_metrics\":false,\"no_error_summary\":false,\"report_file\":\"\",\"requests_file\":\"\",\"requests_format\":\"json\",\"debug_file\":\"\",\"debug_format\":\"json\",\"no_debug_body\":false,\"status_codes\":false,\"no_telnet\":false,\"telnet_host\":\"0.0.0.0\",\"telnet_port\":5116,\"no_websocket\":false,\"websocket_host\":\"0.0.0.0\",\"websocket_port\":5117,\"no_autostart\":true,\"throttle_requests\":0,\"sticky_follow\":false,\"manager\":false,\"expect_workers\":null,\"no_hash_check\":false,\"manager_bind_host\":\"\",\"manager_bind_port\":0,\"worker\":false,\"manager_host\":\"\",\"manager_port\":0}","success":true}
+{"response":"{\"help\":false,\"version\":false,\"list\":false,\"host\":\"http://apache/\",\"users\":5,\"hatch_rate\":\".5\",\"run_time\":\"\",\"log_level\":0,\"goose_log\":\"\",\"verbose\":1,\"running_metrics\":null,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_task_metrics\":false,\"no_error_summary\":false,\"report_file\":\"\",\"request_log\":\"\",\"request_format\":\"json\",\"debug_log\":\"\",\"debug_format\":\"json\",\"no_debug_body\":false,\"status_codes\":false,\"no_telnet\":false,\"telnet_host\":\"0.0.0.0\",\"telnet_port\":5116,\"no_websocket\":false,\"websocket_host\":\"0.0.0.0\",\"websocket_port\":5117,\"no_autostart\":true,\"throttle_requests\":0,\"sticky_follow\":false,\"manager\":false,\"expect_workers\":null,\"no_hash_check\":false,\"manager_bind_host\":\"\",\"manager_bind_port\":0,\"worker\":false,\"manager_host\":\"\",\"manager_port\":0}","success":true}
 {"request": "stop"}
 {"response":"load test not running, failed to stop","success":false}
 {"request": "exit"}
@@ -763,9 +763,9 @@ elapsed,method,name,url,final_url,redirected,response_time,status_code,user,erro
 
 ## Logging Load Test Requests
 
-Goose can optionally log details about all load test requests to a file. To enable, add the `--requests-file=requests.log` command line option, where `requests.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all load test requests to a file. To enable, add the `--request-log=request.log` command line option, where `request.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
-When operating in Gaggle-mode, the `--requests-file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+When operating in Gaggle-mode, the `--request-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
 
 By default, logs are written in JSON Lines format. For example:
 
@@ -780,7 +780,7 @@ Logs include the entire [`GooseRequestMetric`] object as defined in `src/goose.r
 
 In the first line of the above example, `GooseUser` thread 7 made a successful `GET` request for `/misc/feed.png`, which takes 4 milliseconds. The second line is `GooseUser` thread 2 making a successful `GET` request for `/user/4816`, which takes 28 milliseconds.
 
-By default Goose logs requests in JSON Lines format. The `--requests-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`] object.
+By default Goose logs requests in JSON Lines format. The `--request-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`] object.
 
 For example, `csv` output of similar requests as those logged above would like like:
 ```csv
@@ -794,9 +794,9 @@ elapsed,method,name,url,final_url,redirected,response_time,status_code,success,u
 
 ## Logging Load Test Tasks
 
-Goose can optionally log details about all load test tasks to a file. To enable, add the `--tasks-file=tasks.log` command line option, where `tasks.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all load test tasks to a file. To enable, add the `--task-log=task.log` command line option, where `task.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
-When operating in Gaggle-mode, the `--tasks-file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+When operating in Gaggle-mode, the `--task-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
 
 By default, logs are written in JSON Lines format. For example:
 
@@ -812,7 +812,7 @@ Logs include the entire [`GooseTaskMetric`] object as defined in `src/goose.rs`,
 
 In the first line of the above example, `GooseUser` thread 0 succesfully ran the `(Anon) front page` task in 97 milliseconds. In the second line `GooseUser` thread 5 succesfully ran the `(Anon) node page` task in 41 milliseconds.
 
-By default Goose logs tass in JSON Lines format. The `--tasks-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseTaskMetric`] object.
+By default Goose logs tass in JSON Lines format. The `--task-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseTaskMetric`] object.
 
 For example, `csv` output of similar tasks as those logged above would like like:
 ```csv
@@ -834,13 +834,13 @@ See `examples/drupal_loadtest` for an example of how you might invoke log_debug 
 
 Calls to `client.set_failure(tag, Option<request>, Option<headers>, Option<body>)` can be used to tell Goose that a request failed even though the server returned a successful status code, and will automatically invoke `log_debug()` for you. See `examples/drupal_loadtest` and `examples/umami` to see how you might use `set_failure` to generate useful debug logs.
 
-When the load test is run with the `--debug-file=foo` command line option, where `foo` is either a relative or an absolute path, Goose will log all debug generated by calls to `client.log_debug()` (or to `client.set_failure()`) to this file. If the file already exists it will be overwritten. The following is an example debug log file entry:
+When the load test is run with the `--debug-log=foo` command line option, where `foo` is either a relative or an absolute path, Goose will log all debug generated by calls to `client.log_debug()` (or to `client.set_failure()`) to this file. If the file already exists it will be overwritten. The following is an example debug log file entry:
 
 ```json
 {"body":"<!DOCTYPE html>\n<html>\n  <head>\n    <title>503 Backend fetch failed</title>\n  </head>\n  <body>\n    <h1>Error 503 Backend fetch failed</h1>\n    <p>Backend fetch failed</p>\n    <h3>Guru Meditation:</h3>\n    <p>XID: 923425</p>\n    <hr>\n    <p>Varnish cache server</p>\n  </body>\n</html>\n","header":"{\"date\": \"Wed, 01 Jul 2020 10:27:31 GMT\", \"server\": \"Varnish\", \"content-type\": \"text/html; charset=utf-8\", \"retry-after\": \"5\", \"x-varnish\": \"923424\", \"age\": \"0\", \"via\": \"1.1 varnish (Varnish/6.1)\", \"x-varnish-cache\": \"MISS\", \"x-varnish-cookie\": \"SESSd7e04cba6a8ba148c966860632ef3636=hejsW1mQnnsHlua0AicCjEpUjnCRTkOLubwL33UJXRU\", \"content-length\": \"283\", \"connection\": \"keep-alive\"}","request":{"elapsed":4192,"final_url":"http://local.dev/node/3247","method":"GET","name":"(Auth) comment form","redirected":false,"response_time":8,"status_code":503,"success":false,"update":false,"url":"http://local.dev/node/3247","user":4},"tag":"post_comment: no form_build_id found on node/3247"}
 ```
 
-If `--debug-file=foo` is not specified at run time, nothing will be logged and there is no measurable overhead in your load test.
+If `--debug-log=foo` is not specified at run time, nothing will be logged and there is no measurable overhead in your load test.
 
 By default Goose writes debug logs in JSON Lines format. The `--debug-format` option can be used to log in `json` or `raw` format. The `raw` format is Rust's debug output of the `GooseDebug` object.
 

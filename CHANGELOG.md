@@ -34,6 +34,7 @@
   - rename `GooseTaskMetric` to `GooseTaskMetricAggregate`, and introduce `GooseTaskMetric` which is a subset of `GooseRequestMetric` only used for logging
   - introduce `--error-file` run-time option for logging `GooseErrorMetric`s to file
   - introduce `GooseLogFormat` enum for formatting all logs; add `--task-format` and `--error-format` using new enum, update `--requests-format` and `--debug-format`.
+  - renamed `--log-file` to `--goose-log`, `--requests-file` to `--request-log`, `--requests-format` to `--request-format`, `--tasks-file` to `--task-log`, `--tasks-format` to `--task-format`, `--error-file` to `--error-log`, and `--debug-file` to `--debug-log`
 
 ## 0.11.2 June 10, 2021
  - introduce telnet Controller allowing real-time control of load test, optionally disable with `--no-telnet`, supports the following commands:

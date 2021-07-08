@@ -331,8 +331,8 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
 impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
     /// Converts a GooseRequestMetric structure to a formatted string.
     fn format_message(&self, message: GooseRequestMetric) -> String {
-        if let Some(requests_format) = self.requests_format.as_ref() {
-            match requests_format {
+        if let Some(request_format) = self.request_format.as_ref() {
+            match request_format {
                 // Use serde_json to create JSON.
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseRequestMetric structure.
@@ -372,8 +372,8 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
 impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
     /// Converts a GooseTaskMetric structure to a formatted string.
     fn format_message(&self, message: GooseTaskMetric) -> String {
-        if let Some(tasks_format) = self.tasks_format.as_ref() {
-            match tasks_format {
+        if let Some(task_format) = self.task_format.as_ref() {
+            match task_format {
                 // Use serde_json to create JSON.
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseTaskMetric structure.
@@ -413,32 +413,32 @@ impl GooseConfiguration {
             return;
         }
 
-        // Configure debug_file path if enabled.
-        if self.debug_file.is_empty() {
+        // Configure debug_log path if enabled.
+        if self.debug_log.is_empty() {
             // Set default, if configured.
-            if let Some(default_debug_file) = defaults.debug_file.clone() {
-                self.debug_file = default_debug_file;
+            if let Some(default_debug_log) = defaults.debug_log.clone() {
+                self.debug_log = default_debug_log;
             }
         }
-        // Configure error_file path if enabled.
-        if self.error_file.is_empty() {
+        // Configure error_log path if enabled.
+        if self.error_log.is_empty() {
             // Set default, if configured.
-            if let Some(default_error_file) = defaults.error_file.clone() {
-                self.error_file = default_error_file;
+            if let Some(default_error_log) = defaults.error_log.clone() {
+                self.error_log = default_error_log;
             }
         }
-        // Configure requests_file path if enabled.
-        if self.requests_file.is_empty() {
+        // Configure request_log path if enabled.
+        if self.request_log.is_empty() {
             // Set default, if configured.
-            if let Some(default_requests_file) = defaults.requests_file.clone() {
-                self.requests_file = default_requests_file;
+            if let Some(default_request_log) = defaults.request_log.clone() {
+                self.request_log = default_request_log;
             }
         }
-        // Configure tasks_file path if enabled.
-        if self.tasks_file.is_empty() {
+        // Configure task_log path if enabled.
+        if self.task_log.is_empty() {
             // Set default, if configured.
-            if let Some(default_tasks_file) = defaults.tasks_file.clone() {
-                self.tasks_file = default_tasks_file;
+            if let Some(default_task_log) = defaults.task_log.clone() {
+                self.task_log = default_task_log;
             }
         }
     }
@@ -457,10 +457,10 @@ impl GooseConfiguration {
         self.configure_loggers(defaults);
 
         // If no longger is enabled, return immediately without launching logger thread.
-        if self.debug_file.is_empty()
-            && self.requests_file.is_empty()
-            && self.tasks_file.is_empty()
-            && self.error_file.is_empty()
+        if self.debug_log.is_empty()
+            && self.request_log.is_empty()
+            && self.task_log.is_empty()
+            && self.error_log.is_empty()
         {
             return Ok((None, None));
         }
@@ -514,7 +514,7 @@ impl GooseConfiguration {
         {
             Ok(_) => (),
             Err(e) => {
-                warn!("failed to write to {}: {}", &self.debug_file, e);
+                warn!("failed to write to {}: {}", &self.debug_log, e);
             }
         }
 
@@ -527,10 +527,10 @@ impl GooseConfiguration {
         self: GooseConfiguration,
         receiver: flume::Receiver<Option<GooseLog>>,
     ) -> Result<(), GooseError> {
-        // If the debug_file is enabled, allocate a buffer and open the file.
-        let mut debug_file = self
+        // If the debug_log is enabled, allocate a buffer and open the file.
+        let mut debug_log = self
             .open_log_file(
-                &self.debug_file,
+                &self.debug_log,
                 "debug file",
                 if self.no_debug_body {
                     // Allocate a smaller 64K buffer if not logging response body.
@@ -541,33 +541,33 @@ impl GooseConfiguration {
                 },
             )
             .await;
-        // If the debug_file is a CSV, write the header.
+        // If the debug_log is a CSV, write the header.
         if self.debug_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = debug_file.as_mut() {
+            if let Some(log_file) = debug_log.as_mut() {
                 // @TODO: error handling when writing to log fails.
                 let _ = self.write_to_log_file(log_file, debug_csv_header()).await;
             }
         }
 
-        // If the error_file is enabled, allocate a buffer and open the file.
-        let mut error_file = self
-            .open_log_file(&self.error_file, "error file", 64 * 1024)
+        // If the error_log is enabled, allocate a buffer and open the file.
+        let mut error_log = self
+            .open_log_file(&self.error_log, "error log", 64 * 1024)
             .await;
-        // If the requests_file is a CSV, write the header.
+        // If the request_log is a CSV, write the header.
         if self.error_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = error_file.as_mut() {
+            if let Some(log_file) = error_log.as_mut() {
                 // @TODO: error handling when writing to log fails.
                 let _ = self.write_to_log_file(log_file, error_csv_header()).await;
             }
         }
 
-        // If the requests_file is enabled, allocate a buffer and open the file.
-        let mut requests_file = self
-            .open_log_file(&self.requests_file, "requests file", 64 * 1024)
+        // If the request_log is enabled, allocate a buffer and open the file.
+        let mut request_log = self
+            .open_log_file(&self.request_log, "request log", 64 * 1024)
             .await;
-        // If the requests_file is a CSV, write the header.
-        if self.requests_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = requests_file.as_mut() {
+        // If the request_log is a CSV, write the header.
+        if self.request_format == Some(GooseLogFormat::Csv) {
+            if let Some(log_file) = request_log.as_mut() {
                 // @TODO: error handling when writing to log fails.
                 let _ = self
                     .write_to_log_file(log_file, requests_csv_header())
@@ -575,13 +575,13 @@ impl GooseConfiguration {
             }
         }
 
-        // If the tasks_file is enabled, allocate a buffer and open the file.
-        let mut tasks_file = self
-            .open_log_file(&self.tasks_file, "tasks file", 64 * 1024)
+        // If the task_log is enabled, allocate a buffer and open the file.
+        let mut task_log = self
+            .open_log_file(&self.task_log, "task log", 64 * 1024)
             .await;
-        // If the tasks_file is a CSV, write the header.
-        if self.tasks_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = tasks_file.as_mut() {
+        // If the task_log is a CSV, write the header.
+        if self.task_format == Some(GooseLogFormat::Csv) {
+            if let Some(log_file) = task_log.as_mut() {
                 // @TODO: error handling when writing to log fails.
                 let _ = self.write_to_log_file(log_file, tasks_csv_header()).await;
             }
@@ -594,19 +594,19 @@ impl GooseConfiguration {
                 if let Some(log_file) = match message {
                     GooseLog::Debug(debug_message) => {
                         formatted_message = self.format_message(debug_message).to_string();
-                        debug_file.as_mut()
+                        debug_log.as_mut()
                     }
                     GooseLog::Error(error_message) => {
                         formatted_message = self.format_message(error_message).to_string();
-                        error_file.as_mut()
+                        error_log.as_mut()
                     }
                     GooseLog::Request(request_message) => {
                         formatted_message = self.format_message(request_message).to_string();
-                        requests_file.as_mut()
+                        request_log.as_mut()
                     }
                     GooseLog::Task(task_message) => {
                         formatted_message = self.format_message(task_message).to_string();
-                        tasks_file.as_mut()
+                        task_log.as_mut()
                     }
                 } {
                     // @TODO: error handling when writing to log fails.
@@ -619,26 +619,26 @@ impl GooseConfiguration {
         }
 
         // Flush debug logs to disk if enabled.
-        if let Some(debug_log_file) = debug_file.as_mut() {
-            info!("flushing debug_file: {}", &self.debug_file);
+        if let Some(debug_log_file) = debug_log.as_mut() {
+            info!("flushing debug_log: {}", &self.debug_log);
             let _ = debug_log_file.flush().await;
         };
 
         // Flush requests log to disk if enabled.
-        if let Some(requests_log_file) = requests_file.as_mut() {
-            info!("flushing requests_file: {}", &self.requests_file);
+        if let Some(requests_log_file) = request_log.as_mut() {
+            info!("flushing request_log: {}", &self.request_log);
             let _ = requests_log_file.flush().await;
         }
 
         // Flush tasks log to disk if enabled.
-        if let Some(tasks_log_file) = tasks_file.as_mut() {
-            info!("flushing tasks_file: {}", &self.tasks_file);
+        if let Some(tasks_log_file) = task_log.as_mut() {
+            info!("flushing task_log: {}", &self.task_log);
             let _ = tasks_log_file.flush().await;
         }
 
         // Flush error logs to disk if enabled.
-        if let Some(error_log_file) = error_file.as_mut() {
-            info!("flushing error_file: {}", &self.error_file);
+        if let Some(error_log_file) = error_log.as_mut() {
+            info!("flushing error_log: {}", &self.error_log);
             let _ = error_log_file.flush().await;
         };
 

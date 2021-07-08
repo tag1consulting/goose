@@ -187,7 +187,7 @@ async fn invoke_task_function(
     }
 
     // If tasks-file is enabled, send a copy of the raw task metric to the logger thread.
-    if !thread_user.config.tasks_file.is_empty() {
+    if !thread_user.config.task_log.is_empty() {
         if let Some(logger) = thread_user.logger.as_ref() {
             logger.send(Some(GooseLog::Task(raw_task.clone())))?;
         }

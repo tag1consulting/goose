@@ -222,27 +222,23 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // This is a Worker instance, not a Manager instance.
     worker_goose_attack.configuration.manager = false;
     worker_goose_attack.configuration.worker = true;
-    // The requests_file option is configured on the Worker.
-    worker_goose_attack.configuration.requests_file =
-        goose_attack.configuration.requests_file.to_string();
-    // The requests_format option is configured on the Worker.
-    worker_goose_attack.configuration.requests_format =
-        goose_attack.configuration.requests_format.clone();
-    // The tasks_file option is configured on the Worker.
-    worker_goose_attack.configuration.tasks_file =
-        goose_attack.configuration.tasks_file.to_string();
-    // The tasks_format option is configured on the Worker.
-    worker_goose_attack.configuration.tasks_format =
-        goose_attack.configuration.tasks_format.clone();
-    // The error_file option is configured on the Worker.
-    worker_goose_attack.configuration.error_file =
-        goose_attack.configuration.error_file.to_string();
+    // The request_log option is configured on the Worker.
+    worker_goose_attack.configuration.request_log =
+        goose_attack.configuration.request_log.to_string();
+    // The request_format option is configured on the Worker.
+    worker_goose_attack.configuration.request_format =
+        goose_attack.configuration.request_format.clone();
+    // The task_log option is configured on the Worker.
+    worker_goose_attack.configuration.task_log = goose_attack.configuration.task_log.to_string();
+    // The task_format option is configured on the Worker.
+    worker_goose_attack.configuration.task_format = goose_attack.configuration.task_format.clone();
+    // The error_log option is configured on the Worker.
+    worker_goose_attack.configuration.error_log = goose_attack.configuration.error_log.to_string();
     // The error_format option is configured on the Worker.
     worker_goose_attack.configuration.error_format =
         goose_attack.configuration.error_format.clone();
-    // The debug_file option is configured on the Worker.
-    worker_goose_attack.configuration.debug_file =
-        goose_attack.configuration.debug_file.to_string();
+    // The debug_log option is configured on the Worker.
+    worker_goose_attack.configuration.debug_log = goose_attack.configuration.debug_log.to_string();
     // The debug_format option is configured on the Worker.
     worker_goose_attack.configuration.debug_format =
         goose_attack.configuration.debug_format.clone();
