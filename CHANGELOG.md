@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.12.0-dev
+## 0.12.0
  - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library (API change)
     o `goose::initialize_logger()`, `Socket` reduced to `pub(crate)` scope
     o `goose::controller::GooseControllerProtocol`, `GooseControllerRequestMessage`, `GooseControllerResponseMessage`, `GooseControllerRequest`, `GooseControllerResponse`, `GooseControllerState`, `::controller_main()` reduced to `pub(crate)` scope
@@ -26,8 +26,8 @@
     o `goose::record_error()` changed to `goose::metrics::record_error()` and reduced to `pub(crate)` scope
  - expose utility functions used by Goose for use by load tests
     o `goose::util::parse_timespan()`, `::gcd()`, `::median()`, `::truncate_string()`, `::timer_expired()`, `::ms_timer_expired()`, `::get_hatch_rate()`, and `::is_valid_host()` were elevated to `pub` scope
- - introduce (enabled by default) Coordinated Omission Mitigation, configured through `--co-mitigation` with the following options: "disabled" (earlier default, pre-0.12.0), "average" (current default), "minimum", "maximum"; (or with `GooseDefault::CoordinatedOmissionMitigation`)
-  - Coordinated Omission Mitigation tracks the cadence that a GooseUser loops through all GooseTasks, (also accounting for time spent sleeping due to `.set_wait_time()`); it detects stalls (network or upstream server) that block and prevent other requests from running, and backfills the metrics to mitigate this loss of data ([based on the general implementation found in HdrHistogram](https://github.com/HdrHistogram/HdrHistogram_rust/blob/9c09314ac91848fd696b699892414cb337d9abce/src/lib.rs#L916)
+ - introduce (disabled by default) Coordinated Omission Mitigation, configured through `--co-mitigation` with the following options: "disabled" (default0), "average", "minimum", "maximum"; (or with `GooseDefault::CoordinatedOmissionMitigation`)
+  - (EXPERIMENTAL) Coordinated Omission Mitigation tracks the cadence that a GooseUser loops through all GooseTasks, (also accounting for time spent sleeping due to `.set_wait_time()`); it detects stalls (network or upstream server) that block and prevent other requests from running, and backfills the metrics to mitigate this loss of data ([based on the general implementation found in HdrHistogram](https://github.com/HdrHistogram/HdrHistogram_rust/blob/9c09314ac91848fd696b699892414cb337d9abce/src/lib.rs#L916)
   - When displaying metrics (via the cli and the html report) show both "raw" (actual) metrics and "coordinated omission mitigation" (back-filled with statistically generated) metrics, and the standard deviation between the average times for each
   - introduce `GooseLog` enum for sending `GooseDebug`, `GooseRequestMetric` and `GooseTaskMetric` objects to the Logger thread for logging to file
   - introduce `--tasks-file` run-time option for logging `GooseTaskMetric`s to file
