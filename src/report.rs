@@ -393,7 +393,7 @@ pub fn errors_template(error_rows: &str) -> String {
 }
 
 /// Build an individual error row in the html report.
-pub fn error_row(error: &metrics::GooseErrorMetric) -> String {
+pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
     format!(
         r#"<tr>
         <td>{occurrences}</td>

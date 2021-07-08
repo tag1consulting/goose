@@ -140,7 +140,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 use crate::goose::GooseDebug;
-use crate::metrics::{GooseRequestMetric, GooseTaskMetric};
+use crate::metrics::{GooseErrorMetric, GooseRequestMetric, GooseTaskMetric};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
 /// Optional unbounded receiver for logger thread, if debug logger is enabled.
@@ -154,6 +154,7 @@ pub(crate) type GooseLoggerTx = Option<flume::Sender<Option<GooseLog>>>;
 #[derive(Debug, Deserialize, Serialize)]
 pub enum GooseLog {
     Debug(GooseDebug),
+    Error(GooseErrorMetric),
     Request(GooseRequestMetric),
     Task(GooseTaskMetric),
 }
@@ -195,6 +196,24 @@ impl FromStr for GooseLogFormat {
 fn debug_csv_header() -> String {
     // No quotes needed in header.
     format!("{},{},{},{}", "tag", "request", "header", "body")
+}
+
+// @TODO this should be automatically derived from the structure.
+fn error_csv_header() -> String {
+    // No quotes needed in header.
+    format!(
+        "{},{},{},{},{},{},{},{},{},{}",
+        "elapsed",
+        "method",
+        "name",
+        "url",
+        "final_url",
+        "redirected",
+        "response_time",
+        "status_code",
+        "user",
+        "error",
+    )
 }
 
 // @TODO this should be automatically derived from the structure.
@@ -268,6 +287,43 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
         format!(
             "\"{}\",\"{:?}\",\"{:?}\",\"{:?}\"",
             debug.tag, debug.request, debug.header, debug.body
+        )
+    }
+}
+/// Traits for GooseErrorMetric logs.
+impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
+    /// Converts a GooseErrorMetric structure to a formatted string.
+    fn format_message(&self, message: GooseErrorMetric) -> String {
+        if let Some(error_format) = self.error_format.as_ref() {
+            match error_format {
+                // Use serde_json to create JSON.
+                GooseLogFormat::Json => json!(message).to_string(),
+                // Raw format is Debug output for GooseErrorMetric structure.
+                GooseLogFormat::Raw => format!("{:?}", message),
+                // Not yet implemented.
+                GooseLogFormat::Csv => self.prepare_csv(&message),
+            }
+        } else {
+            // A log format is required.
+            unreachable!()
+        }
+    }
+
+    /// Converts a GooseErrorMetric structure to a CSV row.
+    fn prepare_csv(&self, request: &GooseErrorMetric) -> String {
+        format!(
+            // Put quotes around name, url, final_url and error as they are strings.
+            "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},\"{}\"",
+            request.elapsed,
+            request.method,
+            request.name,
+            request.url,
+            request.final_url,
+            request.redirected,
+            request.response_time,
+            request.status_code,
+            request.user,
+            request.error,
         )
     }
 }
@@ -483,6 +539,18 @@ impl GooseConfiguration {
             }
         }
 
+        // If the error_file is enabled, allocate a buffer and open the file.
+        let mut error_file = self
+            .open_log_file(&self.error_file, "error file", 64 * 1024)
+            .await;
+        // If the requests_file is a CSV, write the header.
+        if self.error_format == Some(GooseLogFormat::Csv) {
+            if let Some(log_file) = error_file.as_mut() {
+                // @TODO: error handling when writing to log fails.
+                let _ = self.write_to_log_file(log_file, error_csv_header()).await;
+            }
+        }
+
         // If the requests_file is enabled, allocate a buffer and open the file.
         let mut requests_file = self
             .open_log_file(&self.requests_file, "requests file", 64 * 1024)
@@ -518,6 +586,10 @@ impl GooseConfiguration {
                         formatted_message = self.format_message(debug_message).to_string();
                         debug_file.as_mut()
                     }
+                    GooseLog::Error(error_message) => {
+                        formatted_message = self.format_message(error_message).to_string();
+                        error_file.as_mut()
+                    }
                     GooseLog::Request(request_message) => {
                         formatted_message = self.format_message(request_message).to_string();
                         requests_file.as_mut()
@@ -540,6 +612,12 @@ impl GooseConfiguration {
         if let Some(debug_log_file) = debug_file.as_mut() {
             info!("flushing debug_file: {}", &self.debug_file);
             let _ = debug_log_file.flush().await;
+        };
+
+        // Flush error logs to disk if enabled.
+        if let Some(error_log_file) = error_file.as_mut() {
+            info!("flushing error_file: {}", &self.error_file);
+            let _ = error_log_file.flush().await;
         };
 
         // Flush requests log to disk if enabled.
