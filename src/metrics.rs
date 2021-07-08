@@ -2329,7 +2329,7 @@ impl GooseAttack {
     ) {
         // If error-file is enabled, convert the raw request to a GooseErrorMetric and send it
         // to the logger thread.
-        if !self.configuration.error_file.is_empty() {
+        if !self.configuration.error_log.is_empty() {
             if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
                 // This is a best effort logger attempt, if the logger has alrady shut down it
                 // will fail which we ignore.

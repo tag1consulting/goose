@@ -1633,7 +1633,7 @@ impl GooseUser {
 
     fn send_request_metric_to_parent(&self, request_metric: GooseRequestMetric) -> GooseTaskResult {
         // If requests-file is enabled, send a copy of the raw request to the logger thread.
-        if !self.config.requests_file.is_empty() {
+        if !self.config.request_log.is_empty() {
             if let Some(logger) = self.logger.as_ref() {
                 logger.send(Some(GooseLog::Request(request_metric.clone())))?;
             }
@@ -1871,7 +1871,7 @@ impl GooseUser {
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> GooseTaskResult {
-        if !self.config.debug_file.is_empty() {
+        if !self.config.debug_log.is_empty() {
             // Logger is not defined when running
             // [`test_start`](../struct.GooseAttack.html#method.test_start),
             // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.

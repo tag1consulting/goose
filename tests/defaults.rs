@@ -19,8 +19,8 @@ const USERS: usize = 3;
 const RUN_TIME: usize = 3;
 const HATCH_RATE: &str = "10";
 const LOG_LEVEL: usize = 0;
-const METRICS_FILE: &str = "metrics-test.log";
-const DEBUG_FILE: &str = "debug-test.log";
+const REQUEST_LOG: &str = "request-test.log";
+const DEBUG_LOG: &str = "debug-test.log";
 const LOG_FORMAT: GooseLogFormat = GooseLogFormat::Raw;
 const THROTTLE_REQUESTS: usize = 10;
 const EXPECT_WORKERS: usize = 2;
@@ -140,11 +140,11 @@ fn validate_test(
 // Configure load test with set_default.
 fn test_defaults() {
     // Multiple tests run together, so set a unique name.
-    let requests_file = "defaults-".to_string() + METRICS_FILE;
-    let debug_file = "defaults-".to_string() + DEBUG_FILE;
+    let request_log = "defaults-".to_string() + REQUEST_LOG;
+    let debug_log = "defaults-".to_string() + DEBUG_LOG;
 
     // Be sure there's no files left over from an earlier test.
-    common::cleanup_files(vec![&requests_file, &debug_file]);
+    common::cleanup_files(vec![&request_log, &debug_log]);
 
     let server = MockServer::start();
 
@@ -174,11 +174,11 @@ fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::LogLevel, LOG_LEVEL)
         .unwrap()
-        .set_default(GooseDefault::RequestsFile, requests_file.as_str())
+        .set_default(GooseDefault::RequestLog, request_log.as_str())
         .unwrap()
         .set_default(GooseDefault::RequestsFormat, LOG_FORMAT)
         .unwrap()
-        .set_default(GooseDefault::DebugFile, debug_file.as_str())
+        .set_default(GooseDefault::DebugLog, debug_log.as_str())
         .unwrap()
         .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
         .unwrap()
@@ -204,12 +204,7 @@ fn test_defaults() {
         .execute()
         .unwrap();
 
-    validate_test(
-        goose_metrics,
-        &mock_endpoints,
-        &[requests_file],
-        &[debug_file],
-    );
+    validate_test(goose_metrics, &mock_endpoints, &[request_log], &[debug_log]);
 }
 
 #[test]
@@ -218,14 +213,14 @@ fn test_defaults() {
 // Configure load test with set_default, run as Gaggle.
 fn test_defaults_gaggle() {
     // Multiple tests run together, so set a unique name.
-    let requests_file = "gaggle-defaults".to_string() + METRICS_FILE;
-    let debug_file = "gaggle-defaults".to_string() + DEBUG_FILE;
+    let request_log = "gaggle-defaults".to_string() + REQUEST_LOG;
+    let debug_log = "gaggle-defaults".to_string() + DEBUG_LOG;
 
     // Be sure there's no files left over from an earlier test.
     for i in 0..EXPECT_WORKERS {
-        let file = requests_file.to_string() + &i.to_string();
+        let file = request_log.to_string() + &i.to_string();
         common::cleanup_files(vec![&file]);
-        let file = debug_file.to_string() + &i.to_string();
+        let file = debug_log.to_string() + &i.to_string();
         common::cleanup_files(vec![&file]);
     }
 
@@ -250,8 +245,8 @@ fn test_defaults_gaggle() {
     let mut worker_handles = Vec::new();
     for i in 0..EXPECT_WORKERS {
         let worker_configuration = configuration.clone();
-        let worker_requests_file = requests_file.clone() + &i.to_string();
-        let worker_debug_file = debug_file.clone() + &i.to_string();
+        let worker_request_log = request_log.clone() + &i.to_string();
+        let worker_debug_log = debug_log.clone() + &i.to_string();
         worker_handles.push(std::thread::spawn(move || {
             let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
@@ -260,13 +255,13 @@ fn test_defaults_gaggle() {
                 // Start at least two users, required to run both TaskSets.
                 .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
                 .unwrap()
-                .set_default(GooseDefault::DebugFile, worker_debug_file.as_str())
+                .set_default(GooseDefault::DebugLog, worker_debug_log.as_str())
                 .unwrap()
                 .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
                 .unwrap()
                 .set_default(GooseDefault::NoDebugBody, true)
                 .unwrap()
-                .set_default(GooseDefault::RequestsFile, worker_requests_file.as_str())
+                .set_default(GooseDefault::RequestLog, worker_request_log.as_str())
                 .unwrap()
                 .set_default(GooseDefault::RequestsFormat, LOG_FORMAT)
                 .unwrap()
@@ -329,28 +324,23 @@ fn test_defaults_gaggle() {
         let _ = worker_handle.join();
     }
 
-    let mut requests_files: Vec<String> = vec![];
-    let mut debug_files: Vec<String> = vec![];
+    let mut request_logs: Vec<String> = vec![];
+    let mut debug_logs: Vec<String> = vec![];
     for i in 0..EXPECT_WORKERS {
-        let file = requests_file.to_string() + &i.to_string();
-        requests_files.push(file);
-        let file = debug_file.to_string() + &i.to_string();
-        debug_files.push(file);
+        let file = request_log.to_string() + &i.to_string();
+        request_logs.push(file);
+        let file = debug_log.to_string() + &i.to_string();
+        debug_logs.push(file);
     }
-    validate_test(
-        goose_metrics,
-        &mock_endpoints,
-        &requests_files,
-        &debug_files,
-    );
+    validate_test(goose_metrics, &mock_endpoints, &request_logs, &debug_logs);
 }
 
 #[test]
 // Configure load test with run time options (not with defaults).
 fn test_no_defaults() {
     // Multiple tests run together, so set a unique name.
-    let requests_file = "nodefaults-".to_string() + METRICS_FILE;
-    let debug_file = "nodefaults-".to_string() + DEBUG_FILE;
+    let requests_file = "nodefaults-".to_string() + REQUEST_LOG;
+    let debug_file = "nodefaults-".to_string() + DEBUG_LOG;
 
     // Be sure there's no files left over from an earlier test.
     common::cleanup_files(vec![&requests_file, &debug_file]);
@@ -369,11 +359,11 @@ fn test_no_defaults() {
             &HATCH_RATE.to_string(),
             "--run-time",
             &RUN_TIME.to_string(),
-            "--requests-file",
+            "--request-log",
             &requests_file,
-            "--requests-format",
+            "--request-format",
             &format!("{:?}", LOG_FORMAT),
-            "--debug-file",
+            "--debug-log",
             &debug_file,
             "--debug-format",
             &format!("{:?}", LOG_FORMAT),
@@ -409,8 +399,8 @@ fn test_no_defaults() {
 #[serial]
 // Configure load test with run time options (not with defaults), run as Gaggle.
 fn test_no_defaults_gaggle() {
-    let requests_file = "gaggle-nodefaults".to_string() + METRICS_FILE;
-    let debug_file = "gaggle-nodefaults".to_string() + DEBUG_FILE;
+    let requests_file = "gaggle-nodefaults".to_string() + REQUEST_LOG;
+    let debug_file = "gaggle-nodefaults".to_string() + DEBUG_LOG;
 
     // Be sure there's no files left over from an earlier test.
     for i in 0..EXPECT_WORKERS {
@@ -441,11 +431,11 @@ fn test_no_defaults_gaggle() {
                 &HOST.to_string(),
                 "--manager-port",
                 &PORT.to_string(),
-                "--requests-file",
+                "--request-log",
                 &worker_requests_file,
-                "--requests-format",
+                "--request-format",
                 &format!("{:?}", LOG_FORMAT),
-                "--debug-file",
+                "--debug-log",
                 &worker_debug_file,
                 "--debug-format",
                 &format!("{:?}", LOG_FORMAT),

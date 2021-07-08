@@ -32,10 +32,10 @@ enum TestType {
 }
 
 struct LogFiles<'a> {
-    requests_files: &'a [String],
-    tasks_files: &'a [String],
-    error_files: &'a [String],
-    debug_files: &'a [String],
+    request_logs: &'a [String],
+    task_logs: &'a [String],
+    error_logs: &'a [String],
+    debug_logs: &'a [String],
 }
 
 // Implement fmt::Display for TestType to uniquely name the log files generated
@@ -120,11 +120,11 @@ fn validate_test(
     match test_type {
         TestType::Debug => {
             // Debug file must exist.
-            assert!(!log_files.debug_files.is_empty());
+            assert!(!log_files.debug_logs.is_empty());
 
             // Confirm the debug log files actually exist.
             let mut debug_file_lines = 0;
-            for debug_file in log_files.debug_files {
+            for debug_file in log_files.debug_logs {
                 assert!(std::path::Path::new(debug_file).exists());
                 debug_file_lines += common::file_length(debug_file);
             }
@@ -133,24 +133,24 @@ fn validate_test(
         }
         TestType::Requests => {
             // Requests file must exist.
-            assert!(!log_files.requests_files.is_empty());
+            assert!(!log_files.request_logs.is_empty());
 
             // Confirm the requests log files actually exist.
             let mut requests_file_lines = 0;
-            for requests_file in log_files.requests_files {
-                assert!(std::path::Path::new(requests_file).exists());
-                requests_file_lines += common::file_length(requests_file);
+            for request_log in log_files.request_logs {
+                assert!(std::path::Path::new(request_log).exists());
+                requests_file_lines += common::file_length(request_log);
             }
             // Metrics file must not be empty.
             assert!(requests_file_lines > 0);
         }
         TestType::Tasks => {
             // Tasks file must exist.
-            assert!(!log_files.tasks_files.is_empty());
+            assert!(!log_files.task_logs.is_empty());
 
             // Confirm the tasks log files actually exist.
             let mut tasks_file_lines = 0;
-            for tasks_file in log_files.tasks_files {
+            for tasks_file in log_files.task_logs {
                 assert!(std::path::Path::new(tasks_file).exists());
                 tasks_file_lines += common::file_length(tasks_file);
             }
@@ -159,11 +159,11 @@ fn validate_test(
         }
         TestType::Error => {
             // Error file must exist.
-            assert!(!log_files.error_files.is_empty());
+            assert!(!log_files.error_logs.is_empty());
 
             // Confirm the error log files actually exist.
             let mut error_file_lines = 0;
-            for error_file in log_files.error_files {
+            for error_file in log_files.error_logs {
                 assert!(std::path::Path::new(error_file).exists());
                 error_file_lines += common::file_length(error_file);
             }
@@ -172,46 +172,46 @@ fn validate_test(
         }
         TestType::All => {
             // Debug file must exist.
-            assert!(!log_files.debug_files.is_empty());
+            assert!(!log_files.debug_logs.is_empty());
             // Error file must exist.
-            assert!(!log_files.error_files.is_empty());
+            assert!(!log_files.error_logs.is_empty());
             // Requests file must exist.
-            assert!(!log_files.requests_files.is_empty());
+            assert!(!log_files.request_logs.is_empty());
             // Tasks file must exist.
-            assert!(!log_files.tasks_files.is_empty());
+            assert!(!log_files.task_logs.is_empty());
 
             // Confirm the debug log files actually exist.
             let mut debug_file_lines = 0;
-            for debug_file in log_files.debug_files {
-                assert!(std::path::Path::new(debug_file).exists());
-                debug_file_lines += common::file_length(debug_file);
+            for debug_log in log_files.debug_logs {
+                assert!(std::path::Path::new(debug_log).exists());
+                debug_file_lines += common::file_length(debug_log);
             }
             // Debug file must not be empty.
             assert!(debug_file_lines > 0);
 
             // Confirm the error log files actually exist.
             let mut error_file_lines = 0;
-            for error_file in log_files.error_files {
-                assert!(std::path::Path::new(error_file).exists());
-                error_file_lines += common::file_length(error_file);
+            for error_log in log_files.error_logs {
+                assert!(std::path::Path::new(error_log).exists());
+                error_file_lines += common::file_length(error_log);
             }
             // Error file must not be empty.
             assert!(error_file_lines > 0);
 
             // Confirm the requests log files actually exist.
             let mut requests_file_lines = 0;
-            for requests_file in log_files.requests_files {
-                assert!(std::path::Path::new(requests_file).exists());
-                requests_file_lines += common::file_length(requests_file);
+            for request_log in log_files.request_logs {
+                assert!(std::path::Path::new(request_log).exists());
+                requests_file_lines += common::file_length(request_log);
             }
             // Requests file must not be empty.
             assert!(requests_file_lines > 0);
 
             // Confirm the tasks log files actually exist.
             let mut tasks_file_lines = 0;
-            for tasks_file in log_files.tasks_files {
-                assert!(std::path::Path::new(tasks_file).exists());
-                tasks_file_lines += common::file_length(tasks_file);
+            for tasks_log in log_files.task_logs {
+                assert!(std::path::Path::new(tasks_log).exists());
+                tasks_file_lines += common::file_length(tasks_log);
             }
             // Task file must not be empty.
             assert!(tasks_file_lines > 0);
@@ -221,40 +221,35 @@ fn validate_test(
 
 // Helper to run all standalone tests.
 fn run_standalone_test(test_type: TestType, format: &str) {
-    let requests_file = test_type.to_string() + "-requests-log." + format;
-    let tasks_file = test_type.to_string() + "-tasks-log." + format;
-    let debug_file = test_type.to_string() + "-debug-log." + format;
-    let error_file = test_type.to_string() + "-error-log." + format;
+    let request_log = test_type.to_string() + "-request-log." + format;
+    let task_log = test_type.to_string() + "-task-log." + format;
+    let debug_log = test_type.to_string() + "-debug-log." + format;
+    let error_log = test_type.to_string() + "-error-log." + format;
 
     let server = MockServer::start();
 
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     let mut configuration_flags = match test_type {
-        TestType::Debug => vec!["--debug-file", &debug_file, "--debug-format", format],
-        TestType::Error => vec!["--error-file", &error_file, "--error-format", format],
-        TestType::Requests => vec![
-            "--requests-file",
-            &requests_file,
-            "--requests-format",
-            format,
-        ],
-        TestType::Tasks => vec!["--tasks-file", &tasks_file, "--tasks-format", format],
+        TestType::Debug => vec!["--debug-log", &debug_log, "--debug-format", format],
+        TestType::Error => vec!["--error-log", &error_log, "--error-format", format],
+        TestType::Requests => vec!["--request-log", &request_log, "--request-format", format],
+        TestType::Tasks => vec!["--task-log", &task_log, "--task-format", format],
         TestType::All => vec![
-            "--requests-file",
-            &requests_file,
-            "--requests-format",
+            "--request-log",
+            &request_log,
+            "--request-format",
             format,
-            "--tasks-file",
-            &tasks_file,
-            "--tasks-format",
+            "--task-log",
+            &task_log,
+            "--task-format",
             format,
-            "--error-file",
-            &error_file,
+            "--error-log",
+            &error_log,
             "--error-format",
             format,
-            "--debug-file",
-            &debug_file,
+            "--debug-log",
+            &debug_log,
             "--debug-format",
             format,
         ],
@@ -269,21 +264,21 @@ fn run_standalone_test(test_type: TestType, format: &str) {
     );
 
     let log_files = LogFiles {
-        requests_files: &[requests_file.to_string()],
-        tasks_files: &[tasks_file.to_string()],
-        error_files: &[error_file.to_string()],
-        debug_files: &[debug_file.to_string()],
+        request_logs: &[request_log.to_string()],
+        task_logs: &[task_log.to_string()],
+        error_logs: &[error_log.to_string()],
+        debug_logs: &[debug_log.to_string()],
     };
 
     validate_test(goose_metrics, &mock_endpoints, &test_type, &log_files);
 
-    common::cleanup_files(vec![&requests_file, &tasks_file, &error_file, &debug_file]);
+    common::cleanup_files(vec![&request_log, &task_log, &error_log, &debug_log]);
 }
 
 // Helper to run all gaggle tests.
 fn run_gaggle_test(test_type: TestType, format: &str) {
-    let requests_file = test_type.to_string() + "-gaggle-requests-log." + format;
-    let tasks_file = test_type.to_string() + "-gaggle-tasks-log." + format;
+    let requests_file = test_type.to_string() + "-gaggle-request-log." + format;
+    let tasks_file = test_type.to_string() + "-gaggle-task-log." + format;
     let error_file = test_type.to_string() + "-gaggle-error-log." + format;
     let debug_file = test_type.to_string() + "-gaggle-debug-log." + format;
 
@@ -312,47 +307,47 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
         let worker_configuration_flags = match test_type {
             TestType::Debug => vec![
                 "--worker",
-                "--debug-file",
+                "--debug-log",
                 &worker_debug_file,
                 "--debug-format",
                 format,
             ],
             TestType::Error => vec![
                 "--worker",
-                "--error-file",
+                "--error-log",
                 &worker_error_file,
                 "--error-format",
                 format,
             ],
             TestType::Requests => vec![
                 "--worker",
-                "--requests-file",
+                "--request-log",
                 &worker_requests_file,
-                "--requests-format",
+                "--request-format",
                 format,
             ],
             TestType::Tasks => vec![
                 "--worker",
-                "--tasks-file",
+                "--task-log",
                 &worker_tasks_file,
-                "--tasks-format",
+                "--task-format",
                 format,
             ],
             TestType::All => vec![
                 "--worker",
-                "--requests-file",
+                "--request-log",
                 &worker_requests_file,
-                "--requests-format",
+                "--request-format",
                 format,
-                "--tasks-file",
+                "--task-log",
                 &worker_tasks_file,
-                "--tasks-format",
+                "--task-format",
                 format,
-                "--error-file",
+                "--error-log",
                 &worker_error_file,
                 "--error-format",
                 format,
-                "--debug-file",
+                "--debug-log",
                 &worker_debug_file,
                 "--debug-format",
                 format,
@@ -391,10 +386,10 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
     let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles));
 
     let log_files = LogFiles {
-        requests_files: &requests_files,
-        tasks_files: &tasks_files,
-        error_files: &error_files,
-        debug_files: &debug_files,
+        request_logs: &requests_files,
+        task_logs: &tasks_files,
+        error_logs: &error_files,
+        debug_logs: &debug_files,
     };
 
     validate_test(goose_metrics, &mock_endpoints, &test_type, &log_files);
