@@ -599,7 +599,16 @@ The following example was "contrived". The `drupal_loadtest` example was run for
  Aggregated               |      432.98 |     294.11 |       3,390 |         14
  ```
 
-From these two tables, it is clear that there was a statistically significant event affecting the load testing metrics. In particular, note that the standard deviation between the "raw" average and the "adjusted" average is considerably larger than the "raw" average, calling into questing whether or not your load test was "valid". (The answer to that question depends very much on your specific goals and load test.)
+Note: It is beyond the scope of Goose to test for statistically significant changes in the right-tail, or other locations, of the distribution of response times.  Goose produces the raw data you need to conduct these tests.
+
+Nonetheless, for users interested in establishing if there was an event(s) affecting the shape of the distribution of load test metrics (by a statistically significant amount): The following program is a reasonable starting point.
+
+1. Run a test in circumstances where you believe the test can serve as a baseline sample from the 'healthy' state, record the raw response data (record the CO-adjusted data if using the minimum 'cadence' to adjust for CO).
+2. Run a test in circumstances where you want to compare the distribution of response times against your baseline sample, record the CO-adjusted response data.
+
+Use a [Kolmogorov-Smirnov](https://www.itl.nist.gov/div898/handbook/eda/section3/eda35g.htm), [Anderson-Darling](https://www.itl.nist.gov/div898/handbook/eda/section3/eda35e.htm) or some such test to establish if the two sample distributions are different. Take care to adjust the test statistic distribution for any differences in sample sizes (non-trivial). Alternatively, take care to ensure the two runs produce samples of the same size (generally feasible, but do take into account the CO-adjustment process backfills data).
+
+The KS and AD tests assume the two data samples are independent of one another. However, Goose produces the CO-adjusted data from the raw data.  Hence, obviously, the CO-adjusted data is not independent of the raw data produced in the same test/run.
 
 Goose also shows multiple percentile graphs, again showing first the "raw" metrics followed by the "adjusted" metrics. The "raw" graph would suggest that less than 1% of the requests for the `GET (Anon) node page` were slow, and less than 0.1% of the requests for the `GET (Auth) node page` were slow. However, through Coordinated Omission Mitigation we can see that statistically this would have actually affected all requests, and for authenticated users the impact is visible on >25% of the requests.
 
