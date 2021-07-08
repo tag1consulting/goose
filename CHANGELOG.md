@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.12.0
+## 0.12.1-dev
+
+## 0.12.0 July 8, 2021
  - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library (API change)
     o `goose::initialize_logger()`, `Socket` reduced to `pub(crate)` scope
     o `goose::controller::GooseControllerProtocol`, `GooseControllerRequestMessage`, `GooseControllerResponseMessage`, `GooseControllerRequest`, `GooseControllerResponse`, `GooseControllerState`, `::controller_main()` reduced to `pub(crate)` scope
