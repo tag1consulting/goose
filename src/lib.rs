@@ -72,7 +72,7 @@
 //!   let _goose = user.get("/path/to/foo").await?;
 //!
 //!   Ok(())
-//! }   
+//! }
 //! ```
 //!
 //! In the above example, we're using the [`GooseUser`](./goose/struct.GooseUser.html) helper
@@ -94,7 +94,7 @@
 //!     let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
 //!
 //!     Ok(())
-//! }   
+//! }
 //! ```
 //!
 //! We pass the [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
@@ -134,14 +134,14 @@
 //!     let _goose = user.get("/path/to/foo").await?;
 //!
 //!     Ok(())
-//! }   
+//! }
 //!
 //! // A task function that loads `/path/to/bar`.
 //! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/path/to/bar").await?;
 //!
 //!     Ok(())
-//! }   
+//! }
 //! ```
 //!
 //! Goose now spins up a configurable number of users, each simulating a user on your
