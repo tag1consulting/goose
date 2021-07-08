@@ -89,7 +89,7 @@ fn main() -> Result<(), GooseError> {
         )
         .execute()?
         .print();
-    
+
     Ok(())
 }
 ```
@@ -114,58 +114,58 @@ $ cargo run -- --host http://local.dev/
      Running `target/debug/loadtest --host 'http://local.dev/'`
 
 === PER TASK METRICS ===
------------------------------------------------------------------------------- 
+------------------------------------------------------------------------------
  Name                    | # times run    | # fails        | task/s | fail/s
- ----------------------------------------------------------------------------- 
+ -----------------------------------------------------------------------------
  1: LoadtestTasks        |
    1:                    | 2,240          | 0 (0%)         | 280.0  | 0.000
 -------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median    
- ----------------------------------------------------------------------------- 
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
  1: LoadtestTasks        |
-   1:                    | 15.54      | 6          | 136        | 14        
+   1:                    | 15.54      | 6          | 136        | 14
 
 === PER REQUEST METRICS ===
------------------------------------------------------------------------------- 
+------------------------------------------------------------------------------
  Name                    | # reqs         | # fails        | req/s  | fail/s
- ----------------------------------------------------------------------------- 
+ -----------------------------------------------------------------------------
  GET /                   | 2,240          | 0 (0%)         | 280.0  | 0.000
 -------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median    
- ----------------------------------------------------------------------------- 
- GET /                   | 15.30      | 6          | 135        | 14        
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
+ GET /                   | 15.30      | 6          | 135        | 14
 
 All 8 users hatched, resetting metrics (disable with --no-reset-metrics).
 
 ^C06:03:25 [ WARN] caught ctrl-c, stopping...
 
 === PER TASK METRICS ===
------------------------------------------------------------------------------- 
+------------------------------------------------------------------------------
  Name                    | # times run    | # fails        | task/s | fail/s
- ----------------------------------------------------------------------------- 
+ -----------------------------------------------------------------------------
  1: LoadtestTasks        |
    1:                    | 2,054          | 0 (0%)         | 410.8  | 0.000
 -------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median    
- ----------------------------------------------------------------------------- 
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
  1: LoadtestTasks        |
-   1:                    | 20.86      | 7          | 254        | 19        
+   1:                    | 20.86      | 7          | 254        | 19
 
 === PER REQUEST METRICS ===
------------------------------------------------------------------------------- 
+------------------------------------------------------------------------------
  Name                    | # reqs         | # fails        | req/s  | fail/s
- ----------------------------------------------------------------------------- 
+ -----------------------------------------------------------------------------
  GET /                   | 2,054          | 0 (0%)         | 410.8  | 0.000
 -------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median    
- ----------------------------------------------------------------------------- 
- GET /                   | 20.68      | 7          | 254        | 19        
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
+ GET /                   | 20.68      | 7          | 254        | 19
 -------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
  Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
- ----------------------------------------------------------------------------- 
- GET /                   | 19     | 21     | 53     | 69     | 250    | 250   
+ -----------------------------------------------------------------------------
+ GET /                   | 19     | 21     | 53     | 69     | 250    | 250
 ```
 
 By default, Goose will hatch 1 GooseUser per second, up to the number of CPU cores available on the server used for load testing. In the above example, the server has 8 CPU cores, so it took 8 seconds to hatch all users. After all users are hatched, Goose flushes all metrics collected during the hatching process so all subsequent metrics are taken with all users running. Before flushing the metrics, they are displayed to the console so the data is not lost.
@@ -263,10 +263,10 @@ top - 06:56:06 up 15 days,  3:13,  2 users,  load average: 0.22, 0.10, 0.04
 Tasks: 116 total,   3 running, 113 sleeping,   0 stopped,   0 zombie
 %Cpu(s):  1.7 us,  0.7 sy,  0.0 ni, 96.7 id,  0.0 wa,  0.0 hi,  1.0 si,  0.0 st
 MiB Mem :   9994.9 total,   7836.8 free,   1101.2 used,   1056.9 buff/cache
-MiB Swap:  10237.0 total,  10237.0 free,      0.0 used.   8606.9 avail Mem 
+MiB Swap:  10237.0 total,  10237.0 free,      0.0 used.   8606.9 avail Mem
 
-  PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND    
- 1339 goose     20   0 1235480 758292   8984 R   3.0   7.4   0:06.56 simple     
+  PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+ 1339 goose     20   0 1235480 758292   8984 R   3.0   7.4   0:06.56 simple
 ```
 
 Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to start tracking the 10m run-time from when the first user starts, instead of the default which is to flush all metrics and start timing after all users have started. And finally, the `--only-summary` flag tells Goose to only display the final metrics after the load test finishes, otherwise it would display running metrics every 15 seconds for the duration of the test.
@@ -307,58 +307,58 @@ All 1024 users hatched.
 11:05:11 [ INFO] printing metrics after 601 seconds...
 
 === PER TASK METRICS ===
------------------------------------------------------------------------------- 
+------------------------------------------------------------------------------
  Name                    | # times run    | # fails        | task/s | fail/s
- ----------------------------------------------------------------------------- 
+ -----------------------------------------------------------------------------
  1: WebsiteUser          |
    1:                    | 1,024          | 0 (0%)         | 1.707  | 0.000
    2:                    | 28,746         | 0 (0%)         | 47.91  | 0.000
    3:                    | 28,748         | 0 (0%)         | 47.91  | 0.000
- ------------------------+----------------+----------------+--------+--------- 
+ ------------------------+----------------+----------------+--------+---------
  Aggregated              | 58,518         | 0 (0%)         | 97.53  | 0.000
 -------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median    
- ----------------------------------------------------------------------------- 
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
  1: WebsiteUser          |
-   1:                    | 5.995      | 5          | 37         | 6         
-   2:                    | 0.428      | 0          | 17         | 0         
-   3:                    | 0.360      | 0          | 37         | 0         
- ------------------------+------------+------------+------------+------------- 
- Aggregated              | 0.492      | 5          | 37         | 5         
+   1:                    | 5.995      | 5          | 37         | 6
+   2:                    | 0.428      | 0          | 17         | 0
+   3:                    | 0.360      | 0          | 37         | 0
+ ------------------------+------------+------------+------------+-------------
+ Aggregated              | 0.492      | 5          | 37         | 5
 
 === PER REQUEST METRICS ===
------------------------------------------------------------------------------- 
+------------------------------------------------------------------------------
  Name                    | # reqs         | # fails        | req/s  | fail/s
- ----------------------------------------------------------------------------- 
+ -----------------------------------------------------------------------------
  GET /                   | 28,746         | 0 (0%)         | 47.91  | 0.000
  GET /about/             | 28,748         | 0 (0%)         | 47.91  | 0.000
  POST /login             | 1,024          | 0 (0%)         | 1.707  | 0.000
- ------------------------+----------------+----------------+--------+--------- 
+ ------------------------+----------------+----------------+--------+---------
  Aggregated              | 58,518         | 29,772 (50.9%) | 97.53  | 49.62
 -------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median    
- ----------------------------------------------------------------------------- 
- GET /                   | 0.412      | 0          | 17         | 0         
- GET /about/             | 0.348      | 0          | 37         | 0         
- POST /login             | 5.979      | 5          | 37         | 6         
- ------------------------+------------+------------+------------+------------- 
- Aggregated              | 0.478      | 5          | 37         | 5         
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
+ GET /                   | 0.412      | 0          | 17         | 0
+ GET /about/             | 0.348      | 0          | 37         | 0
+ POST /login             | 5.979      | 5          | 37         | 6
+ ------------------------+------------+------------+------------+-------------
+ Aggregated              | 0.478      | 5          | 37         | 5
 -------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
  Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
- ----------------------------------------------------------------------------- 
- GET /                   | 0      | 1      | 3      | 4      | 5      | 5     
- GET /about/             | 0      | 0      | 3      | 3      | 5      | 5     
- POST /login             | 6      | 6      | 7      | 7      | 28     | 28    
- ------------------------+--------+--------+--------+--------+--------+------- 
- Aggregated              | 5      | 5      | 5      | 6      | 7      | 17    
+ -----------------------------------------------------------------------------
+ GET /                   | 0      | 1      | 3      | 4      | 5      | 5
+ GET /about/             | 0      | 0      | 3      | 3      | 5      | 5
+ POST /login             | 6      | 6      | 7      | 7      | 28     | 28
+ ------------------------+--------+--------+--------+--------+--------+-------
+ Aggregated              | 5      | 5      | 5      | 6      | 7      | 17
 -------------------------------------------------------------------------------
- Name                    | Status codes              
- ----------------------------------------------------------------------------- 
- GET /                   | 28,746 [200]             
- GET /about/             | 28,748 [200]             
- POST /login             | 1,024 [200]              
+ Name                    | Status codes
+ -----------------------------------------------------------------------------
+ GET /                   | 28,746 [200]
+ GET /about/             | 28,748 [200]
+ POST /login             | 1,024 [200]
 -------------------------------------------------------------------------------
  Aggregated              | 58,518 [200]
 ```
@@ -407,7 +407,7 @@ The following simple example helps illustrate how the different schedulers work.
         )
         .execute()?
         .print();
-    
+
     Ok(())
 ```
 
@@ -447,7 +447,7 @@ All run-time options can be configured with custom defaults. For example, you ma
         .set_default(GooseDefault::Host, "http://local.dev/")?
         .execute()?
         .print();
-    
+
     Ok(())
 ```
 
@@ -511,7 +511,7 @@ For example, without any run-time options the following load test would automati
         .set_default(GooseDefault::StatusCodes, true)?
         .execute()?
         .print();
-    
+
     Ok(())
 ```
 
@@ -656,7 +656,7 @@ To learn about all available commands, telnet into the Controller thread and ent
 Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
-goose> ?  
+goose> ?
 goose 0.11.2 controller commands:
  help (?)           this help
  exit (quit)        exit controller
@@ -671,7 +671,7 @@ goose 0.11.2 controller commands:
  config-json        display load test configuration in json format
  metrics            display metrics for current load test
  metrics-json       display metrics for current load test in json format
-goose> 
+goose>
 ```
 
 ### WebSocket Controller
@@ -683,14 +683,14 @@ The WebSocket Controller supports the same commands listed above. Requests and R
 Requests must be made in the following format:
 ```json
 {
-  "request": String, 
+  "request": String,
 }
 ```
 
 For example, a client should send the follow json to request the current load test metrics:
 ```json
 {
-  "request": "metrics", 
+  "request": "metrics",
 }
 ```
 
@@ -705,7 +705,7 @@ Responses will always be in the following format:
 For example:
 ```
 % websocat ws://127.0.0.1:5117
-foo   
+foo
 {"response":"unable to parse json, see Goose README.md","success":false}
 {"request": "foo"}
 {"response":"unrecognized command, see Goose README.md","success":false}
