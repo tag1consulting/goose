@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::{thread, time};
 
 use crate::metrics::{
-    self, GooseErrorMetric, GooseErrorMetrics, GooseRequestMetricAggregate, GooseRequestMetrics,
-    GooseTaskMetricAggregate, GooseTaskMetrics,
+    self, GooseErrorMetricAggregate, GooseErrorMetrics, GooseRequestMetricAggregate,
+    GooseRequestMetrics, GooseTaskMetricAggregate, GooseTaskMetrics,
 };
 use crate::util;
 use crate::worker::GaggleMetrics;
@@ -152,9 +152,9 @@ fn merge_requests_from_worker(
 
 /// Merge per-Worker errors into global Manager metrics
 fn merge_errors_from_worker(
-    manager_error: &GooseErrorMetric,
-    worker_error: &GooseErrorMetric,
-) -> GooseErrorMetric {
+    manager_error: &GooseErrorMetricAggregate,
+    worker_error: &GooseErrorMetricAggregate,
+) -> GooseErrorMetricAggregate {
     // Make a mutable copy where we can merge things
     let mut merged_error = manager_error.clone();
     // Add in how many additional times this happened on the Worker.

@@ -228,6 +228,18 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
     // The requests_format option is configured on the Worker.
     worker_goose_attack.configuration.requests_format =
         goose_attack.configuration.requests_format.clone();
+    // The tasks_file option is configured on the Worker.
+    worker_goose_attack.configuration.tasks_file =
+        goose_attack.configuration.tasks_file.to_string();
+    // The tasks_format option is configured on the Worker.
+    worker_goose_attack.configuration.tasks_format =
+        goose_attack.configuration.tasks_format.clone();
+    // The error_file option is configured on the Worker.
+    worker_goose_attack.configuration.error_file =
+        goose_attack.configuration.error_file.to_string();
+    // The error_format option is configured on the Worker.
+    worker_goose_attack.configuration.error_format =
+        goose_attack.configuration.error_format.clone();
     // The debug_file option is configured on the Worker.
     worker_goose_attack.configuration.debug_file =
         goose_attack.configuration.debug_file.to_string();

@@ -22,6 +22,7 @@ use std::{f32, fmt};
 use tokio::io::AsyncWriteExt;
 
 use crate::goose::{GooseMethod, GooseTaskSet};
+use crate::logger::GooseLog;
 use crate::report;
 use crate::util;
 #[cfg(feature = "gaggle")]
@@ -37,16 +38,14 @@ use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, Go
 ///
 /// The parent process will spend up to 80% of its time receiving and aggregating
 /// these metrics. The parent process aggregates [`GooseRequestMetric`]s into
-/// [`GooseRequestMetricAggregate`], and [`GooseTaskMetric`]s into
-/// [`GooseTaskMetricAggregate`]. [`GooseErrorMetric`]s do not require any further
-/// aggregation. Aggregation happens in the parent process so the individual
-/// [`GooseUser`](../goose/struct.GooseUser.html) threads can spend all their time
-/// generating and validating load.
+/// [`GooseRequestMetricAggregate`], [`GooseTaskMetric`]s into [`GooseTaskMetricAggregate`],
+/// and [`GooseErrorMetric`]s into [`GooseErrorMetricAggregate`]. Aggregation happens in the
+/// parent process so the individual [`GooseUser`](../goose/struct.GooseUser.html) threads
+/// can spend all their time generating and validating load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
     Request(GooseRequestMetric),
     Task(GooseTaskMetric),
-    Error(GooseErrorMetric),
 }
 
 /// Mitigate the loss of data (coordinated omission) due to stalls on the upstream server.
@@ -222,8 +221,8 @@ pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 /// All errors detected during a load test.
 ///
 /// By default Goose tracks all errors detected during the load test. Each error is stored
-/// as a [`GooseErrorMetric`](./struct.GooseErrorMetric.html), and they are all stored
-/// together within a `BTreeMap` which is returned by
+/// as a [`GooseErrorMetricAggregate`](./struct.GooseErrorMetricAggregate.html), and they
+/// are all stored together within a `BTreeMap` which is returned by
 /// [`GooseAttack::execute()`](../struct.GooseAttack.html#method.execute) when a load test
 /// completes.
 ///
@@ -242,7 +241,7 @@ pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 /// 715           POST (Auth) front page: 503 Service Unavailable: /user
 /// 36            GET (Anon) front page: error sending request for url (http://example.com/): connection closed before message completed
 /// ```
-pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetric>;
+pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetricAggregate>;
 
 /// For tracking and counting requests made during a load test.
 ///
@@ -2011,6 +2010,38 @@ impl fmt::Display for GooseMetrics {
     }
 }
 
+/// For tracking and counting requests made during a load test.
+///
+/// The request that Goose is making. User threads send this data to the parent thread
+/// when metrics are enabled. This request object must be provided to calls to
+/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
+/// or
+/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
+/// so Goose knows which request is being updated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GooseErrorMetric {
+    /// How many milliseconds the load test has been running.
+    pub elapsed: u64,
+    /// The method that was used (ie, Get, Post, etc).
+    pub method: GooseMethod,
+    /// The optional name of the request.
+    pub name: String,
+    /// The full URL that was requested.
+    pub url: String,
+    /// The final full URL that was requested, after redirects.
+    pub final_url: String,
+    /// Whether or not the request was redirected.
+    pub redirected: bool,
+    /// How many milliseconds the request took.
+    pub response_time: u64,
+    /// The HTTP response code (optional).
+    pub status_code: u16,
+    /// Which GooseUser thread processed the request.
+    pub user: usize,
+    /// The error caused by this request.
+    pub error: String,
+}
+
 /// For tracking and counting errors detected during a load test.
 ///
 /// When a load test completes, by default it will include a summary of all errors that
@@ -2039,7 +2070,7 @@ impl fmt::Display for GooseMetrics {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct GooseErrorMetric {
+pub struct GooseErrorMetricAggregate {
     /// The method that resulted in an error.
     pub method: GooseMethod,
     /// The optional name of the request.
@@ -2049,9 +2080,9 @@ pub struct GooseErrorMetric {
     /// A counter reflecting how many times this error occurred.
     pub occurrences: usize,
 }
-impl GooseErrorMetric {
+impl GooseErrorMetricAggregate {
     pub(crate) fn new(method: GooseMethod, name: String, error: String) -> Self {
-        GooseErrorMetric {
+        GooseErrorMetricAggregate {
             method,
             name,
             error,
@@ -2239,7 +2270,7 @@ impl GooseAttack {
                 GooseMetric::Request(request_metric) => {
                     // If there was an error, store it.
                     if !request_metric.error.is_empty() {
-                        self.record_error(&request_metric);
+                        self.record_error(&request_metric, goose_attack_run_state);
                     }
 
                     // If coordinated_omission_elapsed is non-zero, this was a statistically
@@ -2274,25 +2305,6 @@ impl GooseAttack {
                         self.record_request_metric(&request_metric).await;
                     }
                 }
-                GooseMetric::Error(raw_error) => {
-                    // Recreate the string used to uniquely identify errors.
-                    let error_key = format!(
-                        "{}.{}.{}",
-                        raw_error.error, raw_error.method, raw_error.name
-                    );
-                    let mut merge_error = match self.metrics.errors.get(&error_key) {
-                        Some(error) => error.clone(),
-                        None => GooseErrorMetric::new(
-                            raw_error.method.clone(),
-                            raw_error.name.to_string(),
-                            raw_error.error.to_string(),
-                        ),
-                    };
-                    merge_error.occurrences += raw_error.occurrences;
-                    self.metrics
-                        .errors
-                        .insert(error_key.to_string(), merge_error);
-                }
                 GooseMetric::Task(raw_task) => {
                     // Store a new metric.
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
@@ -2310,8 +2322,33 @@ impl GooseAttack {
     }
 
     /// Update error metrics.
-    pub(crate) fn record_error(&mut self, raw_request: &GooseRequestMetric) {
-        // If the error summary is disabled, return immediately without collecting errors.
+    pub(crate) fn record_error(
+        &mut self,
+        raw_request: &GooseRequestMetric,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) {
+        // If error-file is enabled, convert the raw request to a GooseErrorMetric and send it
+        // to the logger thread.
+        if !self.configuration.error_file.is_empty() {
+            if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
+                // This is a best effort logger attempt, if the logger has alrady shut down it
+                // will fail which we ignore.
+                let _ = logger.send(Some(GooseLog::Error(GooseErrorMetric {
+                    elapsed: raw_request.elapsed,
+                    method: raw_request.method.clone(),
+                    name: raw_request.name.clone(),
+                    url: raw_request.url.clone(),
+                    final_url: raw_request.final_url.clone(),
+                    redirected: raw_request.redirected,
+                    response_time: raw_request.response_time,
+                    status_code: raw_request.status_code,
+                    user: raw_request.user,
+                    error: raw_request.error.clone(),
+                })));
+            }
+        }
+
+        // If the error summary is disabled, return without collecting errors.
         if self.configuration.no_error_summary {
             return;
         }
@@ -2326,7 +2363,7 @@ impl GooseAttack {
             // We've seen this error before.
             Some(m) => m.clone(),
             // First time we've seen this error.
-            None => GooseErrorMetric::new(
+            None => GooseErrorMetricAggregate::new(
                 raw_request.method.clone(),
                 raw_request.name.to_string(),
                 raw_request.error.to_string(),

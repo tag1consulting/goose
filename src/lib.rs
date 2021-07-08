@@ -716,6 +716,10 @@ pub struct GooseDefaults {
     tasks_file: Option<String>,
     /// An optional default for the tasks log file format.
     tasks_format: Option<GooseLogFormat>,
+    /// An optional default for the error log file name.
+    error_file: Option<String>,
+    /// An optional default for the error log format.
+    error_format: Option<GooseLogFormat>,
     /// An optional default for the debug log file name.
     debug_file: Option<String>,
     /// An optional default for the debug log format.
@@ -799,6 +803,10 @@ pub enum GooseDefault {
     TasksFile,
     /// An optional default for the tasks log file format.
     TasksFormat,
+    /// An optional default for the error log file name.
+    ErrorFile,
+    /// An optional default for the error log format.
+    ErrorFormat,
     /// An optional default for the debug log file name.
     DebugFile,
     /// An optional default for the debug log format.
@@ -2374,6 +2382,54 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Configure tasks log format.
+    fn set_error_format(&mut self) -> Result<(), GooseError> {
+        // Track how value gets set so we can return a meaningful error if necessary.
+        let mut key = "configuration.error_format";
+        let mut value = Some(GooseLogFormat::Json);
+
+        if self.configuration.error_format.is_some() {
+            key = "--error-format";
+            value = self.configuration.error_format.clone();
+        } else if let Some(default_error_format) = self.defaults.error_format.as_ref() {
+            // In Gaggles, error_format is only set on Worker.
+            if self.attack_mode != AttackMode::Manager {
+                key = "set_default(GooseDefault::ErrorFormat)";
+                value = Some(default_error_format.clone());
+                self.configuration.error_format = Some(default_error_format.clone());
+            }
+        }
+
+        // Otherwise default to GooseLogFormat::Json.
+        if !self.configuration.error_file.is_empty()
+            && self.configuration.error_format.is_none()
+            && self.attack_mode != AttackMode::Manager
+        {
+            self.configuration.error_format = value.clone();
+        }
+
+        if self.configuration.error_format.is_some() {
+            // Log format isn't relevant if metrics aren't enabled.
+            if self.configuration.no_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "--no-metrics".to_string(),
+                    value: "true".to_string(),
+                    detail: "The --no-metrics flag can not be set together with the --error-format option.".to_string(),
+                });
+            }
+            // Log format isn't relevant if log not enabled.
+            else if self.configuration.error_file.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: key.to_string(),
+                    value: format!("{:?}", value),
+                    detail: "The --error-file option must be set together with the --error-format option.".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     // Configure debug log format.
     fn set_debug_format(&mut self) -> Result<(), GooseError> {
         // Track how value gets set so we can return a meaningful error if necessary.
@@ -2612,6 +2668,9 @@ impl GooseAttack {
 
         // Configure the tasks log format.
         self.set_tasks_format()?;
+
+        // Configure the tasks log format.
+        self.set_error_format()?;
 
         // Configure the debug log format.
         self.set_debug_format()?;
@@ -3523,6 +3582,8 @@ impl GooseAttack {
 ///  - [GooseDefault::Host](../goose/enum.GooseDefault.html#variant.Host)
 ///  - [GooseDefault::LogFile](../goose/enum.GooseDefault.html#variant.LogFile)
 ///  - [GooseDefault::RequestsFormat](../goose/enum.GooseDefault.html#variant.RequestsFormat)
+///  - [GooseDefault::TasksFile](../goose/enum.GooseDefault.html#variant.TasksFile)
+///  - [GooseDefault::ErrorFile](../goose/enum.GooseDefault.html#variant.ErrorFile)
 ///  - [GooseDefault::DebugFile](../goose/enum.GooseDefault.html#variant.DebugFile)
 ///  - [GooseDefault::TelnetHost](../goose/enum.GooseDefault.html#variant.TelnetHost)
 ///  - [GooseDefault::WebSocketHost](../goose/enum.GooseDefault.html#variant.WebSocketHost)
@@ -3594,6 +3655,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestsFile => self.defaults.requests_file = Some(value.to_string()),
             GooseDefault::TasksFile => self.defaults.tasks_file = Some(value.to_string()),
+            GooseDefault::ErrorFile => self.defaults.error_file = Some(value.to_string()),
             GooseDefault::DebugFile => self.defaults.debug_file = Some(value.to_string()),
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
@@ -3645,6 +3707,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                 });
             }
             GooseDefault::DebugFormat
+            | GooseDefault::ErrorFormat
             | GooseDefault::TasksFormat
             | GooseDefault::RequestsFormat => {
                 return Err(GooseError::InvalidOption {
@@ -3691,6 +3754,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::RequestsFile
             | GooseDefault::TasksFile
+            | GooseDefault::ErrorFile
             | GooseDefault::DebugFile
             | GooseDefault::TelnetHost
             | GooseDefault::WebSocketHost
@@ -3729,6 +3793,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             }
             GooseDefault::RequestsFormat
             | GooseDefault::DebugFormat
+            | GooseDefault::ErrorFormat
             | GooseDefault::TasksFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -3776,6 +3841,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::RequestsFile
             | GooseDefault::TasksFile
             | GooseDefault::RunningMetrics
+            | GooseDefault::ErrorFile
             | GooseDefault::DebugFile
             | GooseDefault::TelnetHost
             | GooseDefault::WebSocketHost
@@ -3812,6 +3878,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             }
             GooseDefault::RequestsFormat
             | GooseDefault::DebugFormat
+            | GooseDefault::ErrorFormat
             | GooseDefault::TasksFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -3873,6 +3940,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::RequestsFile
             | GooseDefault::TasksFile
             | GooseDefault::RunningMetrics
+            | GooseDefault::ErrorFile
             | GooseDefault::DebugFile
             | GooseDefault::TelnetHost
             | GooseDefault::WebSocketHost
@@ -3909,6 +3977,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             }
             GooseDefault::RequestsFormat
             | GooseDefault::DebugFormat
+            | GooseDefault::ErrorFormat
             | GooseDefault::TasksFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -3932,6 +4001,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
         match key {
             GooseDefault::RequestsFormat => self.defaults.requests_format = Some(value),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value),
+            GooseDefault::ErrorFormat => self.defaults.error_format = Some(value),
             GooseDefault::TasksFormat => self.defaults.tasks_format = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::NoResetMetrics
@@ -3962,6 +4032,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::RequestsFile
             | GooseDefault::TasksFile
             | GooseDefault::RunningMetrics
+            | GooseDefault::ErrorFile
             | GooseDefault::DebugFile
             | GooseDefault::TelnetHost
             | GooseDefault::WebSocketHost
@@ -4067,22 +4138,28 @@ pub struct GooseConfiguration {
     #[options(no_short)]
     pub no_error_summary: bool,
     /// Create an html-formatted report
-    #[options(meta = "NAME")]
+    #[options(no_short, meta = "NAME")]
     pub report_file: String,
     /// Sets requests log file name
-    #[options(short = "m", meta = "NAME")]
+    #[options(short = "R", meta = "NAME")]
     pub requests_file: String,
     /// Sets requests log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
     pub requests_format: Option<GooseLogFormat>,
     /// Sets tasks log file name
-    #[options(meta = "NAME")]
+    #[options(short = "T", meta = "NAME")]
     pub tasks_file: String,
     /// Sets tasks log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
     pub tasks_format: Option<GooseLogFormat>,
+    /// Sets error log file name
+    #[options(short = "E", meta = "NAME")]
+    pub error_file: String,
+    /// Sets error log format (csv, json, raw)
+    #[options(no_short, meta = "FORMAT")]
+    pub error_format: Option<GooseLogFormat>,
     /// Sets debug log file name
-    #[options(short = "d", meta = "NAME")]
+    #[options(short = "D", meta = "NAME")]
     pub debug_file: String,
     /// Sets debug log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
@@ -4423,6 +4500,7 @@ mod test {
         let report_file = "custom-goose-report.html".to_string();
         let requests_file = "custom-goose-metrics.log".to_string();
         let debug_file = "custom-goose-debug.log".to_string();
+        let error_file = "custom-goose-error.log".to_string();
         let throttle_requests: usize = 25;
         let expect_workers: usize = 5;
         let manager_bind_host = "127.0.0.1".to_string();
@@ -4467,6 +4545,10 @@ mod test {
             .set_default(GooseDefault::RequestsFile, requests_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestsFormat, GooseLogFormat::Raw)
+            .unwrap()
+            .set_default(GooseDefault::ErrorFile, error_file.as_str())
+            .unwrap()
+            .set_default(GooseDefault::ErrorFormat, GooseLogFormat::Csv)
             .unwrap()
             .set_default(GooseDefault::DebugFile, debug_file.as_str())
             .unwrap()
@@ -4521,6 +4603,8 @@ mod test {
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.requests_file == Some(requests_file));
         assert!(goose_attack.defaults.requests_format == Some(GooseLogFormat::Raw));
+        assert!(goose_attack.defaults.error_file == Some(error_file));
+        assert!(goose_attack.defaults.error_format == Some(GooseLogFormat::Csv));
         assert!(goose_attack.defaults.debug_file == Some(debug_file));
         assert!(goose_attack.defaults.debug_format == Some(GooseLogFormat::Csv));
         assert!(goose_attack.defaults.status_codes == Some(true));
