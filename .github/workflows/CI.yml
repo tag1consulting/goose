@@ -7,29 +7,52 @@ on:
     branches: [ main ]
 
 env:
-    RUST_BACKTRACE: 1
+  RUST_BACKTRACE: 1
 
 jobs:
   style:
-    name: verify formatting and style
+    name: Verify formatting and style
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Verify code formatting
-      run: cargo fmt -- --check
-    - name: Verify code style
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      - uses: actions/checkout@v2
+      - name: Verify code formatting
+        run: cargo fmt -- --check
+      - name: Verify code style
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   build:
-    name: build and run tests
+    name: Build and run tests
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --verbose --all-features
-    - name: Docs
-      run: cargo rustdoc --lib --examples
-    - name: Run tests
-      run: cargo test --verbose --all-features
+      - uses: actions/checkout@v2
+      - name: Build
+        run: cargo build --verbose --all-features
+      - name: Docs
+        run: cargo rustdoc --lib --examples
+      - name: Run tests
+        run: cargo test --verbose --all-features
+
+  deploy:
+    name: Build and deploy book
+    runs-on: ubuntu-latest
+    needs: [style, build]
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup mdbook
+        uses: peaceiris/actions-mdbook@v1
+        with:
+          mdbook-version: "0.4.10"
+      - name: Build and test Goose book
+        run: mdbook build book && mdbook test book
+      - name: Deploy Goose book
+        uses: peaceiris/actions-gh-pages@v3.5.4-6
+        # Workaround https://github.com/peaceiris/actions-gh-pages/issues/627
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: true
+        with:
+          deploy_key: ${{ secrets.ACTIONS_DEPLOY_KEY }}
+          publish_dir: ./book/html
+          publish_branch: gh-pages
