@@ -176,7 +176,7 @@ fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::RequestLog, request_log.as_str())
         .unwrap()
-        .set_default(GooseDefault::RequestsFormat, LOG_FORMAT)
+        .set_default(GooseDefault::RequestFormat, LOG_FORMAT)
         .unwrap()
         .set_default(GooseDefault::DebugLog, debug_log.as_str())
         .unwrap()
@@ -263,7 +263,7 @@ fn test_defaults_gaggle() {
                 .unwrap()
                 .set_default(GooseDefault::RequestLog, worker_request_log.as_str())
                 .unwrap()
-                .set_default(GooseDefault::RequestsFormat, LOG_FORMAT)
+                .set_default(GooseDefault::RequestFormat, LOG_FORMAT)
                 .unwrap()
                 // Worker configuration using defaults instead of run-time options.
                 .set_default(GooseDefault::Worker, true)
