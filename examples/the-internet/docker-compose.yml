@@ -1,0 +1,77 @@
+version: "3"
+services:
+  the-internet.int:
+    image: the-internet
+    container_name: the-internet.int
+    hostname: the-internet
+    domainname: int
+    environment:
+      - APP_NAME=bionic-frr-7
+    ports:
+      - "5000:5000"
+    restart: on-failure
+    networks:
+      int:
+        - the-internet
+  gaggle.int:
+    image: gti
+    container_name: gaggle.int
+    hostname: gaggle
+    domainname: int
+    depends_on:
+      - the-internet
+    entrypoint:
+      - /usr/local/bin/gti --manager --expect-workers --host http://the-internet.int:5000 --log-file /gaggle.log --report-file /gaggle.html
+      - sleep 3s
+      - /usr/local/bin/gti --worker --manager-host gaggle.int --log-file /003-goose.log --report-file /003-goose.html
+    environment:
+      - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+    restart: on-failure
+    volumes:
+      - ./log/gaggle.log:/gaggle.log
+      - ./report/gaggle.html:/gaggle.html
+      - ./log/003-goose.log:/003-goose.log
+      - ./report/003-goose.html:/003-goose.html
+    networks:
+      int:
+        - gaggle
+  001-goose.int:
+    image: gti
+    container_name: 001-goose.int
+    hostname: 001-goose
+    domainname: int
+    depends_on:
+      - gaggle
+    entrypoint:
+      - /usr/local/bin/gti --worker --manager-host gaggle.int --log-file /001-goose.log --report-file /001-goose.html
+    environment:
+      - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+    restart: on-failure
+    volumes:
+      - ./log/001-goose.log:/001-goose.log
+      - ./report/001-goose.html:/001-goose.html
+    networks:
+      int:
+        - 001-goose
+  002-goose.int:
+    image: gti
+    container_name: 002-goose.int
+    hostname: 002-goose
+    domainname: int
+    depends_on:
+      - 001-goose
+    entrypoint:
+      - /usr/local/bin/gti --worker --manager-host gaggle.int --log-file /002-goose.log --report-file /002-goose.html
+    environment:
+      - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+    restart: on-failure
+    volumes:
+      - ./log/002-goose.log:/002-goose.log
+      - ./report/002-goose.html:/002-goose.html
+    networks:
+      int:
+        - 002-goose
+
+networks:
+  int:
+    driver: bridge
