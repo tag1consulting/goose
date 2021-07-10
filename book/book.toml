@@ -1,0 +1,14 @@
+[book]
+title = "The Goose Book"
+authors = ["Jeremy Andrews"]
+description = "Load testing framework, inspired by Locust."
+language = "en"
+
+[rust]
+edition = "2018"
+
+[build]
+build-dir = "html"
+
+[output.html]
+mathjax-support = true
