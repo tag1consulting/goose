@@ -18,10 +18,6 @@ Have you ever been attacked by a goose?
   - [Gaggle: a distributed load test](https://www.tag1consulting.com/blog/show-me-how-flock-flies-working-gaggle-goose)
   - [Optimizing Goose performance](https://www.tag1consulting.com/blog/golden-goose-egg-compile-time-adventure)
 
-### Requirements
-
-- Minimum required `rustc` version is `1.49.0`: `goose` depends on [`flume`](https://docs.rs/flume) for communication between threads, which in turn depends on [`spinning_top`](https://docs.rs/spinning_top) which uses `hint::spin_loop` which stabilized in `rustc` version `1.49.0`. More detail in https://github.com/rust-lang/rust/issues/55002.
-
 ## Getting Started
 
 The [in-line documentation](https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test) offers much more detail about Goose specifics. For a general background to help you get started with Rust and Goose, read on.
