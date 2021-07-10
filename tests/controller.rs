@@ -47,11 +47,21 @@ struct TestState {
     // A TCP socket if testing the telnet Controller.
     telnet_stream: Option<TcpStream>,
     // A TCP socket if testing the WebSocket Controller.
+    #[cfg(not(feature = "rustls-tls"))]
     websocket_stream: Option<
         tungstenite::WebSocket<
             tungstenite::stream::Stream<
                 std::net::TcpStream,
                 native_tls::TlsStream<std::net::TcpStream>,
+            >,
+        >,
+    >,
+    #[cfg(feature = "rustls-tls")]
+    websocket_stream: Option<
+        tungstenite::WebSocket<
+            tungstenite::stream::Stream<
+                std::net::TcpStream,
+                rustls::StreamOwned<rustls::ClientSession, TcpStream>,
             >,
         >,
     >,
