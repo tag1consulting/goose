@@ -795,13 +795,13 @@ pub enum GooseDefault {
     NoErrorSummary,
     /// An optional default for the report file name.
     ReportFile,
-    /// An optional default for the requests log file name.
+    /// An optional default for the request log file name.
     RequestLog,
-    /// An optional default for the requests log file format.
-    RequestsFormat,
-    /// An optional default for the tasks log file name.
+    /// An optional default for the request log file format.
+    RequestFormat,
+    /// An optional default for the task log file name.
     TaskLog,
-    /// An optional default for the tasks log file format.
+    /// An optional default for the task log file format.
     TaskFormat,
     /// An optional default for the error log file name.
     ErrorLog,
@@ -2298,7 +2298,7 @@ impl GooseAttack {
         } else if let Some(default_request_format) = self.defaults.request_format.as_ref() {
             // In Gaggles, request_format is only set on Worker.
             if self.attack_mode != AttackMode::Manager {
-                key = "set_default(GooseDefault::RequestsFormat)";
+                key = "set_default(GooseDefault::RequestFormat)";
                 value = Some(default_request_format.clone());
                 self.configuration.request_format = Some(default_request_format.clone());
             }
@@ -3581,7 +3581,7 @@ impl GooseAttack {
 /// borrowed string slice (`&str`):
 ///  - [GooseDefault::Host](../goose/enum.GooseDefault.html#variant.Host)
 ///  - [GooseDefault::GooseLog](../goose/enum.GooseDefault.html#variant.GooseLog)
-///  - [GooseDefault::RequestsFormat](../goose/enum.GooseDefault.html#variant.RequestsFormat)
+///  - [GooseDefault::RequestFormat](../goose/enum.GooseDefault.html#variant.RequestFormat)
 ///  - [GooseDefault::TaskLog](../goose/enum.GooseDefault.html#variant.TaskLog)
 ///  - [GooseDefault::ErrorLog](../goose/enum.GooseDefault.html#variant.ErrorLog)
 ///  - [GooseDefault::DebugLog](../goose/enum.GooseDefault.html#variant.DebugLog)
@@ -3709,7 +3709,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
             | GooseDefault::TaskFormat
-            | GooseDefault::RequestsFormat => {
+            | GooseDefault::RequestFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -3791,7 +3791,7 @@ impl GooseDefaultType<usize> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::RequestsFormat
+            GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
             | GooseDefault::TaskFormat => {
@@ -3876,7 +3876,7 @@ impl GooseDefaultType<bool> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::RequestsFormat
+            GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
             | GooseDefault::TaskFormat => {
@@ -3975,7 +3975,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::RequestsFormat
+            GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
             | GooseDefault::TaskFormat => {
@@ -3999,7 +3999,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
         value: GooseLogFormat,
     ) -> Result<Box<Self>, GooseError> {
         match key {
-            GooseDefault::RequestsFormat => self.defaults.request_format = Some(value),
+            GooseDefault::RequestFormat => self.defaults.request_format = Some(value),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value),
             GooseDefault::ErrorFormat => self.defaults.error_format = Some(value),
             GooseDefault::TaskFormat => self.defaults.task_format = Some(value),
@@ -4545,7 +4545,7 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::RequestLog, request_log.as_str())
             .unwrap()
-            .set_default(GooseDefault::RequestsFormat, GooseLogFormat::Raw)
+            .set_default(GooseDefault::RequestFormat, GooseLogFormat::Raw)
             .unwrap()
             .set_default(GooseDefault::TaskLog, task_log.as_str())
             .unwrap()

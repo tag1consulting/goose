@@ -48,7 +48,8 @@ pub enum GooseMetric {
     Task(GooseTaskMetric),
 }
 
-/// Mitigate the loss of data (coordinated omission) due to stalls on the upstream server.
+/// THIS IS IN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
+/// (coordinated omission) due to stalls on the upstream server.
 ///
 /// Stalling can happen for many reasons, for example: garbage collection, a cache stampede,
 /// even unrelated load on the same server. Without any mitigation, Goose loses
@@ -58,18 +59,24 @@ pub enum GooseMetric {
 /// Backfilled requests show up in the `--request-file` if enabled, though they were not actually
 /// sent to the server.
 ///
-/// By default, Goose is configured to backfill based on the Average response time seen for the
-/// stalled request. However, different server configurations and testing plans can work on
-/// different assumptions so the following configurations are supported.
+/// Goose can be configured to backfill requests based on the expected
+/// [`user_cadence`](struct.GooseRequestMetric.html#structfield.user_cadence). The expected
+/// cadence can be automatically calculated with any of the following configuration options.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum GooseCoordinatedOmissionMitigation {
-    /// Backfill based on the average response_time for this request (default).
+    /// Backfill based on the average
+    /// [`user_cadence`](struct.GooseRequestMetric.html#structfield.user_cadence) for this
+    /// [`GooseUser`](../goose/struct.GooseUser.html).
     Average,
-    /// Backfill based on the maximum response_time for this request.
+    /// Backfill based on the maximum
+    /// [`user_cadence`](struct.GooseRequestMetric.html#structfield.user_cadence) for this
+    /// [`GooseUser`](../goose/struct.GooseUser.html).
     Maximum,
-    /// Backfill based on the minimum response_time for this request.
+    /// Backfill based on the minimum
+    /// [`user_cadence`](struct.GooseRequestMetric.html#structfield.user_cadence) for this
+    /// [`GooseUser`](../goose/struct.GooseUser.html).
     Minimum,
-    /// Completely disable coordinated omission mitigation.
+    /// Completely disable coordinated omission mitigation (default).
     Disabled,
 }
 /// Allow `--co-mitigation` from the command line using text variations on supported
@@ -273,14 +280,16 @@ pub struct GooseRequestMetric {
     pub success: bool,
     /// Whether or not we're updating a previous request, modifies how the parent thread records it.
     pub update: bool,
-    /// Which GooseUser thread processed the request.
+    /// Which [`GooseUser`](../goose/struct.GooseUser.html) thread processed the request.
     pub user: usize,
     /// The optional error caused by this request.
     pub error: String,
     /// If non-zero, Coordinated Omission Mitigation detected an abnormally long response time on
     /// the upstream server, blocking requests from being made.
     pub coordinated_omission_elapsed: u64,
-    /// If non-zero, the expected cadence of looping through all GooseTasks by this GooseUser.
+    /// If non-zero, the calculated cadence of looping through all
+    /// [`GooseTask`](../goose/struct.GooseTask.html)s by this
+    /// [`GooseUser`](../goose/struct.GooseUser.html).
     pub user_cadence: u64,
 }
 impl GooseRequestMetric {
