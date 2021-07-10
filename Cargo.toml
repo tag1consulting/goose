@@ -45,8 +45,8 @@ tokio = { version = "1", features = [
     "time",
     "sync",
 ] }
-tokio-tungstenite = "0.14"
-tungstenite = "0.13"
+tokio-tungstenite = "0.15"
+tungstenite = "0.14"
 url = "2"
 
 # optional dependencies
@@ -55,7 +55,7 @@ nng = { version = "1.0", optional = true }
 [features]
 default = ["reqwest/default-tls"]
 gaggle = ["nng"]
-rustls = ["reqwest/rustls-tls"]
+rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls-tls"]
 
 [build-dependencies]
 rustc_version = "0.3"
@@ -64,3 +64,4 @@ rustc_version = "0.3"
 httpmock = "0.5"
 serial_test = "0.5"
 native-tls = "0.2"
+rustls = "0.19"

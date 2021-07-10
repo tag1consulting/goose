@@ -1,0 +1,70 @@
+FROM docker.io/library/rust:1.52.1-slim-buster as debian-build
+
+## Principle of least privilege
+#
+# Create a user unlikely to exist.
+#
+RUN useradd yelgeb
+
+RUN mkdir -p /usr/src/yelgeb
+
+WORKDIR /usr/src/yelgeb
+
+COPY Cargo.toml Cargo.toml
+
+## Rust OpenSSL
+#
+RUN echo "deb http://ftp.debian.org/debian buster-backports main" | tee /etc/apt/sources.list.d/backports.list \
+    && apt update \
+    && apt --yes install -t buster-backports cmake \
+    && apt --yes install --no-install-recommends pkg-config libssl-dev
+
+## Workaround Cargo #2644
+#
+# Reference:
+# - https://github.com/rust-lang/cargo/issues/2644
+#
+RUN echo "fn main() {println!(\"if you see this, the build broke\")}" > /usr/src/yelgeb/gti.rs
+
+## Cache Build Dependencies
+#
+# Docker caches each RUN in a layer. Cache the build dependencies.
+#
+RUN cargo build --release
+
+## Build
+#
+# With all dependencies built and cached we can build the application without
+# having to wait for all dependencies to be rebuilt on each change.
+#
+RUN rm -f target/release/deps/gti*
+COPY gti.rs /usr/src/yelgeb/gti.rs
+RUN cargo build --release
+
+RUN chown yelgeb:yelgeb /usr/src/yelgeb/target/release/gti
+RUN chmod a+x /usr/src/yelgeb/target/release/gti
+
+FROM scratch
+
+COPY --from=debian-build /usr/src/yelgeb/target/release/gti /usr/local/bin/gti
+# Chore: Bring along linked libraries.
+COPY --from=debian-build /usr/lib/x86_64-linux-gnu/libssl.so.1.1 /usr/lib/x86_64-linux-gnu/libssl.so.1.1
+COPY --from=debian-build /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1
+COPY --from=debian-build /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/libgcc_s.so.1
+COPY --from=debian-build /lib/x86_64-linux-gnu/librt.so.1 /lib/x86_64-linux-gnu/librt.so.1
+COPY --from=debian-build /lib/x86_64-linux-gnu/libpthread.so.0 /lib/x86_64-linux-gnu/libpthread.so.0
+COPY --from=debian-build /lib/x86_64-linux-gnu/libm.so.6 /lib/x86_64-linux-gnu/libm.so.6
+COPY --from=debian-build /lib/x86_64-linux-gnu/libdl.so.2 /lib/x86_64-linux-gnu/libdl.so.2
+COPY --from=debian-build /lib/x86_64-linux-gnu/libc.so.6 /lib/x86_64-linux-gnu/libc.so.6
+COPY --from=debian-build /lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
+
+## Setup Container User
+#
+# COPY --from=debian-build /etc/passwd /etc/passwd
+# USER yelgeb
+
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+
+ENTRYPOINT ["/usr/local/bin/gti"]
+
+CMD ["--list"]

@@ -24,3 +24,7 @@
 # Developers
 
 - [Developers](developers.md)
+
+-----------
+
+[Contributors](contributors.md)
