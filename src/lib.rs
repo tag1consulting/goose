@@ -1,3 +1,5 @@
+// #![feature(extended_key_value_attributes)]
+// #[doc = include_str!("ducks.md")]
 //! # Goose
 //!
 //! Have you ever been attacked by a goose?
