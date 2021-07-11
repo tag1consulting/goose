@@ -1421,87 +1421,94 @@ impl GooseAttack {
     // Configure which mode this [`GooseAttack`](./struct.GooseAttack.html)
     // will run in.
     fn set_attack_mode(&mut self) -> Result<(), GooseError> {
-        // Determine if Manager is enabled by default.
-        let manager_is_default = if let Some(value) = self.defaults.manager {
-            value
+        // Check if --manager or default was set.
+        let manager_key = if self.configuration.manager {
+            "--manager"
+        } else if let Some(default_manager) = self.defaults.manager {
+            self.configuration.manager = default_manager;
+            "set_default(GooseDefault::Manager)"
         } else {
-            false
+            ""
         };
 
-        // Determine if Worker is enabled by default.
-        let worker_is_default = if let Some(value) = self.defaults.worker {
-            value
+        // Check if --worker or default was set.
+        let worker_key = if self.configuration.worker {
+            "--worker"
+        } else if let Some(default_worker) = self.defaults.worker {
+            self.configuration.worker = default_worker;
+            "set_default(GooseDefault::Worker)"
         } else {
-            false
+            ""
         };
 
-        // Don't allow Manager and Worker to both be the default.
-        if manager_is_default && worker_is_default {
+        // Don't allow --manager and --worker together.
+        if self.configuration.manager && self.configuration.worker {
             return Err(GooseError::InvalidOption {
-                option: "GooseDefault::Worker".to_string(),
+                option: format!("{} && {}", manager_key, worker_key),
                 value: "true".to_string(),
-                detail: "The GooseDefault::Worker default can not be set together with the GooseDefault::Manager default"
-                    .to_string(),
+                detail: "Goose can not run as both Manager and Worker".to_string(),
             });
         }
 
-        // Manager mode if --manager is set, or --worker is not set and Manager is default.
-        if self.configuration.manager || (!self.configuration.worker && manager_is_default) {
-            self.attack_mode = AttackMode::Manager;
-            if self.configuration.worker {
-                return Err(GooseError::InvalidOption {
-                    option: "--worker".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --worker flag can not be set together with the --manager flag"
-                        .to_string(),
-                });
-            }
-
+        if self.configuration.manager {
             if !self.configuration.debug_log.is_empty() {
                 return Err(GooseError::InvalidOption {
-                    option: "--debug-file".to_string(),
+                    option: "--debug-log".to_string(),
                     value: self.configuration.debug_log.clone(),
-                    detail:
-                        "The --debug-file option can not be set together with the --manager flag."
-                            .to_string(),
+                    detail: format!(
+                        "The --debug-log option can not be set together with {}.",
+                        manager_key
+                    ),
+                });
+            } else if !self.configuration.error_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--error-log".to_string(),
+                    value: self.configuration.error_log.clone(),
+                    detail: format!(
+                        "The --error-log option can not be set together with {}.",
+                        manager_key
+                    ),
+                });
+            } else if !self.configuration.request_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--request-log".to_string(),
+                    value: self.configuration.request_log.clone(),
+                    detail: format!(
+                        "The --request-log option can not be set together with {}.",
+                        manager_key
+                    ),
+                });
+            } else if !self.configuration.task_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "--task-log".to_string(),
+                    value: self.configuration.task_log.clone(),
+                    detail: format!(
+                        "The --task-log option can not be set together with {}.",
+                        manager_key
+                    ),
                 });
             }
         }
 
-        // Worker mode if --worker is set, or --manager is not set and Worker is default.
-        if self.configuration.worker || (!self.configuration.manager && worker_is_default) {
-            self.attack_mode = AttackMode::Worker;
-            if self.configuration.manager {
-                return Err(GooseError::InvalidOption {
-                    option: "--manager".to_string(),
-                    value: "true".to_string(),
-                    detail: "The --manager flag can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
-
-            if !self.configuration.host.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "--host".to_string(),
-                    value: self.configuration.host.clone(),
-                    detail: "The --host option can not be set together with the --worker flag."
-                        .to_string(),
-                });
-            }
+        // Host is only set on the Manager.
+        if self.configuration.worker && !self.configuration.host.is_empty() {
+            return Err(GooseError::InvalidOption {
+                option: "--host".to_string(),
+                value: self.configuration.host.clone(),
+                detail: format!(
+                    "The --host option can not be set together with {}.",
+                    worker_key
+                ),
+            });
         }
 
-        // Otherwise run in standalone attack mode.
-        if self.attack_mode == AttackMode::Undefined {
-            self.attack_mode = AttackMode::StandAlone;
-
-            if self.configuration.no_hash_check {
-                return Err(GooseError::InvalidOption {
-                    option: "--no-hash-check".to_string(),
-                    value: self.configuration.no_hash_check.to_string(),
-                    detail: "The --no-hash-check flag can not be set without also setting the --manager flag.".to_string(),
-                });
-            }
-        }
+        self.attack_mode = if self.configuration.manager {
+            AttackMode::Manager
+        } else if self.configuration.worker {
+            AttackMode::Worker
+        } else {
+            AttackMode::StandAlone
+        };
 
         Ok(())
     }
@@ -1529,24 +1536,25 @@ impl GooseAttack {
 
     // Determine how many Workers to expect.
     fn set_expect_workers(&mut self) -> Result<(), GooseError> {
-        // Track how value gets set so we can return a meaningful error if necessary.
-        let mut key = "configuration.expect_workers";
-
         // Check if --expect-workers was set.
-        if self.configuration.expect_workers.is_some() {
-            key = "--expect-workers";
+        let key = if self.configuration.expect_workers.is_some() {
+            "--expect-workers"
         // Otherwise check if a custom default is set.
         } else if let Some(default_expect_workers) = self.defaults.expect_workers {
-            if self.attack_mode == AttackMode::Manager {
-                key = "set_default(GooseDefault::ExpectWorkers)";
-
+            // Only use default if configured as Manager.
+            if self.configuration.manager {
                 self.configuration.expect_workers = Some(default_expect_workers);
+                "set_default(GooseDefault::ExpectWorkers)"
+            } else {
+                ""
             }
-        }
+        } else {
+            ""
+        };
 
         if let Some(expect_workers) = self.configuration.expect_workers {
             // Disallow --expect-workers without --manager.
-            if self.attack_mode != AttackMode::Manager {
+            if !self.configuration.manager {
                 return Err(GooseError::InvalidOption {
                     option: key.to_string(),
                     value: expect_workers.to_string(),
@@ -1578,6 +1586,13 @@ impl GooseAttack {
                     });
                 }
             }
+        // configuration.manager requires configuration.expect_workers.
+        } else if self.configuration.manager {
+            return Err(GooseError::InvalidOption {
+                option: "configuration.manager".to_string(),
+                value: true.to_string(),
+                detail: "Manager mode requires --expect-workers be configured".to_string(),
+            });
         }
 
         Ok(())
@@ -2639,6 +2654,12 @@ impl GooseAttack {
         // Configure run mode (StandAlone, Worker, Manager).
         self.set_attack_mode()?;
 
+        // Configure number of users to simulate.
+        self.set_users()?;
+
+        // Configure expect_workers if running in Manager attack mode.
+        self.set_expect_workers()?;
+
         // Determine whether or not to enable the telnet Controller.
         self.set_no_telnet();
 
@@ -2647,12 +2668,6 @@ impl GooseAttack {
 
         // Determine whether or not to autostart load test.
         self.set_no_autostart()?;
-
-        // Configure number of users to simulate.
-        self.set_users()?;
-
-        // Configure expect_workers if running in Manager attack mode.
-        self.set_expect_workers()?;
 
         // Configure host and ports if running in a Gaggle distributed load test.
         self.set_gaggle_host_and_port()?;
