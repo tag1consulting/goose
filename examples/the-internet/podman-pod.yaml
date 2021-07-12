@@ -1,0 +1,209 @@
+# Generation of Kubernetes YAML is still under development!
+#
+# Save the output of this file and use kubectl create -f to import
+# it into Kubernetes.
+#
+# Created with podman-3.0.1
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: "2021-06-24T08:48:15Z"
+  labels:
+    app: the-internet
+  name: the-internet
+spec:
+  containers:
+  - command:
+    - /usr/local/bin/gti
+    - --worker
+    - --manager-host gaggle.int
+    - --log-file /001-goose.log
+    - --report-file /001-goose.html
+    env:
+    - name: PATH
+      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+    - name: TERM
+      value: xterm
+    - name: container
+      value: podman
+    - name: HOSTNAME
+      value: 001-goose
+    image: localhost/gti:latest
+    name: 001-goose.int
+    ports:
+    - containerPort: 5000
+      hostPort: 5000
+      protocol: TCP
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: true
+      capabilities:
+        drop:
+        - CAP_MKNOD
+        - CAP_NET_RAW
+        - CAP_AUDIT_WRITE
+      privileged: false
+      readOnlyRootFilesystem: false
+      seLinuxOptions: {}
+    volumeMounts:
+    - mountPath: /001-goose.log
+      name: home-hedge-src-goose-examples-the-internet-log-001-goose.log
+    - mountPath: /001-goose.html
+      name: home-hedge-src-goose-examples-the-internet-report-001-goose.html
+    workingDir: /
+  - command:
+    - /usr/local/bin/gti
+    - --worker
+    - --manager-host gaggle.int
+    - --log-file /002-goose.log
+    - --report-file /002-goose.html
+    env:
+    - name: PATH
+      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+    - name: TERM
+      value: xterm
+    - name: container
+      value: podman
+    - name: HOSTNAME
+      value: 002-goose
+    image: localhost/gti:latest
+    name: 002-goose.int
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: true
+      capabilities:
+        drop:
+        - CAP_MKNOD
+        - CAP_NET_RAW
+        - CAP_AUDIT_WRITE
+      privileged: false
+      readOnlyRootFilesystem: false
+      seLinuxOptions: {}
+    volumeMounts:
+    - mountPath: /002-goose.log
+      name: home-hedge-src-goose-examples-the-internet-log-002-goose.log
+    - mountPath: /002-goose.html
+      name: home-hedge-src-goose-examples-the-internet-report-002-goose.html
+    workingDir: /
+  - command:
+    - bundle
+    - exec
+    - rackup
+    - --host
+    - 0.0.0.0
+    - -p
+    - "5000"
+    env:
+    - name: PATH
+      value: /usr/local/bundle/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    - name: TERM
+      value: xterm
+    - name: container
+      value: podman
+    - name: RUBY_VERSION
+      value: 2.7.2
+    - name: RUBY_DOWNLOAD_SHA256
+      value: 1b95ab193cc8f5b5e59d2686cb3d5dcf1ddf2a86cb6950e0b4bdaae5040ec0d6
+    - name: GEM_HOME
+      value: /usr/local/bundle
+    - name: BUNDLE_SILENCE_ROOT_WARNING
+      value: "1"
+    - name: BUNDLE_APP_CONFIG
+      value: /usr/local/bundle
+    - name: LANG
+      value: C.UTF-8
+    - name: RUBY_MAJOR
+      value: "2.7"
+    - name: APP_NAME
+      value: bionic-frr-7
+    - name: HOSTNAME
+      value: the-internet
+    image: localhost/the-internet:latest
+    name: the-internet.int
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: true
+      capabilities:
+        drop:
+        - CAP_MKNOD
+        - CAP_NET_RAW
+        - CAP_AUDIT_WRITE
+      privileged: false
+      readOnlyRootFilesystem: false
+      seLinuxOptions: {}
+    workingDir: /app
+  - command:
+    - /usr/local/bin/gti
+    - --manager
+    - --expect-workers 2
+    - --host http://the-internet.int:5000
+    - --log-file /gaggle.log
+    - --report-file /gaggle.html
+    env:
+    - name: PATH
+      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+    - name: TERM
+      value: xterm
+    - name: container
+      value: podman
+    - name: HOSTNAME
+      value: gaggle
+    image: localhost/gti:latest
+    name: gaggle.int
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: true
+      capabilities:
+        drop:
+        - CAP_MKNOD
+        - CAP_NET_RAW
+        - CAP_AUDIT_WRITE
+      privileged: false
+      readOnlyRootFilesystem: false
+      seLinuxOptions: {}
+    volumeMounts:
+    - mountPath: /gaggle.log
+      name: home-hedge-src-goose-examples-the-internet-log-gaggle.log
+    - mountPath: /gaggle.html
+      name: home-hedge-src-goose-examples-the-internet-report-gaggle.html
+    - mountPath: /003-goose.log
+      name: home-hedge-src-goose-examples-the-internet-log-003-goose.log
+    - mountPath: /003-goose.html
+      name: home-hedge-src-goose-examples-the-internet-report-003-goose.html
+    workingDir: /
+  dnsConfig: {}
+  restartPolicy: Never
+  volumes:
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/log/002-goose.log
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-log-002-goose.log
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/report/002-goose.html
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-report-002-goose.html
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/log/gaggle.log
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-log-gaggle.log
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/report/gaggle.html
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-report-gaggle.html
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/log/003-goose.log
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-log-003-goose.log
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/report/003-goose.html
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-report-003-goose.html
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/log/001-goose.log
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-log-001-goose.log
+  - hostPath:
+      path: /home/hedge/src/goose/examples/the-internet/report/001-goose.html
+      type: File
+    name: home-hedge-src-goose-examples-the-internet-report-001-goose.html
+status: {}
