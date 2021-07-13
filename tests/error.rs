@@ -3,9 +3,9 @@ use serial_test::serial;
 
 mod common;
 
+use goose::config::GooseConfiguration;
 use goose::goose::GooseMethod;
 use goose::prelude::*;
-use goose::GooseConfiguration;
 
 // Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";

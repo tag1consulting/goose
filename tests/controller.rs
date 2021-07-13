@@ -5,11 +5,11 @@ use std::net::TcpStream;
 use std::{str, thread, time};
 use tungstenite::Message;
 
+use goose::config::GooseConfiguration;
 use goose::controller::{
     GooseControllerCommand, GooseControllerWebSocketRequest, GooseControllerWebSocketResponse,
 };
 use goose::prelude::*;
-use goose::GooseConfiguration;
 
 mod common;
 

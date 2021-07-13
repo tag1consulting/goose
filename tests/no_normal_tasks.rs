@@ -5,9 +5,9 @@ use httpmock::{
 
 mod common;
 
+use goose::config::GooseConfiguration;
 use goose::goose::GooseTaskSet;
 use goose::prelude::*;
-use goose::GooseConfiguration;
 
 // Paths used in load tests performed during these tests.
 const LOGIN_PATH: &str = "/login";

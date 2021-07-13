@@ -2,9 +2,10 @@ use gumdrop::Options;
 use httpmock::MockServer;
 use std::io::{self, BufRead};
 
+use goose::config::GooseConfiguration;
 use goose::goose::{GooseTask, GooseTaskSet};
 use goose::metrics::GooseMetrics;
-use goose::{GooseAttack, GooseConfiguration};
+use goose::GooseAttack;
 
 type WorkerHandles = Vec<std::thread::JoinHandle<()>>;
 

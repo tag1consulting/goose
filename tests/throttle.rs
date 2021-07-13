@@ -2,8 +2,8 @@ use httpmock::{Method::GET, MockRef, MockServer};
 
 mod common;
 
+use goose::config::GooseConfiguration;
 use goose::prelude::*;
-use goose::GooseConfiguration;
 
 // Paths used in load tests performed during these tests.
 const INDEX_PATH: &str = "/";

@@ -4,8 +4,8 @@ use tokio::time::{sleep, Duration};
 
 mod common;
 
+use goose::config::GooseConfiguration;
 use goose::prelude::*;
-use goose::GooseConfiguration;
 
 // Paths used in load tests performed during these tests.
 const ONE_PATH: &str = "/one";
