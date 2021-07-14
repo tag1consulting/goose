@@ -871,6 +871,8 @@ impl GooseUser {
         let client = Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true)
+            .deflate(true)
+            .gzip(true)
             .build()?;
 
         Ok(GooseUser {
@@ -1929,8 +1931,8 @@ impl GooseUser {
     ///    will only affect requests made during test teardown;
     ///  - A manually built client is specific to a single Goose thread -- if you are
     ///    generating a large load test with many users, each will need to manually build their
-    ///    own client (typically you'd do this in a Task that is registered with `set_on_start()`
-    ///    in each Task Set requiring a custom client;
+    ///    own client (typically you'd do this in a Task that is registered with
+    ///   [`GooseTask::set_on_start()`] in each Task Set requiring a custom client;
     ///  - Manually building a client will completely replace the automatically built client
     ///    with a brand new one, so any configuration, cookies or headers set in the previously
     ///    built client will be gone;
@@ -1940,7 +1942,8 @@ impl GooseUser {
     ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store).
     ///
     /// In the following example, the Goose client is configured with a different user agent,
-    /// sets a default header on every request, and stores cookies.
+    /// sets a default header on every request, stores cookies, and supports gzip and deflate
+    /// compression.
     ///
     /// # Example
     /// ```rust
@@ -1958,7 +1961,9 @@ impl GooseUser {
     ///     let builder = Client::builder()
     ///         .default_headers(headers)
     ///         .user_agent("custom user agent")
-    ///         .cookie_store(true);
+    ///         .cookie_store(true)
+    ///         .deflate(true)
+    ///         .gzip(true);
     ///
     ///     user.set_client_builder(builder).await?;
     ///
