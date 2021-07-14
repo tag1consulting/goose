@@ -139,6 +139,7 @@ use std::str::FromStr;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
+use crate::config::{GooseConfigure, GooseValue};
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, GooseTaskMetric};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
@@ -408,39 +409,165 @@ impl GooseConfiguration {
     /// Makes sure the GooseConfiguration has any/all configured log files (loading from defaults
     /// if not configured through a run time option).
     pub(crate) fn configure_loggers(&mut self, defaults: &GooseDefaults) {
-        // If running in Manager mode, no logger is configured.
-        if self.manager {
-            return;
-        }
-
         // Configure debug_log path if enabled.
-        if self.debug_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_debug_log) = defaults.debug_log.clone() {
-                self.debug_log = default_debug_log;
-            }
-        }
+        self.debug_log = self
+            .get_value(vec![
+                // Use --debug-log if set.
+                GooseValue {
+                    value: Some(self.debug_log.to_string()),
+                    filter: self.debug_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.debug_log.clone(),
+                    filter: defaults.debug_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
+        // Set `debug_format`.
+        self.debug_format = self.get_value(vec![
+            // Use --debug-format if set.
+            GooseValue {
+                value: self.debug_format.clone(),
+                filter: self.debug_format.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set and not on Manager.
+            GooseValue {
+                value: defaults.debug_format.clone(),
+                filter: defaults.debug_format.is_none() || self.manager,
+                message: "",
+            },
+            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            GooseValue {
+                value: Some(GooseLogFormat::Json),
+                filter: self.manager,
+                message: "",
+            },
+        ]);
+
         // Configure error_log path if enabled.
-        if self.error_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_error_log) = defaults.error_log.clone() {
-                self.error_log = default_error_log;
-            }
-        }
+        self.error_log = self
+            .get_value(vec![
+                // Use --error-log if set.
+                GooseValue {
+                    value: Some(self.error_log.to_string()),
+                    filter: self.error_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.error_log.clone(),
+                    filter: defaults.error_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
+        // Set `error_format`.
+        self.error_format = self.get_value(vec![
+            // Use --error-format if set.
+            GooseValue {
+                value: self.error_format.clone(),
+                filter: self.error_format.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set and not on Manager.
+            GooseValue {
+                value: defaults.error_format.clone(),
+                filter: defaults.error_format.is_none() || self.manager,
+                message: "",
+            },
+            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            GooseValue {
+                value: Some(GooseLogFormat::Json),
+                filter: self.manager,
+                message: "",
+            },
+        ]);
+
         // Configure request_log path if enabled.
-        if self.request_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_request_log) = defaults.request_log.clone() {
-                self.request_log = default_request_log;
-            }
-        }
+        self.request_log = self
+            .get_value(vec![
+                // Use --request-log if set.
+                GooseValue {
+                    value: Some(self.request_log.to_string()),
+                    filter: self.request_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.request_log.clone(),
+                    filter: defaults.request_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
+        // Set `request_format`.
+        self.request_format = self.get_value(vec![
+            // Use --request-format if set.
+            GooseValue {
+                value: self.request_format.clone(),
+                filter: self.request_format.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set and not on Manager.
+            GooseValue {
+                value: defaults.request_format.clone(),
+                filter: defaults.request_format.is_none() || self.manager,
+                message: "",
+            },
+            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            GooseValue {
+                value: Some(GooseLogFormat::Json),
+                filter: self.manager,
+                message: "",
+            },
+        ]);
+
         // Configure task_log path if enabled.
-        if self.task_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_task_log) = defaults.task_log.clone() {
-                self.task_log = default_task_log;
-            }
-        }
+        self.task_log = self
+            .get_value(vec![
+                // Use --task-log if set.
+                GooseValue {
+                    value: Some(self.task_log.to_string()),
+                    filter: self.task_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.task_log.clone(),
+                    filter: defaults.task_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
+        // Set `task_format`.
+        self.task_format = self.get_value(vec![
+            // Use --task-format if set.
+            GooseValue {
+                value: self.task_format.clone(),
+                filter: self.task_format.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set and not on Manager.
+            GooseValue {
+                value: defaults.task_format.clone(),
+                filter: defaults.task_format.is_none() || self.manager,
+                message: "",
+            },
+            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            GooseValue {
+                value: Some(GooseLogFormat::Json),
+                filter: self.manager,
+                message: "",
+            },
+        ]);
     }
 
     /// Spawns the logger thread if one or more loggers are enabled.
