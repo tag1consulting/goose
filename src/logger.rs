@@ -139,6 +139,7 @@ use std::str::FromStr;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
+use crate::config::{GooseConfigure, GooseValue};
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, GooseTaskMetric};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
@@ -408,39 +409,77 @@ impl GooseConfiguration {
     /// Makes sure the GooseConfiguration has any/all configured log files (loading from defaults
     /// if not configured through a run time option).
     pub(crate) fn configure_loggers(&mut self, defaults: &GooseDefaults) {
-        // If running in Manager mode, no logger is configured.
-        if self.manager {
-            return;
-        }
-
         // Configure debug_log path if enabled.
-        if self.debug_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_debug_log) = defaults.debug_log.clone() {
-                self.debug_log = default_debug_log;
-            }
-        }
+        self.debug_log = self
+            .get_value(vec![
+                // Use --debug-log if set.
+                GooseValue {
+                    value: Some(self.debug_log.to_string()),
+                    filter: self.debug_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.debug_log.clone(),
+                    filter: defaults.debug_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
         // Configure error_log path if enabled.
-        if self.error_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_error_log) = defaults.error_log.clone() {
-                self.error_log = default_error_log;
-            }
-        }
+        self.error_log = self
+            .get_value(vec![
+                // Use --error-log if set.
+                GooseValue {
+                    value: Some(self.error_log.to_string()),
+                    filter: self.error_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.error_log.clone(),
+                    filter: defaults.error_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
         // Configure request_log path if enabled.
-        if self.request_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_request_log) = defaults.request_log.clone() {
-                self.request_log = default_request_log;
-            }
-        }
+        self.request_log = self
+            .get_value(vec![
+                // Use --request-log if set.
+                GooseValue {
+                    value: Some(self.request_log.to_string()),
+                    filter: self.request_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.request_log.clone(),
+                    filter: defaults.request_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
         // Configure task_log path if enabled.
-        if self.task_log.is_empty() {
-            // Set default, if configured.
-            if let Some(default_task_log) = defaults.task_log.clone() {
-                self.task_log = default_task_log;
-            }
-        }
+        self.task_log = self
+            .get_value(vec![
+                // Use --task-log if set.
+                GooseValue {
+                    value: Some(self.task_log.to_string()),
+                    filter: self.task_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.task_log.clone(),
+                    filter: defaults.task_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
     }
 
     /// Spawns the logger thread if one or more loggers are enabled.

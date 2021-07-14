@@ -7,6 +7,8 @@
 
 use gumdrop::Options;
 use serde::{Deserialize, Serialize};
+use simplelog::*;
+use std::path::PathBuf;
 
 use crate::logger::GooseLogFormat;
 use crate::metrics::GooseCoordinatedOmissionMitigation;
@@ -964,13 +966,13 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
 
 /// Used internally to configure [`GooseConfiguration`] values based on precedence rules.
 #[derive(Debug, Clone)]
-struct GooseValue<'a, T> {
-    value: Option<T>,
-    filter: bool,
-    message: &'a str,
+pub(crate) struct GooseValue<'a, T> {
+    pub(crate) value: Option<T>,
+    pub(crate) filter: bool,
+    pub(crate) message: &'a str,
 }
 
-trait GooseConfigure<T> {
+pub(crate) trait GooseConfigure<T> {
     /// Set [`GooseValue`] with supported type.
     fn get_value(&self, values: Vec<GooseValue<T>>) -> Option<T>;
 }
@@ -1126,9 +1128,6 @@ impl GooseConfigure<GooseCoordinatedOmissionMitigation> for GooseConfiguration {
 impl GooseConfiguration {
     /// Implement precedence rules for all [`GooseConfiguration`] values.
     pub(crate) fn configure(&mut self, defaults: &GooseDefaults) {
-        // Configure loggers.
-        self.configure_loggers(defaults);
-
         // Configure `verbose`.
         self.verbose = self
             .get_value(vec![
@@ -1165,7 +1164,32 @@ impl GooseConfiguration {
             ])
             .unwrap_or(0);
 
-        // Configure `manager`. (NOTE: manager and worker must be configured first.)
+        // Configure `goose_log`.
+        self.goose_log = self
+            .get_value(vec![
+                // Use --log-level if set.
+                GooseValue {
+                    value: Some(self.goose_log.to_string()),
+                    filter: self.goose_log.is_empty(),
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.goose_log.clone(),
+                    filter: defaults.goose_log.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
+        // Initialize the Goose logger.
+        self.initialize_goose_logger();
+
+        // Configure loggers.
+        self.configure_loggers(defaults);
+
+        // Configure `manager`. (DEVELOPER NOTE: manager and worker must be configured
+        // immediately after the loggers.)
         self.manager = self
             .get_value(vec![
                 // Use --manager if set.
@@ -1183,7 +1207,8 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
-        // Configure `worker`. (NOTE: manager and worker must be configured first.)
+        // Configure `worker`. (DEVELOPER NOTE: manager and worker must be configured
+        // immediately after the loggers.)
         self.worker = self
             .get_value(vec![
                 // Use --worker if set.
@@ -1493,7 +1518,7 @@ impl GooseConfiguration {
             GooseValue {
                 value: Some(GooseCoordinatedOmissionMitigation::Disabled),
                 filter: self.worker,
-                message: "co_mitigation",
+                message: "",
             },
         ]);
 
@@ -1581,7 +1606,7 @@ impl GooseConfiguration {
             GooseValue {
                 value: Some(GooseLogFormat::Json),
                 filter: self.manager,
-                message: "request_format",
+                message: "",
             },
         ]);
 
@@ -1603,7 +1628,7 @@ impl GooseConfiguration {
             GooseValue {
                 value: Some(GooseLogFormat::Json),
                 filter: self.manager,
-                message: "task_format",
+                message: "",
             },
         ]);
 
@@ -1625,7 +1650,7 @@ impl GooseConfiguration {
             GooseValue {
                 value: Some(GooseLogFormat::Json),
                 filter: self.manager,
-                message: "error_format",
+                message: "",
             },
         ]);
 
@@ -1647,7 +1672,7 @@ impl GooseConfiguration {
             GooseValue {
                 value: Some(GooseLogFormat::Json),
                 filter: self.manager,
-                message: "debug_format",
+                message: "",
             },
         ]);
 
@@ -2130,6 +2155,61 @@ impl GooseConfiguration {
         }
 
         Ok(())
+    }
+
+    /// Optionally initialize the Goose logger which writes to standard out and/or to
+    /// a configurable log file.
+    pub(crate) fn initialize_goose_logger(&self) {
+        // Configure debug output level.
+        let debug_level = match self.verbose {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            _ => LevelFilter::Trace,
+        };
+
+        // Configure Goose log level.
+        let log_level = match self.log_level {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            _ => LevelFilter::Trace,
+        };
+
+        // Open the log file if configured.
+        let goose_log: Option<PathBuf> = if !self.goose_log.is_empty() {
+            Some(PathBuf::from(&self.goose_log))
+        // Otherwise disable the log.
+        } else {
+            None
+        };
+
+        if let Some(log_to_file) = goose_log {
+            match CombinedLogger::init(vec![
+                SimpleLogger::new(debug_level, Config::default()),
+                WriteLogger::new(
+                    log_level,
+                    Config::default(),
+                    std::fs::File::create(&log_to_file).unwrap(),
+                ),
+            ]) {
+                Ok(_) => (),
+                Err(e) => {
+                    info!("failed to initialize CombinedLogger: {}", e);
+                }
+            }
+            info!("Writing to log file: {}", log_to_file.display());
+        } else {
+            match CombinedLogger::init(vec![SimpleLogger::new(debug_level, Config::default())]) {
+                Ok(_) => (),
+                Err(e) => {
+                    info!("failed to initialize CombinedLogger: {}", e);
+                }
+            }
+        }
+
+        info!("Output verbosity level: {}", debug_level);
+        info!("Logfile verbosity level: {}", log_level);
     }
 }
 

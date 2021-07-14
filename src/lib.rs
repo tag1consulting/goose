@@ -444,11 +444,9 @@ use lazy_static::lazy_static;
 use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use simplelog::*;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -830,78 +828,6 @@ impl GooseAttack {
             started: None,
             metrics: GooseMetrics::default(),
         })
-    }
-
-    /// Optionally initialize the Goose logger which writes to standard out and/or to
-    /// a configurable log file.
-    ///
-    /// This method is invoked by
-    /// [`GooseAttack.execute()`](./struct.GooseAttack.html#method.execute).
-    pub(crate) fn initialize_goose_logger(&self) {
-        // Allow optionally controlling debug output level
-        let debug_level;
-        match self.configuration.verbose {
-            0 => debug_level = LevelFilter::Warn,
-            1 => debug_level = LevelFilter::Info,
-            2 => debug_level = LevelFilter::Debug,
-            _ => debug_level = LevelFilter::Trace,
-        }
-
-        // Set log level based on run-time option or default if set.
-        let log_level_value = if self.configuration.log_level > 0 {
-            self.configuration.log_level
-        } else if let Some(default_log_level) = self.defaults.log_level {
-            default_log_level
-        } else {
-            0
-        };
-        let log_level = match log_level_value {
-            0 => LevelFilter::Warn,
-            1 => LevelFilter::Info,
-            2 => LevelFilter::Debug,
-            _ => LevelFilter::Trace,
-        };
-
-        let goose_log: Option<PathBuf>;
-        // Use --log-file if set.
-        if !self.configuration.goose_log.is_empty() {
-            goose_log = Some(PathBuf::from(&self.configuration.goose_log));
-        }
-        // Otherwise use goose_attack.defaults.goose_log if set.
-        else if let Some(default_goose_log) = &self.defaults.goose_log {
-            goose_log = Some(PathBuf::from(default_goose_log));
-        }
-        // Otherwise disable the log.
-        else {
-            goose_log = None;
-        }
-
-        if let Some(log_to_file) = goose_log {
-            match CombinedLogger::init(vec![
-                SimpleLogger::new(debug_level, Config::default()),
-                WriteLogger::new(
-                    log_level,
-                    Config::default(),
-                    std::fs::File::create(&log_to_file).unwrap(),
-                ),
-            ]) {
-                Ok(_) => (),
-                Err(e) => {
-                    info!("failed to initialize CombinedLogger: {}", e);
-                }
-            }
-            info!("Writing to log file: {}", log_to_file.display());
-        } else {
-            match CombinedLogger::init(vec![SimpleLogger::new(debug_level, Config::default())]) {
-                Ok(_) => (),
-                Err(e) => {
-                    info!("failed to initialize CombinedLogger: {}", e);
-                }
-            }
-        }
-
-        info!("Output verbosity level: {}", debug_level);
-        info!("Logfile verbosity level: {}", log_level);
     }
 
     /// Define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are
@@ -1337,10 +1263,6 @@ impl GooseAttack {
             }
             std::process::exit(0);
         }
-
-        // @TODO: Move into Config
-        // Initialize goose logger.
-        self.initialize_goose_logger();
 
         // Configure GooseConfiguration.
         self.configuration.configure(&self.defaults);
