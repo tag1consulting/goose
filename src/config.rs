@@ -1,3 +1,10 @@
+//! Functions and structures related to configuring a Goose load test.
+//!
+//! Goose can be configured at run time by passing in the options and flags defined by
+//! the [`GooseConfiguration`] structure.
+//!
+//! Goose can be configured programmatically with [`GooseDefaultType::set_default`].
+
 use gumdrop::Options;
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +16,81 @@ use crate::{GooseAttack, GooseError};
 /// Constant defining Goose's default port when running a Gaggle.
 const DEFAULT_PORT: &str = "5115";
 
+/// Runtime options available when launching a Goose load test.
+///
+/// Custom defaults can be programmatically set for most of these options using the
+/// `GooseDefaults` structure.
+///
+/// Help is generated for all of these options by passing a `-h` flag to an application
+/// built with the Goose Library. For example, using the following command from within the
+/// Goose source tree to run the included `simple` example:
+///
+/// `cargo run --example simple -- -h`
+///
+/// Goose will generate the following output from the [`GooseConfiguration`] structure:
+///
+/// ```text
+/// Usage: target/debug/examples/simple [OPTIONS]
+///
 /// Options available when launching a Goose load test.
+///
+///
+/// Optional arguments:
+/// -h, --help                 Displays this help
+/// -V, --version              Prints version information
+/// -l, --list                 Lists all tasks and exits
+///
+/// -H, --host HOST            Defines host to load test (ie http://10.21.32.33)
+/// -u, --users USERS          Sets concurrent users (default: number of CPUs)
+/// -r, --hatch-rate RATE      Sets per-second user hatch rate (default: 1)
+/// -t, --run-time TIME        Stops after (30s, 20m, 3h, 1h30m, etc)
+/// -G, --goose-log NAME       Enables Goose log file and sets name
+/// -g, --log-level            Sets Goose log level (-g, -gg, etc)
+/// -v, --verbose              Sets Goose verbosity (-v, -vv, etc)
+///
+/// Metrics:
+/// --running-metrics TIME     How often to optionally print running metrics
+/// --no-reset-metrics         Doesn't reset metrics after all users have started
+/// --no-metrics               Doesn't track metrics
+/// --no-task-metrics          Doesn't track task metrics
+/// --no-error-summary         Doesn't display an error summary
+/// --report-file NAME         Create an html-formatted report
+/// -R, --request-log NAME     Sets request log file name
+/// --request-format FORMAT    Sets request log format (csv, json, raw)
+/// -T, --task-log NAME        Sets task log file name
+/// --task-format FORMAT       Sets task log format (csv, json, raw)
+/// -E, --error-log NAME       Sets error log file name
+/// --error-format FORMAT      Sets error log format (csv, json, raw)
+/// -D, --debug-log NAME       Sets debug log file name
+/// --debug-format FORMAT      Sets debug log format (csv, json, raw)
+/// --no-debug-body            Do not include the response body in the debug log
+/// --status-codes             Tracks additional status code metrics
+///
+/// Advanced:
+/// --no-telnet                Doesn't enable telnet Controller
+/// --telnet-host HOST         Sets telnet Controller host (default: 0.0.0.0)
+/// --telnet-port PORT         Sets telnet Controller TCP port (default: 5116)
+/// --no-websocket             Doesn't enable WebSocket Controller
+/// --websocket-host HOST      Sets WebSocket Controller host (default: 0.0.0.0)
+/// --websocket-port PORT      Sets WebSocket Controller TCP port (default: 5117)
+/// --no-autostart             Doesn't automatically start load test
+/// --co-mitigation STRATEGY   Sets coordinated omission mitigation strategy
+/// --throttle-requests VALUE  Sets maximum requests per second
+/// --sticky-follow            Follows base_url redirect with subsequent requests
+///
+/// Gaggle:
+/// --manager                  Enables distributed load test Manager mode
+/// --expect-workers VALUE     Sets number of Workers to expect
+/// --no-hash-check            Tells Manager to ignore load test checksum
+/// --manager-bind-host HOST   Sets host Manager listens on (default: 0.0.0.0)
+/// --manager-bind-port PORT   Sets port Manager listens on (default: 5115)
+/// --worker                   Enables distributed load test Worker mode
+/// --manager-host HOST        Sets host Worker connects to (default: 127.0.0.1)
+/// --manager-port PORT        Sets port Worker connects to (default: 5115)
+/// ```
+///
+/// Goose leverages [`gumdrop`](https://docs.rs/gumdrop/) to derive the above help from
+/// the the below structure.
 #[derive(Options, Debug, Clone, Serialize, Deserialize)]
 pub struct GooseConfiguration {
     /// Displays this help
@@ -157,8 +238,10 @@ pub struct GooseConfiguration {
 }
 
 /// Optional default values for Goose run-time options.
+///
+/// These custom defaults can be configured using [`GooseDefaultType::set_default()`].
 #[derive(Clone, Debug, Default)]
-pub struct GooseDefaults {
+pub(crate) struct GooseDefaults {
     /// An optional default host to run this load test against.
     pub host: Option<String>,
     /// An optional default number of users to simulate.
@@ -243,7 +326,10 @@ pub struct GooseDefaults {
     pub manager_port: Option<u16>,
 }
 
-/// Allows the optional configuration of Goose's defaults.
+/// Defines all [`GooseConfiguration`] options that can be programmatically configured with
+/// a custom default.
+///
+/// These custom defaults can be configured using [`GooseDefaultType::set_default()`].
 #[derive(Debug)]
 pub enum GooseDefault {
     /// An optional default host to run this load test against.
@@ -330,17 +416,21 @@ pub enum GooseDefault {
     ManagerPort,
 }
 
-/// All run-time options can optionally be configured with custom defaults.
+/// Most run-time options can be programmatically configured with custom defaults.
 ///
 /// For example, you can optionally configure a default host for the load test. This is
-/// used if no per-[`GooseTaskSet`](./goose/struct.GooseTaskSet.html) host is defined,
-/// no `--host` CLI option is configured, and if the
-/// [`GooseTask`](./goose/struct.GooseTask.html) itself doesn't hard-code the host in
+/// used if no per-[`GooseTaskSet`](../struct.GooseTaskSet.html) host is defined, no
+/// [`--host`](./enum.GooseDefault.html#variant.Host) CLI option is configured, and if
+/// the [`GooseTask`](../struct.GooseTask.html) itself doesn't hard-code the host in
 /// the base url of its request. In that case, this host is added to all requests.
 ///
-/// For example, a load test could be configured to default to running against a local
-/// development container, and the `--host` option could be used to override the host
-/// value to run the load test against the production environment.
+/// In the following example, the load test is programmatically configured with
+/// [`GooseDefaultType::set_default`] to default to running against a local development
+/// container. The [`--host`](./enum.GooseDefault.html#variant.Host) run time option
+/// can be used at start time to override the host value, and the
+/// [`GooseControllerCommand::host`](../controller/enum.GooseControllerCommand.html#variant.Host)
+/// Controller command can be used to change the host value of an
+/// [`AttackPhase::idle`](../enum.AttackPhase.html#variant.Idle) load test.
 ///
 /// # Example
 /// ```rust
@@ -355,74 +445,82 @@ pub enum GooseDefault {
 /// ```
 ///
 /// The following run-time options can be configured with a custom default using a
-/// borrowed string slice (`&str`):
-///  - [GooseDefault::Host](../goose/enum.GooseDefault.html#variant.Host)
-///  - [GooseDefault::GooseLog](../goose/enum.GooseDefault.html#variant.GooseLog)
-///  - [GooseDefault::RequestFormat](../goose/enum.GooseDefault.html#variant.RequestFormat)
-///  - [GooseDefault::TaskLog](../goose/enum.GooseDefault.html#variant.TaskLog)
-///  - [GooseDefault::ErrorLog](../goose/enum.GooseDefault.html#variant.ErrorLog)
-///  - [GooseDefault::DebugLog](../goose/enum.GooseDefault.html#variant.DebugLog)
-///  - [GooseDefault::TelnetHost](../goose/enum.GooseDefault.html#variant.TelnetHost)
-///  - [GooseDefault::WebSocketHost](../goose/enum.GooseDefault.html#variant.WebSocketHost)
-///  - [GooseDefault::ManagerBindHost](../goose/enum.GooseDefault.html#variant.ManagerBindHost)
-///  - [GooseDefault::ManagerHost](../goose/enum.GooseDefault.html#variant.ManagerHost)
+/// borrowed string slice ([`&str`]):
+///  - [`GooseDefault::Host`]
+///  - [`GooseDefault::GooseLog`]
+///  - [`GooseDefault::RequestFormat`]
+///  - [`GooseDefault::TaskLog`]
+///  - [`GooseDefault::ErrorLog`]
+///  - [`GooseDefault::DebugLog`]
+///  - [`GooseDefault::TelnetHost`]
+///  - [`GooseDefault::WebSocketHost`]
+///  - [`GooseDefault::ManagerBindHost`]
+///  - [`GooseDefault::ManagerHost`]
 ///
 /// The following run-time options can be configured with a custom default using a
-/// `usize` integer:
-///  - [GooseDefault::Users](../goose/enum.GooseDefault.html#variant.Users)
-///  - [GooseDefault::HatchRate](../goose/enum.GooseDefault.html#variant.HatchRate)
-///  - [GooseDefault::RunTime](../goose/enum.GooseDefault.html#variant.RunTime)
-///  - [GooseDefault::RunningMetrics](../goose/enum.GooseDefault.html#variant.RunningMetrics)
-///  - [GooseDefault::LogLevel](../goose/enum.GooseDefault.html#variant.LogLevel)
-///  - [GooseDefault::Verbose](../goose/enum.GooseDefault.html#variant.Verbose)
-///  - [GooseDefault::ThrottleRequests](../goose/enum.GooseDefault.html#variant.ThrottleRequests)
-///  - [GooseDefault::ExpectWorkers](../goose/enum.GooseDefault.html#variant.ExpectWorkers)
-///  - [GooseDefault::TelnetPort](../goose/enum.GooseDefault.html#variant.TelnetPort)
-///  - [GooseDefault::WebSocketPort](../goose/enum.GooseDefault.html#variant.WebSocketPort)
-///  - [GooseDefault::ManagerBindPort](../goose/enum.GooseDefault.html#variant.ManagerBindPort)
-///  - [GooseDefault::ManagerPort](../goose/enum.GooseDefault.html#variant.ManagerPort)
+/// [`usize`] integer:
+///  - [`GooseDefault::Users`]
+///  - [`GooseDefault::HatchRate`]
+///  - [`GooseDefault::RunTime`]
+///  - [`GooseDefault::RunningMetrics`]
+///  - [`GooseDefault::LogLevel`]
+///  - [`GooseDefault::Verbose`]
+///  - [`GooseDefault::ThrottleRequests`]
+///  - [`GooseDefault::ExpectWorkers`]
+///  - [`GooseDefault::TelnetPort`]
+///  - [`GooseDefault::WebSocketPort`]
+///  - [`GooseDefault::ManagerBindPort`]
+///  - [`GooseDefault::ManagerPort`]
 ///
 /// The following run-time flags can be configured with a custom default using a
-/// `bool` (and otherwise default to `false`).
-///  - [GooseDefault::NoResetMetrics](../goose/enum.GooseDefault.html#variant.NoResetMetrics)
-///  - [GooseDefault::NoMetrics](../goose/enum.GooseDefault.html#variant.NoMetrics)
-///  - [GooseDefault::NoTaskMetrics](../goose/enum.GooseDefault.html#variant.NoTaskMetrics)
-///  - [GooseDefault::NoErrorSummary](../goose/enum.GooseDefault.html#variant.NoErrorSummary)
-///  - [GooseDefault::NoDebugBody](../goose/enum.GooseDefault.html#variant.NoDebugBody)
-///  - [GooseDefault::NoTelnet](../goose/enum.GooseDefault.html#variant.NoTelnet)
-///  - [GooseDefault::NoWebSocket](../goose/enum.GooseDefault.html#variant.NoWebSocket)
-///  - [GooseDefault::NoAutoStart](../goose/enum.GooseDefault.html#variant.NoAutoStart)
-///  - [GooseDefault::StatusCodes](../goose/enum.GooseDefault.html#variant.StatusCodes)
-///  - [GooseDefault::StickyFollow](../goose/enum.GooseDefault.html#variant.StickyFollow)
-///  - [GooseDefault::Manager](../goose/enum.GooseDefault.html#variant.Manager)
-///  - [GooseDefault::NoHashCheck](../goose/enum.GooseDefault.html#variant.NoHashCheck)
-///  - [GooseDefault::Worker](../goose/enum.GooseDefault.html#variant.Worker)
+/// [`bool`] (and otherwise default to [`false`]).
+///  - [`GooseDefault::NoResetMetrics`]
+///  - [`GooseDefault::NoMetrics`]
+///  - [`GooseDefault::NoTaskMetrics`]
+///  - [`GooseDefault::NoErrorSummary`]
+///  - [`GooseDefault::NoDebugBody`]
+///  - [`GooseDefault::NoTelnet`]
+///  - [`GooseDefault::NoWebSocket`]
+///  - [`GooseDefault::NoAutoStart`]
+///  - [`GooseDefault::StatusCodes`]
+///  - [`GooseDefault::StickyFollow`]
+///  - [`GooseDefault::Manager`]
+///  - [`GooseDefault::NoHashCheck`]
+///  - [`GooseDefault::Worker`]
 ///
 /// The following run-time flags can be configured with a custom default using a
-/// `GooseLogFormat`.
-///  - [GooseDefault::RequestLog](../goose/enum.GooseDefault.html#variant.RequestLog)
-///  - [GooseDefault::TaskLog](../goose/enum.GooseDefault.html#variant.TaskLog)
-///  - [GooseDefault::DebugFormat](../goose/enum.GooseDefault.html#variant.DebugFormat)
-/// # Another Example
-/// ```rust
-/// use goose::prelude::*;
+/// [`GooseLogFormat`].
+///  - [`GooseDefault::RequestLog`]
+///  - [`GooseDefault::TaskLog`]
+///  - [`GooseDefault::DebugFormat`]
 ///
-/// fn main() -> Result<(), GooseError> {
-///     GooseAttack::initialize()?
-///         // Do not reset the metrics after the load test finishes starting.
-///         .set_default(GooseDefault::NoResetMetrics, true)?
-///         // Display info level logs while the test runs.
-///         .set_default(GooseDefault::Verbose, 1)?
-///         // Log all requests made during the test to `./goose-request.log`.
-///         .set_default(GooseDefault::RequestLog, "goose-request.log")?;
-///
-///     Ok(())
-/// }
-/// ```
+/// The following run-time flags can be configured with a custom default using a
+/// [`GooseCoordinatedOmissionMitigation`].
+///  - [`GooseDefault::CoordinatedOmissionMitigation`]
 pub trait GooseDefaultType<T> {
+    /// Sets a [`GooseDefault`] to the provided value. The required type of each option
+    /// is documented in [`GooseDefaultType`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// fn main() -> Result<(), GooseError> {
+    ///     GooseAttack::initialize()?
+    ///         // Do not reset the metrics after the load test finishes starting.
+    ///         .set_default(GooseDefault::NoResetMetrics, true)?
+    ///         // Display info level logs while the test runs.
+    ///         .set_default(GooseDefault::Verbose, 1)?
+    ///         // Log all requests made during the test to `./goose-request.log`.
+    ///         .set_default(GooseDefault::RequestLog, "goose-request.log")?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     fn set_default(self, key: GooseDefault, value: T) -> Result<Box<Self>, GooseError>;
 }
 impl GooseDefaultType<&str> for GooseAttack {
+    /// Sets [`GooseDefault`] to a [`&str`] value.
     fn set_default(mut self, key: GooseDefault, value: &str) -> Result<Box<Self>, GooseError> {
         match key {
             // Set valid defaults.
@@ -511,6 +609,7 @@ impl GooseDefaultType<&str> for GooseAttack {
     }
 }
 impl GooseDefaultType<usize> for GooseAttack {
+    /// Sets [`GooseDefault`] to a [`usize`] value.
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::Users => self.defaults.users = Some(value),
@@ -596,6 +695,7 @@ impl GooseDefaultType<usize> for GooseAttack {
     }
 }
 impl GooseDefaultType<bool> for GooseAttack {
+    /// Sets [`GooseDefault`] to a [`bool`] value.
     fn set_default(mut self, key: GooseDefault, value: bool) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
@@ -681,6 +781,7 @@ impl GooseDefaultType<bool> for GooseAttack {
     }
 }
 impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
+    /// Sets [`GooseDefault`] to a [`GooseCoordinatedOmissionMitigation`] value.
     fn set_default(
         mut self,
         key: GooseDefault,
@@ -770,6 +871,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
     }
 }
 impl GooseDefaultType<GooseLogFormat> for GooseAttack {
+    /// Sets [`GooseDefault`] to a [`GooseLogFormat`] value.
     fn set_default(
         mut self,
         key: GooseDefault,
@@ -860,6 +962,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
     }
 }
 
+/// Used internally to configure [`GooseConfiguration`] values based on precedence rules.
 #[derive(Debug, Clone)]
 struct GooseValue<'a, T> {
     value: Option<T>,
@@ -868,10 +971,12 @@ struct GooseValue<'a, T> {
 }
 
 trait GooseConfigure<T> {
+    /// Set [`GooseValue`] with supported type.
     fn get_value(&self, values: Vec<GooseValue<T>>) -> Option<T>;
 }
 
 impl GooseConfigure<usize> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`usize`] value.
     fn get_value(&self, values: Vec<GooseValue<usize>>) -> Option<usize> {
         for value in values {
             if let Some(v) = value.value {
@@ -889,6 +994,7 @@ impl GooseConfigure<usize> for GooseConfiguration {
     }
 }
 impl GooseConfigure<u16> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`usize`] value.
     fn get_value(&self, values: Vec<GooseValue<u16>>) -> Option<u16> {
         for value in values {
             if let Some(v) = value.value {
@@ -906,6 +1012,7 @@ impl GooseConfigure<u16> for GooseConfiguration {
     }
 }
 impl GooseConfigure<u8> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`u8`] value.
     fn get_value(&self, values: Vec<GooseValue<u8>>) -> Option<u8> {
         for value in values {
             if let Some(v) = value.value {
@@ -923,6 +1030,7 @@ impl GooseConfigure<u8> for GooseConfiguration {
     }
 }
 impl GooseConfigure<f32> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`f32`] value.
     fn get_value(&self, values: Vec<GooseValue<f32>>) -> Option<f32> {
         for value in values {
             if let Some(v) = value.value {
@@ -940,6 +1048,7 @@ impl GooseConfigure<f32> for GooseConfiguration {
     }
 }
 impl GooseConfigure<String> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`String`] value.
     fn get_value(&self, values: Vec<GooseValue<String>>) -> Option<String> {
         for value in values {
             if let Some(v) = value.value {
@@ -957,6 +1066,7 @@ impl GooseConfigure<String> for GooseConfiguration {
     }
 }
 impl GooseConfigure<bool> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`bool`] value.
     fn get_value(&self, values: Vec<GooseValue<bool>>) -> Option<bool> {
         for value in values {
             if let Some(v) = value.value {
@@ -974,6 +1084,7 @@ impl GooseConfigure<bool> for GooseConfiguration {
     }
 }
 impl GooseConfigure<GooseLogFormat> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`GooseLogFormat`] value.
     fn get_value(&self, values: Vec<GooseValue<GooseLogFormat>>) -> Option<GooseLogFormat> {
         for value in values {
             if let Some(v) = value.value {
@@ -991,6 +1102,7 @@ impl GooseConfigure<GooseLogFormat> for GooseConfiguration {
     }
 }
 impl GooseConfigure<GooseCoordinatedOmissionMitigation> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`GooseCoordinatedOmissionMitigation`] value.
     fn get_value(
         &self,
         values: Vec<GooseValue<GooseCoordinatedOmissionMitigation>>,
@@ -1012,7 +1124,8 @@ impl GooseConfigure<GooseCoordinatedOmissionMitigation> for GooseConfiguration {
 }
 
 impl GooseConfiguration {
-    pub fn configure(&mut self, defaults: &GooseDefaults) {
+    /// Implement precedence rules for all [`GooseConfiguration`] values.
+    pub(crate) fn configure(&mut self, defaults: &GooseDefaults) {
         // Configure loggers.
         self.configure_loggers(defaults);
 
@@ -1635,7 +1748,8 @@ impl GooseConfiguration {
             .unwrap_or(0);
     }
 
-    pub fn validate(&self) -> Result<(), GooseError> {
+    /// Validate configured [`GooseConfiguration`] values.
+    pub(crate) fn validate(&self) -> Result<(), GooseError> {
         // Validate nothing incompatible is enabled with --manager.
         if self.manager {
             // Don't allow --manager and --worker together.

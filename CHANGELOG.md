@@ -4,6 +4,7 @@
  - rename `rustls` feature to `rustls-tls` so `tests/controller.rs` can build with the `rustls` library; update `tungstenite` to `0.14` and `tokio-tungstenite` = `0.15` to allow building with `rustls`
   - documentation cleanup; properly rename `GooseDefault::RequestFormat` and fix links
   - always configure `GooseConfiguration.manager` and `GooseConfiguration.worker`; confirm Manager is enabled when setting `--expect-workers`
+  - moved `GooseConfiguration`, `GooseDefault`, and `GooseDefaultType` into new `src/config.rs` file; standardized configuration precedence through internal `GooseConfigure` trait defining `get_value()` for all supported types; general improvements to configuration documentation
 
 ## 0.12.0 July 8, 2021
  - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library (API change)
