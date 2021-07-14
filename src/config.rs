@@ -967,8 +967,11 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
 /// Used internally to configure [`GooseConfiguration`] values based on precedence rules.
 #[derive(Debug, Clone)]
 pub(crate) struct GooseValue<'a, T> {
+    /// The optional value to set.
     pub(crate) value: Option<T>,
+    /// Filter using this value if true.
     pub(crate) filter: bool,
+    /// An optional INFO level Goose log message.
     pub(crate) message: &'a str,
 }
 
@@ -1249,24 +1252,22 @@ impl GooseConfiguration {
         ]);
 
         // Configure `run_time`.
-        if let Some(run_time) = self.get_value(vec![
-            // Use --run-time if set.
-            GooseValue {
-                value: Some(util::parse_timespan(&self.run_time)),
-                filter: util::parse_timespan(&self.run_time) == 0,
-                message: "run_time",
-            },
-            // Otherwise use GooseDefault if set and not on Worker.
-            GooseValue {
-                value: defaults.run_time,
-                filter: defaults.run_time.is_none() || self.worker,
-                message: "run_time",
-            },
-        ]) {
-            self.run_time = run_time.to_string();
-        } else {
-            self.run_time = 0.to_string();
-        }
+        self.run_time = self
+            .get_value(vec![
+                // Use --run-time if set.
+                GooseValue {
+                    value: Some(util::parse_timespan(&self.run_time)),
+                    filter: util::parse_timespan(&self.run_time) == 0,
+                    message: "run_time",
+                },
+                // Otherwise use GooseDefault if set and not on Worker.
+                GooseValue {
+                    value: defaults.run_time,
+                    filter: defaults.run_time.is_none() || self.worker,
+                    message: "run_time",
+                },
+            ])
+            .map_or_else(|| "0".to_string(), |v| v.to_string());
 
         // Configure `hatch_rate`.
         self.hatch_rate = self
@@ -1559,16 +1560,20 @@ impl GooseConfiguration {
             .unwrap_or(false);
 
         // Configure `expect_workers`.
-        if let Some(value) = self.get_value(vec![
+        self.expect_workers = self.get_value(vec![
+            // Use --expect-workers if configured.
+            GooseValue {
+                value: self.expect_workers,
+                filter: self.expect_workers.is_none(),
+                message: "expect_workers",
+            },
             // Use GooseDefault if not already set and not Worker.
             GooseValue {
                 value: defaults.expect_workers,
                 filter: !self.expect_workers.is_some() && self.worker,
                 message: "expect_workers",
             },
-        ]) {
-            self.expect_workers = Some(value);
-        }
+        ]);
 
         // Configure `no_hash_check`.
         self.no_hash_check = self
@@ -1587,94 +1592,6 @@ impl GooseConfiguration {
                 },
             ])
             .unwrap_or(false);
-
-        // Set `request_format`.
-        self.request_format = self.get_value(vec![
-            // Use --request-format if set.
-            GooseValue {
-                value: self.request_format.clone(),
-                filter: self.request_format.is_none(),
-                message: "request_format",
-            },
-            // Otherwise use GooseDefault if set and not on Manager.
-            GooseValue {
-                value: defaults.request_format.clone(),
-                filter: defaults.request_format.is_none() || self.manager,
-                message: "request_format",
-            },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
-            GooseValue {
-                value: Some(GooseLogFormat::Json),
-                filter: self.manager,
-                message: "",
-            },
-        ]);
-
-        // Set `task_format`.
-        self.task_format = self.get_value(vec![
-            // Use --task-format if set.
-            GooseValue {
-                value: self.task_format.clone(),
-                filter: self.task_format.is_none(),
-                message: "task_format",
-            },
-            // Otherwise use GooseDefault if set and not on Manager.
-            GooseValue {
-                value: defaults.task_format.clone(),
-                filter: defaults.task_format.is_none() || self.manager,
-                message: "task_format",
-            },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
-            GooseValue {
-                value: Some(GooseLogFormat::Json),
-                filter: self.manager,
-                message: "",
-            },
-        ]);
-
-        // Set `error_format`.
-        self.error_format = self.get_value(vec![
-            // Use --error-format if set.
-            GooseValue {
-                value: self.error_format.clone(),
-                filter: self.error_format.is_none(),
-                message: "error_format",
-            },
-            // Otherwise use GooseDefault if set and not on Manager.
-            GooseValue {
-                value: defaults.error_format.clone(),
-                filter: defaults.error_format.is_none() || self.manager,
-                message: "error_format",
-            },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
-            GooseValue {
-                value: Some(GooseLogFormat::Json),
-                filter: self.manager,
-                message: "",
-            },
-        ]);
-
-        // Set `debug_format`.
-        self.debug_format = self.get_value(vec![
-            // Use --debug-format if set.
-            GooseValue {
-                value: self.debug_format.clone(),
-                filter: self.debug_format.is_none(),
-                message: "debug_format",
-            },
-            // Otherwise use GooseDefault if set and not on Manager.
-            GooseValue {
-                value: defaults.debug_format.clone(),
-                filter: defaults.debug_format.is_none() || self.manager,
-                message: "debug_format",
-            },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
-            GooseValue {
-                value: Some(GooseLogFormat::Json),
-                filter: self.manager,
-                message: "",
-            },
-        ]);
 
         // Set `manager_bind_host` on Manager.
         self.manager_bind_host = self
