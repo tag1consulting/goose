@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.12.1-dev
+## 0.12.1 July 15, 2021
  - rename `rustls` feature to `rustls-tls` so `tests/controller.rs` can build with the `rustls` library; update `tungstenite` to `0.14` and `tokio-tungstenite` = `0.15` to allow building with `rustls`
   - documentation cleanup; properly rename `GooseDefault::RequestFormat` and fix links
   - always configure `GooseConfiguration.manager` and `GooseConfiguration.worker`; confirm Manager is enabled when setting `--expect-workers`
