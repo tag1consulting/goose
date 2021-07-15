@@ -76,6 +76,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --websocket-host HOST      Sets WebSocket Controller host (default: 0.0.0.0)
 /// --websocket-port PORT      Sets WebSocket Controller TCP port (default: 5117)
 /// --no-autostart             Doesn't automatically start load test
+/// --no-gzip                  Doesn't set the gzip Accept-Encoding header
 /// --co-mitigation STRATEGY   Sets coordinated omission mitigation strategy
 /// --throttle-requests VALUE  Sets maximum requests per second
 /// --sticky-follow            Follows base_url redirect with subsequent requests
@@ -201,6 +202,9 @@ pub struct GooseConfiguration {
     /// Doesn't automatically start load test
     #[options(no_short)]
     pub no_autostart: bool,
+    /// Doesn't set the gzip Accept-Encoding header
+    #[options(no_short)]
+    pub no_gzip: bool,
     /// Sets coordinated omission mitigation strategy
     #[options(no_short, meta = "STRATEGY")]
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
@@ -294,6 +298,8 @@ pub(crate) struct GooseDefaults {
     pub no_websocket: Option<bool>,
     /// An optional default for not auto-starting the load test.
     pub no_autostart: Option<bool>,
+    /// An optional default for not setting the gzip Accept-Encoding header.
+    pub no_gzip: Option<bool>,
     /// An optional default for coordinated omission mitigation.
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     /// An optional default to track additional status code metrics.
@@ -386,6 +392,8 @@ pub enum GooseDefault {
     CoordinatedOmissionMitigation,
     /// An optional default for not automatically starting load test.
     NoAutoStart,
+    /// An optional default for not setting the gzip Accept-Encoding header.
+    NoGzip,
     /// An optional default to track additional status code metrics.
     StatusCodes,
     /// An optional default maximum requests per second.
@@ -484,6 +492,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoTelnet`]
 ///  - [`GooseDefault::NoWebSocket`]
 ///  - [`GooseDefault::NoAutoStart`]
+///  - [`GooseDefault::NoGzip`]
 ///  - [`GooseDefault::StatusCodes`]
 ///  - [`GooseDefault::StickyFollow`]
 ///  - [`GooseDefault::Manager`]
@@ -569,6 +578,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
+            | GooseDefault::NoGzip
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -655,6 +665,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
+            | GooseDefault::NoGzip
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -708,6 +719,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
+            GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
             GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
@@ -800,6 +812,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
+            | GooseDefault::NoGzip
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -893,6 +906,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
+            | GooseDefault::NoGzip
             | GooseDefault::StatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
@@ -1502,6 +1516,24 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
+        // Configure `no_gzip`.
+        self.no_gzip = self
+            .get_value(vec![
+                // Use --no-gzip if set.
+                GooseValue {
+                    value: Some(self.no_gzip),
+                    filter: !self.no_gzip,
+                    message: "no_gzip",
+                },
+                // Use GooseDefault if not already set and not Worker.
+                GooseValue {
+                    value: defaults.no_gzip,
+                    filter: defaults.no_gzip.is_none() || self.worker,
+                    message: "no_gzip",
+                },
+            ])
+            .unwrap_or(false);
+
         self.co_mitigation = self.get_value(vec![
             // Use --co-mitigation if set.
             GooseValue {
@@ -1880,6 +1912,13 @@ impl GooseConfiguration {
                     detail: "`configuration.no_autostart` can not be set in Worker mode."
                         .to_string(),
                 });
+            // Can't set `no_gzip` on Worker.
+            } else if self.no_gzip {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_gzip`".to_string(),
+                    value: true.to_string(),
+                    detail: "`configuration.no_gzip` can not be set in Worker mode.".to_string(),
+                });
             } else if self
                 .co_mitigation
                 .as_ref()
@@ -2187,6 +2226,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoAutoStart, true)
             .unwrap()
+            .set_default(GooseDefault::NoGzip, true)
+            .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
             .set_default(GooseDefault::RequestLog, request_log.as_str())
@@ -2251,6 +2292,7 @@ mod test {
         assert!(goose_attack.defaults.no_telnet == Some(true));
         assert!(goose_attack.defaults.no_websocket == Some(true));
         assert!(goose_attack.defaults.no_autostart == Some(true));
+        assert!(goose_attack.defaults.no_gzip == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.request_log == Some(request_log));
         assert!(goose_attack.defaults.request_format == Some(GooseLogFormat::Raw));

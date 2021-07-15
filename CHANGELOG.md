@@ -1,11 +1,13 @@
 # Changelog
 
+## 0.12.2-dev
+  - enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) support and set Accept-Encoding header by default in the client; disable with `--no-gzip` or `GooseDefault::NoGzip`
+
 ## 0.12.1 July 15, 2021
  - rename `rustls` feature to `rustls-tls` so `tests/controller.rs` can build with the `rustls` library; update `tungstenite` to `0.14` and `tokio-tungstenite` = `0.15` to allow building with `rustls`
   - documentation cleanup; properly rename `GooseDefault::RequestFormat` and fix links
   - always configure `GooseConfiguration.manager` and `GooseConfiguration.worker`; confirm Manager is enabled when setting `--expect-workers`
   - moved `GooseConfiguration`, `GooseDefault`, and `GooseDefaultType` into new `src/config.rs` file; standardized configuration precedence through internal `GooseConfigure` trait defining `get_value()` for all supported types; general improvements to configuration documentation
-  - enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) and [`deflate`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.deflate) support in the client
 
 ## 0.12.0 July 8, 2021
  - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library (API change)

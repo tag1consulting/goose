@@ -871,8 +871,8 @@ impl GooseUser {
         let client = Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true)
-            .deflate(true)
-            .gzip(true)
+            // Enable gzip unless `--no-gzip` flag is enabled.
+            .gzip(!configuration.no_gzip)
             .build()?;
 
         Ok(GooseUser {
@@ -1942,8 +1942,7 @@ impl GooseUser {
     ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store).
     ///
     /// In the following example, the Goose client is configured with a different user agent,
-    /// sets a default header on every request, stores cookies, and supports gzip and deflate
-    /// compression.
+    /// sets a default header on every request, stores cookies, and supports gzip compression.
     ///
     /// # Example
     /// ```rust
@@ -1962,7 +1961,6 @@ impl GooseUser {
     ///         .default_headers(headers)
     ///         .user_agent("custom user agent")
     ///         .cookie_store(true)
-    ///         .deflate(true)
     ///         .gzip(true);
     ///
     ///     user.set_client_builder(builder).await?;
