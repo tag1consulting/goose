@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.12.2-dev
+  - enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) support and set Accept-Encoding header by default in the client; disable with `--no-gzip` or `GooseDefault::NoGzip`
+
 ## 0.12.1 July 15, 2021
  - rename `rustls` feature to `rustls-tls` so `tests/controller.rs` can build with the `rustls` library; update `tungstenite` to `0.14` and `tokio-tungstenite` = `0.15` to allow building with `rustls`
   - documentation cleanup; properly rename `GooseDefault::RequestFormat` and fix links
