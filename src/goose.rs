@@ -1945,7 +1945,7 @@ impl GooseUser {
     /// In the following example, the Goose client is configured with a different user agent,
     /// sets a default header on every request, stores cookies, and supports gzip compression.
     ///
-    /// # Example
+    /// ## Example
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1958,18 +1958,21 @@ impl GooseUser {
     ///     let mut headers = header::HeaderMap::new();
     ///     headers.insert("X-Custom-Header", header::HeaderValue::from_str("custom value").unwrap());
     ///
+    ///     // Build a custom client.
     ///     let builder = Client::builder()
     ///         .default_headers(headers)
     ///         .user_agent("custom user agent")
     ///         .cookie_store(true)
     ///         .gzip(true);
     ///
+    ///     // Assign the custom client to this GooseUser.
     ///     user.set_client_builder(builder).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     ///
+    /// # Alternative Compression Algorithms
     /// Reqwest also supports
     /// [`brotli`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.brotli) and
     /// [`deflate`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.deflate) compression.
@@ -1985,8 +1988,52 @@ impl GooseUser {
     /// ] }
     /// ```
     ///
-    /// Once enabled, you can add `.brotli(true)` and/or `.deflate(true)` to your custom Client::builder(),
-    /// similar to how is documented above.
+    /// Once enabled, you can add `.brotli(true)` and/or `.deflate(true)` to your custom
+    /// [`reqwest::Client::builder()`], following the documentation above.
+    ///
+    /// # Custom Cookies
+    /// Custom cookies can also be manually set when building a custom [`reqwest::Client`]. This requires
+    /// loading the [`GooseUser::base_url`] being load tested in order to properly build the cookie. Then
+    /// a custom [`reqwest::cookie::Jar`] is created and the custom cookie is added with
+    /// [`reqwest::cookie::Jar::add_cookie_str`]. Finally, the new cookie jar must be specified as the
+    /// [`reqwest::ClientBuilder::cookie_provider`] for the custom client.
+    ///
+    /// ## Example
+    /// ```rust
+    /// use reqwest::{cookie::Jar, Client};
+    /// use std::sync::Arc;
+    ///
+    /// use goose::prelude::*;
+    ///
+    /// task!(custom_cookie_with_custom_client).set_on_start();
+    ///
+    /// async fn custom_cookie_with_custom_client(user: &GooseUser) -> GooseTaskResult {
+    ///     // Get the base_url that is being load tested, use when building the cookie.
+    ///     let url = user.base_url.read().await;
+    ///
+    ///     // Prepare the contents of a custom cookie.
+    ///     let cookie = "my-custom-cookie=custom-value";
+    ///
+    ///     // Pre-load one or more cookies into a custom cookie jar to use with this client.
+    ///     let jar = Jar::default();
+    ///     jar.add_cookie_str(
+    ///         cookie,
+    ///         &url,
+    ///     );
+    ///
+    ///     // Build a custom client.
+    ///     let builder = Client::builder()
+    ///         .user_agent("example-loadtest")
+    ///         .cookie_store(true)
+    ///         .cookie_provider(Arc::new(jar))
+    ///         .gzip(true);
+    ///
+    ///     // Assign the custom client to this GooseUser.
+    ///     user.set_client_builder(builder).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn set_client_builder(&self, builder: ClientBuilder) -> Result<(), GooseTaskError> {
         *self.client.lock().await = builder.build()?;
 
