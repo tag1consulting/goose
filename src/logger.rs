@@ -203,11 +203,10 @@ fn debug_csv_header() -> String {
 fn error_csv_header() -> String {
     // No quotes needed in header.
     format!(
-        "{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{}",
         "elapsed",
-        "method",
+        "raw",
         "name",
-        "url",
         "final_url",
         "redirected",
         "response_time",
@@ -221,12 +220,10 @@ fn error_csv_header() -> String {
 fn requests_csv_header() -> String {
     // No quotes needed in header.
     format!(
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{}",
         "elapsed",
-        "method",
-        "headers",
+        "raw",
         "name",
-        "url",
         "final_url",
         "redirected",
         "response_time",
@@ -315,11 +312,10 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
     fn prepare_csv(&self, request: &GooseErrorMetric) -> String {
         format!(
             // Put quotes around name, url, final_url and error as they are strings.
-            "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},\"{}\"",
+            "{},\"{:?}\",\"{}\",\"{}\",{},{},{},{},\"{}\"",
             request.elapsed,
-            request.method,
+            request.raw,
             request.name,
-            request.url,
             request.final_url,
             request.redirected,
             request.response_time,
@@ -352,12 +348,10 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
     fn prepare_csv(&self, request: &GooseRequestMetric) -> String {
         format!(
             // Put quotes around name, url and final_url as they are strings.
-            "{},{},\"{:?}\",\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}",
+            "{},\"{:?}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}",
             request.elapsed,
-            request.method,
-            request.headers,
+            request.raw,
             request.name,
-            request.url,
             request.final_url,
             request.redirected,
             request.response_time,
@@ -530,6 +524,24 @@ impl GooseConfiguration {
                 message: "",
             },
         ]);
+
+        // Configure `request_body`.
+        self.request_body = self
+            .get_value(vec![
+                // Use --request-body if set.
+                GooseValue {
+                    value: Some(self.request_body),
+                    filter: !self.request_body,
+                    message: "request_body",
+                },
+                // Otherwise use GooseDefault if set and not on Worker.
+                GooseValue {
+                    value: defaults.request_body,
+                    filter: defaults.request_body.is_none() || self.manager,
+                    message: "request_body",
+                },
+            ])
+            .unwrap_or(false);
 
         // Configure task_log path if enabled.
         self.task_log = self

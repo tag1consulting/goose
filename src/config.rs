@@ -59,6 +59,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --report-file NAME         Create an html-formatted report
 /// -R, --request-log NAME     Sets request log file name
 /// --request-format FORMAT    Sets request log format (csv, json, raw)
+/// --request-body             Include the request body in the request log
 /// -T, --task-log NAME        Sets task log file name
 /// --task-format FORMAT       Sets task log format (csv, json, raw)
 /// -E, --error-log NAME       Sets error log file name
@@ -156,6 +157,9 @@ pub struct GooseConfiguration {
     /// Sets request log format (csv, json, raw)
     #[options(no_short, meta = "FORMAT")]
     pub request_format: Option<GooseLogFormat>,
+    /// Include the request body in the request log
+    #[options(no_short)]
+    pub request_body: bool,
     /// Sets task log file name
     #[options(short = "T", meta = "NAME")]
     pub task_log: String,
@@ -278,6 +282,8 @@ pub(crate) struct GooseDefaults {
     pub request_log: Option<String>,
     /// An optional default for the requests log file format.
     pub request_format: Option<GooseLogFormat>,
+    /// An optional default for logging the request body.
+    pub request_body: Option<bool>,
     /// An optional default for the tasks log file name.
     pub task_log: Option<String>,
     /// An optional default for the tasks log file format.
@@ -370,6 +376,8 @@ pub enum GooseDefault {
     RequestLog,
     /// An optional default for the request log file format.
     RequestFormat,
+    /// An optional default for logging the request body.
+    RequestBody,
     /// An optional default for the task log file name.
     TaskLog,
     /// An optional default for the task log file format.
@@ -487,6 +495,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoResetMetrics`]
 ///  - [`GooseDefault::NoMetrics`]
 ///  - [`GooseDefault::NoTaskMetrics`]
+///  - [`GooseDefault::RequestsBody`]
 ///  - [`GooseDefault::NoErrorSummary`]
 ///  - [`GooseDefault::NoDebugBody`]
 ///  - [`GooseDefault::NoTelnet`]
@@ -573,6 +582,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::RequestBody
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -660,6 +670,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::RequestBody
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -714,6 +725,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
+            GooseDefault::RequestBody => self.defaults.request_body = Some(value),
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
@@ -807,6 +819,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::RequestBody
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -901,6 +914,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
+            | GooseDefault::RequestBody
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -2234,6 +2248,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::RequestFormat, GooseLogFormat::Raw)
             .unwrap()
+            .set_default(GooseDefault::RequestBody, true)
+            .unwrap()
             .set_default(GooseDefault::TaskLog, task_log.as_str())
             .unwrap()
             .set_default(GooseDefault::TaskFormat, GooseLogFormat::Raw)
@@ -2282,6 +2298,7 @@ mod test {
         assert!(goose_attack.defaults.hatch_rate == Some(hatch_rate));
         assert!(goose_attack.defaults.log_level == Some(log_level as u8));
         assert!(goose_attack.defaults.goose_log == Some(goose_log));
+        assert!(goose_attack.defaults.request_body == Some(true));
         assert!(goose_attack.defaults.no_debug_body == Some(true));
         assert!(goose_attack.defaults.verbose == Some(verbose as u8));
         assert!(goose_attack.defaults.running_metrics == Some(15));

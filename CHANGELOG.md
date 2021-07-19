@@ -1,10 +1,13 @@
 # Changelog
 
-## 0.12.2-dev
+## 0.13.0-dev
   - enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) support and set Accept-Encoding header by default in the client; disable with `--no-gzip` or `GooseDefault::NoGzip`
   - document how to add custom cookies (https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#custom-cookies)
   - update [`rustc_version`](https://docs.rs/rustc_version) dependency to `0.4`
   - include client request headers in `GooseRequestMetric` so they show up in the request log and the debug log
+  - introduce `GooseRawMetric` which contains the `method`, `url`, `headers` and `body` of the client request made, and is now contained in `raw` field of the `GooseRequestMetric` (API change)
+  - introduce `--request-body` (and `GooseDefault::RequestBody`) which when enabled shows up in the `body` field of the `GooseRawMetric`
+  - add `GooseRawMetric` to the request log, debug log and error log
 
 ## 0.12.1 July 15, 2021
  - rename `rustls` feature to `rustls-tls` so `tests/controller.rs` can build with the `rustls` library; update `tungstenite` to `0.14` and `tokio-tungstenite` = `0.15` to allow building with `rustls`
