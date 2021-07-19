@@ -264,6 +264,8 @@ pub struct GooseRequestMetric {
     pub elapsed: u64,
     /// The method being used (ie, Get, Post, etc).
     pub method: GooseMethod,
+    /// Any headers set by the client when making the request.
+    pub headers: Vec<String>,
     /// The optional name of the request.
     pub name: String,
     /// The full URL that was requested.
@@ -295,6 +297,7 @@ pub struct GooseRequestMetric {
 impl GooseRequestMetric {
     pub(crate) fn new(
         method: GooseMethod,
+        headers: Vec<String>,
         name: &str,
         url: &str,
         elapsed: u128,
@@ -303,6 +306,7 @@ impl GooseRequestMetric {
         GooseRequestMetric {
             elapsed: elapsed as u64,
             method,
+            headers,
             name: name.to_string(),
             url: url.to_string(),
             final_url: "".to_string(),
@@ -3065,7 +3069,7 @@ mod test {
     #[test]
     fn goose_raw_request() {
         const PATH: &str = "http://127.0.0.1/";
-        let mut raw_request = GooseRequestMetric::new(GooseMethod::Get, "/", PATH, 0, 0);
+        let mut raw_request = GooseRequestMetric::new(GooseMethod::Get, vec![], "/", PATH, 0, 0);
         assert_eq!(raw_request.method, GooseMethod::Get);
         assert_eq!(raw_request.name, "/".to_string());
         assert_eq!(raw_request.url, PATH.to_string());

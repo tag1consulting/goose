@@ -221,9 +221,10 @@ fn error_csv_header() -> String {
 fn requests_csv_header() -> String {
     // No quotes needed in header.
     format!(
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         "elapsed",
         "method",
+        "headers",
         "name",
         "url",
         "final_url",
@@ -351,9 +352,10 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
     fn prepare_csv(&self, request: &GooseRequestMetric) -> String {
         format!(
             // Put quotes around name, url and final_url as they are strings.
-            "{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}",
+            "{},{},\"{:?}\",\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}",
             request.elapsed,
             request.method,
+            request.headers,
             request.name,
             request.url,
             request.final_url,

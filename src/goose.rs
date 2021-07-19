@@ -1417,9 +1417,17 @@ impl GooseUser {
         let method = goose_method_from_method(request.method().clone())?;
         let request_name = self.get_request_name(&path, request_name);
 
+        // Grab a copy of any headers set by this request, included in the request log
+        // and the debug log.
+        let mut headers: Vec<String> = Vec::new();
+        for header in request.headers() {
+            headers.push(format!("{:?}", header));
+        }
+
         // Record information about the request.
         let mut request_metric = GooseRequestMetric::new(
             method,
+            headers,
             &request_name,
             &request.url().to_string(),
             self.started.elapsed().as_millis(),
