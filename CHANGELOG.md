@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.0-dev
+## 0.13.0 July 19, 2021
   - enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) support and set Accept-Encoding header by default in the client; disable with `--no-gzip` or `GooseDefault::NoGzip`
   - document how to add custom cookies (https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#custom-cookies)
   - update [`rustc_version`](https://docs.rs/rustc_version) dependency to `0.4`
