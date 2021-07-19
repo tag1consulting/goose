@@ -704,7 +704,17 @@ impl GooseConfiguration {
 
         // If the request_log is enabled, allocate a buffer and open the file.
         let mut request_log = self
-            .open_log_file(&self.request_log, "request log", 64 * 1024)
+            .open_log_file(
+                &self.request_log,
+                "request log",
+                if self.request_body {
+                    // Allocate a larger 8M buffer if logging request body.
+                    8 * 1024 * 1024
+                } else {
+                    // Allocate a smaller 64K buffer if not logging request body.
+                    64 * 1024
+                },
+            )
             .await;
         // If the request_log is a CSV, write the header.
         if self.request_format == Some(GooseLogFormat::Csv) {
