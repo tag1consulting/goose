@@ -226,6 +226,7 @@ Metrics:
   --report-file NAME         Create an html-formatted report
   -R, --request-log NAME     Sets request log file name
   --request-format FORMAT    Sets request log format (csv, json, raw)
+  --request-body             Include the request body in the request log
   -T, --task-log NAME        Sets task log file name
   --task-format FORMAT       Sets task log format (csv, json, raw)
   -E, --error-log NAME       Sets error log file name
@@ -617,57 +618,37 @@ When operating in Gaggle-mode, the `--error-file` option can only be enabled on 
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":2239,"error":"503 Service Unavailable: /comment/reply/8151","final_url":"http://apache/comment/reply/8151","method":"Post","name":"(Auth) comment form","redirected":false,"response_time":26,"status_code":503,"url":"http://apache/comment/reply/8151","user":1}
-{"elapsed":2261,"error":"503 Service Unavailable: /node/9577","final_url":"http://apache/node/9577","method":"Get","name":"(Anon) node page","redirected":false,"response_time":143,"status_code":503,"url":"http://apache/node/9577","user":2}
-{"elapsed":2267,"error":"503 Service Unavailable: /","final_url":"http://apache/","method":"Get","name":"(Auth) front page","redirected":false,"response_time":138,"status_code":503,"url":"http://apache/","user":1}
-{"elapsed":2404,"error":"503 Service Unavailable: /user/4375","final_url":"http://apache/user/4375","method":"Get","name":"(Anon) user page","redirected":false,"response_time":5,"status_code":503,"url":"http://apache/user/4375","user":2}
+{"elapsed":9318,"error":"503 Service Unavailable: /","final_url":"http://apache/","name":"(Auth) front page","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/"},"redirected":false,"response_time":6,"status_code":503,"user":1}
+{"elapsed":9318,"error":"503 Service Unavailable: /node/8211","final_url":"http://apache/node/8211","name":"(Anon) node page","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/node/8211"},"redirected":false,"response_time":6,"status_code":503,"user":3}
 ```
 
 Logs include the entire [`GooseErrorMetric`] object as defined in `src/goose.rs`, which are created when requests result in an error.
 
 By default Goose logs errors in JSON Lines format. The `--errors-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseErrorMetric`] object.
 
-For example, `csv` output of similar errors as those logged above would like like:
-```csv
-elapsed,method,name,url,final_url,redirected,response_time,status_code,user,error
-6250,GET,"(Auth) node page","http://apache/node/3781","http://apache/node/3781",false,5,503,1,"503 Service Unavailable: /node/3781"
-6256,GET,"(Auth) front page","http://apache/","http://apache/",false,5,503,1,"503 Service Unavailable: /"
-6262,GET,"(Auth) node page","http://apache/node/5452","http://apache/node/5452",false,8,503,1,"503 Service Unavailable: /node/5452"
-6265,GET,"(Anon) node page","http://apache/node/1819","http://apache/node/1819",false,5,503,0,"503 Service Unavailable: /node/1819"
-```
-
 ## Logging Load Test Requests
 
-Goose can optionally log details about all load test requests to a file. To enable, add the `--request-log=request.log` command line option, where `request.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all load test requests to a file. To enable, add the `--request-log request.log` command line option, where `request.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+
+If `--request-body` is enabled, the request log will also include the entire body of any client requests.
 
 When operating in Gaggle-mode, the `--request-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
 
-By default, logs are written in JSON Lines format. For example:
+By default, logs are written in JSON Lines format. For example (in this case with `--request-body` also enabled):
 
 ```json
-{"coordinated_omission_elapsed":0,"elapsed":23189,"error":"","final_url":"http://apache/misc/drupal.js?q9apdy","method":"Get","name":"static asset","redirected":false,"response_time":8,"status_code":200,"success":true,"update":false,"url":"http://apache/misc/drupal.js?q9apdy","user":5,"user_cadence":0}
-{"coordinated_omission_elapsed":0,"elapsed":23192,"error":"","final_url":"http://apache/misc/jquery.once.js?v=1.2","method":"Get","name":"static asset","redirected":false,"response_time":6,"status_code":200,"success":true,"update":false,"url":"http://apache/misc/jquery.once.js?v=1.2","user":6,"user_cadence":0}
-{"coordinated_omission_elapsed":0,"elapsed":23181,"error":"","final_url":"http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4","method":"Get","name":"static asset","redirected":false,"response_time":16,"status_code":200,"success":true,"update":false,"url":"http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4","user":1,"user_cadence":0}
+{"coordinated_omission_elapsed":0,"elapsed":13219,"error":"","final_url":"http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4","name":"static asset","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4"},"redirected":false,"response_time":7,"status_code":200,"success":true,"update":false,"user":4,"user_cadence":0}
+{"coordinated_omission_elapsed":0,"elapsed":13055,"error":"","final_url":"http://apache/node/1786#comment-114852","name":"(Auth) comment form","raw":{"body":"subject=this+is+a+test+comment+subject&comment_body%5Bund%5D%5B0%5D%5Bvalue%5D=this+is+a+test+comment+body&comment_body%5Bund%5D%5B0%5D%5Bformat%5D=filtered_html&form_build_id=form-U0L3wm2SsIKAhVhaHpxeL1TLUHW64DXKifmQeZsUsss&form_token=VKDel_jiYzjqPrekL1FrP2_4EqHTlsaqLjMUJ6pn-sE&form_id=comment_node_article_form&op=Save","headers":["(\"content-type\", \"application/x-www-form-urlencoded\")"],"method":"Post","url":"http://apache/comment/reply/1786"},"redirected":true,"response_time":172,"status_code":200,"success":true,"update":false,"user":1,"user_cadence":0}
+{"coordinated_omission_elapsed":0,"elapsed":13219,"error":"","final_url":"http://apache/misc/drupal.js?q9apdy","name":"static asset","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/misc/drupal.js?q9apdy"},"redirected":false,"response_time":7,"status_code":200,"success":true,"update":false,"user":0,"user_cadence":0}
 ```
 
-Logs include the entire [`GooseRequestMetric`] object as defined in `src/goose.rs`, which are created on all requests.
-
-In the first line of the above example, `GooseUser` thread 7 made a successful `GET` request for `/misc/feed.png`, which takes 4 milliseconds. The second line is `GooseUser` thread 2 making a successful `GET` request for `/user/4816`, which takes 28 milliseconds.
+Logs include the entire [`GooseRequestMetric`] object which also includes the entire [`GooseRawRequest`] object, both defined in `src/goose.rs` and created for all client requests.
 
 By default Goose logs requests in JSON Lines format. The `--request-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`] object.
 
-For example, `csv` output of similar requests as those logged above would like like:
-```csv
-elapsed,method,name,url,final_url,redirected,response_time,status_code,success,update,user,error,coordinated_omission_elapsed,user_cadence
-22143,GET,"(Anon) user page","http://apache/user/4","http://apache/user/4",false,25,200,true,false,3,,0,0
-22153,GET,"static asset","http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4","http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4",false,16,200,true,false,6,,0,0
-22165,GET,"static asset","http://apache/misc/jquery.js?v=1.4.4","http://apache/misc/jquery.js?v=1.4.4",false,3,200,true,false,0,,0,0
-22165,GET,"static asset","http://apache/misc/feed.png","http://apache/misc/feed.png",false,4,200,true,false,1,,0,0
-```
-
 ## Logging Load Test Tasks
 
-Goose can optionally log details about all load test tasks to a file. To enable, add the `--task-log=task.log` command line option, where `task.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all load test tasks to a file. To enable, add the `--task-log task.log` command line option, where `task.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
 When operating in Gaggle-mode, the `--task-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
 
@@ -707,13 +688,13 @@ See `examples/drupal_loadtest` for an example of how you might invoke log_debug 
 
 Calls to `client.set_failure(tag, Option<request>, Option<headers>, Option<body>)` can be used to tell Goose that a request failed even though the server returned a successful status code, and will automatically invoke `log_debug()` for you. See `examples/drupal_loadtest` and `examples/umami` to see how you might use `set_failure` to generate useful debug logs.
 
-When the load test is run with the `--debug-log=foo` command line option, where `foo` is either a relative or an absolute path, Goose will log all debug generated by calls to `client.log_debug()` (or to `client.set_failure()`) to this file. If the file already exists it will be overwritten. The following is an example debug log file entry:
+When the load test is run with the `--debug-log foo` command line option, where `foo` is either a relative or an absolute path, Goose will log all debug generated by calls to `client.log_debug()` (or to `client.set_failure()`) to this file. If the file already exists it will be overwritten. The following is an example debug log file entry:
 
 ```json
-{"body":"<!DOCTYPE html>\n<html>\n  <head>\n    <title>503 Backend fetch failed</title>\n  </head>\n  <body>\n    <h1>Error 503 Backend fetch failed</h1>\n    <p>Backend fetch failed</p>\n    <h3>Guru Meditation:</h3>\n    <p>XID: 923425</p>\n    <hr>\n    <p>Varnish cache server</p>\n  </body>\n</html>\n","header":"{\"date\": \"Wed, 01 Jul 2020 10:27:31 GMT\", \"server\": \"Varnish\", \"content-type\": \"text/html; charset=utf-8\", \"retry-after\": \"5\", \"x-varnish\": \"923424\", \"age\": \"0\", \"via\": \"1.1 varnish (Varnish/6.1)\", \"x-varnish-cache\": \"MISS\", \"x-varnish-cookie\": \"SESSd7e04cba6a8ba148c966860632ef3636=hejsW1mQnnsHlua0AicCjEpUjnCRTkOLubwL33UJXRU\", \"content-length\": \"283\", \"connection\": \"keep-alive\"}","request":{"elapsed":4192,"final_url":"http://local.dev/node/3247","method":"GET","name":"(Auth) comment form","redirected":false,"response_time":8,"status_code":503,"success":false,"update":false,"url":"http://local.dev/node/3247","user":4},"tag":"post_comment: no form_build_id found on node/3247"}
+{"body":"<!DOCTYPE html>\n<html>\n  <head>\n    <title>503 Backend fetch failed</title>\n  </head>\n  <body>\n    <h1>Error 503 Backend fetch failed</h1>\n    <p>Backend fetch failed</p>\n    <h3>Guru Meditation:</h3>\n    <p>XID: 1506620</p>\n    <hr>\n    <p>Varnish cache server</p>\n  </body>\n</html>\n","header":"{\"date\": \"Mon, 19 Jul 2021 09:21:58 GMT\", \"server\": \"Varnish\", \"content-type\": \"text/html; charset=utf-8\", \"retry-after\": \"5\", \"x-varnish\": \"1506619\", \"age\": \"0\", \"via\": \"1.1 varnish (Varnish/6.1)\", \"x-varnish-cache\": \"MISS\", \"x-varnish-cookie\": \"SESSd7e04cba6a8ba148c966860632ef3636=Z50aRHuIzSE5a54pOi-dK_wbxYMhsMwrG0s2WM2TS20\", \"content-length\": \"284\", \"connection\": \"keep-alive\"}","request":{"coordinated_omission_elapsed":0,"elapsed":9162,"error":"503 Service Unavailable: /node/1439","final_url":"http://apache/node/1439","name":"(Auth) comment form","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/node/1439"},"redirected":false,"response_time":5,"status_code":503,"success":false,"update":false,"user":1,"user_cadence":0},"tag":"post_comment: no form_build_id found on node/1439"}
 ```
 
-If `--debug-log=foo` is not specified at run time, nothing will be logged and there is no measurable overhead in your load test.
+If `--debug-log foo` is not specified at run time, nothing will be logged and there is no measurable overhead in your load test.
 
 By default Goose writes debug logs in JSON Lines format. The `--debug-format` option can be used to log in `json` or `raw` format. The `raw` format is Rust's debug output of the `GooseDebug` object.
 

@@ -36,7 +36,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
                     let title = "Log in";
                     if !common::valid_title(&html, title) {
                         return user.set_failure(
-                            &format!("{}: title not found: {}", &goose.request.url, title),
+                            &format!("{}: title not found: {}", &goose.request.raw.url, title),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -51,7 +51,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
                     let form_build_id = common::get_form_value(&html, "form_build_id");
                     if form_build_id.is_none() {
                         return user.set_failure(
-                            &format!("{}: no form_build_id on page", goose.request.url),
+                            &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -84,7 +84,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
                 }
                 Err(e) => {
                     return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.url, e),
+                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
                         Some(&headers),
                         None,
@@ -94,7 +94,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
         }
         Err(e) => {
             return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.url, e),
+                &format!("{}: no response from server: {}", goose.request.raw.url, e),
                 &mut goose.request,
                 None,
                 None,
@@ -131,7 +131,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                     let title = "Edit Article";
                     if !common::valid_title(&html, title) {
                         return user.set_failure(
-                            &format!("{}: title not found: {}", &goose.request.url, title),
+                            &format!("{}: title not found: {}", &goose.request.raw.url, title),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -146,7 +146,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                     let form_build_id = common::get_form_value(&html, "form_build_id");
                     if form_build_id.is_none() {
                         return user.set_failure(
-                            &format!("{}: no form_build_id on page", goose.request.url),
+                            &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -155,7 +155,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                     let form_token = common::get_form_value(&html, "form_token");
                     if form_token.is_none() {
                         return user.set_failure(
-                            &format!("{}: no form_token on page", goose.request.url),
+                            &format!("{}: no form_token on page", goose.request.raw.url),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -186,7 +186,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                 }
                 Err(e) => {
                     return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.url, e),
+                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
                         Some(&headers),
                         None,
@@ -196,7 +196,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
         }
         Err(e) => {
             return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.url, e),
+                &format!("{}: no response from server: {}", goose.request.raw.url, e),
                 &mut goose.request,
                 None,
                 None,

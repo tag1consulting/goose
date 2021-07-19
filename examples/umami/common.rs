@@ -462,7 +462,7 @@ pub async fn validate_and_load_static_assets(
                 Ok(html) => {
                     if !valid_title(&html, &title) {
                         return user.set_failure(
-                            &format!("{}: title not found: {}", goose.request.url, title),
+                            &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -473,7 +473,7 @@ pub async fn validate_and_load_static_assets(
                 }
                 Err(e) => {
                     return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.url, e),
+                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
                         Some(&headers),
                         None,
@@ -483,7 +483,7 @@ pub async fn validate_and_load_static_assets(
         }
         Err(e) => {
             return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.url, e),
+                &format!("{}: no response from server: {}", goose.request.raw.url, e),
                 &mut goose.request,
                 None,
                 None,
@@ -529,7 +529,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                     };
                     if !valid_title(&html, title) {
                         return user.set_failure(
-                            &format!("{}: title not found: {}", goose.request.url, title),
+                            &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -544,7 +544,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                     let form_build_id = get_form_value(&html, "form_build_id");
                     if form_build_id.is_none() {
                         return user.set_failure(
-                            &format!("{}: no form_build_id on page", goose.request.url),
+                            &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -570,7 +570,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                 }
                 Err(e) => {
                     return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.url, e),
+                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
                         Some(&headers),
                         None,
@@ -580,7 +580,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
         }
         Err(e) => {
             return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.url, e),
+                &format!("{}: no response from server: {}", goose.request.raw.url, e),
                 &mut goose.request,
                 None,
                 None,
@@ -614,7 +614,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                 }
                 Err(e) => {
                     return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.url, e),
+                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
                         Some(&headers),
                         None,
@@ -624,7 +624,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
         }
         Err(e) => {
             return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.url, e),
+                &format!("{}: no response from server: {}", goose.request.raw.url, e),
                 &mut goose.request,
                 None,
                 None,
@@ -661,7 +661,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                     let title = if english { "Search" } else { "Buscar" };
                     if !valid_title(&html, title) {
                         return user.set_failure(
-                            &format!("{}: title not found: {}", goose.request.url, title),
+                            &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -676,7 +676,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                     let form_build_id = get_form_value(&html, "form_build_id");
                     if form_build_id.is_none() {
                         return user.set_failure(
-                            &format!("{}: no form_build_id on page", goose.request.url),
+                            &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
                             Some(&headers),
                             Some(&html),
@@ -709,7 +709,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                 }
                 Err(e) => {
                     return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.url, e),
+                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
                         Some(&headers),
                         None,
@@ -719,7 +719,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
         }
         Err(e) => {
             return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.url, e),
+                &format!("{}: no response from server: {}", goose.request.raw.url, e),
                 &mut goose.request,
                 None,
                 None,
@@ -737,7 +737,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                         return user.set_failure(
                             &format!(
                                 "{}: search terms ({}) not on page",
-                                goose.request.url, &search_phrase
+                                goose.request.raw.url, &search_phrase
                             ),
                             &mut goose.request,
                             Some(&headers),
@@ -750,7 +750,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                 }
                 Err(e) => {
                     return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.url, e),
+                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
                         Some(&headers),
                         None,
@@ -760,7 +760,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
         }
         Err(e) => {
             return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.url, e),
+                &format!("{}: no response from server: {}", goose.request.raw.url, e),
                 &mut goose.request,
                 None,
                 None,

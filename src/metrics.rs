@@ -250,6 +250,37 @@ pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 /// ```
 pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetricAggregate>;
 
+/// For tracking and logging requests made during a load test.
+///
+/// The raw request that the GooseClient is making. Is included in the [`GooseRequestMetric`]
+/// when metrics are enabled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GooseRawRequest {
+    /// The method being used (ie, Get, Post, etc).
+    pub method: GooseMethod,
+    /// The full URL that was requested.
+    pub url: String,
+    /// Any headers set by the client when making the request.
+    pub headers: Vec<String>,
+    /// The body of the request made, if `--request-body` is enabled.
+    pub body: String,
+}
+impl GooseRawRequest {
+    pub(crate) fn new(
+        method: GooseMethod,
+        url: &str,
+        headers: Vec<String>,
+        body: &str,
+    ) -> GooseRawRequest {
+        GooseRawRequest {
+            method,
+            url: url.to_string(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+}
+
 /// For tracking and counting requests made during a load test.
 ///
 /// The request that Goose is making. User threads send this data to the parent thread
@@ -262,12 +293,10 @@ pub type GooseErrorMetrics = BTreeMap<String, GooseErrorMetricAggregate>;
 pub struct GooseRequestMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// The method being used (ie, Get, Post, etc).
-    pub method: GooseMethod,
+    /// The raw request that the GooseClient made.
+    pub raw: GooseRawRequest,
     /// The optional name of the request.
     pub name: String,
-    /// The full URL that was requested.
-    pub url: String,
     /// The final full URL that was requested, after redirects.
     pub final_url: String,
     /// How many milliseconds the request took.
@@ -293,18 +322,11 @@ pub struct GooseRequestMetric {
     pub user_cadence: u64,
 }
 impl GooseRequestMetric {
-    pub(crate) fn new(
-        method: GooseMethod,
-        name: &str,
-        url: &str,
-        elapsed: u128,
-        user: usize,
-    ) -> Self {
+    pub(crate) fn new(raw: GooseRawRequest, name: &str, elapsed: u128, user: usize) -> Self {
         GooseRequestMetric {
             elapsed: elapsed as u64,
-            method,
+            raw,
             name: name.to_string(),
-            url: url.to_string(),
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,
@@ -321,7 +343,7 @@ impl GooseRequestMetric {
     // Record the final URL returned.
     pub(crate) fn set_final_url(&mut self, final_url: &str) {
         self.final_url = final_url.to_string();
-        if self.final_url != self.url {
+        if self.final_url != self.raw.url {
             self.redirected = true;
         }
     }
@@ -2031,12 +2053,10 @@ impl fmt::Display for GooseMetrics {
 pub struct GooseErrorMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// The method that was used (ie, Get, Post, etc).
-    pub method: GooseMethod,
+    /// The raw request that the GooseClient made.
+    pub raw: GooseRawRequest,
     /// The optional name of the request.
     pub name: String,
-    /// The full URL that was requested.
-    pub url: String,
     /// The final full URL that was requested, after redirects.
     pub final_url: String,
     /// Whether or not the request was redirected.
@@ -2218,12 +2238,12 @@ impl GooseAttack {
     // `GooseMetrics.requests` `HashMap`, merging if already existing, or creating new.
     // Also writes it to the request_file if enabled.
     async fn record_request_metric(&mut self, request_metric: &GooseRequestMetric) {
-        let key = format!("{} {}", request_metric.method, request_metric.name);
+        let key = format!("{} {}", request_metric.raw.method, request_metric.name);
         let mut merge_request = match self.metrics.requests.get(&key) {
             Some(m) => m.clone(),
             None => GooseRequestMetricAggregate::new(
                 &request_metric.name,
-                request_metric.method.clone(),
+                request_metric.raw.method.clone(),
                 0,
             ),
         };
@@ -2344,9 +2364,8 @@ impl GooseAttack {
                 // will fail which we ignore.
                 let _ = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
-                    method: raw_request.method.clone(),
+                    raw: raw_request.raw.clone(),
                     name: raw_request.name.clone(),
-                    url: raw_request.url.clone(),
                     final_url: raw_request.final_url.clone(),
                     redirected: raw_request.redirected,
                     response_time: raw_request.response_time,
@@ -2365,7 +2384,7 @@ impl GooseAttack {
         // Create a string to uniquely identify errors for tracking metrics.
         let error_string = format!(
             "{}.{}.{}",
-            raw_request.error, raw_request.method, raw_request.name
+            raw_request.error, raw_request.raw.method, raw_request.name
         );
 
         let mut error_metrics = match self.metrics.errors.get(&error_string) {
@@ -2373,7 +2392,7 @@ impl GooseAttack {
             Some(m) => m.clone(),
             // First time we've seen this error.
             None => GooseErrorMetricAggregate::new(
-                raw_request.method.clone(),
+                raw_request.raw.method.clone(),
                 raw_request.name.to_string(),
                 raw_request.error.to_string(),
             ),
@@ -3065,34 +3084,35 @@ mod test {
     #[test]
     fn goose_raw_request() {
         const PATH: &str = "http://127.0.0.1/";
-        let mut raw_request = GooseRequestMetric::new(GooseMethod::Get, "/", PATH, 0, 0);
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, 0);
-        assert_eq!(raw_request.status_code, 0);
-        assert!(raw_request.success);
-        assert!(!raw_request.update);
+        let raw_request = GooseRawRequest::new(GooseMethod::Get, PATH, vec![], "");
+        let mut request_metric = GooseRequestMetric::new(raw_request, "/", 0, 0);
+        assert_eq!(request_metric.raw.method, GooseMethod::Get);
+        assert_eq!(request_metric.raw.url, PATH.to_string());
+        assert_eq!(request_metric.name, "/".to_string());
+        assert_eq!(request_metric.response_time, 0);
+        assert_eq!(request_metric.status_code, 0);
+        assert!(request_metric.success);
+        assert!(!request_metric.update);
 
         let response_time = 123;
-        raw_request.set_response_time(response_time);
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time as u64);
-        assert_eq!(raw_request.status_code, 0);
-        assert!(raw_request.success);
-        assert!(!raw_request.update);
+        request_metric.set_response_time(response_time);
+        assert_eq!(request_metric.raw.method, GooseMethod::Get);
+        assert_eq!(request_metric.name, "/".to_string());
+        assert_eq!(request_metric.raw.url, PATH.to_string());
+        assert_eq!(request_metric.response_time, response_time as u64);
+        assert_eq!(request_metric.status_code, 0);
+        assert!(request_metric.success);
+        assert!(!request_metric.update);
 
         let status_code = http::StatusCode::OK;
-        raw_request.set_status_code(Some(status_code));
-        assert_eq!(raw_request.method, GooseMethod::Get);
-        assert_eq!(raw_request.name, "/".to_string());
-        assert_eq!(raw_request.url, PATH.to_string());
-        assert_eq!(raw_request.response_time, response_time as u64);
-        assert_eq!(raw_request.status_code, 200);
-        assert!(raw_request.success);
-        assert!(!raw_request.update);
+        request_metric.set_status_code(Some(status_code));
+        assert_eq!(request_metric.raw.method, GooseMethod::Get);
+        assert_eq!(request_metric.name, "/".to_string());
+        assert_eq!(request_metric.raw.url, PATH.to_string());
+        assert_eq!(request_metric.response_time, response_time as u64);
+        assert_eq!(request_metric.status_code, 200);
+        assert!(request_metric.success);
+        assert!(!request_metric.update);
     }
 
     #[test]

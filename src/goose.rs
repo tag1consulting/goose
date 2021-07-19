@@ -287,16 +287,18 @@
 use http::method::Method;
 use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
 use crate::logger::GooseLog;
-use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetric, GooseRequestMetric};
+use crate::metrics::{
+    GooseCoordinatedOmissionMitigation, GooseMetric, GooseRawRequest, GooseRequestMetric,
+};
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
 /// By default Goose sets the following User-Agent header when making requests.
@@ -1417,11 +1419,34 @@ impl GooseUser {
         let method = goose_method_from_method(request.method().clone())?;
         let request_name = self.get_request_name(&path, request_name);
 
+        // Grab a copy of any headers set by this request, included in the request log
+        // and the debug log.
+        let mut headers: Vec<String> = Vec::new();
+        for header in request.headers() {
+            headers.push(format!("{:?}", header));
+        }
+
+        // If enabled, grab a copy of the request body, included in the request log and
+        // the debug log.
+        let body = if self.config.request_body {
+            // Get a bytes representation of the body, if any.
+            let body_bytes = match request.body() {
+                Some(b) => b.as_bytes().unwrap_or(b""),
+                None => b"",
+            };
+            // Convert the bytes into a &str if valid utf8.
+            str::from_utf8(&body_bytes).unwrap_or("")
+        } else {
+            ""
+        };
+
+        // Record the complete client request, included in the request log and the debug log.
+        let raw_request = GooseRawRequest::new(method, request.url().as_str(), headers, body);
+
         // Record information about the request.
         let mut request_metric = GooseRequestMetric::new(
-            method,
+            raw_request,
             &request_name,
-            &request.url().to_string(),
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
         );
@@ -1443,7 +1468,7 @@ impl GooseUser {
                 request_metric.set_final_url(r.url().as_str());
 
                 // Load test user was redirected.
-                if self.config.sticky_follow && request_metric.url != request_metric.final_url {
+                if self.config.sticky_follow && request_metric.raw.url != request_metric.final_url {
                     let base_url = self.base_url.read().await.to_string();
                     // Check if the URL redirected started with the load test base_url.
                     if !request_metric.final_url.starts_with(&base_url) {
@@ -1604,8 +1629,8 @@ impl GooseUser {
                 info!(
                     "{:.3}s into goose attack: \"{} {}\" [{}] took abnormally long ({} ms){}",
                     request_metric.elapsed as f64 / 1_000.0,
-                    request_metric.method,
-                    request_metric.url,
+                    request_metric.raw.method,
+                    request_metric.raw.url,
                     request_metric.status_code,
                     request_metric.response_time,
                     task_name,
@@ -2739,7 +2764,7 @@ mod tests {
             .expect("get returned unexpected error");
         let status = goose.response.unwrap().status();
         assert_eq!(status, 200);
-        assert_eq!(goose.request.method, GooseMethod::Get);
+        assert_eq!(goose.request.raw.method, GooseMethod::Get);
         assert_eq!(goose.request.name, INDEX_PATH);
         assert!(goose.request.success);
         assert!(!goose.request.update);
@@ -2761,7 +2786,7 @@ mod tests {
             .expect("get returned unexpected error");
         let status = goose.response.unwrap().status();
         assert_eq!(status, 404);
-        assert_eq!(goose.request.method, GooseMethod::Get);
+        assert_eq!(goose.request.raw.method, GooseMethod::Get);
         assert_eq!(goose.request.name, NO_SUCH_PATH);
         assert!(!goose.request.success);
         assert!(!goose.request.update);
@@ -2786,7 +2811,7 @@ mod tests {
         assert_eq!(status, 200);
         let body = unwrapped_response.text().await.unwrap();
         assert_eq!(body, "foo");
-        assert_eq!(goose.request.method, GooseMethod::Post);
+        assert_eq!(goose.request.raw.method, GooseMethod::Post);
         assert_eq!(goose.request.name, COMMENT_PATH);
         assert!(goose.request.success);
         assert!(!goose.request.update);
