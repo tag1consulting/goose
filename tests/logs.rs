@@ -451,6 +451,20 @@ fn test_requests_logs_raw_gaggle() {
 }
 
 #[test]
+// Enable pretty-formatted requests log.
+fn test_requests_logs_pretty() {
+    run_standalone_test(TestType::Requests, "pretty");
+}
+
+#[test]
+#[serial]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable pretty-formatted requests log, in Gaggle mode.
+fn test_requests_logs_pretty_gaggle() {
+    run_gaggle_test(TestType::Requests, "pretty");
+}
+
+#[test]
 // Enable json-formatted tasks log.
 fn test_tasks_logs_json() {
     run_standalone_test(TestType::Tasks, "json");
@@ -577,7 +591,7 @@ fn test_debug_logs_csv_gaggle() {
 }
 
 #[test]
-// Enable raw-formatted debug log and metrics log.
+// Enable raw-formatted logs.
 fn test_all_logs_raw() {
     run_standalone_test(TestType::All, "raw");
 }
@@ -585,7 +599,21 @@ fn test_all_logs_raw() {
 #[test]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Enable raw-formatted debug log and metrics log, in Gaggle mode.
+// Enable raw-formatted logs, in Gaggle mode.
 fn test_all_logs_raw_gaggle() {
     run_gaggle_test(TestType::All, "raw");
+}
+
+#[test]
+// Enable pretty-formatted logs.
+fn test_all_logs_pretty() {
+    run_standalone_test(TestType::All, "pretty");
+}
+
+#[test]
+#[serial]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable pretty-formatted logs, in Gaggle mode.
+fn test_all_logs_pretty_gaggle() {
+    run_gaggle_test(TestType::All, "pretty");
 }

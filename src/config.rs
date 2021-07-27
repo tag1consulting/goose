@@ -58,14 +58,14 @@ const DEFAULT_PORT: &str = "5115";
 /// --no-error-summary         Doesn't display an error summary
 /// --report-file NAME         Create an html-formatted report
 /// -R, --request-log NAME     Sets request log file name
-/// --request-format FORMAT    Sets request log format (csv, json, raw)
+/// --request-format FORMAT    Sets request log format (csv, json, raw, pretty)
 /// --request-body             Include the request body in the request log
 /// -T, --task-log NAME        Sets task log file name
-/// --task-format FORMAT       Sets task log format (csv, json, raw)
+/// --task-format FORMAT       Sets task log format (csv, json, raw, pretty)
 /// -E, --error-log NAME       Sets error log file name
-/// --error-format FORMAT      Sets error log format (csv, json, raw)
+/// --error-format FORMAT      Sets error log format (csv, json, raw, pretty)
 /// -D, --debug-log NAME       Sets debug log file name
-/// --debug-format FORMAT      Sets debug log format (csv, json, raw)
+/// --debug-format FORMAT      Sets debug log format (csv, json, raw, pretty)
 /// --no-debug-body            Do not include the response body in the debug log
 /// --status-codes             Tracks additional status code metrics
 ///
@@ -154,7 +154,7 @@ pub struct GooseConfiguration {
     /// Sets request log file name
     #[options(short = "R", meta = "NAME")]
     pub request_log: String,
-    /// Sets request log format (csv, json, raw)
+    /// Sets request log format (csv, json, raw, pretty)
     #[options(no_short, meta = "FORMAT")]
     pub request_format: Option<GooseLogFormat>,
     /// Include the request body in the request log
@@ -163,19 +163,19 @@ pub struct GooseConfiguration {
     /// Sets task log file name
     #[options(short = "T", meta = "NAME")]
     pub task_log: String,
-    /// Sets task log format (csv, json, raw)
+    /// Sets task log format (csv, json, raw, pretty)
     #[options(no_short, meta = "FORMAT")]
     pub task_format: Option<GooseLogFormat>,
     /// Sets error log file name
     #[options(short = "E", meta = "NAME")]
     pub error_log: String,
-    /// Sets error log format (csv, json, raw)
+    /// Sets error log format (csv, json, raw, pretty)
     #[options(no_short, meta = "FORMAT")]
     pub error_format: Option<GooseLogFormat>,
     /// Sets debug log file name
     #[options(short = "D", meta = "NAME")]
     pub debug_log: String,
-    /// Sets debug log format (csv, json, raw)
+    /// Sets debug log format (csv, json, raw, pretty)
     #[options(no_short, meta = "FORMAT")]
     pub debug_format: Option<GooseLogFormat>,
     /// Do not include the response body in the debug log
