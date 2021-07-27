@@ -2741,6 +2741,23 @@ mod tests {
         assert_eq!(built_request.method(), &Method::HEAD);
         assert_eq!(built_request.url().as_str(), server.url("/path/to/head"));
         assert_eq!(built_request.timeout(), None);
+
+        // Confirm Goose can build a base_url that includes a path.
+        const HOST_WITH_PATH: &str = "http://example.com/with/path/";
+        let base_url = get_base_url(Some(HOST_WITH_PATH.to_string()), None, None).unwrap();
+        let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0).unwrap();
+
+        // Confirm the URLs are correctly built using the default_host that includes a path.
+        let url = user.build_url("foo").await.unwrap();
+        assert_eq!(&url, &[HOST_WITH_PATH, "foo"].concat());
+        let url = user.build_url("bar/").await.unwrap();
+        assert_eq!(&url, &[HOST_WITH_PATH, "bar/"].concat());
+        let url = user.build_url("foo/bar").await.unwrap();
+        assert_eq!(&url, &[HOST_WITH_PATH, "foo/bar"].concat());
+
+        // Confirm that URLs are correctly re-written if an absolute path is used.
+        let url = user.build_url("/foo").await.unwrap();
+        assert_eq!(&url, &[HOST, "foo"].concat());
     }
 
     #[tokio::test]
