@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.13.1-dev
+ - add test to confirm a `base_url` can include a path and be joined with a relative path
+
 ## 0.13.0 July 19, 2021
   - enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) support and set Accept-Encoding header by default in the client; disable with `--no-gzip` or `GooseDefault::NoGzip`
   - document how to add custom cookies (https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#custom-cookies)
