@@ -225,14 +225,14 @@ Metrics:
   --no-error-summary         Doesn't display an error summary
   --report-file NAME         Create an html-formatted report
   -R, --request-log NAME     Sets request log file name
-  --request-format FORMAT    Sets request log format (csv, json, raw)
+  --request-format FORMAT    Sets request log format (csv, json, raw, pretty)
   --request-body             Include the request body in the request log
   -T, --task-log NAME        Sets task log file name
-  --task-format FORMAT       Sets task log format (csv, json, raw)
+  --task-format FORMAT       Sets task log format (csv, json, raw, pretty)
   -E, --error-log NAME       Sets error log file name
-  --error-format FORMAT      Sets error log format (csv, json, raw)
+  --error-format FORMAT      Sets error log format (csv, json, raw, pretty)
   -D, --debug-log NAME       Sets debug log file name
-  --debug-format FORMAT      Sets debug log format (csv, json, raw)
+  --debug-format FORMAT      Sets debug log format (csv, json, raw, pretty)
   --no-debug-body            Do not include the response body in the debug log
   --status-codes             Tracks additional status code metrics
 
@@ -624,7 +624,7 @@ By default, logs are written in JSON Lines format. For example:
 
 Logs include the entire [`GooseErrorMetric`] object as defined in `src/goose.rs`, which are created when requests result in an error.
 
-By default Goose logs errors in JSON Lines format. The `--errors-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseErrorMetric`] object.
+By default Goose logs errors in JSON Lines format. The `--errors-format` option can be used to log in `csv`, `json`, `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseErrorMetric`] object.
 
 ## Logging Load Test Requests
 
@@ -644,7 +644,7 @@ By default, logs are written in JSON Lines format. For example (in this case wit
 
 Logs include the entire [`GooseRequestMetric`] object which also includes the entire [`GooseRawRequest`] object, both defined in `src/goose.rs` and created for all client requests.
 
-By default Goose logs requests in JSON Lines format. The `--request-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`] object.
+By default Goose logs requests in JSON Lines format. The `--request-format` option can be used to log in `csv`, `json`, `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`] object.
 
 ## Logging Load Test Tasks
 
@@ -666,7 +666,7 @@ Logs include the entire [`GooseTaskMetric`] object as defined in `src/goose.rs`,
 
 In the first line of the above example, `GooseUser` thread 0 succesfully ran the `(Anon) front page` task in 97 milliseconds. In the second line `GooseUser` thread 5 succesfully ran the `(Anon) node page` task in 41 milliseconds.
 
-By default Goose logs tass in JSON Lines format. The `--task-format` option can be used to log in `csv`, `json` or `raw` format. The `raw` format is Rust's debug output of the entire [`GooseTaskMetric`] object.
+By default Goose logs tass in JSON Lines format. The `--task-format` option can be used to log in `csv`, `json`, `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseTaskMetric`] object.
 
 For example, `csv` output of similar tasks as those logged above would like like:
 ```csv
@@ -696,7 +696,7 @@ When the load test is run with the `--debug-log foo` command line option, where 
 
 If `--debug-log foo` is not specified at run time, nothing will be logged and there is no measurable overhead in your load test.
 
-By default Goose writes debug logs in JSON Lines format. The `--debug-format` option can be used to log in `json` or `raw` format. The `raw` format is Rust's debug output of the `GooseDebug` object.
+By default Goose writes debug logs in JSON Lines format. The `--debug-format` option can be used to log in `json`, `raw` or `pretty` format. The `raw` format is Rust's debug output of the `GooseDebug` object.
 
 ## Coordinated Omission Mitigation
 
