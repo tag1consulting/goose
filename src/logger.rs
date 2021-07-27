@@ -166,6 +166,7 @@ pub enum GooseLogFormat {
     Csv,
     Json,
     Raw,
+    Pretty,
 }
 /// Allow setting log formats from the command line by impleenting [`FromStr`].
 impl FromStr for GooseLogFormat {
@@ -174,8 +175,13 @@ impl FromStr for GooseLogFormat {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
         // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
-        let log_format = RegexSet::new(&[r"(?i)^csv$", r"(?i)^(json|jsn)$", r"(?i)^raw$"])
-            .expect("failed to compile log_format RegexSet");
+        let log_format = RegexSet::new(&[
+            r"(?i)^csv$",
+            r"(?i)^(json|jsn)$",
+            r"(?i)^raw$",
+            r"(?i)^pretty$",
+        ])
+        .expect("failed to compile log_format RegexSet");
         let matches = log_format.matches(&s);
         if matches.matched(0) {
             Ok(GooseLogFormat::Csv)
@@ -183,6 +189,8 @@ impl FromStr for GooseLogFormat {
             Ok(GooseLogFormat::Json)
         } else if matches.matched(2) {
             Ok(GooseLogFormat::Raw)
+        } else if matches.matched(3) {
+            Ok(GooseLogFormat::Pretty)
         } else {
             Err(GooseError::InvalidOption {
                 option: format!("GooseLogFormat::{:?}", s),
@@ -270,6 +278,8 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseRawRequest structure.
                 GooseLogFormat::Raw => format!("{:?}", message),
+                // Pretty format is Debug Pretty output for GooseRawRequest structure.
+                GooseLogFormat::Pretty => format!("{:#?}", message),
                 // Not yet implemented.
                 GooseLogFormat::Csv => self.prepare_csv(&message),
             }
@@ -299,6 +309,8 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseErrorMetric structure.
                 GooseLogFormat::Raw => format!("{:?}", message),
+                // Pretty format is Debug Pretty output for GooseErrorMetric structure.
+                GooseLogFormat::Pretty => format!("{:#?}", message),
                 // Not yet implemented.
                 GooseLogFormat::Csv => self.prepare_csv(&message),
             }
@@ -335,6 +347,8 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseRequestMetric structure.
                 GooseLogFormat::Raw => format!("{:?}", message),
+                // Pretty format is Debug Pretty output for GooseRequestMetric structure.
+                GooseLogFormat::Pretty => format!("{:#?}", message),
                 // Not yet implemented.
                 GooseLogFormat::Csv => self.prepare_csv(&message),
             }
@@ -375,6 +389,8 @@ impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseTaskMetric structure.
                 GooseLogFormat::Raw => format!("{:?}", message),
+                // Pretty format is Debug Pretty output for GooseTaskMetric structure.
+                GooseLogFormat::Pretty => format!("{:#?}", message),
                 // Not yet implemented.
                 GooseLogFormat::Csv => self.prepare_csv(&message),
             }
