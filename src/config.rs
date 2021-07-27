@@ -495,7 +495,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoResetMetrics`]
 ///  - [`GooseDefault::NoMetrics`]
 ///  - [`GooseDefault::NoTaskMetrics`]
-///  - [`GooseDefault::RequestsBody`]
+///  - [`GooseDefault::RequestBody`]
 ///  - [`GooseDefault::NoErrorSummary`]
 ///  - [`GooseDefault::NoDebugBody`]
 ///  - [`GooseDefault::NoTelnet`]
