@@ -178,7 +178,7 @@ async fn invoke_task_function(
         thread_task_name.to_string(),
         thread_user.weighted_users_index,
     );
-    let success = function(&thread_user).await.is_ok();
+    let success = function(thread_user).await.is_ok();
     raw_task.set_time(started.elapsed().as_millis(), success);
 
     // Exit if all metrics or task metrics are disabled.

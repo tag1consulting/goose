@@ -182,7 +182,7 @@ impl FromStr for GooseLogFormat {
             r"(?i)^pretty$",
         ])
         .expect("failed to compile log_format RegexSet");
-        let matches = log_format.matches(&s);
+        let matches = log_format.matches(s);
         if matches.matched(0) {
             Ok(GooseLogFormat::Csv)
         } else if matches.matched(1) {

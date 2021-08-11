@@ -60,7 +60,7 @@ fn common_build_configuration(
 ) -> GooseConfiguration {
     if let Some(expect_workers) = manager {
         common::build_configuration(
-            &server,
+            server,
             vec![
                 "--manager",
                 "--expect-workers",
@@ -76,7 +76,7 @@ fn common_build_configuration(
         )
     } else if worker.is_some() {
         common::build_configuration(
-            &server,
+            server,
             vec![
                 "--worker",
                 // Limit the maximum requests per second.
@@ -89,7 +89,7 @@ fn common_build_configuration(
         )
     } else {
         common::build_configuration(
-            &server,
+            server,
             vec![
                 "--users",
                 &users.to_string(),

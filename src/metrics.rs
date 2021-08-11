@@ -94,7 +94,7 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
             r"(?i)^(disabled|di|dis|disable|none|no)$",
         ])
         .expect("failed to compile co_mitigation RegexSet");
-        let matches = co_mitigation.matches(&s);
+        let matches = co_mitigation.matches(s);
         if matches.matched(0) {
             Ok(GooseCoordinatedOmissionMitigation::Average)
         } else if matches.matched(1) {
@@ -981,7 +981,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    util::truncate_string(&request_key, 24),
+                    util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
                     format!(
                         "{} ({}%)",
@@ -997,7 +997,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    util::truncate_string(&request_key, 24),
+                    util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
                     format!(
                         "{} ({:.1}%)",
@@ -1394,7 +1394,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:<24} | {:>11.raw_avg_precision$} | {:>10} | {:>11} | {:>10}",
-                util::truncate_string(&request_key, 24),
+                util::truncate_string(request_key, 24),
                 raw_average,
                 format_number(request.raw_data.minimum_time),
                 format_number(request.raw_data.maximum_time),
@@ -1508,7 +1508,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>11.co_avg_precision$} | {:>10.sd_precision$} | {:>11} | {:>10}",
-                    util::truncate_string(&request_key, 24),
+                    util::truncate_string(request_key, 24),
                     co_average,
                     standard_deviation,
                     format_number(co_maximum),
@@ -1525,7 +1525,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
-                    util::truncate_string(&request_key, 24),
+                    util::truncate_string(request_key, 24),
                     "-",
                     "-",
                     "-",
@@ -1638,7 +1638,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                util::truncate_string(&request_key, 24),
+                util::truncate_string(request_key, 24),
                 calculate_response_time_percentile(
                     &request.raw_data.times,
                     request.raw_data.counter,
@@ -1796,7 +1796,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                    util::truncate_string(&request_key, 24),
+                    util::truncate_string(request_key, 24),
                     calculate_response_time_percentile(
                         &coordinated_omission_data.times,
                         coordinated_omission_data.counter,
@@ -1844,7 +1844,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                    util::truncate_string(&request_key, 24),
+                    util::truncate_string(request_key, 24),
                     "-",
                     "-",
                     "-",
@@ -1940,7 +1940,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:<24} | {:>51}",
-                util::truncate_string(&request_key, 24),
+                util::truncate_string(request_key, 24),
                 codes,
             )?;
         }
@@ -2891,7 +2891,7 @@ pub(crate) fn merge_times(
 ) -> BTreeMap<usize, usize> {
     // Iterate over user response times, and merge into global response times.
     for (response_time, count) in &local_response_times {
-        let counter = match global_response_times.get(&response_time) {
+        let counter = match global_response_times.get(response_time) {
             // We've seen this response_time before, increment counter.
             Some(c) => *c + count,
             // First time we've seen this response time, initialize counter.
@@ -2972,7 +2972,7 @@ pub(crate) fn prepare_status_codes(
         }
         if let Some(aggregate_status_code_counts) = aggregate_counts.as_mut() {
             let new_count;
-            if let Some(existing_status_code_count) = aggregate_status_code_counts.get(&status_code)
+            if let Some(existing_status_code_count) = aggregate_status_code_counts.get(status_code)
             {
                 new_count = *existing_status_code_count + *count;
             } else {

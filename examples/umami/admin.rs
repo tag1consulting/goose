@@ -38,7 +38,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: title not found: {}", &goose.request.raw.url, title),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -53,7 +53,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -77,7 +77,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
                                 logged_in_user.request.final_url
                             ),
                             &mut logged_in_user.request,
-                            Some(&headers),
+                            Some(headers),
                             None,
                         );
                     }
@@ -86,7 +86,7 @@ pub async fn log_in(user: &GooseUser) -> GooseTaskResult {
                     return user.set_failure(
                         &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }
@@ -133,7 +133,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: title not found: {}", &goose.request.raw.url, title),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -148,7 +148,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -157,7 +157,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: no form_token on page", goose.request.raw.url),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -179,7 +179,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: saving article failed", saved_article.request.final_url),
                             &mut saved_article.request,
-                            Some(&headers),
+                            Some(headers),
                             None,
                         );
                     }
@@ -188,7 +188,7 @@ pub async fn edit_article(user: &GooseUser) -> GooseTaskResult {
                     return user.set_failure(
                         &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }

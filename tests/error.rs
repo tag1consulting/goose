@@ -72,7 +72,7 @@ fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> Go
     configuration.append(custom);
 
     // Return the resulting configuration.
-    common::build_configuration(&server, configuration)
+    common::build_configuration(server, configuration)
 }
 
 // Helper to confirm all variations generate appropriate results.

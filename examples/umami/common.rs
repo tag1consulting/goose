@@ -395,7 +395,7 @@ pub fn random_words(count: usize, english: bool) -> Vec<String> {
         ];
         let content_type = content_types.choose(&mut rand::thread_rng());
         // Then randomly select a node of this content type.
-        let nodes = get_nodes(&content_type.unwrap());
+        let nodes = get_nodes(content_type.unwrap());
         let page = nodes.choose(&mut rand::thread_rng());
         // Randomly select a word from the title to use in our search.
         let title = if english {
@@ -428,7 +428,7 @@ pub async fn load_static_elements(user: &GooseUser, html: &str) {
     // @TODO: parse HTML5 srcset= also
     let image = Regex::new(r#"src="(.*?)""#).unwrap();
     let mut urls = Vec::new();
-    for url in image.captures_iter(&html) {
+    for url in image.captures_iter(html) {
         if url[1].starts_with("/sites") || url[1].starts_with("/core") {
             urls.push(url[1].to_string());
         }
@@ -437,7 +437,7 @@ pub async fn load_static_elements(user: &GooseUser, html: &str) {
     // Use a regular expression to find all href=<foo> in the HTML, where foo
     // is the URL to css assets.
     let css = Regex::new(r#"href="(/sites/default/files/css/.*?)""#).unwrap();
-    for url in css.captures_iter(&html) {
+    for url in css.captures_iter(html) {
         urls.push(url[1].to_string());
     }
 
@@ -460,11 +460,11 @@ pub async fn validate_and_load_static_assets(
             let headers = &response.headers().clone();
             match response.text().await {
                 Ok(html) => {
-                    if !valid_title(&html, &title) {
+                    if !valid_title(&html, title) {
                         return user.set_failure(
                             &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -475,7 +475,7 @@ pub async fn validate_and_load_static_assets(
                     return user.set_failure(
                         &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }
@@ -497,7 +497,7 @@ pub async fn validate_and_load_static_assets(
 /// Use regular expression to get the value of a named form element.
 pub fn get_form_value(html: &str, name: &str) -> Option<String> {
     let re = Regex::new(&format!(r#"name="{}" value=['"](.*?)['"]"#, name)).unwrap();
-    re.captures(&html).map(|value| value[1].to_string())
+    re.captures(html).map(|value| value[1].to_string())
 }
 
 /// Anonymously load the contact form and POST feedback. The english boolean flag indicates
@@ -531,7 +531,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                         return user.set_failure(
                             &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -546,7 +546,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                         return user.set_failure(
                             &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -572,7 +572,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                     return user.set_failure(
                         &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }
@@ -616,7 +616,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                     return user.set_failure(
                         &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }
@@ -663,7 +663,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -678,7 +678,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: no form_build_id on page", goose.request.raw.url),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -702,7 +702,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                         return user.set_failure(
                             &format!("{}: search didn't redirect", search_form.request.final_url),
                             &mut search_form.request,
-                            Some(&headers),
+                            Some(headers),
                             None,
                         );
                     }
@@ -711,7 +711,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                     return user.set_failure(
                         &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }
@@ -740,7 +740,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                                 goose.request.raw.url, &search_phrase
                             ),
                             &mut goose.request,
-                            Some(&headers),
+                            Some(headers),
                             Some(&html),
                         );
                     }
@@ -752,7 +752,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                     return user.set_failure(
                         &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }

@@ -111,7 +111,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
                     return user.set_failure(
                         &format!("front_page: failed to parse page: {}", e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }
@@ -167,7 +167,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                             return user.set_failure(
                                 "login: no form_build_id on page: /user page",
                                 &mut goose.request,
-                                Some(&headers),
+                                Some(headers),
                                 Some(&html),
                             );
                         }
@@ -193,7 +193,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                     return user.set_failure(
                         &format!("login: unexpected error when loading /user page: {}", e),
                         &mut goose.request,
-                        Some(&headers),
+                        Some(headers),
                         None,
                     );
                 }
@@ -239,7 +239,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             return user.set_failure(
                                 &format!("post_comment: no form_build_id found on {}", &node_path),
                                 &mut goose.request,
-                                Some(&headers),
+                                Some(headers),
                                 Some(&html),
                             );
                         }
@@ -254,7 +254,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             return user.set_failure(
                                 &format!("post_comment: no form_token found on {}", &node_path),
                                 &mut goose.request,
-                                Some(&headers),
+                                Some(headers),
                                 Some(&html),
                             );
                         }
@@ -269,7 +269,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             return user.set_failure(
                                 &format!("post_comment: no form_id found on {}", &node_path),
                                 &mut goose.request,
-                                Some(&headers),
+                                Some(headers),
                                 Some(&html),
                             );
                         }
@@ -283,7 +283,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                             &form_id[1], &form_build_id[1], &form_token[1]
                         ),
                         Some(&goose.request),
-                        Some(&headers),
+                        Some(headers),
                         Some(&html),
                     );
                     */
@@ -291,7 +291,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     let comment_body = "this is a test comment body";
                     let params = [
                         ("subject", "this is a test comment subject"),
-                        ("comment_body[und][0][value]", &comment_body),
+                        ("comment_body[und][0][value]", comment_body),
                         ("comment_body[und][0][format]", "filtered_html"),
                         ("form_build_id", &form_build_id[1]),
                         ("form_token", &form_token[1]),
@@ -316,7 +316,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                         return user.set_failure(
                                             &format!("post_comment: no comment showed up after posting to {}", &comment_path),
                                             &mut goose.request,
-                                            Some(&headers),
+                                            Some(headers),
                                             Some(&html),
                                         );
                                     }
@@ -330,7 +330,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                                             &comment_path, e
                                         ),
                                         &mut goose.request,
-                                        Some(&headers),
+                                        Some(headers),
                                         None,
                                     );
                                 }
