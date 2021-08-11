@@ -134,7 +134,7 @@ fn merge_requests_from_worker(
             let new_count;
             // Add user count into global count
             if let Some(existing_status_code_count) =
-                merged_request.status_code_counts.get(&status_code)
+                merged_request.status_code_counts.get(status_code)
             {
                 new_count = *existing_status_code_count + *count;
             }

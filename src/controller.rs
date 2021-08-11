@@ -357,7 +357,7 @@ impl GooseControllerState {
                     // Extract the command string in a protocol-specific way.
                     if let Ok(command_string) = self.get_command_string(buf).await {
                         // Extract the command and value in a generic way.
-                        if let Ok(request_message) = self.get_match(&command_string.trim()).await {
+                        if let Ok(request_message) = self.get_match(command_string.trim()).await {
                             // Act on the commmand received.
                             if self.execute_command(&mut socket, request_message).await {
                                 // If execute_command returns true, it's time to exit.
@@ -411,7 +411,7 @@ impl GooseControllerState {
                     // Extract the command string in a protocol-specific way.
                     if let Ok(command_string) = self.get_command_string(data).await {
                         // Extract the command and value in a generic way.
-                        if let Ok(request_message) = self.get_match(&command_string.trim()).await {
+                        if let Ok(request_message) = self.get_match(command_string.trim()).await {
                             if self.execute_command(&mut ws_sender, request_message).await {
                                 // If execute_command() returns true, it's time to exit.
                                 info!(
@@ -441,7 +441,7 @@ impl GooseControllerState {
 
     // Both Controllers use a common function to identify commands.
     async fn get_match(&self, command_string: &str) -> Result<GooseControllerRequestMessage, ()> {
-        let matches = self.commands.matches(&command_string);
+        let matches = self.commands.matches(command_string);
         if matches.matched(GooseControllerCommand::Help as usize) {
             Ok(GooseControllerRequestMessage {
                 command: GooseControllerCommand::Help,
@@ -1253,7 +1253,7 @@ impl GooseAttack {
                                     );
                                     // Use expect() as Controller uses regex to validate this is an integer.
                                     self.configuration.users = Some(
-                                        usize::from_str(&users)
+                                        usize::from_str(users)
                                             .expect("failed to convert string to usize"),
                                     );
                                     self.reply_to_controller(

@@ -172,7 +172,7 @@ fn common_build_configuration(
     if let Some(expect_workers) = manager {
         if sticky {
             common::build_configuration(
-                &server,
+                server,
                 vec![
                     "--sticky-follow",
                     "--manager",
@@ -188,7 +188,7 @@ fn common_build_configuration(
             )
         } else {
             common::build_configuration(
-                &server,
+                server,
                 vec![
                     "--manager",
                     "--expect-workers",
@@ -203,10 +203,10 @@ fn common_build_configuration(
             )
         }
     } else if worker.is_some() {
-        common::build_configuration(&server, vec!["--worker"])
+        common::build_configuration(server, vec!["--worker"])
     } else if sticky {
         common::build_configuration(
-            &server,
+            server,
             vec![
                 "--sticky-follow",
                 "--users",
@@ -219,7 +219,7 @@ fn common_build_configuration(
         )
     } else {
         common::build_configuration(
-            &server,
+            server,
             vec![
                 "--users",
                 &USERS.to_string(),

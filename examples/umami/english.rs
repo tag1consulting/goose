@@ -68,7 +68,7 @@ pub async fn page_by_nid(user: &GooseUser) -> GooseTaskResult {
     ];
     let content_type = content_types.choose(&mut rand::thread_rng());
     // Then randomly select a node of this content type.
-    let nodes = common::get_nodes(&content_type.unwrap());
+    let nodes = common::get_nodes(content_type.unwrap());
     let page = nodes.choose(&mut rand::thread_rng());
     // Load the page by nid instead of by URL.
     let goose = user

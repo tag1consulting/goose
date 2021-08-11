@@ -1435,7 +1435,7 @@ impl GooseUser {
                 None => b"",
             };
             // Convert the bytes into a &str if valid utf8.
-            str::from_utf8(&body_bytes).unwrap_or("")
+            str::from_utf8(body_bytes).unwrap_or("")
         } else {
             ""
         };

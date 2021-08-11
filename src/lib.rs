@@ -1384,7 +1384,7 @@ impl GooseAttack {
         // Apply weights to tasks in each task set.
         for task_set in &mut self.task_sets {
             let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) =
-                allocate_tasks(&task_set, &self.scheduler);
+                allocate_tasks(task_set, &self.scheduler);
             task_set.weighted_on_start_tasks = weighted_on_start_tasks;
             task_set.weighted_tasks = weighted_tasks;
             task_set.weighted_on_stop_tasks = weighted_on_stop_tasks;
@@ -2308,7 +2308,7 @@ fn weight_sequenced_tasks(
     // sequence value, allowing actual weighting to be done by weight_unsequenced_tasks().
     for (sequence, unsequenced_tasks) in sequenced_tasks.iter() {
         let (weighted_tasks, _total_weighted_tasks) =
-            weight_unsequenced_tasks(&unsequenced_tasks, u);
+            weight_unsequenced_tasks(unsequenced_tasks, u);
         available_sequenced_tasks.insert(*sequence, weighted_tasks);
     }
 
