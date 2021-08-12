@@ -406,11 +406,15 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
 
 /// Build the html report.
 pub fn build_report(
+    users: &str,
     start_time: &str,
     end_time: &str,
-    host: &str,
+    duration: &str,
+    hosts: &str,
     templates: GooseReportTemplates,
 ) -> String {
+    let pkg_name = env!("CARGO_PKG_NAME");
+    let pkg_version = env!("CARGO_PKG_VERSION");
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -476,8 +480,10 @@ pub fn build_report(
         <h1>Goose Attack Report</h1>
 
         <div class="info">
-            <p>During: <span>{start_time} - {end_time}</span></p>
-            <p>Target Host: <span>{host}</span></p>
+            <p>Users: <span>{users}</span> </p>
+            <p>Target Host: <span>{hosts}</span></p>
+            <p>During: <span>{start_time} - {end_time} (Duration: {duration})</span></p>
+            <p><span><small><em>{pkg_name} v{pkg_version}</em></small></span></pr>
         </div>
 
         <div class="requests">
@@ -538,9 +544,13 @@ pub fn build_report(
     </div>
 </body>
 </html>"#,
+        users = users,
         start_time = start_time,
         end_time = end_time,
-        host = host,
+        duration = duration,
+        hosts = hosts,
+        pkg_name = pkg_name,
+        pkg_version = pkg_version,
         raw_requests_template = templates.raw_requests_template,
         raw_responses_template = templates.raw_responses_template,
         co_requests_template = templates.co_requests_template,

@@ -403,6 +403,19 @@
 //! slowest 1% of page loads, so were an edge case. 98% of the time page loads
 //! happened in 29 milliseconds or less.
 //!
+//! ```bash
+//!  ------------------------------------------------------------------------------
+//!  Users: 2
+//!  Target host: http://dev.local/
+//!  During: 2021-08-12 15:42:22 - 2021-08-12 15:43:02 (duration: 00:30:00)
+//!
+//!  goose v0.13.1-dev
+//!  ------------------------------------------------------------------------------
+//! ```
+//!
+//! And the final table shows an overview of the load test configuration and
+//! duration.
+//!
 //! ## License
 //!
 //! Copyright 2020-21 Jeremy Andrews
@@ -1964,8 +1977,11 @@ impl GooseAttack {
         // Prepare to collect metrics, if enabled.
         self.metrics = GooseMetrics::default();
         if !self.configuration.no_metrics {
-            self.metrics
-                .initialize_task_metrics(&self.task_sets, &self.configuration);
+            self.metrics.initialize_task_metrics(
+                &self.task_sets,
+                &self.configuration,
+                &self.defaults,
+            )?;
             self.metrics.display_metrics = true;
             // Only display status codes if enabled.
             self.metrics.display_status_codes = self.configuration.status_codes;

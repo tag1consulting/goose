@@ -307,7 +307,12 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     // Initialize the optional task metrics.
     goose_attack
         .metrics
-        .initialize_task_metrics(&goose_attack.task_sets, &goose_attack.configuration);
+        .initialize_task_metrics(
+            &goose_attack.task_sets,
+            &goose_attack.configuration,
+            &goose_attack.defaults,
+        )
+        .expect("failed to initialize task metrics");
 
     // Update metrics, which doesn't happen automatically on the Master as we don't
     // invoke start_attack. Hatch rate is required here so unwrap() is safe.
