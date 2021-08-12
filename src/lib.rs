@@ -1964,8 +1964,11 @@ impl GooseAttack {
         // Prepare to collect metrics, if enabled.
         self.metrics = GooseMetrics::default();
         if !self.configuration.no_metrics {
-            self.metrics
-                .initialize_task_metrics(&self.task_sets, &self.configuration);
+            self.metrics.initialize_task_metrics(
+                &self.task_sets,
+                &self.configuration,
+                &self.defaults,
+            )?;
             self.metrics.display_metrics = true;
             // Only display status codes if enabled.
             self.metrics.display_status_codes = self.configuration.status_codes;

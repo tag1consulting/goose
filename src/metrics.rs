@@ -16,12 +16,13 @@ use regex::RegexSet;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
 use tokio::io::AsyncWriteExt;
 
-use crate::goose::{GooseMethod, GooseTaskSet};
+use crate::config::GooseDefaults;
+use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
 use crate::logger::GooseLog;
 use crate::report;
 use crate::util;
@@ -854,6 +855,8 @@ pub struct GooseMetrics {
     /// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary) or
     /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
     pub errors: GooseErrorMetrics,
+    /// Tracks all hosts that the load test is run against.
+    pub hosts: HashSet<String>,
     /// Flag indicating whether or not these are the final metrics, used to determine
     /// which metrics should be displayed. Defaults to false.
     pub(crate) final_metrics: bool,
@@ -869,7 +872,8 @@ impl GooseMetrics {
         &mut self,
         task_sets: &[GooseTaskSet],
         config: &GooseConfiguration,
-    ) {
+        defaults: &GooseDefaults,
+    ) -> Result<(), GooseError> {
         self.tasks = Vec::new();
         if !config.no_metrics && !config.no_task_metrics {
             for task_set in task_sets {
@@ -883,8 +887,28 @@ impl GooseMetrics {
                     ));
                 }
                 self.tasks.push(task_vector);
+
+                // Determine the base_url for this task based on which of the following
+                // are configured.
+                self.hosts.insert(
+                    get_base_url(
+                        // Determine if --host was configured.
+                        if !config.host.is_empty() {
+                            Some(config.host.to_string())
+                        } else {
+                            None
+                        },
+                        // Determine if the task_set defines a host.
+                        task_set.host.clone(),
+                        // Determine if there is a default host.
+                        defaults.host.clone(),
+                    )?
+                    .to_string(),
+                );
             }
         }
+
+        Ok(())
     }
 
     /// Consumes and display all enabled metrics from a completed load test.
@@ -1996,7 +2020,70 @@ impl GooseMetrics {
 
         Ok(())
     }
+
+    /// Optionally prepares an overview table.
+    ///
+    /// This function is invoked by [`GooseMetrics::print()`.
+    pub(crate) fn fmt_overview(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Only display overview in the final metrics.
+        if !self.final_metrics {
+            return Ok(());
+        }
+
+        // Calculations necessary for overview table.
+        let started = self.started.unwrap();
+        let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
+        let end_time = (started + chrono::Duration::seconds(self.duration as i64))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let seconds = self.duration % 60;
+        let minutes = (self.duration / 60) % 60;
+        let hours = self.duration / 60 / 60;
+
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        writeln!(fmt, " Users: {}", self.users)?;
+        match self.hosts.len() {
+            0 => {
+                // A host is required to run a load test.
+                unreachable!();
+            }
+            1 => {
+                for host in &self.hosts {
+                    writeln!(fmt, " Target host: {}", host)?;
+                }
+            }
+            _ => {
+                writeln!(fmt, " Target hosts: ")?;
+                for host in &self.hosts {
+                    writeln!(fmt, " - {}", host,)?;
+                }
+            }
+        }
+        writeln!(
+            fmt,
+            " During: {} - {} (duration: {:02}:{:02}:{:02})",
+            start_time, end_time, hours, minutes, seconds,
+        )?;
+        writeln!(
+            fmt,
+            "\n {} v{}",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+        )?;
+
+        if self.hosts.len() == 1 {}
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+
+        Ok(())
+    }
 }
+
 impl Serialize for GooseMetrics {
     // GooseMetrics serialization can't be derived because of the started field.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -2029,15 +2116,16 @@ impl Serialize for GooseMetrics {
 impl fmt::Display for GooseMetrics {
     // Implement display of metrics with `{}` marker.
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        // Formats from zero to six tables of data, depending on what data is contained
-        // and which contained flags are set.
+        // Formats metrics data in tables, depending on what data is contained and which
+        // flags are set.
         self.fmt_tasks(fmt)?;
         self.fmt_task_times(fmt)?;
         self.fmt_requests(fmt)?;
         self.fmt_response_times(fmt)?;
         self.fmt_percentiles(fmt)?;
         self.fmt_status_codes(fmt)?;
-        self.fmt_errors(fmt)
+        self.fmt_errors(fmt)?;
+        self.fmt_overview(fmt)
     }
 }
 
@@ -2167,8 +2255,11 @@ impl GooseAttack {
                     }
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();
-                    self.metrics
-                        .initialize_task_metrics(&self.task_sets, &self.configuration);
+                    self.metrics.initialize_task_metrics(
+                        &self.task_sets,
+                        &self.configuration,
+                        &self.defaults,
+                    )?;
                 }
             }
         }
@@ -2217,8 +2308,11 @@ impl GooseAttack {
                 }
 
                 self.metrics.requests = HashMap::new();
-                self.metrics
-                    .initialize_task_metrics(&self.task_sets, &self.configuration);
+                self.metrics.initialize_task_metrics(
+                    &self.task_sets,
+                    &self.configuration,
+                    &self.defaults,
+                )?;
                 // Restart the timer now that all threads are launched.
                 self.started = Some(std::time::Instant::now());
             } else if self.metrics.users < users {
@@ -2418,15 +2512,18 @@ impl GooseAttack {
         // Only write the report if enabled.
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
             // Prepare report summary variables.
+            let users = self.metrics.users.to_string();
             let started = self.metrics.started.unwrap();
             let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
             let end_time = (started + chrono::Duration::seconds(self.metrics.duration as i64))
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
-            let host = match self.get_configuration_host() {
-                Some(h) => h.to_string(),
-                None => "".to_string(),
-            };
+            let seconds = self.metrics.duration % 60;
+            let minutes = (self.metrics.duration / 60) % 60;
+            let hours = self.metrics.duration / 60 / 60;
+            let duration = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
+            // Build a comma separated list of hosts.
+            let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
 
             // Prepare requests and responses variables.
             let mut raw_request_metrics = Vec::new();
@@ -2819,9 +2916,11 @@ impl GooseAttack {
 
             // Compile the report template.
             let report = report::build_report(
+                &users,
                 &start_time,
                 &end_time,
-                &host,
+                &duration,
+                hosts,
                 report::GooseReportTemplates {
                     raw_requests_template: &raw_requests_rows.join("\n"),
                     raw_responses_template: &raw_responses_rows.join("\n"),
