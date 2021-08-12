@@ -403,6 +403,19 @@
 //! slowest 1% of page loads, so were an edge case. 98% of the time page loads
 //! happened in 29 milliseconds or less.
 //!
+//! ```bash
+//!  ------------------------------------------------------------------------------
+//!  Users: 2
+//!  Target host: http://dev.local/
+//!  During: 2021-08-12 15:42:22 - 2021-08-12 15:43:02 (duration: 00:30:00)
+//!
+//!  goose v0.13.1-dev
+//!  ------------------------------------------------------------------------------
+//! ```
+//!
+//! And the final table shows an overview of the load test configuration and
+//! duration.
+//!
 //! ## License
 //!
 //! Copyright 2020-21 Jeremy Andrews
