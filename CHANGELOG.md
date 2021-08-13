@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.1-dev
+## 0.13.1 August 13, 2021
  - add test to confirm a `base_url` can include a path and be joined with a relative path
  - fix documentation typo
  - introduce `pretty` log format for `--error-format`, `--debug-format`, `--request-format`, and `--task-format`
