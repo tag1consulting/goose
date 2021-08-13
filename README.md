@@ -50,9 +50,9 @@ At this point it's possible to compile all dependencies, though the resulting bi
 ```
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.13.0
+  Downloaded goose v0.13.1
       ...
-   Compiling goose v0.13.0
+   Compiling goose v0.13.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -371,7 +371,7 @@ All 1024 users hatched.
  Target host: http://local.dev/
  During: 2021-08-12 10:55:09 - 2021-08-12 11:05:09 (duration: 00:10:00)
 
- goose v0.13.1-dev
+ goose v0.13.1
  ------------------------------------------------------------------------------
 
 ```
@@ -545,7 +545,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose> ?
-goose 0.13.0 controller commands:
+goose 0.13.1 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  start              start an idle load test
