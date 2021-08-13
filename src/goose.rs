@@ -276,7 +276,7 @@
 //! you may not use this file except in compliance with the License.
 //! You may obtain a copy of the License at
 //!
-//! [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0)
+//! <http://www.apache.org/licenses/LICENSE-2.0>
 //!
 //! Unless required by applicable law or agreed to in writing, software
 //! distributed under the License is distributed on an "AS IS" BASIS,
@@ -920,7 +920,7 @@ impl GooseUser {
     ///  1. `--host` (host specified on the command line when running load test)
     ///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined for the
     /// current task set)
-    ///  3. [`GooseDefault::Host`](../enum.GooseDefault.html#variant.Host) (default host
+    ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default host
     /// defined for the current load test)
     pub async fn build_url(&self, path: &str) -> Result<String, GooseTaskError> {
         // If URL includes a host, simply use it.
@@ -1825,7 +1825,7 @@ impl GooseUser {
     /// returned by the server, and the response body returned by the server,
     ///
     /// As the response body can be large, the `--no-debug-body` option (or
-    /// [`GooseDefault::NoDebugBody`](../enum.GooseDefault.html#variant.NoDebugBody) default)
+    /// [`GooseDefault::NoDebugBody`](../config/enum.GooseDefault.html#variant.NoDebugBody) default)
     /// can be set to prevent the debug log from including the response body. When this option
     /// is enabled, the body will always show up as `null` in the debug log.
     ///
@@ -2088,7 +2088,7 @@ impl GooseUser {
     /// This functionality is used internally by Goose to follow redirects of the
     /// `base_url` when `--sticky-follow` is specified at run time, or
     /// [`set_default`](../struct.GooseAttack.html#method.set_default)
-    /// `(`[`GooseDefault::StickyFollow`](../enum.GooseDefault.html#variant.StickyFollow)
+    /// `(`[`GooseDefault::StickyFollow`](../config/enum.GooseDefault.html#variant.StickyFollow)
     /// `, true)` is enabled. It is also
     /// available to be manually invoked from a load test such as in the following
     /// example.
@@ -2143,7 +2143,7 @@ impl GooseUser {
 ///  1. `--host` (host specified on the command line when running load test)
 ///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined
 ///     for the current task set)
-///  3. [`GooseDefault::Host`](../enum.GooseDefault.html#variant.Host) (default
+///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default
 ///     host defined for the current load test)
 pub fn get_base_url(
     config_host: Option<String>,
