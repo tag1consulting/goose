@@ -1,4 +1,4 @@
-use httpmock::{Method::GET, MockRef, MockServer};
+use httpmock::{Method::GET, Mock, MockServer};
 use std::sync::Arc;
 
 mod common;
@@ -51,7 +51,7 @@ fn configure_mock_endpoints<'a>() -> Vec<LoadtestEndpoint<'a>> {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
     // Get common configuration for building endpoints and the load test itself.
     let test_endpoints = configure_mock_endpoints();
 
@@ -144,7 +144,7 @@ fn build_taskset() -> GooseTaskSet {
 
 // Common validation for the load tests in this file.
 fn validate_closer_test(
-    mock_endpoints: &[MockRef],
+    mock_endpoints: &[Mock],
     goose_metrics: &GooseMetrics,
     configuration: &GooseConfiguration,
 ) {

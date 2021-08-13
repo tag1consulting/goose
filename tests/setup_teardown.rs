@@ -1,6 +1,6 @@
 use httpmock::{
     Method::{GET, POST},
-    MockRef, MockServer,
+    Mock, MockServer,
 };
 use serial_test::serial;
 
@@ -55,7 +55,7 @@ pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
     vec![
         // First set up INDEX_PATH, store in vector at INDEX_KEY.
         server.mock(|when, then| {
@@ -102,7 +102,7 @@ fn common_build_configuration(
 }
 
 // Helper to confirm all variations generate appropriate results.
-fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
+fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
     // Confirm the load test ran.
     assert!(mock_endpoints[INDEX_KEY].hits() > 0);
 

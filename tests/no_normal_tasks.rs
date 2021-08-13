@@ -1,6 +1,6 @@
 use httpmock::{
     Method::{GET, POST},
-    MockRef, MockServer,
+    Mock, MockServer,
 };
 
 mod common;
@@ -37,7 +37,7 @@ pub async fn logout(user: &GooseUser) -> GooseTaskResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
     vec![
         // First set up LOGIN_PATH, store in vector at LOGIN_KEY.
         server.mock(|when, then| {
@@ -93,7 +93,7 @@ fn common_build_configuration(
 }
 
 // Helper to confirm all variations generate appropriate results.
-fn validate_test(mock_endpoints: &[MockRef]) {
+fn validate_test(mock_endpoints: &[Mock]) {
     // Confirm that the on_start and on_exit tasks actually ran once per GooseUser.
     mock_endpoints[LOGIN_KEY].assert_hits(USERS);
     mock_endpoints[LOGOUT_KEY].assert_hits(USERS);

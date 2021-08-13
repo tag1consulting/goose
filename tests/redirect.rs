@@ -1,4 +1,4 @@
-use httpmock::{Method::GET, MockRef, MockServer};
+use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 
 mod common;
@@ -96,7 +96,7 @@ fn setup_mock_server_endpoints<'a>(
     test_type: &TestType,
     server: &'a MockServer,
     server2: Option<&'a MockServer>,
-) -> Vec<MockRef<'a>> {
+) -> Vec<Mock<'a>> {
     match test_type {
         TestType::Chain => {
             vec![
@@ -233,7 +233,7 @@ fn common_build_configuration(
 }
 
 // Helper to confirm all variations generate appropriate results.
-fn validate_redirect(test_type: &TestType, mock_endpoints: &[MockRef]) {
+fn validate_redirect(test_type: &TestType, mock_endpoints: &[Mock]) {
     match test_type {
         TestType::Chain => {
             // Confirm that all pages are loaded, even those not requested directly but
