@@ -120,7 +120,7 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
 ///
 /// Goose optionally tracks metrics about requests made during a load test. The
 /// metrics can be disabled with the `--no-metrics` run-time option, or with
-/// [`GooseDefault::NoMetrics`](../enum.GooseDefault.html#variant.NoMetrics).
+/// [`GooseDefault::NoMetrics`](../config/enum.GooseDefault.html#variant.NoMetrics).
 ///
 /// Aggregated requests ([`GooseRequestMetricAggregate`]) are stored in a HashMap
 /// with they key `method request-name`, for example `GET /`.
@@ -182,8 +182,8 @@ pub type GooseRequestMetrics = HashMap<String, GooseRequestMetricAggregate>;
 /// Goose optionally tracks metrics about tasks executed during a load test. The
 /// metrics can be disabled with either the `--no-task-metrics` or the `--no-metrics`
 /// run-time option, or with either
-/// [`GooseDefault::NoTaskMetrics`](../enum.GooseDefault.html#variant.NoTaskMetrics) or
-/// [`GooseDefault::NoMetrics`](../enum.GooseDefault.html#variant.NoMetrics).
+/// [`GooseDefault::NoTaskMetrics`](../config/enum.GooseDefault.html#variant.NoTaskMetrics) or
+/// [`GooseDefault::NoMetrics`](../config/enum.GooseDefault.html#variant.NoMetrics).
 ///
 /// Aggregated tasks ([`GooseTaskMetricAggregate`]) are stored in a Vector of Vectors
 /// keyed to the order the task is created in the load test.
@@ -235,7 +235,7 @@ pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
 /// completes.
 ///
 /// `GooseErrorMetrics` can be disabled with the `--no-error-summary` run-time option, or with
-/// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
+/// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary).
 ///
 /// # Example
 /// When viewed with [`std::fmt::Display`], [`GooseErrorMetrics`] are displayed in
@@ -839,21 +839,21 @@ pub struct GooseMetrics {
     /// Tracks details about each request made during the load test.
     ///
     /// Can be disabled with the `--no-metrics` run-time option, or with
-    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
+    /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub requests: GooseRequestMetrics,
     /// Tracks details about each task that is invoked during the load test.
     ///
     /// Can be disabled with either the `--no-task-metrics` or `--no-metrics` run-time options,
     /// or with either the
-    /// [GooseDefault::NoTaskMetrics](../enum.GooseDefault.html#variant.NoTaskMetrics) or
-    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
+    /// [GooseDefault::NoTaskMetrics](../config/enum.GooseDefault.html#variant.NoTaskMetrics) or
+    /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub tasks: GooseTaskMetrics,
     /// Tracks and counts each time an error is detected during the load test.
     ///
     /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
     /// or with either the
-    /// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary) or
-    /// [GooseDefault::NoMetrics](../enum.GooseDefault.html#variant.NoMetrics).
+    /// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary) or
+    /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub errors: GooseErrorMetrics,
     /// Tracks all hosts that the load test is run against.
     pub hosts: HashSet<String>,
@@ -2174,7 +2174,7 @@ pub struct GooseErrorMetric {
 /// test finishes.
 ///
 /// Can be disabled with the `--no-error-summary` run-time option, or with
-/// [GooseDefault::NoErrorSummary](../enum.GooseDefault.html#variant.NoErrorSummary).
+/// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary).
 ///
 /// # Example
 /// In this example, requests to load the front page are failing:

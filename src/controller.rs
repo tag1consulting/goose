@@ -58,7 +58,7 @@ pub enum GooseControllerCommand {
     /// Configure the host to load test.
     ///
     /// # Example
-    /// Tells Goose to generate load against http://example.com/.
+    /// Tells Goose to generate load against <http://example.com/>.
     /// ```notest
     /// host http://example.com/
     /// ```
