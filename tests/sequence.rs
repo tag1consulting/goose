@@ -1,4 +1,4 @@
-use httpmock::{Method::GET, MockRef, MockServer};
+use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 use tokio::time::{sleep, Duration};
 
@@ -78,7 +78,7 @@ pub async fn stop_one(user: &GooseUser) -> GooseTaskResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
     vec![
         // First set up ONE_PATH, store in vector at ONE_KEY.
         server.mock(|when, then| {
@@ -149,7 +149,7 @@ fn common_build_configuration(
 }
 
 // Helper to confirm all variations generate appropriate results.
-fn validate_test(test_type: &TestType, mock_endpoints: &[MockRef]) {
+fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
     mock_endpoints[START_ONE_KEY].assert_hits(1);
 

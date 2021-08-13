@@ -1,4 +1,4 @@
-use httpmock::{Method::GET, MockRef, MockServer};
+use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 
 mod common;
@@ -40,7 +40,7 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
     vec![
         // First set up INDEX_PATH, store in vector at INDEX_KEY.
         server.mock(|when, then| {
@@ -78,7 +78,7 @@ fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> Go
 // Helper to confirm all variations generate appropriate results.
 fn validate_one_taskset(
     goose_metrics: &GooseMetrics,
-    mock_endpoints: &[MockRef],
+    mock_endpoints: &[Mock],
     configuration: &GooseConfiguration,
     test_type: TestType,
 ) {

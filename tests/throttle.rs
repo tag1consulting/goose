@@ -1,4 +1,4 @@
-use httpmock::{Method::GET, MockRef, MockServer};
+use httpmock::{Method::GET, Mock, MockServer};
 
 mod common;
 
@@ -33,7 +33,7 @@ pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<MockRef> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
     vec![
         // First set up INDEX_PATH, store in vector at INDEX_KEY.
         server.mock(|when, then| {
@@ -111,7 +111,7 @@ fn common_build_configuration(
 
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(
-    mock_endpoints: &[MockRef],
+    mock_endpoints: &[Mock],
     request_logs: &[String],
     throttle_value: usize,
     previous_requests_file_lines: Option<usize>,
