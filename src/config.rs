@@ -116,7 +116,10 @@ pub struct GooseConfiguration {
     /// Sets per-second user hatch rate (default: 1)
     #[options(short = "r", meta = "RATE")]
     pub hatch_rate: Option<String>,
-    /// Stops after (30s, 20m, 3h, 1h30m, etc)
+    /// Starts users for up to (30s, 20m, 3h, 1h30m, etc)
+    #[options(short = "s", meta = "TIME")]
+    pub startup_time: String,
+    /// Stops load test after (30s, 20m, 3h, 1h30m, etc)
     #[options(short = "t", meta = "TIME")]
     pub run_time: String,
     /// Enables Goose log file and sets name
@@ -258,6 +261,8 @@ pub(crate) struct GooseDefaults {
     pub users: Option<usize>,
     /// An optional default number of clients to start per second.
     pub hatch_rate: Option<String>,
+    /// An optional default number of seconds for the test to start.
+    pub startup_time: Option<usize>,
     /// An optional default number of seconds for the test to run.
     pub run_time: Option<usize>,
     /// An optional default log level.
@@ -352,6 +357,8 @@ pub enum GooseDefault {
     Users,
     /// An optional default number of clients to start per second.
     HatchRate,
+    /// An optional default number of seconds for the test to start up.
+    StartupTime,
     /// An optional default number of seconds for the test to run.
     RunTime,
     /// An optional default log level.
@@ -479,6 +486,7 @@ pub enum GooseDefault {
 /// [`usize`] integer:
 ///  - [`GooseDefault::Users`]
 ///  - [`GooseDefault::HatchRate`]
+///  - [`GooseDefault::StatupTime`]
 ///  - [`GooseDefault::RunTime`]
 ///  - [`GooseDefault::RunningMetrics`]
 ///  - [`GooseDefault::LogLevel`]
@@ -560,6 +568,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
+            | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
             | GooseDefault::Verbose
@@ -635,6 +644,7 @@ impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::Users => self.defaults.users = Some(value),
+            GooseDefault::StartupTime => self.defaults.startup_time = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
             GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
@@ -761,6 +771,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             }
             GooseDefault::Users
             | GooseDefault::HatchRate
+            | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
             | GooseDefault::Verbose
@@ -863,6 +874,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             }
             GooseDefault::Users
             | GooseDefault::HatchRate
+            | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
             | GooseDefault::Verbose
@@ -958,6 +970,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             }
             GooseDefault::Users
             | GooseDefault::HatchRate
+            | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
             | GooseDefault::Verbose
@@ -1278,6 +1291,24 @@ impl GooseConfiguration {
                 message: "users defaulted to number of CPUs",
             },
         ]);
+
+        // Configure `startup_time`.
+        self.startup_time = self
+            .get_value(vec![
+                // Use --startup-time if set.
+                GooseValue {
+                    value: Some(util::parse_timespan(&self.startup_time)),
+                    filter: util::parse_timespan(&self.startup_time) == 0,
+                    message: "startup_time",
+                },
+                // Otherwise use GooseDefault if set and not on Worker.
+                GooseValue {
+                    value: defaults.startup_time,
+                    filter: defaults.startup_time.is_none() || self.worker,
+                    message: "startup_time",
+                },
+            ])
+            .map_or_else(|| "0".to_string(), |v| v.to_string());
 
         // Configure `run_time`.
         self.run_time = self
@@ -1857,6 +1888,14 @@ impl GooseConfiguration {
                     value: self.users.as_ref().unwrap().to_string(),
                     detail: "`configuration.users` can not be set together with the `configuration.worker`.".to_string(),
                 });
+            // Can't set `startup_time` on Worker.
+            } else if self.startup_time != "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.startup_time".to_string(),
+                    value: self.startup_time.to_string(),
+                    detail: "`configuration.startup_time` can not be set in Worker mode."
+                        .to_string(),
+                });
             // Can't set `run_time` on Worker.
             } else if self.run_time != "0" {
                 return Err(GooseError::InvalidOption {
@@ -2018,6 +2057,27 @@ impl GooseConfiguration {
                     option: "configuration.users".to_string(),
                     value: users.to_string(),
                     detail: "`configuration.users` must be set to at least 1.".to_string(),
+                });
+            }
+        }
+
+        // Validate `startup_time`.
+        if self.startup_time != "0" {
+            // Startup time can't be set with hatch rate.
+            if self.hatch_rate.is_some() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.startup_time`".to_string(),
+                    value: self.startup_time.to_string(),
+                    detail: "`configuration.startup_time` can not be set with `configuration.hatch_rate`.".to_string(),
+                });
+            }
+
+            // Startup time requires at least 2 users.
+            if let Some(users) = self.users.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "configuration.users".to_string(),
+                    value: users.to_string(),
+                    detail: "`configuration.users` must be set to at least 2 when `configuration.startup_time` is set.".to_string(),
                 });
             }
         }

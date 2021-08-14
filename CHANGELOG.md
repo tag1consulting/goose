@@ -2,6 +2,7 @@
 
 ## 0.13.2-dev
  - fix broken links within the documentation
+ - introduce `--startup-time` which can be set together with `--users` instead of using `--hatch-rate` to configure how quickly to start users, fix `--run-time` to always start counting after all users are fully started
 
 ## 0.13.1 August 13, 2021
  - add test to confirm a `base_url` can include a path and be joined with a relative path

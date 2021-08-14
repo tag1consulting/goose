@@ -212,7 +212,8 @@ Optional arguments:
   -H, --host HOST            Defines host to load test (ie http://10.21.32.33)
   -u, --users USERS          Sets concurrent users (default: number of CPUs)
   -r, --hatch-rate RATE      Sets per-second user hatch rate (default: 1)
-  -t, --run-time TIME        Stops after (30s, 20m, 3h, 1h30m, etc)
+  -s, --startup-time TIME    Starts users for up to (30s, 20m, 3h, 1h30m, etc)
+  -t, --run-time TIME        Stops load test after (30s, 20m, 3h, 1h30m, etc)
   -G, --goose-log NAME       Enables Goose log file and sets name
   -g, --log-level            Sets Goose log level (-g, -gg, etc)
   -v, --verbose              Sets Goose verbosity (-v, -vv, etc)
@@ -274,7 +275,7 @@ MiB Swap:  10237.0 total,  10237.0 free,      0.0 used.   8606.9 avail Mem
  1339 goose     20   0 1235480 758292   8984 R   3.0   7.4   0:06.56 simple
 ```
 
-Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to start tracking the 10m run-time from when the first user starts, instead of the default which is to flush all metrics and start timing after all users have started. And finally, the `--only-summary` flag tells Goose to only display the final metrics after the load test finishes, otherwise it would display running metrics every 15 seconds for the duration of the test.
+Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to track all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the `--only-summary` flag tells Goose to only display the final metrics after the load test finishes, otherwise it would display running metrics every 15 seconds for the duration of the test.
 
 ```
 $ cargo run --release --example simple -- --host http://local.dev -v -u1024 -r32 -t10m --status-codes --no-reset-metrics --only-summary
@@ -375,6 +376,22 @@ All 1024 users hatched.
  ------------------------------------------------------------------------------
 
 ```
+
+## Controlling Launch Time
+
+There are two ways to configure how long Goose will take to launch all configured GooseUsers. You can user either `--hatch-rate` or `--startup-time`, but not both together.
+
+### Hatch Rate
+
+By default, Goose starts one GooseUser per second. So if you configure `--users` to 10 it will take ten seconds to fully start the load test. If you set `--hatch-rate 5` then Goose will start 5 users every second, taking two seconds to start up. If you set `--hatch-rate 0.5` then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users.
+
+### Startup Time
+
+Alternatively, you can tell Goose how long you'd like it to take to start all GooseUsers. So, if you configure `--users` to 10 and set `--startup-time 10` it will launch 1 user every second. If you set `--start-time 1m` it will start 1 user every 6 seconds, starting all users over one minute. And if you set `--start-time 2s` it will launch five users per second, launching all users in two seconds.
+
+## Run Time
+
+The `--run-time` option is not affected by how long Goose takes to start up. Thus, if you configure a load test with `--users 100 --start-time 30m --run-time 5m` Goose will run for a total of 35 minutes, first ramping up for 30 minutes and then running at full load for 5 minutes. If you want Goose to exit immediately after all users start, you can set a very small run time, for example `--users 100 --hatch-rate .25 --run-time 1s`.
 
 ## Scheduling GooseTaskSets
 
@@ -882,7 +899,7 @@ The `--no-metrics`, `--only-summary`, `--no-reset-metrics`, `--status-codes`, an
 * `--manager-host <manager-host>`: configures the host that the Worker will talk to the Manager on. By default, a Goose Worker will connect to the localhost, or `127.0.0.1`. In a distributed load test, this must be set to the IP of the Goose Manager.
 * `--manager-port <manager-port>`: configures the port that a Worker will talk to the Manager on. By default, a Goose Worker will connect to port `5115`.
 
-The `--users`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the Manager. Workers inherit these options from the Manager.
+The `--users`, `--startup-time`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the Manager. Workers inherit these options from the Manager.
 
 The `--throttle-requests` option must be configured on each Worker, and can be set to a different value on each Worker if desired.
 
