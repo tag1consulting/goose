@@ -1691,16 +1691,21 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        // If the run_timer has expired, stop spawning user threads and start stopping them
-        // instead. Unwrap is safe here because load test had to start to get here.
-        if util::timer_expired(self.started.unwrap(), self.run_time) {
-            self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
-            return Ok(());
-        }
-
-        // Hatch rate is used to schedule the next user, and to ensure we don't
-        // sleep too long.
-        let hatch_rate = util::get_hatch_rate(self.configuration.hatch_rate.clone());
+        // If `startup_time` has been configured, calculate the hatch_rate.
+        let hatch_rate = if self.configuration.startup_time != "0" {
+            if let Some(users) = self.configuration.users {
+                // Divide the number of users by the total time to start up to calculate the
+                // hatch rate.
+                users as f32 / util::parse_timespan(&self.configuration.startup_time) as f32
+            } else {
+                // Users have to be configured.
+                unreachable!();
+            }
+        // Otherwise either `hatch_rate` was configured or Goose will default to launching
+        // one GooseUser per second.
+        } else {
+            util::get_hatch_rate(self.configuration.hatch_rate.clone())
+        };
 
         // Determine if it's time to spawn a GooseUser.
         if goose_attack_run_state.spawn_user_in_ms == 0

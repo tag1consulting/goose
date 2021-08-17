@@ -1343,12 +1343,6 @@ impl GooseConfiguration {
                     filter: defaults.hatch_rate.is_none() || self.worker,
                     message: "hatch_rate",
                 },
-                // Otherwise default to 1.0 if not on Worker.
-                GooseValue {
-                    value: Some(1.0),
-                    filter: self.worker,
-                    message: "hatch_rate",
-                },
             ])
             .map(|v| v.to_string());
 
@@ -2033,8 +2027,10 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
-        // Hatch rate must be set and nonzero, unless in Worker mode.
-        } else if let Some(hatch_rate) = self.hatch_rate.as_ref() {
+        }
+
+        // If set, hatch rate must be non-zero.
+        if let Some(hatch_rate) = self.hatch_rate.as_ref() {
             if hatch_rate == "0" {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.hatch_rate`".to_string(),
@@ -2042,12 +2038,6 @@ impl GooseConfiguration {
                     detail: "`configuration.hatch_rate` must be set to at least 1.".to_string(),
                 });
             }
-        } else if self.hatch_rate.is_none() {
-            return Err(GooseError::InvalidOption {
-                option: "`configuration.hatch_rate`".to_string(),
-                value: format!("{:?}", self.hatch_rate),
-                detail: "`configuration.hatch_rate` must be set to at least 1.".to_string(),
-            });
         }
 
         // Validate `users`.
@@ -2074,11 +2064,13 @@ impl GooseConfiguration {
 
             // Startup time requires at least 2 users.
             if let Some(users) = self.users.as_ref() {
-                return Err(GooseError::InvalidOption {
-                    option: "configuration.users".to_string(),
-                    value: users.to_string(),
-                    detail: "`configuration.users` must be set to at least 2 when `configuration.startup_time` is set.".to_string(),
-                });
+                if users < &2 {
+                    return Err(GooseError::InvalidOption {
+                        option: "configuration.users".to_string(),
+                        value: users.to_string(),
+                        detail: "`configuration.users` must be set to at least 2 when `configuration.startup_time` is set.".to_string(),
+                    });
+                }
             }
         }
 

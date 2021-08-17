@@ -2313,8 +2313,6 @@ impl GooseAttack {
                     &self.configuration,
                     &self.defaults,
                 )?;
-                // Restart the timer now that all threads are launched.
-                self.started = Some(std::time::Instant::now());
             } else if self.metrics.users < users {
                 println!(
                     "{} of {} users hatched, timer expired.\n",
@@ -2323,6 +2321,9 @@ impl GooseAttack {
             } else {
                 println!("All {} users hatched.\n", self.metrics.users);
             }
+
+            // Restart the timer now that all threads are launched.
+            self.started = Some(std::time::Instant::now());
         }
 
         Ok(())
