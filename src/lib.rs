@@ -407,7 +407,9 @@
 //!  ------------------------------------------------------------------------------
 //!  Users: 2
 //!  Target host: http://dev.local/
-//!  During: 2021-08-12 15:42:22 - 2021-08-12 15:43:02 (duration: 00:30:00)
+//!  Starting: 2021-08-12 15:42:23 - 2021-08-12 15:42:31 (duration: 00:00:08)
+//!  During:  2021-08-12 15:42:31 - 2021-08-12 15:43:02 (duration: 00:00:30)
+//!  Stopping: 2021-08-12 15:43:02 - 2021-08-12 15:43:02 (duration: 00:00:00)
 //!
 //!  goose v0.13.1
 //!  ------------------------------------------------------------------------------
@@ -1841,6 +1843,8 @@ impl GooseAttack {
 
             self.reset_metrics(goose_attack_run_state).await?;
             self.set_attack_phase(goose_attack_run_state, AttackPhase::Running);
+            // Also record a formattable timestamp, for human readable reports.
+            self.metrics.started = Some(Local::now());
         }
 
         Ok(())
@@ -1855,6 +1859,7 @@ impl GooseAttack {
         // Exit if run_time timer expires.
         if util::timer_expired(self.started.unwrap(), self.run_time) {
             self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
+            self.metrics.stopping = Some(Local::now());
         } else {
             // Subtract the time spent doing other things, running the main parent loop twice
             // per second.
@@ -2033,9 +2038,6 @@ impl GooseAttack {
         // Record when the GooseAttack officially started.
         self.started = Some(time::Instant::now());
 
-        // Also record a formattable timestamp, for human readable reports.
-        self.metrics.started = Some(Local::now());
-
         Ok(())
     }
 
@@ -2076,6 +2078,7 @@ impl GooseAttack {
                         // Prepare to start the load test, resetting timers and counters.
                         self.reset_run_state(&mut goose_attack_run_state).await?;
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
+                        self.metrics.starting = Some(Local::now());
                     }
                 }
                 // In the Start phase, Goose launches GooseUser threads and starts a GooseAttack.
@@ -2102,6 +2105,8 @@ impl GooseAttack {
                     self.stop_attack().await?;
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
+                    // The load test is fully stopped at this point.
+                    self.metrics.stopped = Some(Local::now());
                     // Write an html report, if enabled.
                     self.write_html_report(&mut goose_attack_run_state).await?;
                     // Shutdown Goose or go into an idle waiting state.
@@ -2140,6 +2145,7 @@ impl GooseAttack {
 
                 // Cleanly stop the load test.
                 self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Stopping);
+                self.metrics.stopping = Some(Local::now());
             }
         }
 

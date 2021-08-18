@@ -828,7 +828,13 @@ pub struct GooseMetrics {
     /// are running the same load test.
     pub hash: u64,
     /// An optional system timestamp indicating when the load test started.
+    pub starting: Option<DateTime<Local>>,
+    /// An optional system timestamp indicating when all GooseUsers started.
     pub started: Option<DateTime<Local>>,
+    /// An optional system timestamp indicating when the load test began stopping.
+    pub stopping: Option<DateTime<Local>>,
+    /// An optional system timestamp indicating when the load test fully stopped.
+    pub stopped: Option<DateTime<Local>>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
@@ -2021,6 +2027,19 @@ impl GooseMetrics {
         Ok(())
     }
 
+    // Determine the seconds, minutes and hours between two chrono:DateTimes.
+    fn get_seconds_minutes_hours(
+        &self,
+        start: &chrono::DateTime<chrono::Local>,
+        end: &chrono::DateTime<chrono::Local>,
+    ) -> (i64, i64, i64) {
+        let duration = end.timestamp() - start.timestamp();
+        let seconds = duration % 60;
+        let minutes = (duration / 60) % 60;
+        let hours = duration / 60 / 60;
+        (seconds, minutes, hours)
+    }
+
     /// Optionally prepares an overview table.
     ///
     /// This function is invoked by [`GooseMetrics::print()`.
@@ -2031,14 +2050,24 @@ impl GooseMetrics {
         }
 
         // Calculations necessary for overview table.
-        let started = self.started.unwrap();
+        let starting = self.starting.unwrap();
+        let starting_time = starting.format("%Y-%m-%d %H:%M:%S").to_string();
+        let started = if self.started.is_some() {
+            self.started.unwrap()
+        } else {
+            self.stopping.unwrap()
+        };
+        let (starting_seconds, starting_minutes, starting_hours) =
+            self.get_seconds_minutes_hours(&starting, &started);
         let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
-        let end_time = (started + chrono::Duration::seconds(self.duration as i64))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let seconds = self.duration % 60;
-        let minutes = (self.duration / 60) % 60;
-        let hours = self.duration / 60 / 60;
+        let stopping = self.stopping.unwrap();
+        let (running_seconds, running_minutes, running_hours) =
+            self.get_seconds_minutes_hours(&started, &stopping);
+        let stopping_time = stopping.format("%Y-%m-%d %H:%M:%S").to_string();
+        let stopped = self.stopped.unwrap();
+        let stopped_time = stopped.format("%Y-%m-%d %H:%M:%S").to_string();
+        let (stopping_seconds, stopping_minutes, stopping_hours) =
+            self.get_seconds_minutes_hours(&stopping, &stopped);
 
         writeln!(
             fmt,
@@ -2064,8 +2093,21 @@ impl GooseMetrics {
         }
         writeln!(
             fmt,
-            " During: {} - {} (duration: {:02}:{:02}:{:02})",
-            start_time, end_time, hours, minutes, seconds,
+            " Starting: {} - {} (duration: {:02}:{:02}:{:02})",
+            starting_time, start_time, starting_hours, starting_minutes, starting_seconds,
+        )?;
+        // Only display time running if the load test fully started.
+        if self.started.is_some() {
+            writeln!(
+                fmt,
+                " Running:  {} - {} (duration: {:02}:{:02}:{:02})",
+                start_time, stopping_time, running_hours, running_minutes, running_seconds,
+            )?;
+        }
+        writeln!(
+            fmt,
+            " Stopping: {} - {} (duration: {:02}:{:02}:{:02})",
+            stopping_time, stopped_time, stopping_hours, stopping_minutes, stopping_seconds,
         )?;
         writeln!(
             fmt,
@@ -2514,15 +2556,51 @@ impl GooseAttack {
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
             // Prepare report summary variables.
             let users = self.metrics.users.to_string();
-            let started = self.metrics.started.unwrap();
-            let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
-            let end_time = (started + chrono::Duration::seconds(self.metrics.duration as i64))
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string();
-            let seconds = self.metrics.duration % 60;
-            let minutes = (self.metrics.duration / 60) % 60;
-            let hours = self.metrics.duration / 60 / 60;
-            let duration = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
+
+            let starting = self.metrics.starting.unwrap();
+            let started = if self.metrics.started.is_some() {
+                self.metrics.started.unwrap()
+            } else {
+                self.metrics.stopping.unwrap()
+            };
+            let (starting_seconds, starting_minutes, starting_hours) =
+                self.metrics.get_seconds_minutes_hours(&starting, &started);
+            let stopping = self.metrics.stopping.unwrap();
+            let (running_seconds, running_minutes, running_hours) =
+                self.metrics.get_seconds_minutes_hours(&started, &stopping);
+            let stopped = self.metrics.stopped.unwrap();
+            let (stopping_seconds, stopping_minutes, stopping_hours) =
+                self.metrics.get_seconds_minutes_hours(&stopping, &stopped);
+
+            let mut report_range = format!(
+                "<p>Starting: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
+                starting.format("%Y-%m-%d %H:%M:%S").to_string(),
+                started.format("%Y-%m-%d %H:%M:%S").to_string(),
+                starting_hours,
+                starting_minutes,
+                starting_seconds,
+            );
+
+            if self.metrics.started.is_some() {
+                report_range.push_str(&format!(
+                    "<p>Running: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
+                    started.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    stopping.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    running_hours,
+                    running_minutes,
+                    running_seconds,
+                ));
+            }
+
+            report_range.push_str(&format!(
+                "<p>Stopping: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
+                stopping.format("%Y-%m-%d %H:%M:%S").to_string(),
+                stopped.format("%Y-%m-%d %H:%M:%S").to_string(),
+                stopping_hours,
+                stopping_minutes,
+                stopping_seconds,
+            ));
+
             // Build a comma separated list of hosts.
             let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
 
@@ -2918,9 +2996,7 @@ impl GooseAttack {
             // Compile the report template.
             let report = report::build_report(
                 &users,
-                &start_time,
-                &end_time,
-                &duration,
+                &report_range,
                 hosts,
                 report::GooseReportTemplates {
                     raw_requests_template: &raw_requests_rows.join("\n"),
