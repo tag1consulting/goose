@@ -407,9 +407,7 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
 /// Build the html report.
 pub fn build_report(
     users: &str,
-    start_time: &str,
-    end_time: &str,
-    duration: &str,
+    report_range: &str,
     hosts: &str,
     templates: GooseReportTemplates,
 ) -> String {
@@ -482,7 +480,7 @@ pub fn build_report(
         <div class="info">
             <p>Users: <span>{users}</span> </p>
             <p>Target Host: <span>{hosts}</span></p>
-            <p>During: <span>{start_time} - {end_time} (Duration: {duration})</span></p>
+            {report_range}
             <p><span><small><em>{pkg_name} v{pkg_version}</em></small></span></pr>
         </div>
 
@@ -545,9 +543,7 @@ pub fn build_report(
 </body>
 </html>"#,
         users = users,
-        start_time = start_time,
-        end_time = end_time,
-        duration = duration,
+        report_range = report_range,
         hosts = hosts,
         pkg_name = pkg_name,
         pkg_version = pkg_version,
