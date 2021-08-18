@@ -2042,10 +2042,10 @@ impl GooseMetrics {
 
     /// Optionally prepares an overview table.
     ///
-    /// This function is invoked by [`GooseMetrics::print()`.
+    /// This function is invoked by [`GooseMetrics::print()`].
     pub(crate) fn fmt_overview(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Only display overview in the final metrics.
-        if !self.final_metrics {
+        if !self.final_metrics || self.starting.is_none() {
             return Ok(());
         }
 
