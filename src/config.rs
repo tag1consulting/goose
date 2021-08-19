@@ -486,7 +486,7 @@ pub enum GooseDefault {
 /// [`usize`] integer:
 ///  - [`GooseDefault::Users`]
 ///  - [`GooseDefault::HatchRate`]
-///  - [`GooseDefault::StatupTime`]
+///  - [`GooseDefault::StartupTime`]
 ///  - [`GooseDefault::RunTime`]
 ///  - [`GooseDefault::RunningMetrics`]
 ///  - [`GooseDefault::LogLevel`]

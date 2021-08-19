@@ -1755,8 +1755,7 @@ impl GooseUser {
     /// or is called on a request that was already an error, only the first error will
     /// be collected.
     ///
-    /// This also calls
-    /// [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug).
+    /// This also calls [`GooseUser::log_debug`].
     ///
     /// # Example
     /// ```rust
@@ -1829,9 +1828,7 @@ impl GooseUser {
     /// can be set to prevent the debug log from including the response body. When this option
     /// is enabled, the body will always show up as `null` in the debug log.
     ///
-    /// Calls to
-    /// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
-    /// automatically invoke `log_debug`.
+    /// Calls to [`GooseUser::set_failure`] automatically invoke `log_debug`.
     ///
     /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
     /// option set, where `foo` is either a relative or an absolute path of the log file

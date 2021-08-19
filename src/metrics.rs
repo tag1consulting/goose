@@ -49,7 +49,7 @@ pub enum GooseMetric {
     Task(GooseTaskMetric),
 }
 
-/// THIS IS IN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
+/// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
 /// (coordinated omission) due to stalls on the upstream server.
 ///
 /// Stalling can happen for many reasons, for example: garbage collection, a cache stampede,
@@ -286,10 +286,9 @@ impl GooseRawRequest {
 ///
 /// The request that Goose is making. User threads send this data to the parent thread
 /// when metrics are enabled. This request object must be provided to calls to
-/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
-/// or
-/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
-/// so Goose knows which request is being updated.
+/// [`set_success`](../goose/struct.GooseUser.html#method.set_success) or
+/// [`set_failure`](../goose/struct.GooseUser.html#method.set_failure) so Goose
+/// knows which request is being updated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseRequestMetric {
     /// How many milliseconds the load test has been running.
@@ -319,7 +318,7 @@ pub struct GooseRequestMetric {
     pub coordinated_omission_elapsed: u64,
     /// If non-zero, the calculated cadence of looping through all
     /// [`GooseTask`](../goose/struct.GooseTask.html)s by this
-    /// [`GooseUser`](../goose/struct.GooseUser.html).
+    /// [`GooseUser`](../goose/struct.GooseUser.html) thread.
     pub user_cadence: u64,
 }
 impl GooseRequestMetric {
@@ -827,13 +826,14 @@ pub struct GooseMetrics {
     /// A hash of the load test, primarily used to validate all Workers in a Gaggle
     /// are running the same load test.
     pub hash: u64,
-    /// An optional system timestamp indicating when the load test started.
+    /// Tracks when the load test first started with an optional system timestamp.
     pub starting: Option<DateTime<Local>>,
-    /// An optional system timestamp indicating when all GooseUsers started.
+    /// Tracks when all [`GooseUser`](../goose/struct.GooseUser.html) threads fully
+    /// started with an optional system timestamp.
     pub started: Option<DateTime<Local>>,
-    /// An optional system timestamp indicating when the load test began stopping.
+    /// Tracks when the load test first began stopping with an optional system timestamp.
     pub stopping: Option<DateTime<Local>>,
-    /// An optional system timestamp indicating when the load test fully stopped.
+    /// Tracks when the load test stopped with an optional system timestamp.
     pub stopped: Option<DateTime<Local>>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
@@ -2175,10 +2175,9 @@ impl fmt::Display for GooseMetrics {
 ///
 /// The request that Goose is making. User threads send this data to the parent thread
 /// when metrics are enabled. This request object must be provided to calls to
-/// [`set_success`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_success)
-/// or
-/// [`set_failure`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_failure)
-/// so Goose knows which request is being updated.
+/// [`set_success`](../goose/struct.GooseUser.html#method.set_success) or
+/// [`set_failure`](../goose/struct.GooseUser.html#method.set_failure) so Goose knows
+/// which request is being updated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseErrorMetric {
     /// How many milliseconds the load test has been running.
