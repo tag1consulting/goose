@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.2-dev
+## 0.13.2 August 19, 2021
  - fix broken links within the documentation; general documentation cleanups
  - introduce `--startup-time` which can be set together with `--users` instead of using `--hatch-rate` to configure how quickly to start users
  - fix `--run-time` to always start counting after all users are fully started
