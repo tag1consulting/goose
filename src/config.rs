@@ -103,6 +103,7 @@ pub struct GooseConfiguration {
     /// Prints version information
     #[options(short = "V")]
     pub version: bool,
+    /// Lists all tasks and exits
     // Add a blank line after this option
     #[options(short = "l", help = "Lists all tasks and exits\n")]
     pub list: bool,
@@ -128,6 +129,7 @@ pub struct GooseConfiguration {
     /// Sets Goose log level (-g, -gg, etc)
     #[options(short = "g", count)]
     pub log_level: u8,
+    /// Sets Goose verbosity (-v, -vv, etc)
     #[options(
         count,
         short = "v",
@@ -184,6 +186,7 @@ pub struct GooseConfiguration {
     /// Do not include the response body in the debug log
     #[options(no_short)]
     pub no_debug_body: bool,
+    /// Tracks additional status code metrics
     // Add a blank line and then an Advanced: header after this option
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
@@ -218,6 +221,7 @@ pub struct GooseConfiguration {
     /// Sets maximum requests per second
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
+    /// Follows base_url redirect with subsequent requests
     #[options(
         no_short,
         help = "Follows base_url redirect with subsequent requests\n\nGaggle:"

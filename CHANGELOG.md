@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.13.3-dev
+ - document GooseConfiguration fields that were only documented as gumpdrop parameters (in order to generate new lines in the help output) so now they're also documented in the code
 
 ## 0.13.2 August 19, 2021
  - fix broken links within the documentation; general documentation cleanups
