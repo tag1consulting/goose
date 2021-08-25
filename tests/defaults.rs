@@ -66,7 +66,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
 
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(
-    goose_metrics: GooseMetrics,
+    goose_metrics: &GooseMetrics,
     mock_endpoints: &[Mock],
     requests_files: &[String],
     debug_files: &[String],
@@ -204,7 +204,15 @@ fn test_defaults() {
         .execute()
         .unwrap();
 
-    validate_test(goose_metrics, &mock_endpoints, &[request_log], &[debug_log]);
+    validate_test(
+        &goose_metrics,
+        &mock_endpoints,
+        &[request_log],
+        &[debug_log],
+    );
+
+    // Confirm Goose doesn't panic when printing metrics.
+    goose_metrics.print();
 }
 
 #[test]
@@ -332,7 +340,10 @@ fn test_defaults_gaggle() {
         let file = debug_log.to_string() + &i.to_string();
         debug_logs.push(file);
     }
-    validate_test(goose_metrics, &mock_endpoints, &request_logs, &debug_logs);
+    validate_test(&goose_metrics, &mock_endpoints, &request_logs, &debug_logs);
+
+    // Confirm Goose doesn't panic when printing metrics.
+    goose_metrics.print();
 }
 
 #[test]
@@ -387,11 +398,14 @@ fn test_no_defaults() {
         .unwrap();
 
     validate_test(
-        goose_metrics,
+        &goose_metrics,
         &mock_endpoints,
         &[requests_file],
         &[debug_file],
     );
+
+    // Confirm Goose doesn't panic when printing metrics.
+    goose_metrics.print();
 }
 
 #[test]
@@ -501,11 +515,14 @@ fn test_no_defaults_gaggle() {
         debug_files.push(file);
     }
     validate_test(
-        goose_metrics,
+        &goose_metrics,
         &mock_endpoints,
         &requests_files,
         &debug_files,
     );
+
+    // Confirm Goose doesn't panic when printing metrics.
+    goose_metrics.print();
 }
 
 #[test]
@@ -548,4 +565,7 @@ fn test_defaults_no_metrics() {
     assert!(goose_metrics.tasks.is_empty());
     assert!(goose_metrics.users == USERS);
     assert!(goose_metrics.duration == RUN_TIME);
+
+    // Confirm Goose doesn't panic when printing empty metrics.
+    goose_metrics.print();
 }
