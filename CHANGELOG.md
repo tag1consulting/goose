@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.3-dev
+## 0.13.3 August 25, 2021
  - document GooseConfiguration fields that were only documented as gumpdrop parameters (in order to generate new lines in the help output) so now they're also documented in the code
  - fix panic when `--no-task-metrics` is enabled and metrics are printed; add tests to prevent further regressions
 
