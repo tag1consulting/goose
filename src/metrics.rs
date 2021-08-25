@@ -873,7 +873,8 @@ pub struct GooseMetrics {
     pub(crate) display_metrics: bool,
 }
 impl GooseMetrics {
-    /// Initialize the task_metrics vector.
+    /// Initialize the task_metrics vector, and determine which hosts are being
+    /// load tested to display when printing metrics.
     pub(crate) fn initialize_task_metrics(
         &mut self,
         task_sets: &[GooseTaskSet],
@@ -881,36 +882,43 @@ impl GooseMetrics {
         defaults: &GooseDefaults,
     ) -> Result<(), GooseError> {
         self.tasks = Vec::new();
-        if !config.no_metrics && !config.no_task_metrics {
-            for task_set in task_sets {
-                let mut task_vector = Vec::new();
-                for task in &task_set.tasks {
-                    task_vector.push(GooseTaskMetricAggregate::new(
-                        task_set.task_sets_index,
-                        &task_set.name,
-                        task.tasks_index,
-                        &task.name,
-                    ));
+        for task_set in task_sets {
+            // Don't initialize task metrics if metrics or task_metrics are disabled.
+            if !config.no_metrics {
+                if !config.no_task_metrics {
+                    let mut task_vector = Vec::new();
+                    for task in &task_set.tasks {
+                        task_vector.push(GooseTaskMetricAggregate::new(
+                            task_set.task_sets_index,
+                            &task_set.name,
+                            task.tasks_index,
+                            &task.name,
+                        ));
+                    }
+                    self.tasks.push(task_vector);
                 }
-                self.tasks.push(task_vector);
 
-                // Determine the base_url for this task based on which of the following
-                // are configured.
-                self.hosts.insert(
-                    get_base_url(
-                        // Determine if --host was configured.
-                        if !config.host.is_empty() {
-                            Some(config.host.to_string())
-                        } else {
-                            None
-                        },
-                        // Determine if the task_set defines a host.
-                        task_set.host.clone(),
-                        // Determine if there is a default host.
-                        defaults.host.clone(),
-                    )?
-                    .to_string(),
-                );
+                // The host is not needed on the Worker, metrics are only printed on
+                // the Manager.
+                if !config.worker {
+                    // Determine the base_url for this task based on which of the following
+                    // are configured so metrics can be printed.
+                    self.hosts.insert(
+                        get_base_url(
+                            // Determine if --host was configured.
+                            if !config.host.is_empty() {
+                                Some(config.host.to_string())
+                            } else {
+                                None
+                            },
+                            // Determine if the task_set defines a host.
+                            task_set.host.clone(),
+                            // Determine if there is a default host.
+                            defaults.host.clone(),
+                        )?
+                        .to_string(),
+                    );
+                }
             }
         }
 
