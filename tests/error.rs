@@ -28,13 +28,13 @@ enum TestType {
 }
 
 // Test task.
-pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
 // Test task.
-pub async fn get_404_path(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_404_path(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(A_404_PATH).await?;
     Ok(())
 }
@@ -185,9 +185,11 @@ fn run_gaggle_test(test_type: TestType) {
 
     // Each worker has the same identical configuration.
     let worker_configuration = common::build_configuration(&server, vec!["--worker"]);
-    
+
     // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None));
+    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
+        common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None)
+    });
 
     // Build common configuration elements, adding Manager Gaggle flags.
     let manager_configuration = match test_type {

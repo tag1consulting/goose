@@ -67,7 +67,7 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
+//! async fn loadtest_foo(user: &mut GooseUser) -> GooseTaskResult {
 //!   let _goose = user.get("/path/to/foo").await?;
 //!
 //!   Ok(())
@@ -88,8 +88,8 @@
 //!
 //! use goose::prelude::*;
 //!
-//! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
-//!     let request_builder = user.goose_get("/path/to/bar").await?;
+//! async fn loadtest_bar(user: &mut GooseUser) -> GooseTaskResult {
+//!     let request_builder = user.goose_get("/path/to/bar")?;
 //!     let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
 //!
 //!     Ok(())
@@ -129,14 +129,14 @@
 //! }
 //!
 //! // A task function that loads `/path/to/foo`.
-//! async fn loadtest_foo(user: &GooseUser) -> GooseTaskResult {
+//! async fn loadtest_foo(user: &mut GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/path/to/foo").await?;
 //!
 //!     Ok(())
 //! }
 //!
 //! // A task function that loads `/path/to/bar`.
-//! async fn loadtest_bar(user: &GooseUser) -> GooseTaskResult {
+//! async fn loadtest_bar(user: &mut GooseUser) -> GooseTaskResult {
 //!     let _goose = user.get("/path/to/bar").await?;
 //!
 //!     Ok(())
@@ -890,13 +890,13 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     ///
-    /// async fn a_task_1(user: &GooseUser) -> GooseTaskResult {
+    /// async fn a_task_1(user: &mut GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/foo").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn b_task_1(user: &GooseUser) -> GooseTaskResult {
+    /// async fn b_task_1(user: &mut GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/bar").await?;
     ///
     ///     Ok(())
@@ -926,13 +926,13 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/foo").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn other_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn other_task(user: &mut GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/bar").await?;
     ///
     ///     Ok(())
@@ -969,7 +969,7 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     ///
-    /// async fn setup(user: &GooseUser) -> GooseTaskResult {
+    /// async fn setup(user: &mut GooseUser) -> GooseTaskResult {
     ///     // do stuff to set up load test ...
     ///
     ///     Ok(())
@@ -998,7 +998,7 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     ///
-    /// async fn teardown(user: &GooseUser) -> GooseTaskResult {
+    /// async fn teardown(user: &mut GooseUser) -> GooseTaskResult {
     ///     // do stuff to tear down the load test ...
     ///
     ///     Ok(())
@@ -1240,13 +1240,13 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/foo").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn another_example_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn another_example_task(user: &mut GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/bar").await?;
     ///
     ///     Ok(())
@@ -1592,9 +1592,9 @@ impl GooseAttack {
                         None,
                         self.defaults.host.clone(),
                     )?;
-                    let user = GooseUser::single(base_url, &self.configuration)?;
+                    let mut user = GooseUser::single(base_url, &self.configuration)?;
                     let function = &t.function;
-                    let _ = function(&user).await;
+                    let _ = function(&mut user).await;
                 }
                 // No test_start_task defined, nothing to do.
                 None => (),
@@ -1618,9 +1618,9 @@ impl GooseAttack {
                         None,
                         self.defaults.host.clone(),
                     )?;
-                    let user = GooseUser::single(base_url, &self.configuration)?;
+                    let mut user = GooseUser::single(base_url, &self.configuration)?;
                     let function = &t.function;
-                    let _ = function(&user).await;
+                    let _ = function(&mut user).await;
                 }
                 // No test_stop_task defined, nothing to do.
                 None => (),
@@ -1731,16 +1731,6 @@ impl GooseAttack {
                 };
                 goose_attack_run_state.spawn_user_counter += 1;
 
-                // Copy weighted tasks and weighted on start tasks into the user thread.
-                thread_user.weighted_tasks = self.task_sets[thread_user.task_sets_index]
-                    .weighted_tasks
-                    .clone();
-                thread_user.weighted_on_start_tasks = self.task_sets[thread_user.task_sets_index]
-                    .weighted_on_start_tasks
-                    .clone();
-                thread_user.weighted_on_stop_tasks = self.task_sets[thread_user.task_sets_index]
-                    .weighted_on_stop_tasks
-                    .clone();
                 // Remember which task group this user is using.
                 thread_user.weighted_users_index = self.metrics.users;
 

@@ -1,5 +1,4 @@
 use rand::Rng;
-use std::sync::atomic::Ordering;
 use std::time;
 
 use crate::get_worker_id;
@@ -10,7 +9,7 @@ use crate::metrics::{GooseMetric, GooseTaskMetric};
 pub(crate) async fn user_main(
     thread_number: usize,
     thread_task_set: GooseTaskSet,
-    thread_user: GooseUser,
+    mut thread_user: GooseUser,
     thread_receiver: flume::Receiver<GooseUserCommand>,
     worker: bool,
 ) {
@@ -29,9 +28,9 @@ pub(crate) async fn user_main(
     }
 
     // User is starting, first invoke the weighted on_start tasks.
-    if !thread_user.weighted_on_start_tasks.is_empty() {
+    if !thread_task_set.weighted_on_start_tasks.is_empty() {
         // Tasks are already weighted and scheduled, execute each in order.
-        for (thread_task_index, thread_task_name) in &thread_user.weighted_on_start_tasks {
+        for (thread_task_index, thread_task_name) in &thread_task_set.weighted_on_start_tasks {
             // Determine which task we're going to run next.
             let function = &thread_task_set.tasks[*thread_task_index].function;
             debug!(
@@ -40,24 +39,19 @@ pub(crate) async fn user_main(
             );
             // Invoke the task function.
             let _todo =
-                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                invoke_task_function(function, &mut thread_user, *thread_task_index, thread_task_name)
                     .await;
         }
     }
 
     // If normal tasks are defined, loop launching tasks until parent tells us to stop.
-    if !thread_user.weighted_tasks.is_empty() {
-        let mut position;
+    if !thread_task_set.weighted_tasks.is_empty() {
         'launch_tasks: loop {
-            // Start at the first task in thread_user.weighted_tasks.
-            position = 0;
-            thread_user.position.store(position, Ordering::SeqCst);
-
             // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
             // Mitigation is enabled.
             thread_user.update_request_cadence(thread_number).await;
 
-            for (thread_task_index, thread_task_name) in &thread_user.weighted_tasks {
+            for (thread_task_index, thread_task_name) in &thread_task_set.weighted_tasks {
                 // Determine which task we're going to run next.
                 let function = &thread_task_set.tasks[*thread_task_index].function;
                 debug!(
@@ -67,7 +61,7 @@ pub(crate) async fn user_main(
                 // Invoke the task function.
                 let _todo = invoke_task_function(
                     function,
-                    &thread_user,
+                    &mut thread_user,
                     *thread_task_index,
                     thread_task_name,
                 )
@@ -118,22 +112,15 @@ pub(crate) async fn user_main(
                 }
                 // Track how much time the GooseUser sleeps during this loop through all GooseTasks,
                 // used by Coordinated Omission Mitigation.
-                thread_user.slept.fetch_add(
-                    (time::Instant::now() - sleep_timer).as_millis() as u64,
-                    Ordering::SeqCst,
-                );
-
-                // Move to the next task in thread_user.weighted_tasks.
-                position += 1;
-                thread_user.position.store(position, Ordering::SeqCst);
+                thread_user.slept += (time::Instant::now() - sleep_timer).as_millis() as u64;
             }
         }
     }
 
     // User is exiting, first invoke the weighted on_stop tasks.
-    if !thread_user.weighted_on_stop_tasks.is_empty() {
+    if !thread_task_set.weighted_on_stop_tasks.is_empty() {
         // Tasks are already weighted and scheduled, execute each in order.
-        for (thread_task_index, thread_task_name) in &thread_user.weighted_on_stop_tasks {
+        for (thread_task_index, thread_task_name) in &thread_task_set.weighted_on_stop_tasks {
             // Determine which task we're going to run next.
             let function = &thread_task_set.tasks[*thread_task_index].function;
             debug!(
@@ -142,7 +129,7 @@ pub(crate) async fn user_main(
             );
             // Invoke the task function.
             let _todo =
-                invoke_task_function(function, &thread_user, *thread_task_index, thread_task_name)
+                invoke_task_function(function, &mut thread_user, *thread_task_index, thread_task_name)
                     .await;
         }
     }
@@ -166,7 +153,7 @@ pub(crate) async fn user_main(
 // Invoke the task function, collecting task metrics.
 async fn invoke_task_function(
     function: &GooseTaskFunction,
-    thread_user: &GooseUser,
+    thread_user: &mut GooseUser,
     thread_task_index: usize,
     thread_task_name: &str,
 ) -> Result<(), flume::SendError<Option<GooseLog>>> {
@@ -178,6 +165,13 @@ async fn invoke_task_function(
         thread_task_name.to_string(),
         thread_user.weighted_users_index,
     );
+    if !thread_task_name.is_empty() {
+        thread_user.task_name.replace(thread_task_name.to_string());
+    } else {
+        thread_user.task_name.take();
+    }
+
+
     let success = function(thread_user).await.is_ok();
     raw_task.set_time(started.elapsed().as_millis(), success);
 

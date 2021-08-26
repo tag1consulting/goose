@@ -815,7 +815,7 @@ impl GooseTaskMetricAggregate {
 ///     Ok(())
 /// }
 ///
-/// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+/// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
 ///     let _goose = user.get("/").await?;
 ///
 ///     Ok(())
@@ -946,7 +946,7 @@ impl GooseMetrics {
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &GooseUser) -> GooseTaskResult {
+    /// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
     ///     let _goose = user.get("/").await?;
     ///
     ///     Ok(())

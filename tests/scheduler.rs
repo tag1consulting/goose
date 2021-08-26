@@ -37,7 +37,7 @@ enum TestType {
 }
 
 // Test task.
-pub async fn one_with_delay(user: &GooseUser) -> GooseTaskResult {
+pub async fn one_with_delay(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(ONE_PATH).await?;
 
     // "Run out the clock" on the load test when this function runs. Sleep for
@@ -49,7 +49,7 @@ pub async fn one_with_delay(user: &GooseUser) -> GooseTaskResult {
 }
 
 // Test task.
-pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
+pub async fn two_with_delay(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(TWO_PATH).await?;
 
     // "Run out the clock" on the load test when this function runs. Sleep for
@@ -61,21 +61,21 @@ pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
 }
 
 // Test task.
-pub async fn three(user: &GooseUser) -> GooseTaskResult {
+pub async fn three(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(THREE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_start() function, which always runs one time.
-pub async fn start_one(user: &GooseUser) -> GooseTaskResult {
+pub async fn start_one(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(START_ONE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_stop() function, which always runs one time.
-pub async fn stop_one(user: &GooseUser) -> GooseTaskResult {
+pub async fn stop_one(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(STOP_ONE_PATH).await?;
 
     Ok(())
@@ -312,23 +312,27 @@ fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
         TestType::TaskSets => {
             // Get the tasksets, start and stop tasks to build a load test.
             let (taskset1, taskset2, start_task, stop_task) = get_tasksets();
-            common::launch_gaggle_workers(EXPECT_WORKERS, || crate::GooseAttack::initialize_with_config(worker_configuration.clone())
-                .unwrap()
-                .register_taskset(taskset1.clone())
-                .register_taskset(taskset2.clone())
-                .test_start(start_task.clone())
-                .test_stop(stop_task.clone())
-                .set_scheduler(scheduler.clone()))
+            common::launch_gaggle_workers(EXPECT_WORKERS, || {
+                crate::GooseAttack::initialize_with_config(worker_configuration.clone())
+                    .unwrap()
+                    .register_taskset(taskset1.clone())
+                    .register_taskset(taskset2.clone())
+                    .test_start(start_task.clone())
+                    .test_stop(stop_task.clone())
+                    .set_scheduler(scheduler.clone())
+            })
         }
         TestType::Tasks => {
             // Get the taskset, start and stop tasks to build a load test.
             let (taskset1, start_task, stop_task) = get_tasks();
-            common::launch_gaggle_workers(EXPECT_WORKERS, || crate::GooseAttack::initialize_with_config(worker_configuration.clone())
-                .unwrap()
-                .register_taskset(taskset1.clone())
-                .test_start(start_task.clone())
-                .test_stop(stop_task.clone())
-                .set_scheduler(scheduler.clone()))
+            common::launch_gaggle_workers(EXPECT_WORKERS, || {
+                crate::GooseAttack::initialize_with_config(worker_configuration.clone())
+                    .unwrap()
+                    .register_taskset(taskset1.clone())
+                    .test_start(start_task.clone())
+                    .test_stop(stop_task.clone())
+                    .set_scheduler(scheduler.clone())
+            })
         }
     };
 

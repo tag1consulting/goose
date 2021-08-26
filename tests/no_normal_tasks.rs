@@ -23,15 +23,15 @@ const USERS: usize = 5;
 const RUN_TIME: usize = 2;
 
 // Test task.
-pub async fn login(user: &GooseUser) -> GooseTaskResult {
-    let request_builder = user.goose_post(LOGIN_PATH).await?;
+pub async fn login(user: &mut GooseUser) -> GooseTaskResult {
+    let request_builder = user.goose_post(LOGIN_PATH)?;
     let params = [("username", "me"), ("password", "s3crET!")];
     let _goose = user.goose_send(request_builder.form(&params), None).await?;
     Ok(())
 }
 
 // Test task.
-pub async fn logout(user: &GooseUser) -> GooseTaskResult {
+pub async fn logout(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(LOGOUT_PATH).await?;
     Ok(())
 }
@@ -132,10 +132,9 @@ fn run_load_test(is_gaggle: bool) {
             let worker_configuration = common_build_configuration(&server, Some(true), None);
 
             // Workers launched in own threads, store thread handles.
-            let worker_handles = common::launch_gaggle_workers(
-                EXPECT_WORKERS,
-                || common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None),
-            );
+            let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
+                common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None)
+            });
 
             // Build Manager configuration.
             let manager_configuration =

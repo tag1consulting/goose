@@ -54,13 +54,13 @@ impl fmt::Display for TestType {
 }
 
 // Test task.
-pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
 // Test task.
-pub async fn get_error(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_error(user: &mut GooseUser) -> GooseTaskResult {
     let mut goose = user.get(ERROR_PATH).await?;
 
     if let Ok(r) = goose.response {

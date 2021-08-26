@@ -422,7 +422,7 @@ pub fn valid_title(html: &str, title: &str) -> bool {
 
 /// Finds all local static elements on the page and loads them asynchronously.
 /// This default profile only has local assets, so we can use simple patterns.
-pub async fn load_static_elements(user: &GooseUser, html: &str) {
+pub async fn load_static_elements(user: &mut GooseUser, html: &str) {
     // Use a regular expression to find all src=<foo> in the HTML, where foo
     // is the URL to image and js assets.
     // @TODO: parse HTML5 srcset= also
@@ -450,7 +450,7 @@ pub async fn load_static_elements(user: &GooseUser, html: &str) {
 /// Validate the HTML response, confirming the expected title was returned, then load
 /// all static assets found on the page.
 pub async fn validate_and_load_static_assets(
-    user: &GooseUser,
+    user: &mut GooseUser,
     mut goose: GooseResponse,
     title: &str,
 ) -> GooseTaskResult {
@@ -502,7 +502,7 @@ pub fn get_form_value(html: &str, name: &str) -> Option<String> {
 
 /// Anonymously load the contact form and POST feedback. The english boolean flag indicates
 /// whether to load the English form or the Spanish form.
-pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTaskResult {
+pub async fn anonymous_contact_form(user: &mut GooseUser, english: bool) -> GooseTaskResult {
     let contact_form_url = if english {
         "/en/contact"
     } else {
@@ -565,7 +565,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
                         ("form_id", "contact_message_feedback_form"),
                         ("op", "Send+message"),
                     ];
-                    let request_builder = user.goose_post(contact_form_url).await?;
+                    let request_builder = user.goose_post(contact_form_url)?;
                     contact_form = user.goose_send(request_builder.form(&params), None).await?;
                 }
                 Err(e) => {
@@ -637,7 +637,7 @@ pub async fn anonymous_contact_form(user: &GooseUser, english: bool) -> GooseTas
 
 /// Load the search page and perform a search using one word from one of the node titles
 /// on the site.
-pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
+pub async fn search(user: &mut GooseUser, english: bool) -> GooseTaskResult {
     let search_form_url = if english {
         "/en/search/node"
     } else {
@@ -694,7 +694,7 @@ pub async fn search(user: &GooseUser, english: bool) -> GooseTaskResult {
                         ("form_id", "search_form"),
                         ("op", "Search"),
                     ];
-                    let request_builder = user.goose_post(search_form_url).await?;
+                    let request_builder = user.goose_post(search_form_url)?;
                     search_form = user.goose_send(request_builder.form(&params), None).await?;
 
                     // A successful search is redirected.
