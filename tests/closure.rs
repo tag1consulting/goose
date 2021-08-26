@@ -246,10 +246,9 @@ fn run_load_test(is_gaggle: bool) {
                 common_build_configuration(&server, test_endpoints.len(), Some(true), None);
 
             // Workers launched in own threads, store thread handles.
-            let worker_handles = common::launch_gaggle_workers(
-                common::build_load_test(worker_configuration, &build_taskset(), None, None),
-                EXPECT_WORKERS,
-            );
+            let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
+                common::build_load_test(worker_configuration.clone(), &build_taskset(), None, None)
+            });
 
             // Build Manager configuration.
             let manager_configuration = common_build_configuration(

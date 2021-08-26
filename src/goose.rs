@@ -813,7 +813,7 @@ impl GooseRequestCadence {
 
 /// An individual user state, repeatedly running all [`GooseTask`](./struct.GooseTask.html)s
 /// in a specific [`GooseTaskSet`](./struct.GooseTaskSet.html).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GooseUser {
     /// The Instant when this `GooseUser` client started.
     pub started: Instant,

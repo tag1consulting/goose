@@ -753,7 +753,6 @@ struct GooseAttackRunState {
 }
 
 /// Global internal state for the load test.
-#[derive(Clone)]
 pub struct GooseAttack {
     /// An optional task that is run one time before starting GooseUsers and running GooseTaskSets.
     test_start_task: Option<GooseTask>,
@@ -1716,94 +1715,92 @@ impl GooseAttack {
                 goose_attack_run_state.spawn_user_in_ms,
             )
         {
-            // Reset the spawn timer.
-            goose_attack_run_state.spawn_user_timer = std::time::Instant::now();
+            if let Some(mut thread_user) = self.weighted_users.pop() {
+                // Reset the spawn timer.
+                goose_attack_run_state.spawn_user_timer = std::time::Instant::now();
 
-            // To determine how long before we spawn the next GooseUser, start with 1,000.0
-            // milliseconds and divide by the hatch_rate.
-            goose_attack_run_state.spawn_user_in_ms = (1_000.0 / hatch_rate) as usize;
+                // To determine how long before we spawn the next GooseUser, start with 1,000.0
+                // milliseconds and divide by the hatch_rate.
+                goose_attack_run_state.spawn_user_in_ms = (1_000.0 / hatch_rate) as usize;
 
-            // If running on a Worker, multiple by the number of workers as each is spawning
-            // GooseUsers at this rate.
-            if self.attack_mode == AttackMode::Worker {
-                goose_attack_run_state.spawn_user_in_ms *=
-                    self.configuration.expect_workers.unwrap() as usize;
-            }
+                // If running on a Worker, multiple by the number of workers as each is spawning
+                // GooseUsers at this rate.
+                if self.attack_mode == AttackMode::Worker {
+                    goose_attack_run_state.spawn_user_in_ms *=
+                        self.configuration.expect_workers.unwrap() as usize;
+                };
+                goose_attack_run_state.spawn_user_counter += 1;
 
-            // Spawn next scheduled GooseUser.
-            let mut thread_user =
-                self.weighted_users[goose_attack_run_state.spawn_user_counter].clone();
-            goose_attack_run_state.spawn_user_counter += 1;
+                // Copy weighted tasks and weighted on start tasks into the user thread.
+                thread_user.weighted_tasks = self.task_sets[thread_user.task_sets_index]
+                    .weighted_tasks
+                    .clone();
+                thread_user.weighted_on_start_tasks = self.task_sets[thread_user.task_sets_index]
+                    .weighted_on_start_tasks
+                    .clone();
+                thread_user.weighted_on_stop_tasks = self.task_sets[thread_user.task_sets_index]
+                    .weighted_on_stop_tasks
+                    .clone();
+                // Remember which task group this user is using.
+                thread_user.weighted_users_index = self.metrics.users;
 
-            // Copy weighted tasks and weighted on start tasks into the user thread.
-            thread_user.weighted_tasks = self.task_sets[thread_user.task_sets_index]
-                .weighted_tasks
-                .clone();
-            thread_user.weighted_on_start_tasks = self.task_sets[thread_user.task_sets_index]
-                .weighted_on_start_tasks
-                .clone();
-            thread_user.weighted_on_stop_tasks = self.task_sets[thread_user.task_sets_index]
-                .weighted_on_stop_tasks
-                .clone();
-            // Remember which task group this user is using.
-            thread_user.weighted_users_index = self.metrics.users;
+                // Create a per-thread channel allowing parent thread to control child threads.
+                let (parent_sender, thread_receiver): (
+                    flume::Sender<GooseUserCommand>,
+                    flume::Receiver<GooseUserCommand>,
+                ) = flume::unbounded();
+                goose_attack_run_state.user_channels.push(parent_sender);
 
-            // Create a per-thread channel allowing parent thread to control child threads.
-            let (parent_sender, thread_receiver): (
-                flume::Sender<GooseUserCommand>,
-                flume::Receiver<GooseUserCommand>,
-            ) = flume::unbounded();
-            goose_attack_run_state.user_channels.push(parent_sender);
+                // Clone the logger_tx if enabled, otherwise is None.
+                thread_user.logger = goose_attack_run_state.all_threads_logger_tx.clone();
 
-            // Clone the logger_tx if enabled, otherwise is None.
-            thread_user.logger = goose_attack_run_state.all_threads_logger_tx.clone();
+                // Copy the GooseUser-throttle receiver channel, used by all threads.
+                thread_user.throttle = if self.configuration.throttle_requests > 0 {
+                    Some(goose_attack_run_state.throttle_threads_tx.clone().unwrap())
+                } else {
+                    None
+                };
 
-            // Copy the GooseUser-throttle receiver channel, used by all threads.
-            thread_user.throttle = if self.configuration.throttle_requests > 0 {
-                Some(goose_attack_run_state.throttle_threads_tx.clone().unwrap())
-            } else {
-                None
-            };
+                // Copy the GooseUser-to-parent sender channel, used by all threads.
+                thread_user.channel_to_parent =
+                    Some(goose_attack_run_state.all_threads_metrics_tx.clone());
 
-            // Copy the GooseUser-to-parent sender channel, used by all threads.
-            thread_user.channel_to_parent =
-                Some(goose_attack_run_state.all_threads_metrics_tx.clone());
+                // Copy the appropriate task_set into the thread.
+                let thread_task_set = self.task_sets[thread_user.task_sets_index].clone();
 
-            // Copy the appropriate task_set into the thread.
-            let thread_task_set = self.task_sets[thread_user.task_sets_index].clone();
+                // We number threads from 1 as they're human-visible (in the logs),
+                // whereas metrics.users starts at 0.
+                let thread_number = self.metrics.users + 1;
 
-            // We number threads from 1 as they're human-visible (in the logs),
-            // whereas metrics.users starts at 0.
-            let thread_number = self.metrics.users + 1;
+                let is_worker = self.attack_mode == AttackMode::Worker;
 
-            let is_worker = self.attack_mode == AttackMode::Worker;
+                // If running on Worker, use Worker configuration in GooseUser.
+                if is_worker {
+                    thread_user.config = self.configuration.clone();
+                }
 
-            // If running on Worker, use Worker configuration in GooseUser.
-            if is_worker {
-                thread_user.config = self.configuration.clone();
-            }
+                // Launch a new user.
+                let user = tokio::spawn(user::user_main(
+                    thread_number,
+                    thread_task_set,
+                    thread_user,
+                    thread_receiver,
+                    is_worker,
+                ));
 
-            // Launch a new user.
-            let user = tokio::spawn(user::user_main(
-                thread_number,
-                thread_task_set,
-                thread_user,
-                thread_receiver,
-                is_worker,
-            ));
+                goose_attack_run_state.users.push(user);
+                self.metrics.users += 1;
 
-            goose_attack_run_state.users.push(user);
-            self.metrics.users += 1;
-
-            if let Some(running_metrics) = self.configuration.running_metrics {
-                if self.attack_mode != AttackMode::Worker
-                    && util::timer_expired(
-                        goose_attack_run_state.running_metrics_timer,
-                        running_metrics,
-                    )
-                {
-                    goose_attack_run_state.running_metrics_timer = time::Instant::now();
-                    self.metrics.print_running();
+                if let Some(running_metrics) = self.configuration.running_metrics {
+                    if self.attack_mode != AttackMode::Worker
+                        && util::timer_expired(
+                            goose_attack_run_state.running_metrics_timer,
+                            running_metrics,
+                        )
+                    {
+                        goose_attack_run_state.running_metrics_timer = time::Instant::now();
+                        self.metrics.print_running();
+                    }
                 }
             }
         } else {
@@ -1827,7 +1824,7 @@ impl GooseAttack {
         }
 
         // If enough users have been spawned, move onto the next attack phase.
-        if self.metrics.users >= self.weighted_users.len() {
+        if self.weighted_users.is_empty() {
             // Pause a tenth of a second waiting for the final user to fully start up.
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 

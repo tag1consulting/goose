@@ -283,31 +283,27 @@ fn run_gaggle_test(test_type: TestType) {
     // Get the taskset, start and stop tasks to build a load test.
     let (taskset, start_task, stop_task) = get_tasks(&test_type);
 
-    let goose_attack;
-    match test_type {
+    // Workers launched in own threads, store thread handles.
+    let worker_handles = match test_type {
         TestType::NotSequenced | TestType::SequencedRoundRobin => {
             // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
+            common::launch_gaggle_workers(EXPECT_WORKERS, || crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                 .unwrap()
                 .register_taskset(taskset.clone())
                 .test_start(start_task.clone())
                 .test_stop(stop_task.clone())
                 // Unnecessary as this is the default.
-                .set_scheduler(GooseScheduler::RoundRobin);
+                .set_scheduler(GooseScheduler::RoundRobin))
         }
         TestType::SequencedSerial => {
-            // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
+            common::launch_gaggle_workers(EXPECT_WORKERS, || crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                 .unwrap()
                 .register_taskset(taskset.clone())
                 .test_start(start_task.clone())
                 .test_stop(stop_task.clone())
-                .set_scheduler(GooseScheduler::Serial);
+                .set_scheduler(GooseScheduler::Serial))
         }
-    }
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
+    };
 
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));

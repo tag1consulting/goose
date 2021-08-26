@@ -356,12 +356,8 @@ fn run_gaggle_test(test_type: TestType) {
     };
     let worker_configuration = common_build_configuration(&server1, sticky, Some(true), None);
 
-    // Build the load test for the Workers.
-    let worker_goose_attack =
-        common::build_load_test(worker_configuration, &get_tasks(&test_type), None, None);
-
     // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(worker_goose_attack, EXPECT_WORKERS);
+    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || common::build_load_test(worker_configuration.clone(), &get_tasks(&test_type), None, None));
 
     // Build Manager configuration.
     let manager_configuration =

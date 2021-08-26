@@ -64,16 +64,16 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
 
 /// Launch each Worker in its own thread, and return a vector of Worker handles.
 #[allow(dead_code)]
-pub fn launch_gaggle_workers(
-    // A goose attack object which is cloned for each Worker.
-    goose_attack: GooseAttack,
+pub fn launch_gaggle_workers<F: Fn() -> GooseAttack>(
     // The number of Workers to launch.
     expect_workers: usize,
+    // A goose attack object which is cloned for each Worker.
+    goose_attack_provider: F,
 ) -> WorkerHandles {
     // Launch each worker in its own thread, storing the join handles.
     let mut worker_handles = Vec::new();
     for _ in 0..expect_workers {
-        let worker_goose_attack = goose_attack.clone();
+        let worker_goose_attack = goose_attack_provider();
         // Start worker instance of the load test.
         worker_handles.push(std::thread::spawn(move || {
             // Run the load test as configured.
