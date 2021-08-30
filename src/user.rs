@@ -38,9 +38,13 @@ pub(crate) async fn user_main(
                 thread_number, thread_task_name, thread_task_set.name
             );
             // Invoke the task function.
-            let _todo =
-                invoke_task_function(function, &mut thread_user, *thread_task_index, thread_task_name)
-                    .await;
+            let _todo = invoke_task_function(
+                function,
+                &mut thread_user,
+                *thread_task_index,
+                thread_task_name,
+            )
+            .await;
         }
     }
 
@@ -128,9 +132,13 @@ pub(crate) async fn user_main(
                 thread_number, thread_task_name, thread_task_set.name
             );
             // Invoke the task function.
-            let _todo =
-                invoke_task_function(function, &mut thread_user, *thread_task_index, thread_task_name)
-                    .await;
+            let _todo = invoke_task_function(
+                function,
+                &mut thread_user,
+                *thread_task_index,
+                thread_task_name,
+            )
+            .await;
         }
     }
 
@@ -170,7 +178,6 @@ async fn invoke_task_function(
     } else {
         thread_user.task_name.take();
     }
-
 
     let success = function(thread_user).await.is_ok();
     raw_task.set_time(started.elapsed().as_millis(), success);

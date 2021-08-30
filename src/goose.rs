@@ -879,7 +879,7 @@ impl GooseUser {
         Ok(GooseUser {
             started: Instant::now(),
             task_sets_index,
-            client: client,
+            client,
             base_url,
             min_wait,
             max_wait,
@@ -910,10 +910,10 @@ impl GooseUser {
         Ok(single_user)
     }
 
-    /// Returns a reference to GooseUser's session data. 
+    /// Returns a reference to GooseUser's session data.
     /// Leaves the session in-place, creating a new one Option with a reference
-    /// to the original session data. 
-    /// 
+    /// to the original session data.
+    ///
     /// Return none if no session data has been set or that the session data is not of type `T`
     ///
     /// # Example
@@ -967,18 +967,15 @@ impl GooseUser {
     /// }
     /// ```
     pub fn get_session_data_uncheck<T: GooseUserData>(&self) -> &T {
-        let session_data = self
-            .session_data
-            .as_deref()
-            .expect("Missing session data!");
-        
+        let session_data = self.session_data.as_deref().expect("Missing session data!");
+
         session_data
             .downcast_ref::<T>()
             .expect("Invalid session data!")
     }
 
-    /// Returns a mutable reference to GooseUser's session data. 
-    /// 
+    /// Returns a mutable reference to GooseUser's session data.
+    ///
     /// Return none if no session data has been set or that the session data is not of type `T`
     ///
     /// # Example
@@ -1593,7 +1590,7 @@ impl GooseUser {
         // Record information about the request.
         let mut request_metric = GooseRequestMetric::new(
             raw_request,
-            &request_name,
+            request_name,
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
         );

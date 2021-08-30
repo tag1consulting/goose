@@ -169,8 +169,8 @@ pub async fn edit_article(user: &mut GooseUser) -> GooseTaskResult {
                         ("form_id", &"node_article_edit_form".to_string()),
                         ("op", &"Save (this translation)".to_string()),
                     ];
-                    let request_builder = user
-                        .goose_post(&format!("/en/node/{}/edit", article.unwrap().nid))?;
+                    let request_builder =
+                        user.goose_post(&format!("/en/node/{}/edit", article.unwrap().nid))?;
                     saved_article = user.goose_send(request_builder.form(&params), None).await?;
 
                     // A successful node save is redirected.
