@@ -284,6 +284,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+use downcast_rs::{impl_downcast, Downcast};
 use http::method::Method;
 use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
@@ -810,6 +811,10 @@ impl GooseRequestCadence {
     }
 }
 
+pub trait GooseUserData: Downcast + Send + Sync + 'static {}
+impl_downcast!(GooseUserData);
+impl<T: Send + Sync + 'static> GooseUserData for T {}
+
 /// An individual user state, repeatedly running all [`GooseTask`](./struct.GooseTask.html)s
 /// in a specific [`GooseTaskSet`](./struct.GooseTaskSet.html).
 pub struct GooseUser {
@@ -850,6 +855,8 @@ pub struct GooseUser {
     pub(crate) slept: u64,
     /// Current task name
     pub(crate) task_name: Option<String>,
+
+    session_data: Option<Box<dyn GooseUserData>>,
 }
 impl GooseUser {
     /// Create a new user state.
@@ -887,6 +894,7 @@ impl GooseUser {
             request_cadence: GooseRequestCadence::new(),
             slept: 0,
             task_name: None,
+            session_data: None,
         })
     }
 
@@ -900,6 +908,156 @@ impl GooseUser {
         single_user.is_throttled = false;
 
         Ok(single_user)
+    }
+
+    /// Returns a reference to GooseUser's session data. 
+    /// Leaves the session in-place, creating a new one Option with a reference
+    /// to the original session data. 
+    /// 
+    /// Return none if no session data has been set or that the session data is not of type `T`
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// #[derive(Debug, Clone)]
+    /// struct Foo(String);
+    ///
+    /// let mut task = task!(get_session_data_function);
+    ///
+    /// /// A very simple task that makes a GET request.
+    /// async fn get_session_data_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let foo = user.get_session_data::<Foo>().expect("Missing session data!");
+    ///     println!("Session data: {}", foo.0);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn get_session_data<T: GooseUserData>(&self) -> Option<&T> {
+        match &self.session_data {
+            Some(data) => data.downcast_ref::<T>(),
+            None => None,
+        }
+    }
+
+    /// Returns a reference to GooseUser's session data, without doing bounds
+    /// checking.
+    ///
+    /// For a safe alternative see [`get_session_data`].
+    ///
+    /// # Safety
+    ///
+    /// Calling this method on an GooseUser without session data or with a different type `T` is *[undefined behavior]*
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// #[derive(Debug, Clone)]
+    /// struct Foo(String);
+    ///
+    /// let mut task = task!(get_session_data_uncheck_function);
+    ///
+    /// /// A very simple task that makes a GET request.
+    /// async fn get_session_data_uncheck_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let foo = user.get_session_data_uncheck::<Foo>();
+    ///     println!("Session data: {}", foo.0);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn get_session_data_uncheck<T: GooseUserData>(&self) -> &T {
+        let session_data = self
+            .session_data
+            .as_deref()
+            .expect("Missing session data!");
+        
+        session_data
+            .downcast_ref::<T>()
+            .expect("Invalid session data!")
+    }
+
+    /// Returns a mutable reference to GooseUser's session data. 
+    /// 
+    /// Return none if no session data has been set or that the session data is not of type `T`
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// #[derive(Debug, Clone)]
+    /// struct Foo(String);
+    ///
+    /// let mut task = task!(get_mut_session_data_function);
+    ///
+    /// /// A very simple task that makes a GET request.
+    /// async fn get_mut_session_data_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let foo = user.get_mut_session_data::<Foo>().expect("Missing session data!");
+    ///     foo.0 = "Bar".to_owned();
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn get_mut_session_data<T: GooseUserData>(&mut self) -> Option<&mut T> {
+        match &mut self.session_data {
+            Some(data) => data.downcast_mut::<T>(),
+            None => None,
+        }
+    }
+
+    /// Returns a mutable reference to GooseUser's session data, without doing any type checking.
+    ///
+    /// For a safe alternative see [`get_mut_session_data`].
+    ///
+    /// # Safety
+    ///
+    /// Calling this method on an GooseUser without session data or with a different type `T` is *[undefined behavior]*
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// #[derive(Debug, Clone)]
+    /// struct Foo(String);
+    ///
+    /// let mut task = task!(get_mut_session_data_uncheck_function);
+    ///
+    /// /// A very simple task that makes a GET request.
+    /// async fn get_mut_session_data_uncheck_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let foo = user.get_mut_session_data_uncheck::<Foo>();
+    ///     foo.0 = "Bar".to_owned();
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn get_mut_session_data_uncheck<T: GooseUserData>(&mut self) -> &mut T {
+        let session_data = self
+            .session_data
+            .as_deref_mut()
+            .expect("Missing session data!");
+        session_data
+            .downcast_mut::<T>()
+            .expect("Invalid session data!")
+    }
+
+    /// Set session data for the current GooseUser. Will replace any session data previously set.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// #[derive(Debug, Clone)]
+    /// struct Foo(String);
+    ///
+    /// let mut task = task!(set_session_data_function);
+    ///
+    /// /// A very simple task that makes a GET request.
+    /// async fn set_session_data_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     user.set_session_data(Foo("Foo".to_string()));
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_session_data<T: GooseUserData>(&mut self, data: T) {
+        self.session_data.replace(Box::new(data));
     }
 
     /// A helper that prepends a `base_url` to all relative paths.
