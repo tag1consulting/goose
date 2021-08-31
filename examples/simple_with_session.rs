@@ -72,7 +72,7 @@ async fn website_signup(user: &mut GooseUser) -> GooseTaskResult {
 /// A very simple task that simply loads the front page.
 async fn authenticated_index(user: &mut GooseUser) -> GooseTaskResult {
     // This will panic if the session is missing or if the session is not of the right type
-    // use `get_session_data` to handle missing session 
+    // use `get_session_data` to handle missing session
     let session = user.get_session_data_uncheck::<Session>();
     let request = user.goose_get("/")?.bearer_auth(&session.jwt_token);
     let _goose = user.goose_send(request, None).await?;

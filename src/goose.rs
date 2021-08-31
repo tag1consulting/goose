@@ -2582,6 +2582,7 @@ impl Hash for GooseTask {
 }
 
 #[cfg(test)]
+#[allow(clippy::blacklisted_name)]
 mod tests {
     use super::*;
 
@@ -2967,17 +2968,20 @@ mod tests {
         comment.assert_hits(1);
     }
 
-    #[test] 
+    #[test]
     fn test_set_session_data() {
         #[derive(Debug, PartialEq, Eq, Clone)]
         struct Foo {
-            bar: String
+            bar: String,
         }
 
-        let foo = Foo{ bar: "bar".to_owned() };
+        let foo = Foo {
+            bar: "bar".to_owned(),
+        };
 
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        let mut user = GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
         user.set_session_data(foo.clone());
 
@@ -2989,19 +2993,22 @@ mod tests {
         assert_eq!(session, &foo);
     }
 
-    #[test] 
+    #[test]
     fn test_get_mut_session_data() {
         #[derive(Debug, PartialEq, Eq, Clone)]
         struct Foo {
-            bar: String
+            bar: String,
         }
 
-        let foo = Foo{ bar: "bar".to_owned() };
+        let foo = Foo {
+            bar: "bar".to_owned(),
+        };
 
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        let mut user = GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
-        user.set_session_data(foo.clone());
+        user.set_session_data(foo);
 
         if let Some(session) = user.get_mut_session_data::<Foo>() {
             session.bar = "foo".to_owned();
@@ -3016,23 +3023,25 @@ mod tests {
         assert_eq!(session.bar, "bar".to_string());
     }
 
-    #[test] 
+    #[test]
     fn test_set_session_data_override() {
         #[derive(Debug, PartialEq, Eq, Clone)]
         struct Foo {
-            bar: String
+            bar: String,
         }
 
-        let mut foo = Foo{ bar: "bar".to_owned() };
+        let mut foo = Foo {
+            bar: "bar".to_owned(),
+        };
 
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        let mut user = GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
         user.set_session_data(foo.clone());
-        
+
         foo.bar = "foo".to_owned();
-        user.set_session_data(foo.clone());
-
+        user.set_session_data(foo);
 
         let session = user.get_session_data_uncheck::<Foo>();
         assert_eq!(session.bar, "foo".to_string());
