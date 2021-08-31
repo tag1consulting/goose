@@ -2593,7 +2593,7 @@ mod tests {
 
     const EMPTY_ARGS: Vec<&str> = vec![];
 
-    async fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
+    fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
         let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
         let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
@@ -2829,7 +2829,7 @@ mod tests {
 
         // Recreate user2.
         let server = MockServer::start();
-        let user2 = setup_user(&server).await.unwrap();
+        let user2 = setup_user(&server).unwrap();
 
         // Create a GET request.
         let mut goose_request = user2.goose_get("/foo").unwrap();
@@ -2895,7 +2895,7 @@ mod tests {
     async fn manual_requests() {
         let server = MockServer::start();
 
-        let mut user = setup_user(&server).await.unwrap();
+        let mut user = setup_user(&server).unwrap();
 
         // Set up a mock http server endpoint.
         const INDEX_PATH: &str = "/";
@@ -2965,5 +2965,76 @@ mod tests {
         assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
         comment.assert_hits(1);
+    }
+
+    #[test] 
+    fn test_set_session_data() {
+        #[derive(Debug, PartialEq, Eq, Clone)]
+        struct Foo {
+            bar: String
+        }
+
+        let foo = Foo{ bar: "bar".to_owned() };
+
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let mut user = GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+
+        user.set_session_data(foo.clone());
+
+        let session = user.get_session_data::<Foo>();
+        assert!(session.is_some());
+        assert_eq!(session.unwrap(), &foo);
+
+        let session = user.get_session_data_uncheck::<Foo>();
+        assert_eq!(session, &foo);
+    }
+
+    #[test] 
+    fn test_get_mut_session_data() {
+        #[derive(Debug, PartialEq, Eq, Clone)]
+        struct Foo {
+            bar: String
+        }
+
+        let foo = Foo{ bar: "bar".to_owned() };
+
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let mut user = GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+
+        user.set_session_data(foo.clone());
+
+        if let Some(session) = user.get_mut_session_data::<Foo>() {
+            session.bar = "foo".to_owned();
+        }
+
+        let session = user.get_session_data_uncheck::<Foo>();
+        assert_eq!(session.bar, "foo".to_string());
+
+        let session = user.get_mut_session_data_uncheck::<Foo>();
+        session.bar = "bar".to_owned();
+        let session = user.get_session_data_uncheck::<Foo>();
+        assert_eq!(session.bar, "bar".to_string());
+    }
+
+    #[test] 
+    fn test_set_session_data_override() {
+        #[derive(Debug, PartialEq, Eq, Clone)]
+        struct Foo {
+            bar: String
+        }
+
+        let mut foo = Foo{ bar: "bar".to_owned() };
+
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let mut user = GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+
+        user.set_session_data(foo.clone());
+        
+        foo.bar = "foo".to_owned();
+        user.set_session_data(foo.clone());
+
+
+        let session = user.get_session_data_uncheck::<Foo>();
+        assert_eq!(session.bar, "foo".to_string());
     }
 }
