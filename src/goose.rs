@@ -920,7 +920,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug, Clone)]
+    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
     /// let mut task = task!(get_session_data_function);
@@ -953,7 +953,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug, Clone)]
+    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
     /// let mut task = task!(get_session_data_uncheck_function);
@@ -982,7 +982,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug, Clone)]
+    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
     /// let mut task = task!(get_mut_session_data_function);
@@ -1013,7 +1013,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug, Clone)]
+    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
     /// let mut task = task!(get_mut_session_data_uncheck_function);
@@ -1041,7 +1041,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug, Clone)]
+    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
     /// let mut task = task!(set_session_data_function);
