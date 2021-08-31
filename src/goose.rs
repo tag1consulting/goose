@@ -303,9 +303,6 @@ use crate::metrics::{
 };
 use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 
-/// By default Goose sets the following User-Agent header when making requests.
-static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-
 /// `task!(foo)` expands to `GooseTask::new(foo)`, but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
 macro_rules! task {
@@ -857,18 +854,13 @@ pub struct GooseUser {
 impl GooseUser {
     /// Create a new user state.
     pub fn new(
+        client: Client,
         task_sets_index: usize,
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Result<Self, GooseError> {
         trace!("new GooseUser");
-        let client = Client::builder()
-            .user_agent(APP_USER_AGENT)
-            .cookie_store(true)
-            // Enable gzip unless `--no-gzip` flag is enabled.
-            .gzip(!configuration.no_gzip)
-            .build()?;
 
         Ok(GooseUser {
             started: Instant::now(),
@@ -891,8 +883,12 @@ impl GooseUser {
     }
 
     /// Create a new single-use user.
-    pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new(0, base_url, configuration, 0)?;
+    pub fn single(
+        client: Client,
+        base_url: Url,
+        configuration: &GooseConfiguration,
+    ) -> Result<Self, GooseError> {
+        let mut single_user = GooseUser::new(client, 0, base_url, configuration, 0)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -2606,10 +2602,11 @@ mod tests {
     const EMPTY_ARGS: Vec<&str> = vec![];
 
     fn setup_user(server: &MockServer) -> Result<GooseUser, GooseError> {
+        let client = Client::builder().build().unwrap();
         let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
         let base_url = get_base_url(Some(server.url("/")), None, None).unwrap();
-        GooseUser::single(base_url, &configuration)
+        GooseUser::single(client, base_url, &configuration)
     }
 
     #[test]
@@ -2797,9 +2794,10 @@ mod tests {
     #[tokio::test]
     async fn goose_user() {
         const HOST: &str = "http://example.com/";
+        let client = Client::builder().build().unwrap();
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, base_url, &configuration, 0).unwrap();
+        let user = GooseUser::new(client.clone(), 0, base_url, &configuration, 0).unwrap();
         assert_eq!(user.task_sets_index, 0);
         assert_eq!(user.weighted_users_index, usize::max_value());
 
@@ -2826,7 +2824,7 @@ mod tests {
             Some("http://www.example.com/".to_string()),
         )
         .unwrap();
-        let user2 = GooseUser::new(0, base_url, &configuration, 0).unwrap();
+        let user2 = GooseUser::new(client.clone(), 0, base_url, &configuration, 0).unwrap();
 
         // Confirm the URLs are correctly built using the task_set_host.
         let url = user2.build_url("/foo").unwrap();
@@ -2885,7 +2883,7 @@ mod tests {
         // Confirm Goose can build a base_url that includes a path.
         const HOST_WITH_PATH: &str = "http://example.com/with/path/";
         let base_url = get_base_url(Some(HOST_WITH_PATH.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, base_url, &configuration, 0).unwrap();
+        let user = GooseUser::new(client, 0, base_url, &configuration, 0).unwrap();
 
         // Confirm the URLs are correctly built using the default_host that includes a path.
         let url = user.build_url("foo").unwrap();
@@ -2987,9 +2985,14 @@ mod tests {
             data: "foo".to_owned(),
         };
 
+        let client = Client::builder().build().unwrap();
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        let mut user =
-            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let mut user = GooseUser::single(
+            client,
+            "http://localhost:8080".parse().unwrap(),
+            &configuration,
+        )
+        .unwrap();
 
         user.set_session_data(session_data.clone());
 
@@ -3011,10 +3014,14 @@ mod tests {
         let session_data = CustomSessionData {
             data: "foo".to_owned(),
         };
-
+        let client = Client::builder().build().unwrap();
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        let mut user =
-            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let mut user = GooseUser::single(
+            client,
+            "http://localhost:8080".parse().unwrap(),
+            &configuration,
+        )
+        .unwrap();
 
         user.set_session_data(session_data);
 
@@ -3042,9 +3049,14 @@ mod tests {
             data: "foo".to_owned(),
         };
 
+        let client = Client::builder().build().unwrap();
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
-        let mut user =
-            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let mut user = GooseUser::single(
+            client,
+            "http://localhost:8080".parse().unwrap(),
+            &configuration,
+        )
+        .unwrap();
 
         user.set_session_data(session_data.clone());
 

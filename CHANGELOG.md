@@ -7,7 +7,7 @@
  - update `GooseTaskSet::set_wait_time()` to accept `std::time::Duration` instead of `usize` allowing more granularity (API change)
  - use request name when displaying errors to avoid having a large volume of distinct error for the same endpoint when using path parameters
  - updated `tungstenite` dependency to [`0.15`](https://github.com/snapview/tungstenite-rs/blob/master/CHANGELOG.md)
-
+ - Use a shared reqwest client among all `GooseUser` 
 ## 0.13.3 August 25, 2021
  - document GooseConfiguration fields that were only documented as gumpdrop parameters (in order to generate new lines in the help output) so now they're also documented in the code
  - fix panic when `--no-task-metrics` is enabled and metrics are printed; add tests to prevent further regressions
