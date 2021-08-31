@@ -466,6 +466,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Duration;
 use std::{fmt, io, time};
 use tokio::fs::File;
 use tokio::runtime::Runtime;
@@ -549,9 +550,9 @@ pub enum GooseError {
     /// Invalid wait time specified.
     InvalidWaitTime {
         // The specified minimum wait time.
-        min_wait: usize,
+        min_wait: Duration,
         // The specified maximum wait time.
-        max_wait: usize,
+        max_wait: Duration,
         /// An optional explanation of the error.
         detail: String,
     },
@@ -1132,8 +1133,6 @@ impl GooseAttack {
                 weighted_users.push(GooseUser::new(
                     self.task_sets[*task_sets_index].task_sets_index,
                     base_url,
-                    self.task_sets[*task_sets_index].min_wait,
-                    self.task_sets[*task_sets_index].max_wait,
                     &self.configuration,
                     self.metrics.hash,
                 )?);
@@ -1167,8 +1166,6 @@ impl GooseAttack {
                 weighted_users.push(GaggleUser::new(
                     self.task_sets[*task_sets_index].task_sets_index,
                     base_url,
-                    self.task_sets[*task_sets_index].min_wait,
-                    self.task_sets[*task_sets_index].max_wait,
                     &self.configuration,
                     self.metrics.hash,
                 ));
