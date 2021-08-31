@@ -220,7 +220,7 @@ fn validate_test(
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(test_type: TestType, format: &str) {
+async fn run_standalone_test(test_type: TestType, format: &str) {
     let request_log = test_type.to_string() + "-request-log." + format;
     let task_log = test_type.to_string() + "-task-log." + format;
     let debug_log = test_type.to_string() + "-debug-log." + format;
@@ -261,7 +261,8 @@ fn run_standalone_test(test_type: TestType, format: &str) {
     let goose_metrics = common::run_load_test(
         common::build_load_test(configuration, &get_tasks(), None, None),
         None,
-    );
+    )
+    .await;
 
     let log_files = LogFiles {
         request_logs: &[request_log.to_string()],
@@ -276,7 +277,7 @@ fn run_standalone_test(test_type: TestType, format: &str) {
 }
 
 // Helper to run all gaggle tests.
-fn run_gaggle_test(test_type: TestType, format: &str) {
+async fn run_gaggle_test(test_type: TestType, format: &str) {
     let requests_file = test_type.to_string() + "-gaggle-request-log." + format;
     let tasks_file = test_type.to_string() + "-gaggle-task-log." + format;
     let error_file = test_type.to_string() + "-gaggle-error-log." + format;
@@ -357,10 +358,10 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
         let worker_goose_attack =
             common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
         // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            common::run_load_test(worker_goose_attack, None);
-        }));
+        worker_handles.push(tokio::spawn(common::run_load_test(
+            worker_goose_attack,
+            None,
+        )));
     }
 
     let manager_configuration = common::build_configuration(
@@ -383,7 +384,7 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
         common::build_load_test(manager_configuration, &get_tasks(), None, None);
 
     // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles));
+    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     let log_files = LogFiles {
         request_logs: &requests_files,
@@ -408,212 +409,212 @@ fn run_gaggle_test(test_type: TestType, format: &str) {
     }
 }
 
-#[test]
+#[tokio::test]
 // Enable json-formatted requests log.
-fn test_requests_logs_json() {
-    run_standalone_test(TestType::Requests, "json");
+async fn test_requests_logs_json() {
+    run_standalone_test(TestType::Requests, "json").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted requests log, in Gaggle mode.
-fn test_requests_logs_json_gaggle() {
-    run_gaggle_test(TestType::Requests, "json");
+async fn test_requests_logs_json_gaggle() {
+    run_gaggle_test(TestType::Requests, "json").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable csv-formatted requests log.
-fn test_requests_logs_csv() {
-    run_standalone_test(TestType::Requests, "csv");
+async fn test_requests_logs_csv() {
+    run_standalone_test(TestType::Requests, "csv").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted requests log, in Gaggle mode.
-fn test_requests_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Requests, "csv");
+async fn test_requests_logs_csv_gaggle() {
+    run_gaggle_test(TestType::Requests, "csv").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable raw-formatted requests log.
-fn test_requests_logs_raw() {
-    run_standalone_test(TestType::Requests, "raw");
+async fn test_requests_logs_raw() {
+    run_standalone_test(TestType::Requests, "raw").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted requests log, in Gaggle mode.
-fn test_requests_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Requests, "raw");
+async fn test_requests_logs_raw_gaggle() {
+    run_gaggle_test(TestType::Requests, "raw").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable pretty-formatted requests log.
-fn test_requests_logs_pretty() {
-    run_standalone_test(TestType::Requests, "pretty");
+async fn test_requests_logs_pretty() {
+    run_standalone_test(TestType::Requests, "pretty").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable pretty-formatted requests log, in Gaggle mode.
-fn test_requests_logs_pretty_gaggle() {
-    run_gaggle_test(TestType::Requests, "pretty");
+async fn test_requests_logs_pretty_gaggle() {
+    run_gaggle_test(TestType::Requests, "pretty").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable json-formatted tasks log.
-fn test_tasks_logs_json() {
-    run_standalone_test(TestType::Tasks, "json");
+async fn test_tasks_logs_json() {
+    run_standalone_test(TestType::Tasks, "json").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted tasks log, in Gaggle mode.
-fn test_tasks_logs_json_gaggle() {
-    run_gaggle_test(TestType::Tasks, "json");
+async fn test_tasks_logs_json_gaggle() {
+    run_gaggle_test(TestType::Tasks, "json").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable csv-formatted tasks log.
-fn test_tasks_logs_csv() {
-    run_standalone_test(TestType::Tasks, "csv");
+async fn test_tasks_logs_csv() {
+    run_standalone_test(TestType::Tasks, "csv").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted tasks log, in Gaggle mode.
-fn test_tasks_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Tasks, "csv");
+async fn test_tasks_logs_csv_gaggle() {
+    run_gaggle_test(TestType::Tasks, "csv").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable raw-formatted tasks log.
-fn test_tasks_logs_raw() {
-    run_standalone_test(TestType::Tasks, "raw");
+async fn test_tasks_logs_raw() {
+    run_standalone_test(TestType::Tasks, "raw").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted tasks log, in Gaggle mode.
-fn test_tasks_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Tasks, "raw");
+async fn test_tasks_logs_raw_gaggle() {
+    run_gaggle_test(TestType::Tasks, "raw").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable raw-formatted error log.
-fn test_error_logs_raw() {
-    run_standalone_test(TestType::Error, "raw");
+async fn test_error_logs_raw() {
+    run_standalone_test(TestType::Error, "raw").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted error log, in Gaggle mode.
-fn test_error_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Error, "raw");
+async fn test_error_logs_raw_gaggle() {
+    run_gaggle_test(TestType::Error, "raw").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable json-formatted error log.
-fn test_error_logs_json() {
-    run_standalone_test(TestType::Error, "json");
+async fn test_error_logs_json() {
+    run_standalone_test(TestType::Error, "json").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted error log, in Gaggle mode.
-fn test_error_logs_json_gaggle() {
-    run_gaggle_test(TestType::Error, "json");
+async fn test_error_logs_json_gaggle() {
+    run_gaggle_test(TestType::Error, "json").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable csv-formatted error log.
-fn test_error_logs_csv() {
-    run_standalone_test(TestType::Error, "csv");
+async fn test_error_logs_csv() {
+    run_standalone_test(TestType::Error, "csv").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted error log, in Gaggle mode.
-fn test_error_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Error, "csv");
+async fn test_error_logs_csv_gaggle() {
+    run_gaggle_test(TestType::Error, "csv").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable raw-formatted debug log.
-fn test_debug_logs_raw() {
-    run_standalone_test(TestType::Debug, "raw");
+async fn test_debug_logs_raw() {
+    run_standalone_test(TestType::Debug, "raw").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted debug log, in Gaggle mode.
-fn test_debug_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Debug, "raw");
+async fn test_debug_logs_raw_gaggle() {
+    run_gaggle_test(TestType::Debug, "raw").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable json-formatted debug log.
-fn test_debug_logs_json() {
-    run_standalone_test(TestType::Debug, "json");
+async fn test_debug_logs_json() {
+    run_standalone_test(TestType::Debug, "json").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted debug log, in Gaggle mode.
-fn test_debug_logs_json_gaggle() {
-    run_gaggle_test(TestType::Debug, "json");
+async fn test_debug_logs_json_gaggle() {
+    run_gaggle_test(TestType::Debug, "json").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable csv-formatted debug log.
-fn test_debug_logs_csv() {
-    run_standalone_test(TestType::Debug, "csv");
+async fn test_debug_logs_csv() {
+    run_standalone_test(TestType::Debug, "csv").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted debug log, in Gaggle mode.
-fn test_debug_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Debug, "csv");
+async fn test_debug_logs_csv_gaggle() {
+    run_gaggle_test(TestType::Debug, "csv").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable raw-formatted logs.
-fn test_all_logs_raw() {
-    run_standalone_test(TestType::All, "raw");
+async fn test_all_logs_raw() {
+    run_standalone_test(TestType::All, "raw").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted logs, in Gaggle mode.
-fn test_all_logs_raw_gaggle() {
-    run_gaggle_test(TestType::All, "raw");
+async fn test_all_logs_raw_gaggle() {
+    run_gaggle_test(TestType::All, "raw").await;
 }
 
-#[test]
+#[tokio::test]
 // Enable pretty-formatted logs.
-fn test_all_logs_pretty() {
-    run_standalone_test(TestType::All, "pretty");
+async fn test_all_logs_pretty() {
+    run_standalone_test(TestType::All, "pretty").await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable pretty-formatted logs, in Gaggle mode.
-fn test_all_logs_pretty_gaggle() {
-    run_gaggle_test(TestType::All, "pretty");
+async fn test_all_logs_pretty_gaggle() {
+    run_gaggle_test(TestType::All, "pretty").await;
 }

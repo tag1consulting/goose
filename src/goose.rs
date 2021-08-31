@@ -551,7 +551,8 @@ impl GooseTaskSet {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     let mut example_tasks = taskset!("ExampleTasks").set_weight(3)?;
     ///
     ///     Ok(())
@@ -597,7 +598,8 @@ impl GooseTaskSet {
     /// use goose::prelude::*;
     /// use std::time::Duration;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     taskset!("ExampleTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(1))?;
     ///
     ///     Ok(())
@@ -2222,7 +2224,8 @@ impl GooseUser {
     /// use goose::prelude::*;
     /// use std::time::Duration;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("LoadtestTasks")
     ///             .set_host("http://foo.example.com/")
@@ -2232,7 +2235,8 @@ impl GooseUser {
     ///         )
     ///         // Set a default run time so this test runs to completion.
     ///         .set_default(GooseDefault::RunTime, 1)?
-    ///         .execute()?;
+    ///         .execute()
+    ///         .await?;
     ///
     ///     Ok(())
     /// }
@@ -2466,7 +2470,8 @@ impl GooseTask {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     task!(task_function).set_weight(3)?;
     ///
     ///     Ok(())
@@ -2539,7 +2544,8 @@ impl GooseTask {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     let runs_first = task!(first_task_function).set_sequence(1).set_weight(2)?;
     ///     let runs_second = task!(second_task_function_a).set_sequence(2);
     ///     let also_runs_second = task!(second_task_function_b).set_sequence(2).set_weight(2)?;

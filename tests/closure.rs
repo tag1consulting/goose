@@ -216,7 +216,7 @@ fn validate_closer_test(
 
 // Helper to run the test, takes a flag for indicating if running in standalone
 // mode or Gaggle mode.
-fn run_load_test(is_gaggle: bool) {
+async fn run_load_test(is_gaggle: bool) {
     // Start mock server.
     let server = MockServer::start();
 
@@ -236,7 +236,8 @@ fn run_load_test(is_gaggle: bool) {
             let goose_metrics = common::run_load_test(
                 common::build_load_test(configuration.clone(), &build_taskset(), None, None),
                 None,
-            );
+            )
+            .await;
 
             (configuration, goose_metrics)
         }
@@ -267,7 +268,8 @@ fn run_load_test(is_gaggle: bool) {
                     None,
                 ),
                 Some(worker_handles),
-            );
+            )
+            .await;
 
             (manager_configuration, goose_metrics)
         }
@@ -277,20 +279,20 @@ fn run_load_test(is_gaggle: bool) {
     validate_closer_test(&mock_endpoints, &goose_metrics, &configuration);
 }
 
-#[test]
+#[tokio::test]
 // Load test with a single task set containing two weighted tasks setup via closure.
 // Validate weighting and statistics.
-fn test_single_taskset_closure() {
+async fn test_single_taskset_closure() {
     // Run load test with is_gaggle set to false.
-    run_load_test(false);
+    run_load_test(false).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Spawn a gaggle of 1 manager and 2 workers each simulating one user. Run a load test,
 // with a single task set containing two weighted tasks setup via closure. Validate
 // that weighting and metrics are correctly merged to the Manager.
-fn test_single_taskset_closure_gaggle() {
+async fn test_single_taskset_closure_gaggle() {
     // Run load test with is_gaggle set to true.
-    run_load_test(true);
+    run_load_test(true).await;
 }

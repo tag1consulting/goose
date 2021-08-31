@@ -21,7 +21,8 @@ use std::time::Duration;
 
 use goose::prelude::*;
 
-fn main() -> Result<(), GooseError> {
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(
@@ -34,7 +35,8 @@ fn main() -> Result<(), GooseError> {
                 .register_task(task!(website_index))
                 .register_task(task!(website_about)),
         )
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())

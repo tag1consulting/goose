@@ -2,7 +2,7 @@ use gumdrop::Options;
 use httpmock::{Method::GET, Mock, MockServer};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::{str, thread, time};
+use std::{str, time};
 use tokio_tungstenite::tungstenite::Message;
 
 use goose::config::GooseConfiguration;
@@ -154,7 +154,7 @@ fn get_tasks() -> GooseTaskSet {
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(test_type: TestType) {
+async fn run_standalone_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
     let server_url = server.base_url();
@@ -174,9 +174,9 @@ fn run_standalone_test(test_type: TestType) {
     let configuration = common_build_configuration(&server, &mut configuration_flags);
 
     // Create a new thread from which to test the Controller.
-    let _controller_handle = thread::spawn(move || {
+    let _controller_handle = tokio::spawn(async move {
         // Sleep a half a second allowing the GooseAttack to start.
-        thread::sleep(time::Duration::from_millis(500));
+        tokio::time::sleep(time::Duration::from_millis(500)).await;
 
         // Initiailize the state engine.
         let mut test_state = update_state(None, &test_type);
@@ -548,7 +548,7 @@ fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("load test stopped"));
 
                             // Give Goose a half second to stop before moving on.
-                            thread::sleep(time::Duration::from_millis(500));
+                            tokio::time::sleep(time::Duration::from_millis(500)).await;
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type);
@@ -575,7 +575,7 @@ fn run_standalone_test(test_type: TestType) {
             test_state.buf = [0; 2048];
 
             // Give the parent process time to catch up.
-            thread::sleep(time::Duration::from_millis(100));
+            tokio::time::sleep(time::Duration::from_millis(100)).await;
         }
     });
 
@@ -583,7 +583,8 @@ fn run_standalone_test(test_type: TestType) {
     let goose_metrics = common::run_load_test(
         common::build_load_test(configuration.clone(), &get_tasks(), None, None),
         None,
-    );
+    )
+    .await;
 
     // Confirm that the load test ran correctly.
     validate_one_taskset(
@@ -683,14 +684,14 @@ fn make_request(test_state: &mut TestState, command: &str) {
     test_state.step += 1;
 }
 
-#[test]
 // Test controlling a load test with Telnet.
-fn test_telnet_controller() {
-    run_standalone_test(TestType::Telnet);
+#[tokio::test(flavor = "multi_thread")]
+async fn test_telnet_controller() {
+    run_standalone_test(TestType::Telnet).await;
 }
 
-#[test]
 // Test controlling a load test with WebSocket controller.
-fn test_websocket_controller() {
-    run_standalone_test(TestType::WebSocket);
+#[tokio::test(flavor = "multi_thread")]
+async fn test_websocket_controller() {
+    run_standalone_test(TestType::WebSocket).await;
 }

@@ -14,7 +14,8 @@ use crate::spanish::*;
 /// Defines the actual load test. Each task set simulates a type of user.
 ///  - Anonymous English user: loads the English version of all pages
 ///  - Anonymous Spanish user: loads the Spanish version of all pages
-fn main() -> Result<(), GooseError> {
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
     let _goose_metrics = GooseAttack::initialize()?
         .register_taskset(
             taskset!("Anonymous English user")
@@ -83,7 +84,8 @@ fn main() -> Result<(), GooseError> {
                 ),
         )
         .set_default(GooseDefault::Host, "https://drupal-9.ddev.site/")?
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())
