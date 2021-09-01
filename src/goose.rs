@@ -811,6 +811,11 @@ impl GooseRequestCadence {
     }
 }
 
+/// Marker trait to represent user data that can
+/// be added to any [`GooseUser`](../goose/struct.GooseUser.html).
+/// There is need to implement it yourself, a
+/// blanc implementation is provided for every `T`
+/// that are `Send` and `Sync`.
 pub trait GooseUserData: Downcast + Send + Sync + 'static {}
 impl_downcast!(GooseUserData);
 impl<T: Send + Sync + 'static> GooseUserData for T {}
