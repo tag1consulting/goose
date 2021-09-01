@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.13.4-dev
- - Add the possibility to attach custom session data `GooseUserData` to each `GooseUser`
- - Change `GooseTask` signature to take a mutable reference of `GooseUser` 
+## 0.14.0-dev
+ - Add the possibility to attach custom session data `GooseUserData` to each `GooseUser` (API change)
+ - Change `GooseTask` signature to take a mutable reference of `GooseUser` (API change)
  - Remove `Clone` trait from `GooseUser` and `GooseAttack`
  
 ## 0.13.3 August 25, 2021
