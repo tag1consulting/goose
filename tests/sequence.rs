@@ -38,14 +38,14 @@ enum TestType {
 }
 
 // Test task.
-pub async fn one(user: &GooseUser) -> GooseTaskResult {
+pub async fn one(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(ONE_PATH).await?;
 
     Ok(())
 }
 
 // Test task.
-pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
+pub async fn two_with_delay(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(TWO_PATH).await?;
 
     // "Run out the clock" on the load test when this function runs. Sleep for
@@ -57,21 +57,21 @@ pub async fn two_with_delay(user: &GooseUser) -> GooseTaskResult {
 }
 
 // Test task.
-pub async fn three(user: &GooseUser) -> GooseTaskResult {
+pub async fn three(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(THREE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_start() function, which always runs one time.
-pub async fn start_one(user: &GooseUser) -> GooseTaskResult {
+pub async fn start_one(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(START_ONE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_stop() function, which always runs one time.
-pub async fn stop_one(user: &GooseUser) -> GooseTaskResult {
+pub async fn stop_one(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(STOP_ONE_PATH).await?;
 
     Ok(())
@@ -283,31 +283,29 @@ fn run_gaggle_test(test_type: TestType) {
     // Get the taskset, start and stop tasks to build a load test.
     let (taskset, start_task, stop_task) = get_tasks(&test_type);
 
-    let goose_attack;
-    match test_type {
+    // Workers launched in own threads, store thread handles.
+    let worker_handles = match test_type {
         TestType::NotSequenced | TestType::SequencedRoundRobin => {
             // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
+            common::launch_gaggle_workers(EXPECT_WORKERS, || {
+                crate::GooseAttack::initialize_with_config(worker_configuration.clone())
+                    .unwrap()
+                    .register_taskset(taskset.clone())
+                    .test_start(start_task.clone())
+                    .test_stop(stop_task.clone())
+                    // Unnecessary as this is the default.
+                    .set_scheduler(GooseScheduler::RoundRobin)
+            })
+        }
+        TestType::SequencedSerial => common::launch_gaggle_workers(EXPECT_WORKERS, || {
+            crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                 .unwrap()
                 .register_taskset(taskset.clone())
                 .test_start(start_task.clone())
                 .test_stop(stop_task.clone())
-                // Unnecessary as this is the default.
-                .set_scheduler(GooseScheduler::RoundRobin);
-        }
-        TestType::SequencedSerial => {
-            // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(worker_configuration)
-                .unwrap()
-                .register_taskset(taskset.clone())
-                .test_start(start_task.clone())
-                .test_stop(stop_task.clone())
-                .set_scheduler(GooseScheduler::Serial);
-        }
-    }
-
-    // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
+                .set_scheduler(GooseScheduler::Serial)
+        }),
+    };
 
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));

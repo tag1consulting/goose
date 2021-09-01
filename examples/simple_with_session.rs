@@ -18,6 +18,17 @@
 //! limitations under the License.
 
 use goose::prelude::*;
+use serde::Deserialize;
+
+struct Session {
+    jwt_token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthenticationResponse {
+    jwt_token: String,
+}
 
 fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
@@ -27,10 +38,9 @@ fn main() -> Result<(), GooseError> {
                 // After each task runs, sleep randomly from 5 to 15 seconds.
                 .set_wait_time(5, 15)?
                 // This task only runs one time when the user first starts.
-                .register_task(task!(website_login).set_on_start())
+                .register_task(task!(website_signup).set_on_start())
                 // These next two tasks run repeatedly as long as the load test is running.
-                .register_task(task!(website_index))
-                .register_task(task!(website_about)),
+                .register_task(task!(authenticated_index)),
         )
         .execute()?
         .print();
@@ -38,28 +48,34 @@ fn main() -> Result<(), GooseError> {
     Ok(())
 }
 
-/// Demonstrates how to log in when a user starts. We flag this task as an
+/// Demonstrates how to log in and set a session when a user starts. We flag this task as an
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
-async fn website_login(user: &mut GooseUser) -> GooseTaskResult {
-    let request_builder = user.goose_post("/login")?;
+async fn website_signup(user: &mut GooseUser) -> GooseTaskResult {
+    let request_builder = user.goose_post("/signup")?;
     // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
-    let _goose = user.goose_send(request_builder.form(&params), None).await?;
+    let response = user
+        .goose_send(request_builder.form(&params), None)
+        .await?
+        .response?
+        .json::<AuthenticationResponse>()
+        .await?;
+
+    user.set_session_data(Session {
+        jwt_token: response.jwt_token,
+    });
 
     Ok(())
 }
 
 /// A very simple task that simply loads the front page.
-async fn website_index(user: &mut GooseUser) -> GooseTaskResult {
-    let _goose = user.get("/").await?;
-
-    Ok(())
-}
-
-/// A very simple task that simply loads the about page.
-async fn website_about(user: &mut GooseUser) -> GooseTaskResult {
-    let _goose = user.get("/about/").await?;
+async fn authenticated_index(user: &mut GooseUser) -> GooseTaskResult {
+    // This will panic if the session is missing or if the session is not of the right type
+    // use `get_session_data` to handle missing session
+    let session = user.get_session_data_unchecked::<Session>();
+    let request = user.goose_get("/")?.bearer_auth(&session.jwt_token);
+    let _goose = user.goose_send(request, None).await?;
 
     Ok(())
 }

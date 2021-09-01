@@ -37,13 +37,13 @@ const EXPECT_WORKERS: usize = 2;
 //     Needs more complex tests
 
 // Test task.
-pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
 // Test task.
-pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_about(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }

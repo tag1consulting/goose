@@ -15,13 +15,13 @@ const ABOUT_PATH: &str = "/about.html";
 const EXPECT_WORKERS: usize = 2;
 
 // Test task.
-pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
 // Test task.
-pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_about(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
@@ -246,10 +246,9 @@ fn run_load_test(is_gaggle: bool) {
                 common_build_configuration(&server, test_endpoints.len(), Some(true), None);
 
             // Workers launched in own threads, store thread handles.
-            let worker_handles = common::launch_gaggle_workers(
-                common::build_load_test(worker_configuration, &build_taskset(), None, None),
-                EXPECT_WORKERS,
-            );
+            let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
+                common::build_load_test(worker_configuration.clone(), &build_taskset(), None, None)
+            });
 
             // Build Manager configuration.
             let manager_configuration = common_build_configuration(

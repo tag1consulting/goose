@@ -35,13 +35,13 @@ enum TestType {
 }
 
 // Test task.
-pub async fn setup(user: &GooseUser) -> GooseTaskResult {
+pub async fn setup(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.post(SETUP_PATH, "setting up load test").await?;
     Ok(())
 }
 
 // Test task.
-pub async fn teardown(user: &GooseUser) -> GooseTaskResult {
+pub async fn teardown(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user
         .post(TEARDOWN_PATH, "cleaning up after load test")
         .await?;
@@ -49,7 +49,7 @@ pub async fn teardown(user: &GooseUser) -> GooseTaskResult {
 }
 
 // Test task.
-pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
@@ -177,11 +177,10 @@ fn run_gaggle_test(test_type: TestType) {
     // Build common configuration.
     let worker_configuration = common_build_configuration(&server, Some(true), None);
 
-    // Use Worker configuration to generate the load test.
-    let goose_attack = build_goose_attack(&test_type, worker_configuration);
-
     // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(goose_attack, EXPECT_WORKERS);
+    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
+        build_goose_attack(&test_type, worker_configuration.clone())
+    });
 
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));

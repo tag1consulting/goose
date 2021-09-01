@@ -68,7 +68,7 @@
 //!
 //! let mut task = task!(post_to_form);
 //!
-//! async fn post_to_form(user: &GooseUser) -> GooseTaskResult {
+//! async fn post_to_form(user: &mut GooseUser) -> GooseTaskResult {
 //!     let path = "/path/to/form";
 //!     let params = [
 //!      ("field_1", "foo"),
@@ -84,7 +84,7 @@
 //!         None,
 //!     )?;
 //!
-//!     let request_builder = user.goose_post(path).await?;
+//!     let request_builder = user.goose_post(path)?;
 //!     let goose = user.goose_send(request_builder.form(&params), None).await?;
 //!
 //!     // Log the form parameters that were posted together with details about the entire

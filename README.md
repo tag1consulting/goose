@@ -70,7 +70,7 @@ Then create a new load testing function. For our example we're simply going to l
 In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. The following `loadtest_index` function simply loads the front page of our web page:
 
 ```rust
-async fn loadtest_index(user: &GooseUser) -> GooseTaskResult {
+async fn loadtest_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose_metrics = user.get("/").await?;
 
     Ok(())

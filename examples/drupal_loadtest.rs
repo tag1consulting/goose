@@ -84,7 +84,7 @@ fn main() -> Result<(), GooseError> {
 }
 
 /// View the front page.
-async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
+async fn drupal_loadtest_front_page(user: &mut GooseUser) -> GooseTaskResult {
     let mut goose = user.get("/").await?;
 
     match goose.response {
@@ -133,7 +133,7 @@ async fn drupal_loadtest_front_page(user: &GooseUser) -> GooseTaskResult {
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
-async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
+async fn drupal_loadtest_node_page(user: &mut GooseUser) -> GooseTaskResult {
     let nid = rand::thread_rng().gen_range(1..10_000);
     let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
 
@@ -141,7 +141,7 @@ async fn drupal_loadtest_node_page(user: &GooseUser) -> GooseTaskResult {
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
-async fn drupal_loadtest_profile_page(user: &GooseUser) -> GooseTaskResult {
+async fn drupal_loadtest_profile_page(user: &mut GooseUser) -> GooseTaskResult {
     let uid = rand::thread_rng().gen_range(2..5_001);
     let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
 
@@ -149,7 +149,7 @@ async fn drupal_loadtest_profile_page(user: &GooseUser) -> GooseTaskResult {
 }
 
 /// Log in.
-async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
+async fn drupal_loadtest_login(user: &mut GooseUser) -> GooseTaskResult {
     let mut goose = user.get("/user").await?;
 
     match goose.response {
@@ -183,7 +183,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let request_builder = user.goose_post("/user").await?;
+                    let request_builder = user.goose_post("/user")?;
                     let _goose = user.goose_send(request_builder.form(&params), None).await;
                     // @TODO: verify that we actually logged in.
                 }
@@ -216,7 +216,7 @@ async fn drupal_loadtest_login(user: &GooseUser) -> GooseTaskResult {
 }
 
 /// Post a comment.
-async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
+async fn drupal_loadtest_post_comment(user: &mut GooseUser) -> GooseTaskResult {
     let nid: i32 = rand::thread_rng().gen_range(1..10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);
@@ -300,7 +300,7 @@ async fn drupal_loadtest_post_comment(user: &GooseUser) -> GooseTaskResult {
                     ];
 
                     // Post the comment.
-                    let request_builder = user.goose_post(&comment_path).await?;
+                    let request_builder = user.goose_post(&comment_path)?;
                     let mut goose = user.goose_send(request_builder.form(&params), None).await?;
 
                     // Verify that the comment posted.

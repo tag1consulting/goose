@@ -43,19 +43,19 @@ enum TestType {
 }
 
 // Test task.
-pub async fn get_index(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
 // Test task.
-pub async fn get_about(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_about(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
 
 // Test task.
-pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_redirect(user: &mut GooseUser) -> GooseTaskResult {
     // Load REDIRECT_PATH and follow redirects to ABOUT_PATH.
     let mut goose = user.get(REDIRECT_PATH).await?;
 
@@ -86,7 +86,7 @@ pub async fn get_redirect(user: &GooseUser) -> GooseTaskResult {
 }
 
 // Test task.
-pub async fn get_domain_redirect(user: &GooseUser) -> GooseTaskResult {
+pub async fn get_domain_redirect(user: &mut GooseUser) -> GooseTaskResult {
     let _goose = user.get(REDIRECT_PATH).await?;
     Ok(())
 }
@@ -356,12 +356,15 @@ fn run_gaggle_test(test_type: TestType) {
     };
     let worker_configuration = common_build_configuration(&server1, sticky, Some(true), None);
 
-    // Build the load test for the Workers.
-    let worker_goose_attack =
-        common::build_load_test(worker_configuration, &get_tasks(&test_type), None, None);
-
     // Workers launched in own threads, store thread handles.
-    let worker_handles = common::launch_gaggle_workers(worker_goose_attack, EXPECT_WORKERS);
+    let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
+        common::build_load_test(
+            worker_configuration.clone(),
+            &get_tasks(&test_type),
+            None,
+            None,
+        )
+    });
 
     // Build Manager configuration.
     let manager_configuration =
