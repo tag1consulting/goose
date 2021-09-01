@@ -73,7 +73,7 @@ async fn website_signup(user: &mut GooseUser) -> GooseTaskResult {
 async fn authenticated_index(user: &mut GooseUser) -> GooseTaskResult {
     // This will panic if the session is missing or if the session is not of the right type
     // use `get_session_data` to handle missing session
-    let session = user.get_session_data_uncheck::<Session>();
+    let session = user.get_session_data_unchecked::<Session>();
     let request = user.goose_get("/")?.bearer_auth(&session.jwt_token);
     let _goose = user.goose_send(request, None).await?;
 

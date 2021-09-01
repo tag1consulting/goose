@@ -920,7 +920,6 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
     /// let mut task = task!(get_session_data_function);
@@ -953,20 +952,19 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
-    /// let mut task = task!(get_session_data_uncheck_function);
+    /// let mut task = task!(get_session_data_unchecked_function);
     ///
     /// /// A very simple task that makes a GET request.
-    /// async fn get_session_data_uncheck_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let foo = user.get_session_data_uncheck::<Foo>();
+    /// async fn get_session_data_unchecked_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let foo = user.get_session_data_unchecked::<Foo>();
     ///     println!("Session data: {}", foo.0);
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_session_data_uncheck<T: GooseUserData>(&self) -> &T {
+    pub fn get_session_data_unchecked<T: GooseUserData>(&self) -> &T {
         let session_data = self.session_data.as_deref().expect("Missing session data!");
 
         session_data
@@ -982,19 +980,18 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
-    /// let mut task = task!(get_mut_session_data_function);
+    /// let mut task = task!(get_session_data_mut_function);
     ///
     /// /// A very simple task that makes a GET request.
-    /// async fn get_mut_session_data_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let foo = user.get_mut_session_data::<Foo>().expect("Missing session data!");
+    /// async fn get_session_data_mut_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let foo = user.get_session_data_mut::<Foo>().expect("Missing session data!");
     ///     foo.0 = "Bar".to_owned();
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_mut_session_data<T: GooseUserData>(&mut self) -> Option<&mut T> {
+    pub fn get_session_data_mut<T: GooseUserData>(&mut self) -> Option<&mut T> {
         match &mut self.session_data {
             Some(data) => data.downcast_mut::<T>(),
             None => None,
@@ -1013,19 +1010,18 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
-    /// let mut task = task!(get_mut_session_data_uncheck_function);
+    /// let mut task = task!(get_session_data_unchecked_mut_function);
     ///
     /// /// A very simple task that makes a GET request.
-    /// async fn get_mut_session_data_uncheck_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let foo = user.get_mut_session_data_uncheck::<Foo>();
+    /// async fn get_session_data_unchecked_mut_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let foo = user.get_session_data_unchecked_mut::<Foo>();
     ///     foo.0 = "Bar".to_owned();
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_mut_session_data_uncheck<T: GooseUserData>(&mut self) -> &mut T {
+    pub fn get_session_data_unchecked_mut<T: GooseUserData>(&mut self) -> &mut T {
         let session_data = self
             .session_data
             .as_deref_mut()
@@ -1041,7 +1037,6 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// #[derive(Debug)]
     /// struct Foo(String);
     ///
     /// let mut task = task!(set_session_data_function);
@@ -2582,7 +2577,6 @@ impl Hash for GooseTask {
 }
 
 #[cfg(test)]
-#[allow(clippy::blacklisted_name)]
 mod tests {
     use super::*;
 
@@ -2970,80 +2964,80 @@ mod tests {
 
     #[test]
     fn test_set_session_data() {
-        #[derive(Debug, PartialEq, Eq, Clone)]
-        struct Foo {
-            bar: String,
+        #[derive(Debug, PartialEq, Clone)]
+        struct CustomSessionData {
+            data: String,
         }
 
-        let foo = Foo {
-            bar: "bar".to_owned(),
+        let session_data = CustomSessionData {
+            data: "foo".to_owned(),
         };
 
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let mut user =
             GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
-        user.set_session_data(foo.clone());
+        user.set_session_data(session_data.clone());
 
-        let session = user.get_session_data::<Foo>();
+        let session = user.get_session_data::<CustomSessionData>();
         assert!(session.is_some());
-        assert_eq!(session.unwrap(), &foo);
+        assert_eq!(session.unwrap(), &session_data);
 
-        let session = user.get_session_data_uncheck::<Foo>();
-        assert_eq!(session, &foo);
+        let session = user.get_session_data_unchecked::<CustomSessionData>();
+        assert_eq!(session, &session_data);
     }
 
     #[test]
     fn test_get_mut_session_data() {
-        #[derive(Debug, PartialEq, Eq, Clone)]
-        struct Foo {
-            bar: String,
+        #[derive(Debug)]
+        struct CustomSessionData {
+            data: String,
         }
 
-        let foo = Foo {
-            bar: "bar".to_owned(),
+        let session_data = CustomSessionData {
+            data: "foo".to_owned(),
         };
 
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let mut user =
             GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
-        user.set_session_data(foo);
+        user.set_session_data(session_data);
 
-        if let Some(session) = user.get_mut_session_data::<Foo>() {
-            session.bar = "foo".to_owned();
+        if let Some(session) = user.get_session_data_mut::<CustomSessionData>() {
+            session.data = "bar".to_owned();
         }
 
-        let session = user.get_session_data_uncheck::<Foo>();
-        assert_eq!(session.bar, "foo".to_string());
+        let session = user.get_session_data_unchecked::<CustomSessionData>();
+        assert_eq!(session.data, "bar".to_string());
 
-        let session = user.get_mut_session_data_uncheck::<Foo>();
-        session.bar = "bar".to_owned();
-        let session = user.get_session_data_uncheck::<Foo>();
-        assert_eq!(session.bar, "bar".to_string());
+        let session = user.get_session_data_unchecked_mut::<CustomSessionData>();
+        session.data = "foo".to_owned();
+        let session = user.get_session_data_unchecked::<CustomSessionData>();
+        assert_eq!(session.data, "foo".to_string());
     }
 
     #[test]
     fn test_set_session_data_override() {
-        #[derive(Debug, PartialEq, Eq, Clone)]
-        struct Foo {
-            bar: String,
+        #[derive(Debug, Clone)]
+        struct CustomSessionData {
+            data: String,
         }
 
-        let mut foo = Foo {
-            bar: "bar".to_owned(),
+        let mut session_data = CustomSessionData {
+            data: "foo".to_owned(),
         };
 
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let mut user =
             GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
-        user.set_session_data(foo.clone());
+        user.set_session_data(session_data.clone());
 
-        foo.bar = "foo".to_owned();
-        user.set_session_data(foo);
+        session_data.data = "bar".to_owned();
+        user.set_session_data(session_data);
 
-        let session = user.get_session_data_uncheck::<Foo>();
-        assert_eq!(session.bar, "foo".to_string());
+        let session = user.get_session_data_unchecked::<CustomSessionData>();
+        assert_eq!(session.data, "bar".to_string());
     }
 }
