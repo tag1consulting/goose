@@ -53,8 +53,8 @@ pub(crate) async fn user_main(
     // If normal tasks are defined, loop launching tasks until parent tells us to stop.
     if !thread_task_set.weighted_tasks.is_empty() {
         let mut task_iter = thread_task_set.weighted_tasks.iter().cycle();
-        let next_task = Fuse::terminated();
-        pin_mut!(next_task);
+        let next_task_delay = Fuse::terminated();
+        pin_mut!(next_task_delay);
 
         let task_wait = match thread_task_set.task_wait.take() {
             Some((min, max)) if min == max => min,
@@ -64,10 +64,10 @@ pub(crate) async fn user_main(
             None => Duration::from_millis(0),
         };
 
-        next_task.set(tokio::time::sleep(Duration::from_secs(0)).fuse());
+        next_task_delay.set(tokio::time::sleep(Duration::from_secs(0)).fuse());
         loop {
             select! {
-                _ = next_task => {
+                _ = next_task_delay => {
                     let (thread_task_index, thread_task_name) = task_iter.next().unwrap();
                     if *thread_task_index == 0 {
                         // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
@@ -75,9 +75,8 @@ pub(crate) async fn user_main(
                         thread_user.update_request_cadence(thread_number).await;
                     }
 
-                    // Determine which task we're going to run next.
-                    let task = &thread_task_set.tasks[*thread_task_index];
-                    let function = &task.function;
+                    // Get a reference to the task function we're going to invoke next.
+                    let function = &thread_task_set.tasks[*thread_task_index].function;
                     debug!(
                         "launching on_start {} task from {}",
                         thread_task_name, thread_task_set.name
@@ -96,9 +95,9 @@ pub(crate) async fn user_main(
                     let elapsed = now.elapsed();
 
                     if elapsed < task_wait {
-                        next_task.set(tokio::time::sleep(task_wait - elapsed).fuse());
+                        next_task_delay.set(tokio::time::sleep(task_wait - elapsed).fuse());
                     } else {
-                        next_task.set(tokio::time::sleep(Duration::from_millis(0)).fuse());
+                        next_task_delay.set(tokio::time::sleep(Duration::from_millis(0)).fuse());
                     }
                 },
                 message = thread_receiver.recv_async().fuse() => {
