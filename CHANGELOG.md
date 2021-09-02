@@ -1,10 +1,11 @@
 # Changelog
 
 ## 0.14.0-dev
- - Add the possibility to attach custom session data `GooseUserData` to each `GooseUser` (API change)
- - Change `GooseTask` signature to take a mutable reference of `GooseUser` (API change)
- - Remove `Clone` trait from `GooseUser` and `GooseAttack`
- 
+ - add the possibility to attach custom session data `GooseUserData` to each `GooseUser` (API change)
+ - change `GooseTask` signature to take a mutable reference of `GooseUser` (API change)
+ - remove `Clone` trait from `GooseUser` and `GooseAttack`
+ - update `GooseTaskSet::set_wait_time()` to accept `std::time::Duration` instead of `usize` allowing more granularity (API change)
+
 ## 0.13.3 August 25, 2021
  - document GooseConfiguration fields that were only documented as gumpdrop parameters (in order to generate new lines in the help output) so now they're also documented in the code
  - fix panic when `--no-task-metrics` is enabled and metrics are printed; add tests to prevent further regressions
