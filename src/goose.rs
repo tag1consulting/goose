@@ -54,17 +54,18 @@
 //!
 //! ### Task Set Wait Time
 //!
-//! Wait time is specified as a low-high integer range. Each time a task completes in
-//! the task set, the user will pause for a random number of seconds inclusively between
+//! Wait time is specified as a low-high duration range. Each time a task completes in
+//! the task set, the user will pause for a random number of milliseconds inclusively between
 //! the low and high wait times. In the following example, users loading `foo` tasks will
 //! sleep 0 to 3 seconds after each task completes, and users loading `bar` tasks will
 //! sleep 5 to 10 seconds after each task completes.
 //!
 //! ```rust
 //! use goose::prelude::*;
+//! use std::time::Duration;
 //!
-//! let mut foo_tasks = taskset!("FooTasks").set_wait_time(0, 3).unwrap();
-//! let mut bar_tasks = taskset!("BarTasks").set_wait_time(5, 10).unwrap();
+//! let mut foo_tasks = taskset!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(3)).unwrap();
+//! let mut bar_tasks = taskset!("BarTasks").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
 //! ```
 //! ## Creating Tasks
 //!
@@ -290,6 +291,7 @@ use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::time::Duration;
 use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::RwLock;
@@ -468,10 +470,8 @@ pub struct GooseTaskSet {
     pub task_sets_index: usize,
     /// An integer value that controls the frequency that this task set will be assigned to a user.
     pub weight: usize,
-    /// An integer value indicating the minimum number of seconds a user will sleep after running a task.
-    pub min_wait: usize,
-    /// An integer value indicating the maximum number of seconds a user will sleep after running a task.
-    pub max_wait: usize,
+    /// An range of duration indicating the interval a user will sleep after running a task.
+    pub task_wait: Option<(Duration, Duration)>,
     /// A vector containing one copy of each [`GooseTask`](./struct.GooseTask.html) that will
     /// run by users running this task set.
     pub tasks: Vec<GooseTask>,
@@ -507,8 +507,7 @@ impl GooseTaskSet {
             name: name.to_string(),
             task_sets_index: usize::max_value(),
             weight: 1,
-            min_wait: 0,
-            max_wait: 0,
+            task_wait: None,
             tasks: Vec::new(),
             weighted_tasks: Vec::new(),
             weighted_on_start_tasks: Vec::new(),
@@ -589,26 +588,31 @@ impl GooseTaskSet {
         self
     }
 
-    /// Configure a task_set to to pause after running each task. The length of the pause will be randomly
-    /// selected from `min_weight` to `max_wait` inclusively.  For example, if `min_wait` is `0` and
-    /// `max_weight` is `2`, the user will randomly sleep for 0, 1 or 2 seconds after each task completes.
+    /// Configure a duration per task_set to pause after running each task. The length of the pause will be randomly
+    /// selected from `min_wait` to `max_wait` inclusively.  For example, if `min_wait` is `Duration::from_secs(0)` and
+    /// `max_wait` is `Duration::from_secs(2)`, the user will randomly sleep between 0 and 2_000 milliseconds after each task completes.
     ///
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
+    /// use std::time::Duration;
     ///
     /// fn main() -> Result<(), GooseError> {
-    ///     taskset!("ExampleTasks").set_wait_time(0, 1)?;
+    ///     taskset!("ExampleTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(1))?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_wait_time(mut self, min_wait: usize, max_wait: usize) -> Result<Self, GooseError> {
+    pub fn set_wait_time(
+        mut self,
+        min_wait: Duration,
+        max_wait: Duration,
+    ) -> Result<Self, GooseError> {
         trace!(
-            "{} set_wait time: min: {} max: {}",
+            "{} set_wait time: min: {}ms max: {}ms",
             self.name,
-            min_wait,
-            max_wait
+            min_wait.as_millis(),
+            max_wait.as_millis()
         );
         if min_wait > max_wait {
             return Err(GooseError::InvalidWaitTime {
@@ -619,8 +623,7 @@ impl GooseTaskSet {
                         .to_string(),
             });
         }
-        self.min_wait = min_wait;
-        self.max_wait = max_wait;
+        self.task_wait.replace((min_wait, max_wait));
 
         Ok(self)
     }
@@ -734,10 +737,6 @@ pub struct GaggleUser {
     pub task_sets_index: usize,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
-    /// Minimum amount of time to sleep after running a task.
-    pub min_wait: usize,
-    /// Maximum amount of time to sleep after running a task.
-    pub max_wait: usize,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
     /// Load test hash.
@@ -748,8 +747,6 @@ impl GaggleUser {
     pub fn new(
         task_sets_index: usize,
         base_url: Url,
-        min_wait: usize,
-        max_wait: usize,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Self {
@@ -757,8 +754,6 @@ impl GaggleUser {
         GaggleUser {
             task_sets_index,
             base_url: Arc::new(RwLock::new(base_url)),
-            min_wait,
-            max_wait,
             config: configuration.clone(),
             load_test_hash,
         }
@@ -832,10 +827,6 @@ pub struct GooseUser {
     pub client: Client,
     /// The base URL to prepend to all relative paths.
     pub base_url: Url,
-    /// Minimum amount of time to sleep after running a task.
-    pub min_wait: usize,
-    /// Maximum amount of time to sleep after running a task.
-    pub max_wait: usize,
     /// A local copy of the global [`GooseConfiguration`](../struct.GooseConfiguration.html).
     pub config: GooseConfiguration,
     /// Channel to logger.
@@ -868,8 +859,6 @@ impl GooseUser {
     pub fn new(
         task_sets_index: usize,
         base_url: Url,
-        min_wait: usize,
-        max_wait: usize,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Result<Self, GooseError> {
@@ -886,8 +875,6 @@ impl GooseUser {
             task_sets_index,
             client,
             base_url,
-            min_wait,
-            max_wait,
             config: configuration.clone(),
             logger: None,
             throttle: None,
@@ -905,7 +892,7 @@ impl GooseUser {
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new(0, base_url, 0, 0, configuration, 0)?;
+        let mut single_user = GooseUser::new(0, base_url, configuration, 0)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -2233,12 +2220,13 @@ impl GooseUser {
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
+    /// use std::time::Duration;
     ///
     /// fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("LoadtestTasks")
     ///             .set_host("http://foo.example.com/")
-    ///             .set_wait_time(0, 3)?
+    ///             .set_wait_time(Duration::from_secs(0), Duration::from_secs(3))?
     ///             .register_task(task!(task_foo).set_weight(10)?)
     ///             .register_task(task!(task_bar))
     ///         )
@@ -2619,8 +2607,7 @@ mod tests {
         assert_eq!(task_set.name, "foo");
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, 0);
-        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.task_wait, None);
         assert!(task_set.host.is_none());
         assert_eq!(task_set.tasks.len(), 0);
         assert_eq!(task_set.weighted_tasks.len(), 0);
@@ -2633,8 +2620,7 @@ mod tests {
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, 0);
-        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.task_wait, None);
         assert!(task_set.host.is_none());
 
         // Different task can be registered.
@@ -2643,8 +2629,7 @@ mod tests {
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, 0);
-        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.task_wait, None);
         assert!(task_set.host.is_none());
 
         // Same task can be registered again.
@@ -2653,8 +2638,7 @@ mod tests {
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, 0);
-        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.task_wait, None);
         assert!(task_set.host.is_none());
 
         // Setting weight only affects weight field.
@@ -2663,8 +2647,7 @@ mod tests {
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.min_wait, 0);
-        assert_eq!(task_set.max_wait, 0);
+        assert_eq!(task_set.task_wait, None);
         assert!(task_set.host.is_none());
 
         // Weight can be changed.
@@ -2678,17 +2661,19 @@ mod tests {
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.min_wait, 0);
-        assert_eq!(task_set.max_wait, 0);
 
         // Host field can be changed.
         task_set = task_set.set_host("https://bar.example.com/");
         assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
 
         // Wait time only affects wait time fields.
-        task_set = task_set.set_wait_time(1, 10).unwrap();
-        assert_eq!(task_set.min_wait, 1);
-        assert_eq!(task_set.max_wait, 10);
+        task_set = task_set
+            .set_wait_time(Duration::from_secs(1), Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(
+            task_set.task_wait,
+            Some((Duration::from_secs(1), Duration::from_secs(10)))
+        );
         assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
         assert_eq!(task_set.weight, 5);
         assert_eq!(task_set.tasks.len(), 3);
@@ -2696,9 +2681,13 @@ mod tests {
         assert_eq!(task_set.task_sets_index, usize::max_value());
 
         // Wait time can be changed.
-        task_set = task_set.set_wait_time(3, 9).unwrap();
-        assert_eq!(task_set.min_wait, 3);
-        assert_eq!(task_set.max_wait, 9);
+        task_set = task_set
+            .set_wait_time(Duration::from_secs(3), Duration::from_secs(9))
+            .unwrap();
+        assert_eq!(
+            task_set.task_wait,
+            Some((Duration::from_secs(3), Duration::from_secs(9)))
+        );
     }
 
     #[test]
@@ -2786,10 +2775,8 @@ mod tests {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0).unwrap();
+        let user = GooseUser::new(0, base_url, &configuration, 0).unwrap();
         assert_eq!(user.task_sets_index, 0);
-        assert_eq!(user.min_wait, 0);
-        assert_eq!(user.max_wait, 0);
         assert_eq!(user.weighted_users_index, usize::max_value());
 
         // Confirm the URLs are correctly built using the default_host.
@@ -2815,9 +2802,7 @@ mod tests {
             Some("http://www.example.com/".to_string()),
         )
         .unwrap();
-        let user2 = GooseUser::new(0, base_url, 1, 3, &configuration, 0).unwrap();
-        assert_eq!(user2.min_wait, 1);
-        assert_eq!(user2.max_wait, 3);
+        let user2 = GooseUser::new(0, base_url, &configuration, 0).unwrap();
 
         // Confirm the URLs are correctly built using the task_set_host.
         let url = user2.build_url("/foo").unwrap();
@@ -2876,7 +2861,7 @@ mod tests {
         // Confirm Goose can build a base_url that includes a path.
         const HOST_WITH_PATH: &str = "http://example.com/with/path/";
         let base_url = get_base_url(Some(HOST_WITH_PATH.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, base_url, 0, 0, &configuration, 0).unwrap();
+        let user = GooseUser::new(0, base_url, &configuration, 0).unwrap();
 
         // Confirm the URLs are correctly built using the default_host that includes a path.
         let url = user.build_url("foo").unwrap();

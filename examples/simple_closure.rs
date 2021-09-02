@@ -20,11 +20,12 @@ use goose::prelude::*;
 
 use std::boxed::Box;
 use std::sync::Arc;
+use std::time::Duration;
 
 fn main() -> Result<(), GooseError> {
     let mut taskset = taskset!("WebsiteUser")
         // After each task runs, sleep randomly from 5 to 15 seconds.
-        .set_wait_time(5, 15)?;
+        .set_wait_time(Duration::from_secs(5), Duration::from_secs(15))?;
 
     let paths = vec!["/", "/about", "/our-team"];
     for request_path in paths {
