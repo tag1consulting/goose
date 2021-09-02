@@ -1593,7 +1593,7 @@ impl GooseUser {
                 // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
                 if !status_code.is_success() {
                     request_metric.success = false;
-                    request_metric.error = format!("{}: {}", status_code, &path);
+                    request_metric.error = format!("{}: {}", status_code, request_name);
                 }
                 request_metric.set_status_code(Some(status_code));
                 request_metric.set_final_url(r.url().as_str());
@@ -1621,7 +1621,7 @@ impl GooseUser {
                 warn!("{:?}: {}", &path, e);
                 request_metric.success = false;
                 request_metric.set_status_code(None);
-                request_metric.error = e.to_string();
+                request_metric.error = clean_reqwest_error(e, request_name);
             }
         };
 
@@ -2256,6 +2256,30 @@ impl GooseUser {
     pub fn set_base_url(&mut self, host: &str) -> Result<(), GooseTaskError> {
         self.base_url = Url::parse(host)?;
         Ok(())
+    }
+}
+
+/// Remove path from Reqwest error to avoid having a lot of distincts error
+/// when path parameters are used.
+fn clean_reqwest_error(e: &reqwest::Error, request_name: &str) -> String {
+    let kind = if e.is_builder() {
+        "builder error"
+    } else if e.is_request() {
+        "error sending request"
+    } else if e.is_body() {
+        "request or response body error"
+    } else if e.is_decode() {
+        "error decoding response body"
+    } else if e.is_redirect() {
+        "error following redirect"
+    } else {
+        "Http status"
+    };
+
+    if let Some(ref e) = std::error::Error::source(e) {
+        format!("{} {}: {}", kind, request_name, e)
+    } else {
+        format!("{} {}", kind, request_name)
     }
 }
 
