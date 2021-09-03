@@ -17,7 +17,7 @@ use std::str;
 use std::str::FromStr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tungstenite::Message;
+use tokio_tungstenite::tungstenite::Message;
 
 /// Goose currently supports two different Controller protocols: telnet and WebSocket.
 #[derive(Clone, Debug)]
@@ -293,13 +293,15 @@ type GooseControllerExit = bool;
 type GooseControllerTelnetMessage = [u8; 1024];
 
 /// The WebSocket Controller message buffer.
-type GooseControllerWebSocketMessage =
-    std::result::Result<tungstenite::Message, tungstenite::Error>;
+type GooseControllerWebSocketMessage = std::result::Result<
+    tokio_tungstenite::tungstenite::Message,
+    tokio_tungstenite::tungstenite::Error,
+>;
 
 /// Simplify the GooseControllerExecuteCommand trait definition for WebSockets.
 type GooseControllerWebSocketSender = futures::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    tungstenite::Message,
+    tokio_tungstenite::tungstenite::Message,
 >;
 
 /// This state object is created in the main Controller thread and then passed to the specific
@@ -844,8 +846,8 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
             // If exiting, notify the WebSocket client that this connection is closing.
             if exit_controller
                 && socket
-                    .send(Message::Close(Some(tungstenite::protocol::CloseFrame {
-                        code: tungstenite::protocol::frame::coding::CloseCode::Normal,
+                    .send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                        code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
                         reason: std::borrow::Cow::Borrowed("exit"),
                     })))
                     .await
@@ -886,8 +888,8 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
         // If exiting, notify the WebSocket client that this connection is closing.
         if exit_controller
             && socket
-                .send(Message::Close(Some(tungstenite::protocol::CloseFrame {
-                    code: tungstenite::protocol::frame::coding::CloseCode::Normal,
+                .send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                    code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
                     reason: std::borrow::Cow::Borrowed("shutdown"),
                 })))
                 .await
