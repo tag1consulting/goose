@@ -3,7 +3,7 @@ use httpmock::{Method::GET, Mock, MockServer};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::{str, thread, time};
-use tungstenite::Message;
+use tokio_tungstenite::tungstenite::Message;
 
 use goose::config::GooseConfiguration;
 use goose::controller::{
@@ -48,11 +48,11 @@ struct TestState {
     telnet_stream: Option<TcpStream>,
     // A TCP socket if testing the WebSocket Controller.
     #[cfg(not(feature = "rustls-tls"))]
-    websocket_stream: Option<tungstenite::WebSocket<std::net::TcpStream>>,
+    websocket_stream: Option<tokio_tungstenite::tungstenite::WebSocket<std::net::TcpStream>>,
     #[cfg(feature = "rustls-tls")]
     websocket_stream: Option<
-        tungstenite::WebSocket<
-            tungstenite::stream::Stream<
+        tokio_tungstenite::tungstenite::WebSocket<
+            tokio_tungstenite::tungstenite::stream::Stream<
                 std::net::TcpStream,
                 rustls::StreamOwned<rustls::ClientSession, TcpStream>,
             >,
@@ -638,7 +638,8 @@ fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestStat
         let websocket_controller: bool;
         let websocket_stream = match test_type {
             TestType::WebSocket => {
-                let (mut stream, _) = tungstenite::client::connect("ws://127.0.0.1:5117").unwrap();
+                let (mut stream, _) =
+                    tokio_tungstenite::tungstenite::client::connect("ws://127.0.0.1:5117").unwrap();
                 // Send an empty message so the client performs a handshake.
                 stream.write_message(Message::Text("".into())).unwrap();
                 // Ignore the error that comes back.

@@ -48,7 +48,7 @@ tokio = { version = "1", features = [
     "sync",
 ] }
 tokio-tungstenite = "0.15"
-tungstenite = "0.14"
+tungstenite = "0.15"
 url = "2"
 
 # optional dependencies
