@@ -287,7 +287,8 @@
 
 use downcast_rs::{impl_downcast, Downcast};
 use http::method::Method;
-use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
+use reqwest::cookie::{CookieStore, Jar};
+use reqwest::{cookie, header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -850,6 +851,8 @@ pub struct GooseUser {
     pub(crate) task_name: Option<String>,
 
     session_data: Option<Box<dyn GooseUserData>>,
+
+    cookie_store: Jar,
 }
 impl GooseUser {
     /// Create a new user state.
@@ -879,6 +882,7 @@ impl GooseUser {
             slept: 0,
             task_name: None,
             session_data: None,
+            cookie_store: cookie::Jar::default(),
         })
     }
 
@@ -1533,8 +1537,7 @@ impl GooseUser {
         };
 
         let started = Instant::now();
-        let request = request_builder.build()?;
-
+        let mut request = request_builder.build()?;
         // String version of request path.
         let path = match Url::parse(&request.url().to_string()) {
             Ok(u) => u.path().to_string(),
@@ -1577,6 +1580,8 @@ impl GooseUser {
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
         );
+
+        self.add_cookie_header(&mut request);
 
         // Make the actual request.
         let response = self.client.execute(request).await;
@@ -1636,6 +1641,14 @@ impl GooseUser {
         }
 
         Ok(GooseResponse::new(request_metric, response))
+    }
+
+    fn add_cookie_header(&self, request: &mut reqwest::Request) {
+        if request.headers().get(header::COOKIE).is_none() {
+            if let Some(header) = self.cookie_store.cookies(request.url()) {
+                request.headers_mut().insert(header::COOKIE, header);
+            }
+        }
     }
 
     /// Tracks the time it takes for the current GooseUser to loop through all GooseTasks

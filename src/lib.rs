@@ -459,7 +459,7 @@ use lazy_static::lazy_static;
 use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use reqwest::Client;
+use reqwest::{Client, ClientBuilder};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -822,7 +822,7 @@ impl GooseAttack {
     ) -> Result<GooseAttack, GooseError> {
         let client = Client::builder()
             .user_agent(APP_USER_AGENT)
-            .cookie_store(true)
+            .cookie_store(false)
             // Enable gzip unless `--no-gzip` flag is enabled.
             .gzip(!configuration.no_gzip)
             .build()?;
@@ -855,19 +855,18 @@ impl GooseAttack {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     let client = Client::builder()
-    ///         .build()?;
+    ///     let client_builder = Client::builder();
     ///
     ///     GooseAttack::initialize()?
     ///         .set_scheduler(GooseScheduler::Random)
-    ///         .set_client(client);
+    ///         .set_client(client_builder)?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_client(mut self, client: Client) -> Self {
-        self.client = client;
-        self
+    pub fn set_client(mut self, client_builder: ClientBuilder) -> Result<Self, GooseError> {
+        self.client = client_builder.cookie_store(false).build()?;
+        Ok(self)
     }
 
     /// Define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are
