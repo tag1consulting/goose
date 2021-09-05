@@ -388,7 +388,7 @@ async fn test_redirect() {
     run_standalone_test(TestType::Chain).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Request a page that redirects multiple times with different redirect headers,
@@ -405,7 +405,7 @@ async fn test_domain_redirect() {
     run_standalone_test(TestType::Domain).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Request a page that redirects to another domain, in Gaggle mode.
@@ -423,7 +423,7 @@ async fn test_sticky_domain_redirect() {
     run_standalone_test(TestType::Sticky).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Request a page that redirects to another domain with --sticky-follow enabled, in

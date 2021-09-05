@@ -201,7 +201,7 @@ async fn test_setup() {
     run_standalone_test(TestType::Start).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test test_start(), in Gaggle mode.
@@ -215,7 +215,7 @@ async fn test_teardown() {
     run_standalone_test(TestType::Stop).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test test_stop(), in Gaggle mode.
@@ -229,7 +229,7 @@ async fn test_setup_teardown() {
     run_standalone_test(TestType::StartAndStop).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 /// Test test_start and test_stop together, in Gaggle mode.

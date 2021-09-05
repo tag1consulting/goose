@@ -161,7 +161,7 @@ async fn test_no_normal_tasks() {
     run_load_test(false).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Test taskset with only on_start() and on_stop() tasks, in Gaggle mode.
 async fn test_no_normal_tasks_gaggle() {

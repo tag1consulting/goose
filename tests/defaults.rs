@@ -217,7 +217,7 @@ async fn test_defaults() {
     goose_metrics.print();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Configure load test with set_default, run as Gaggle.
@@ -409,7 +409,7 @@ async fn test_no_defaults() {
     goose_metrics.print();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Configure load test with run time options (not with defaults), run as Gaggle.

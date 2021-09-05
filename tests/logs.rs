@@ -415,7 +415,7 @@ async fn test_requests_logs_json() {
     run_standalone_test(TestType::Requests, "json").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted requests log, in Gaggle mode.
@@ -429,7 +429,7 @@ async fn test_requests_logs_csv() {
     run_standalone_test(TestType::Requests, "csv").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted requests log, in Gaggle mode.
@@ -443,7 +443,7 @@ async fn test_requests_logs_raw() {
     run_standalone_test(TestType::Requests, "raw").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted requests log, in Gaggle mode.
@@ -457,7 +457,7 @@ async fn test_requests_logs_pretty() {
     run_standalone_test(TestType::Requests, "pretty").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable pretty-formatted requests log, in Gaggle mode.
@@ -471,7 +471,7 @@ async fn test_tasks_logs_json() {
     run_standalone_test(TestType::Tasks, "json").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted tasks log, in Gaggle mode.
@@ -485,7 +485,7 @@ async fn test_tasks_logs_csv() {
     run_standalone_test(TestType::Tasks, "csv").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted tasks log, in Gaggle mode.
@@ -499,7 +499,7 @@ async fn test_tasks_logs_raw() {
     run_standalone_test(TestType::Tasks, "raw").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted tasks log, in Gaggle mode.
@@ -513,7 +513,7 @@ async fn test_error_logs_raw() {
     run_standalone_test(TestType::Error, "raw").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted error log, in Gaggle mode.
@@ -527,7 +527,7 @@ async fn test_error_logs_json() {
     run_standalone_test(TestType::Error, "json").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted error log, in Gaggle mode.
@@ -541,7 +541,7 @@ async fn test_error_logs_csv() {
     run_standalone_test(TestType::Error, "csv").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted error log, in Gaggle mode.
@@ -555,7 +555,7 @@ async fn test_debug_logs_raw() {
     run_standalone_test(TestType::Debug, "raw").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted debug log, in Gaggle mode.
@@ -569,7 +569,7 @@ async fn test_debug_logs_json() {
     run_standalone_test(TestType::Debug, "json").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable json-formatted debug log, in Gaggle mode.
@@ -583,7 +583,7 @@ async fn test_debug_logs_csv() {
     run_standalone_test(TestType::Debug, "csv").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable csv-formatted debug log, in Gaggle mode.
@@ -597,7 +597,7 @@ async fn test_all_logs_raw() {
     run_standalone_test(TestType::All, "raw").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable raw-formatted logs, in Gaggle mode.
@@ -611,7 +611,7 @@ async fn test_all_logs_pretty() {
     run_standalone_test(TestType::All, "pretty").await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable pretty-formatted logs, in Gaggle mode.

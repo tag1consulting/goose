@@ -381,7 +381,7 @@ async fn test_round_robin_taskset() {
     run_standalone_test(&TestType::TaskSets, &GooseScheduler::RoundRobin).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks allocating GooseTaskSets in round robin order, in
@@ -396,7 +396,7 @@ async fn test_round_robin_task() {
     run_standalone_test(&TestType::Tasks, &GooseScheduler::RoundRobin).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple GooseTasks allocated in round robin order, in
@@ -411,7 +411,7 @@ async fn test_serial_taskset() {
     run_standalone_test(&TestType::TaskSets, &GooseScheduler::Serial).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks allocating GooseTaskSets in serial order, in
@@ -432,7 +432,7 @@ async fn test_random_taskset() {
     run_standalone_test(&TestType::TaskSets, &GooseScheduler::Random).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks allocating GooseTaskSets in random order, in

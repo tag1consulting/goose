@@ -238,7 +238,7 @@ async fn test_one_taskset() {
     run_standalone_test(TestType::NoResetMetrics).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test a single task set with multiple weighted tasks, in Gaggle mode.

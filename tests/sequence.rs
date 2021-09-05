@@ -348,7 +348,7 @@ async fn test_not_sequenced() {
     run_standalone_test(TestType::NotSequenced).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks and no sequences defined, in Gaggle mode.
@@ -370,7 +370,7 @@ async fn test_sequenced_sequential() {
     run_standalone_test(TestType::SequencedSerial).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks and sequences defined, using the
@@ -379,7 +379,7 @@ async fn test_sequenced_round_robin_gaggle() {
     run_gaggle_test(TestType::SequencedRoundRobin).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks and sequences defined, using the

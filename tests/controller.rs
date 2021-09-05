@@ -685,13 +685,13 @@ fn make_request(test_state: &mut TestState, command: &str) {
 }
 
 // Test controlling a load test with Telnet.
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_telnet_controller() {
     run_standalone_test(TestType::Telnet).await;
 }
 
 // Test controlling a load test with WebSocket controller.
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_websocket_controller() {
     run_standalone_test(TestType::WebSocket).await;
 }
