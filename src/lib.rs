@@ -845,26 +845,47 @@ impl GooseAttack {
         })
     }
 
-    /// Define a reqwest::Client shared among all the
+    /// Define a reqwest::ClientBuilder used to build a reqwest Client shared among all the
     /// [`GooseUser`](./goose/struct.GooseUser.html)s running.
+    ///
+    /// # Alternative Compression Algorithms
+    /// Reqwest also supports
+    /// [`brotli`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.brotli) and
+    /// [`deflate`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.deflate) compression.
+    ///
+    /// To enable either, you must enable the features in your load test's `Cargo.toml`, for example:
+    /// ```text
+    /// reqwest = { version = "^0.11.4",  default-features = false, features = [
+    ///     "brotli",
+    ///     "cookies",
+    ///     "deflate",
+    ///     "gzip",
+    ///     "json",
+    /// ] }
+    /// ```
+    ///
+    /// Once enabled, you can add `.brotli(true)` and/or `.deflate(true)` to your custom
+    /// [`reqwest::Client::builder()`], following the documentation above.
     ///
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
     /// use reqwest::Client;
+    /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     let client_builder = Client::builder();
+    ///     let client_builder = Client::builder()
+    ///         .user_agent(APP_USER_AGENT);
     ///
     ///     GooseAttack::initialize()?
     ///         .set_scheduler(GooseScheduler::Random)
-    ///         .set_client(client_builder)?;
+    ///         .set_client_builder(client_builder)?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_client(mut self, client_builder: ClientBuilder) -> Result<Self, GooseError> {
+    pub fn set_client_builder(mut self, client_builder: ClientBuilder) -> Result<Self, GooseError> {
         self.client = client_builder.cookie_store(false).build()?;
         Ok(self)
     }

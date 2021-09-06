@@ -286,9 +286,11 @@
 //! limitations under the License.
 
 use downcast_rs::{impl_downcast, Downcast};
+use http::header::{Entry, IntoHeaderName};
 use http::method::Method;
+use http::HeaderValue;
 use reqwest::cookie::{CookieStore, Jar};
-use reqwest::{cookie, header, Client, ClientBuilder, RequestBuilder, Response};
+use reqwest::{cookie, header, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -853,6 +855,8 @@ pub struct GooseUser {
     session_data: Option<Box<dyn GooseUserData>>,
 
     cookie_store: Jar,
+
+    headers: header::HeaderMap,
 }
 impl GooseUser {
     /// Create a new user state.
@@ -883,6 +887,7 @@ impl GooseUser {
             task_name: None,
             session_data: None,
             cookie_store: cookie::Jar::default(),
+            headers: header::HeaderMap::default(),
         })
     }
 
@@ -1581,7 +1586,11 @@ impl GooseUser {
             self.weighted_users_index,
         );
 
+        // Set cookies
         self.add_cookie_header(&mut request);
+
+        // Set default headers
+        self.add_default_headers(&mut request);
 
         // Make the actual request.
         let response = self.client.execute(request).await;
@@ -1643,10 +1652,22 @@ impl GooseUser {
         Ok(GooseResponse::new(request_metric, response))
     }
 
+    // Add cookies from the cookie store.
     fn add_cookie_header(&self, request: &mut reqwest::Request) {
         if request.headers().get(header::COOKIE).is_none() {
             if let Some(header) = self.cookie_store.cookies(request.url()) {
                 request.headers_mut().insert(header::COOKIE, header);
+            }
+        }
+    }
+
+    // insert default headers in the request headers
+    // without overwriting already appended headers.
+    fn add_default_headers(&self, request: &mut reqwest::Request) {
+        let headers = request.headers_mut();
+        for (key, value) in &self.headers {
+            if let Entry::Vacant(entry) = headers.entry(key) {
+                entry.insert(value.clone());
             }
         }
     }
@@ -2050,152 +2071,55 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Manually build a
-    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html).
-    ///
-    /// By default, Goose configures two options when building a
-    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html). The first
-    /// configures Goose to report itself as the
-    /// [`user_agent`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.user_agent)
-    /// requesting web pages (ie `goose/0.11.2`). The second option configures
-    /// [`reqwest`](https://docs.rs/reqwest/) to
-    /// [store cookies](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store),
-    /// which is generally necessary if you aim to simulate logged in users.
-    ///
-    /// # Default configuration:
-    ///
-    /// ```rust
-    /// use reqwest::Client;
-    ///
-    /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-    ///
-    /// let builder = Client::builder()
-    ///   .user_agent(APP_USER_AGENT)
-    ///   .cookie_store(true)
-    ///   .gzip(true);
-    /// ```
-    ///
-    /// Alternatively, you can use this function to manually build a
-    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html).
-    /// with custom configuration. Available options are found in the
-    /// [`reqwest::ClientBuilder`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html)
-    /// documentation.
-    ///
-    /// When manually building a
-    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html),
-    /// there are a few things to be aware of:
-    ///  - Manually building a client in [`test_start`](../struct.GooseAttack.html#method.test_start)
-    ///    will only affect requests made during test setup;
-    ///  - Manually building a client in [`test_stop`](../struct.GooseAttack.html#method.test_stop)
-    ///    will only affect requests made during test teardown;
-    ///  - A manually built client is specific to a single Goose thread -- if you are
-    ///    generating a large load test with many users, each will need to manually build their
-    ///    own client (typically you'd do this in a Task that is registered with
-    ///   [`GooseTask::set_on_start()`] in each Task Set requiring a custom client;
-    ///  - Manually building a client will completely replace the automatically built client
-    ///    with a brand new one, so any configuration, cookies or headers set in the previously
-    ///    built client will be gone;
-    ///  - You must include all desired configuration, as you are completely replacing Goose
-    ///    defaults. For example, if you want Goose clients to store cookies, you will have to
-    ///    include
-    ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store).
-    ///
-    /// In the following example, the Goose client is configured with a different user agent,
-    /// sets a default header on every request, stores cookies, and supports gzip compression.
+    /// Custom cookies can be manually set to each [`GooseUser`](./goose/struct.GooseUser.html).
+    /// Those cookies will automatically been added to each request.
     ///
     /// ## Example
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// task!(setup_custom_client).set_on_start();
+    /// task!(custom_cookie).set_on_start();
     ///
-    /// async fn setup_custom_client(user: &mut GooseUser) -> GooseTaskResult {
-    ///     use reqwest::{Client, header};
-    ///
-    ///     // Build a custom HeaderMap to include with all requests made by this client.
-    ///     let mut headers = header::HeaderMap::new();
-    ///     headers.insert("X-Custom-Header", header::HeaderValue::from_str("custom value").unwrap());
-    ///
-    ///     // Build a custom client.
-    ///     let builder = Client::builder()
-    ///         .default_headers(headers)
-    ///         .user_agent("custom user agent")
-    ///         .cookie_store(true)
-    ///         .gzip(true);
-    ///
-    ///     // Assign the custom client to this GooseUser.
-    ///     user.set_client_builder(builder).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    /// # Alternative Compression Algorithms
-    /// Reqwest also supports
-    /// [`brotli`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.brotli) and
-    /// [`deflate`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.deflate) compression.
-    ///
-    /// To enable either, you must enable the features in your load test's `Cargo.toml`, for example:
-    /// ```text
-    /// reqwest = { version = "^0.11.4",  default-features = false, features = [
-    ///     "brotli",
-    ///     "cookies",
-    ///     "deflate",
-    ///     "gzip",
-    ///     "json",
-    /// ] }
-    /// ```
-    ///
-    /// Once enabled, you can add `.brotli(true)` and/or `.deflate(true)` to your custom
-    /// [`reqwest::Client::builder()`], following the documentation above.
-    ///
-    /// # Custom Cookies
-    /// Custom cookies can also be manually set when building a custom [`reqwest::Client`]. This requires
-    /// loading the [`GooseUser::base_url`] being load tested in order to properly build the cookie. Then
-    /// a custom [`reqwest::cookie::Jar`] is created and the custom cookie is added with
-    /// [`reqwest::cookie::Jar::add_cookie_str`]. Finally, the new cookie jar must be specified as the
-    /// [`reqwest::ClientBuilder::cookie_provider`] for the custom client.
-    ///
-    /// ## Example
-    /// ```rust
-    /// use reqwest::{cookie::Jar, Client};
-    /// use std::sync::Arc;
-    ///
-    /// use goose::prelude::*;
-    ///
-    /// task!(custom_cookie_with_custom_client).set_on_start();
-    ///
-    /// async fn custom_cookie_with_custom_client(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn custom_cookie(user: &mut GooseUser) -> GooseTaskResult {
     ///     // Prepare the contents of a custom cookie.
     ///     let cookie = "my-custom-cookie=custom-value";
     ///
-    ///     // Pre-load one or more cookies into a custom cookie jar to use with this client.
-    ///     let jar = Jar::default();
-    ///     jar.add_cookie_str(
+    ///     // Pre-load one or more cookies into the GooseUser.
+    ///     user.add_cookie_str(
     ///         cookie,
-    ///         &user.base_url,
     ///     );
-    ///
-    ///     // Build a custom client.
-    ///     let builder = Client::builder()
-    ///         .user_agent("example-loadtest")
-    ///         .cookie_store(true)
-    ///         .cookie_provider(Arc::new(jar))
-    ///         .gzip(true);
-    ///
-    ///     // Assign the custom client to this GooseUser.
-    ///     user.set_client_builder(builder).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub async fn set_client_builder(
-        &mut self,
-        builder: ClientBuilder,
-    ) -> Result<(), GooseTaskError> {
-        self.client = builder.build()?;
+    pub fn add_cookie_str(&mut self, cookie: &str) {
+        self.cookie_store.add_cookie_str(cookie, &self.base_url);
+    }
 
-        Ok(())
+    /// Default headers can be manually set to each [`GooseUser`](./goose/struct.GooseUser.html).
+    /// The headers will automatically been added to each request made by the [`GooseUser`](./goose/struct.GooseUser.html).
+    ///
+    /// Default headers doesn't overwrite already appended headers.
+    /// ## Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use reqwest::header;
+    ///
+    /// task!(add_default_header).set_on_start();
+    ///
+    /// async fn add_default_header(user: &mut GooseUser) -> GooseTaskResult {
+    ///
+    ///     // Build a custom HeaderMap to include with all requests made by this client.
+    ///     user.add_default_header("X-Custom-Header", header::HeaderValue::from_str("custom value").unwrap());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn add_default_header<K>(&mut self, key: K, val: HeaderValue)
+    where
+        K: IntoHeaderName,
+    {
+        self.headers.insert(key, val);
     }
 
     /// Some websites use multiple domains to serve traffic, redirecting depending on
