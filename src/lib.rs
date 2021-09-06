@@ -459,6 +459,7 @@ use lazy_static::lazy_static;
 use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use reqwest::{Client, ClientBuilder};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -489,6 +490,9 @@ const DEFAULT_WEBSOCKET_PORT: &str = "5117";
 lazy_static! {
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
 }
+
+/// By default Goose sets the following User-Agent header when making requests.
+pub static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 /// Internal representation of a weighted task list.
 type WeightedGooseTasks = Vec<(usize, String)>;
@@ -782,6 +786,8 @@ pub struct GooseAttack {
     started: Option<time::Instant>,
     /// All metrics merged together.
     metrics: GooseMetrics,
+    /// Shared request client
+    client: Client,
 }
 /// Goose's internal global state.
 impl GooseAttack {
@@ -794,21 +800,7 @@ impl GooseAttack {
     /// let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> Result<GooseAttack, GooseError> {
-        Ok(GooseAttack {
-            test_start_task: None,
-            test_stop_task: None,
-            task_sets: Vec::new(),
-            weighted_users: Vec::new(),
-            weighted_gaggle_users: Vec::new(),
-            defaults: GooseDefaults::default(),
-            configuration: GooseConfiguration::parse_args_default_or_exit(),
-            run_time: 0,
-            attack_mode: AttackMode::Undefined,
-            attack_phase: AttackPhase::Idle,
-            scheduler: GooseScheduler::RoundRobin,
-            started: None,
-            metrics: GooseMetrics::default(),
-        })
+        Self::initialize_with_config(GooseConfiguration::parse_args_default_or_exit())
     }
 
     /// Initialize a [`GooseAttack`](./struct.GooseAttack.html) with an already loaded
@@ -828,6 +820,13 @@ impl GooseAttack {
     pub fn initialize_with_config(
         configuration: GooseConfiguration,
     ) -> Result<GooseAttack, GooseError> {
+        let client = Client::builder()
+            .user_agent(APP_USER_AGENT)
+            .cookie_store(false)
+            // Enable gzip unless `--no-gzip` flag is enabled.
+            .gzip(!configuration.no_gzip)
+            .build()?;
+
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -842,7 +841,53 @@ impl GooseAttack {
             scheduler: GooseScheduler::RoundRobin,
             started: None,
             metrics: GooseMetrics::default(),
+            client,
         })
+    }
+
+    /// Define a reqwest::ClientBuilder used to build a reqwest Client shared among all the
+    /// [`GooseUser`](./goose/struct.GooseUser.html)s running.
+    ///
+    /// # Alternative Compression Algorithms
+    /// Reqwest also supports
+    /// [`brotli`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.brotli) and
+    /// [`deflate`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.deflate) compression.
+    ///
+    /// To enable either, you must enable the features in your load test's `Cargo.toml`, for example:
+    /// ```text
+    /// reqwest = { version = "^0.11.4",  default-features = false, features = [
+    ///     "brotli",
+    ///     "cookies",
+    ///     "deflate",
+    ///     "gzip",
+    ///     "json",
+    /// ] }
+    /// ```
+    ///
+    /// Once enabled, you can add `.brotli(true)` and/or `.deflate(true)` to your custom
+    /// [`reqwest::Client::builder()`], following the documentation above.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use reqwest::Client;
+    /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
+    ///     let client_builder = Client::builder()
+    ///         .user_agent(APP_USER_AGENT);
+    ///
+    ///     GooseAttack::initialize()?
+    ///         .set_scheduler(GooseScheduler::Random)
+    ///         .set_client_builder(client_builder)?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_client_builder(mut self, client_builder: ClientBuilder) -> Result<Self, GooseError> {
+        self.client = client_builder.cookie_store(false).build()?;
+        Ok(self)
     }
 
     /// Define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are
@@ -1131,6 +1176,7 @@ impl GooseAttack {
                     self.defaults.host.clone(),
                 )?;
                 weighted_users.push(GooseUser::new(
+                    self.client.clone(),
                     self.task_sets[*task_sets_index].task_sets_index,
                     base_url,
                     &self.configuration,
@@ -1589,7 +1635,8 @@ impl GooseAttack {
                         None,
                         self.defaults.host.clone(),
                     )?;
-                    let mut user = GooseUser::single(base_url, &self.configuration)?;
+                    let mut user =
+                        GooseUser::single(self.client.clone(), base_url, &self.configuration)?;
                     let function = &t.function;
                     let _ = function(&mut user).await;
                 }
@@ -1615,7 +1662,8 @@ impl GooseAttack {
                         None,
                         self.defaults.host.clone(),
                     )?;
-                    let mut user = GooseUser::single(base_url, &self.configuration)?;
+                    let mut user =
+                        GooseUser::single(self.client.clone(), base_url, &self.configuration)?;
                     let function = &t.function;
                     let _ = function(&mut user).await;
                 }

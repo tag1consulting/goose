@@ -1,5 +1,6 @@
 use gumdrop::Options;
 use nng::*;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::io::BufWriter;
 use std::sync::atomic::Ordering;
@@ -136,7 +137,9 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         if worker_id == 0 {
             worker_id = initializer.worker_id;
         }
+        let client = Client::builder().build().unwrap();
         let user = GooseUser::new(
+            client,
             initializer.task_sets_index,
             Url::parse(&initializer.base_url).unwrap(),
             &initializer.config,
