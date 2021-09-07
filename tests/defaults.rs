@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 
@@ -136,9 +137,9 @@ fn validate_test(
     }
 }
 
-#[test]
+#[tokio::test]
 // Configure load test with set_default.
-fn test_defaults() {
+async fn test_defaults() {
     // Multiple tests run together, so set a unique name.
     let request_log = "defaults-".to_string() + REQUEST_LOG;
     let debug_log = "defaults-".to_string() + DEBUG_LOG;
@@ -202,6 +203,7 @@ fn test_defaults() {
         .set_default(GooseDefault::StickyFollow, true)
         .unwrap()
         .execute()
+        .await
         .unwrap();
 
     validate_test(
@@ -215,11 +217,11 @@ fn test_defaults() {
     goose_metrics.print();
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Configure load test with set_default, run as Gaggle.
-fn test_defaults_gaggle() {
+async fn test_defaults_gaggle() {
     // Multiple tests run together, so set a unique name.
     let request_log = "gaggle-defaults".to_string() + REQUEST_LOG;
     let debug_log = "gaggle-defaults".to_string() + DEBUG_LOG;
@@ -255,8 +257,8 @@ fn test_defaults_gaggle() {
         let worker_configuration = configuration.clone();
         let worker_request_log = request_log.clone() + &i.to_string();
         let worker_debug_log = debug_log.clone() + &i.to_string();
-        worker_handles.push(std::thread::spawn(move || {
-            let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
+        worker_handles.push(tokio::spawn(
+            crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
                 .register_taskset(taskset!("Index").register_task(task!(get_index)))
                 .register_taskset(taskset!("About").register_task(task!(get_about)))
@@ -280,9 +282,8 @@ fn test_defaults_gaggle() {
                 .unwrap()
                 .set_default(GooseDefault::ManagerPort, PORT)
                 .unwrap()
-                .execute()
-                .unwrap();
-        }));
+                .execute(),
+        ));
     }
 
     // Start manager instance in current thread and run a distributed load test.
@@ -325,12 +326,11 @@ fn test_defaults_gaggle() {
         .set_default(GooseDefault::ManagerBindPort, PORT)
         .unwrap()
         .execute()
+        .await
         .unwrap();
 
     // Wait for both worker threads to finish and exit.
-    for worker_handle in worker_handles {
-        let _ = worker_handle.join();
-    }
+    join_all(worker_handles).await;
 
     let mut request_logs: Vec<String> = vec![];
     let mut debug_logs: Vec<String> = vec![];
@@ -346,9 +346,9 @@ fn test_defaults_gaggle() {
     goose_metrics.print();
 }
 
-#[test]
+#[tokio::test]
 // Configure load test with run time options (not with defaults).
-fn test_no_defaults() {
+async fn test_no_defaults() {
     // Multiple tests run together, so set a unique name.
     let requests_file = "nodefaults-".to_string() + REQUEST_LOG;
     let debug_file = "nodefaults-".to_string() + DEBUG_LOG;
@@ -395,6 +395,7 @@ fn test_no_defaults() {
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
         .register_taskset(taskset!("About").register_task(task!(get_about)))
         .execute()
+        .await
         .unwrap();
 
     validate_test(
@@ -408,11 +409,11 @@ fn test_no_defaults() {
     goose_metrics.print();
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Configure load test with run time options (not with defaults), run as Gaggle.
-fn test_no_defaults_gaggle() {
+async fn test_no_defaults_gaggle() {
     let requests_file = "gaggle-nodefaults".to_string() + REQUEST_LOG;
     let debug_file = "gaggle-nodefaults".to_string() + DEBUG_LOG;
 
@@ -459,14 +460,13 @@ fn test_no_defaults_gaggle() {
             ],
         );
         println!("{:#?}", worker_configuration);
-        worker_handles.push(std::thread::spawn(move || {
-            let _ = crate::GooseAttack::initialize_with_config(worker_configuration)
+        worker_handles.push(tokio::spawn(
+            crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
                 .register_taskset(taskset!("Index").register_task(task!(get_index)))
                 .register_taskset(taskset!("About").register_task(task!(get_about)))
-                .execute()
-                .unwrap();
-        }));
+                .execute(),
+        ));
     }
 
     let manager_configuration = common::build_configuration(
@@ -499,12 +499,11 @@ fn test_no_defaults_gaggle() {
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
         .register_taskset(taskset!("About").register_task(task!(get_about)))
         .execute()
+        .await
         .unwrap();
 
     // Wait for both worker threads to finish and exit.
-    for worker_handle in worker_handles {
-        let _ = worker_handle.join();
-    }
+    join_all(worker_handles).await;
 
     let mut requests_files: Vec<String> = vec![];
     let mut debug_files: Vec<String> = vec![];
@@ -525,9 +524,9 @@ fn test_no_defaults_gaggle() {
     goose_metrics.print();
 }
 
-#[test]
+#[tokio::test]
 // Configure load test with defaults, disable metrics.
-fn test_defaults_no_metrics() {
+async fn test_defaults_no_metrics() {
     let server = MockServer::start();
 
     // Setup the mock endpoints needed for this test.
@@ -554,6 +553,7 @@ fn test_defaults_no_metrics() {
         .set_default(GooseDefault::NoMetrics, true)
         .unwrap()
         .execute()
+        .await
         .unwrap();
 
     // Confirm that we loaded the mock endpoints.

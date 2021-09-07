@@ -731,7 +731,8 @@ impl GooseTaskMetricAggregate {
 /// ```rust
 /// use goose::prelude::*;
 ///
-/// fn main() -> Result<(), GooseError> {
+/// #[tokio::main]
+/// async fn main() -> Result<(), GooseError> {
 ///     let goose_metrics: GooseMetrics = GooseAttack::initialize()?
 ///         .register_taskset(taskset!("ExampleUsers")
 ///             .register_task(task!(example_task))
@@ -740,7 +741,8 @@ impl GooseTaskMetricAggregate {
 ///         .set_default(GooseDefault::Host, "http://localhost/")?
 ///         // Set a default run time so this test runs to completion.
 ///         .set_default(GooseDefault::RunTime, 1)?
-///         .execute()?;
+///         .execute()
+///         .await?;
 ///
 ///     // It is now possible to do something with the metrics collected by Goose.
 ///     // For now, we'll just pretty-print the entire object.
@@ -931,7 +933,8 @@ impl GooseMetrics {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleUsers")
     ///             .register_task(task!(example_task))
@@ -940,7 +943,8 @@ impl GooseMetrics {
     ///         .set_default(GooseDefault::Host, "http://localhost/")?
     ///         // Set a default run time so this test runs to completion.
     ///         .set_default(GooseDefault::RunTime, 1)?
-    ///         .execute()?
+    ///         .execute()
+    ///         .await?
     ///         .print();
     ///
     ///     Ok(())

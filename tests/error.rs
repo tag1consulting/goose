@@ -150,7 +150,7 @@ fn get_tasks() -> GooseTaskSet {
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(test_type: TestType) {
+async fn run_standalone_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -169,14 +169,15 @@ fn run_standalone_test(test_type: TestType) {
     let goose_metrics = common::run_load_test(
         common::build_load_test(configuration.clone(), &get_tasks(), None, None),
         None,
-    );
+    )
+    .await;
 
     // Confirm that the load test ran correctly.
     validate_error(&goose_metrics, &mock_endpoints, &configuration, test_type);
 }
 
 // Helper to run all standalone tests.
-fn run_gaggle_test(test_type: TestType) {
+async fn run_gaggle_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -213,7 +214,7 @@ fn run_gaggle_test(test_type: TestType) {
         common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
 
     // Run the Goose Attack.
-    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles));
+    let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     // Confirm that the load test ran correctly.
     validate_error(
@@ -224,31 +225,31 @@ fn run_gaggle_test(test_type: TestType) {
     );
 }
 
-#[test]
+#[tokio::test]
 // Confirm that errors show up in the summary when enabled.
-fn test_error_summary() {
-    run_standalone_test(TestType::ErrorSummary);
+async fn test_error_summary() {
+    run_standalone_test(TestType::ErrorSummary).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Confirm that errors show up in the summary when enabled, in Gaggle mode.
-fn test_error_summary_gaggle() {
-    run_gaggle_test(TestType::ErrorSummary);
+async fn test_error_summary_gaggle() {
+    run_gaggle_test(TestType::ErrorSummary).await;
 }
 
-#[test]
+#[tokio::test]
 // Confirm that errors do not show up in the summary when --no-error-summary is enabled.
-fn test_no_error_summary() {
-    run_standalone_test(TestType::NoErrorSummary);
+async fn test_no_error_summary() {
+    run_standalone_test(TestType::NoErrorSummary).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Confirm that errors do not show up in the summary when --no-error-summary is enabled,
 // in Gaggle mode.
-fn test_no_error_summary_gaggle() {
-    run_gaggle_test(TestType::NoErrorSummary);
+async fn test_no_error_summary_gaggle() {
+    run_gaggle_test(TestType::NoErrorSummary).await;
 }

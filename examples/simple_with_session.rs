@@ -32,7 +32,8 @@ struct AuthenticationResponse {
     jwt_token: String,
 }
 
-fn main() -> Result<(), GooseError> {
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(
@@ -44,7 +45,8 @@ fn main() -> Result<(), GooseError> {
                 // These next two tasks run repeatedly as long as the load test is running.
                 .register_task(task!(authenticated_index)),
         )
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())

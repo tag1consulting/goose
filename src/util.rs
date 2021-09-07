@@ -535,10 +535,8 @@ mod tests {
         assert_eq!(truncate_string("abcde", 2), "..");
     }
 
-    #[test]
-    fn timer() {
-        use std::thread;
-
+    #[tokio::test]
+    async fn timer() {
         let started = time::Instant::now();
 
         // 60 second timer has not expired.
@@ -548,7 +546,7 @@ mod tests {
         assert!(!timer_expired(started, 0));
 
         let sleep_duration = time::Duration::from_secs(1);
-        thread::sleep(sleep_duration);
+        tokio::time::sleep(sleep_duration).await;
 
         // Timer is now expired.
         assert!(timer_expired(started, 1));

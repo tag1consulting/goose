@@ -146,7 +146,7 @@ fn build_goose_attack(test_type: &TestType, configuration: GooseConfiguration) -
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(test_type: TestType) {
+async fn run_standalone_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -160,14 +160,14 @@ fn run_standalone_test(test_type: TestType) {
     let goose_attack = build_goose_attack(&test_type, configuration);
 
     // Run the load test.
-    common::run_load_test(goose_attack, None);
+    common::run_load_test(goose_attack, None).await;
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
 }
 
 // Helper to run all gaggle tests.
-fn run_gaggle_test(test_type: TestType) {
+async fn run_gaggle_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -189,50 +189,50 @@ fn run_gaggle_test(test_type: TestType) {
     let goose_attack = build_goose_attack(&test_type, manager_configuration);
 
     // Run the load test.
-    common::run_load_test(goose_attack, Some(worker_handles));
+    common::run_load_test(goose_attack, Some(worker_handles)).await;
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
 }
 
-#[test]
+#[tokio::test]
 // Test test_start().
-fn test_setup() {
-    run_standalone_test(TestType::Start);
+async fn test_setup() {
+    run_standalone_test(TestType::Start).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test test_start(), in Gaggle mode.
-fn test_setup_gaggle() {
-    run_gaggle_test(TestType::Start);
+async fn test_setup_gaggle() {
+    run_gaggle_test(TestType::Start).await;
 }
 
-#[test]
+#[tokio::test]
 // Test test_stop().
-fn test_teardown() {
-    run_standalone_test(TestType::Stop);
+async fn test_teardown() {
+    run_standalone_test(TestType::Stop).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test test_stop(), in Gaggle mode.
-fn test_teardown_gaggle() {
-    run_gaggle_test(TestType::Stop);
+async fn test_teardown_gaggle() {
+    run_gaggle_test(TestType::Stop).await;
 }
 
-#[test]
+#[tokio::test]
 /// Test test_start and test_stop together.
-fn test_setup_teardown() {
-    run_standalone_test(TestType::StartAndStop);
+async fn test_setup_teardown() {
+    run_standalone_test(TestType::StartAndStop).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 /// Test test_start and test_stop together, in Gaggle mode.
-fn test_setup_teardown_gaggle() {
-    run_gaggle_test(TestType::StartAndStop);
+async fn test_setup_teardown_gaggle() {
+    run_gaggle_test(TestType::StartAndStop).await;
 }

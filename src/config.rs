@@ -465,7 +465,8 @@ pub enum GooseDefault {
 /// ```rust
 /// use goose::prelude::*;
 ///
-/// fn main() -> Result<(), GooseError> {
+/// #[tokio::main]
+/// async fn main() -> Result<(), GooseError> {
 ///     GooseAttack::initialize()?
 ///         .set_default(GooseDefault::Host, "local.dev")?;
 ///
@@ -537,7 +538,8 @@ pub trait GooseDefaultType<T> {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         // Do not reset the metrics after the load test finishes starting.
     ///         .set_default(GooseDefault::NoResetMetrics, true)?

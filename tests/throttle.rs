@@ -154,11 +154,11 @@ fn get_tasks() -> GooseTaskSet {
         .register_task(task!(get_about))
 }
 
-#[test]
+#[tokio::test]
 // Enable throttle to confirm it limits the number of request per second.
 // Increase the throttle and confirm it increases the number of requests
 // per second.
-fn test_throttle() {
+async fn test_throttle() {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -180,7 +180,8 @@ fn test_throttle() {
     common::run_load_test(
         common::build_load_test(configuration, &get_tasks(), None, None),
         None,
-    );
+    )
+    .await;
 
     // Confirm that the load test was actually throttled.
     let test1_lines = validate_test(
@@ -209,7 +210,8 @@ fn test_throttle() {
     common::run_load_test(
         common::build_load_test(configuration, &get_tasks(), None, None),
         None,
-    );
+    )
+    .await;
 
     // Confirm that the load test was actually throttled, at an increased rate.
     let _ = validate_test(
@@ -220,12 +222,12 @@ fn test_throttle() {
     );
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Enable throttle to confirm it limits the number of request per second, in
 // Gaggle mode. Increase the throttle and confirm it increases the number of
 // requests per second, in Gaggle mode.
-fn test_throttle_gaggle() {
+async fn test_throttle_gaggle() {
     // Multiple tests run together, so set a unique name.
     let request_log = "gaggle-".to_string() + REQUEST_LOG;
 
@@ -250,10 +252,10 @@ fn test_throttle_gaggle() {
         let worker_goose_attack =
             common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
         // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            common::run_load_test(worker_goose_attack, None);
-        }));
+        worker_handles.push(tokio::spawn(common::run_load_test(
+            worker_goose_attack,
+            None,
+        )));
     }
 
     // Start manager instance in current thread and run a distributed load test.
@@ -272,7 +274,7 @@ fn test_throttle_gaggle() {
         common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
 
     // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles));
+    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     // Confirm that the load test was actually throttled.
     let test1_lines = validate_test(
@@ -302,10 +304,10 @@ fn test_throttle_gaggle() {
         let worker_goose_attack =
             common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
         // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            common::run_load_test(worker_goose_attack, None);
-        }));
+        worker_handles.push(tokio::spawn(common::run_load_test(
+            worker_goose_attack,
+            None,
+        )));
     }
 
     // Build the load test for the Manager.
@@ -313,7 +315,7 @@ fn test_throttle_gaggle() {
         common::build_load_test(manager_configuration, &get_tasks(), None, None);
 
     // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles));
+    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     // Confirm that the load test was actually throttled, at an increased rate.
     let _ = validate_test(

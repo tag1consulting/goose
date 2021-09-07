@@ -3,7 +3,7 @@ use nng::*;
 use serde::{Deserialize, Serialize};
 use std::io::BufWriter;
 use std::sync::atomic::Ordering;
-use std::{thread, time};
+use std::time;
 use url::Url;
 
 const EMPTY_ARGS: Vec<&str> = vec![];
@@ -49,7 +49,7 @@ pub fn register_shutdown_pipe_handler(manager: &Socket) {
         .expect("failed to set up new pipe handler");
 }
 
-pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
+pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
     // Creates a TCP address.
     let address = format!(
         "tcp://{}:{}",
@@ -68,7 +68,7 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
         .expect("failed to set up pipe handler");
 
     // Pause 1/10 of a second in case we're blocking on a cargo lock.
-    thread::sleep(time::Duration::from_millis(100));
+    tokio::time::sleep(time::Duration::from_millis(100)).await;
     // Connect to manager.
     let mut retries = 0;
     loop {
@@ -84,7 +84,7 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                     "sleeping {:?} milliseconds waiting for manager...",
                     sleep_duration
                 );
-                thread::sleep(sleep_duration);
+                tokio::time::sleep(sleep_duration).await;
                 retries += 1;
             }
         }
@@ -198,7 +198,7 @@ pub(crate) async fn worker_main(goose_attack: &GooseAttack) -> GooseAttack {
                     get_worker_id(),
                     sleep_duration
                 );
-                thread::sleep(sleep_duration);
+                tokio::time::sleep(sleep_duration).await;
             }
         }
     }

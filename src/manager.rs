@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::io::BufWriter;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::{thread, time};
+use std::time;
 
 use crate::metrics::{
     self, GooseErrorMetricAggregate, GooseErrorMetrics, GooseRequestMetricAggregate,
@@ -577,7 +577,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     }
                     if !load_test_finished {
                         // Sleep a tenth of a second then return to the loop.
-                        thread::sleep(time::Duration::from_millis(100));
+                        tokio::time::sleep(time::Duration::from_millis(100)).await;
                     }
                 } else {
                     panic!("error receiving user message: {}", e);

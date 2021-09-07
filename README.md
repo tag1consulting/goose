@@ -82,12 +82,14 @@ The function is declared `async` so that we don't block a CPU-core while loading
 We have to tell Goose about our new task function. Edit the `main()` function, setting a return type and replacing the hello world text as follows:
 
 ```rust
-fn main() -> Result<(), GooseError> {
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))
         )
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())
@@ -436,7 +438,8 @@ The following simple example helps illustrate how the different schedulers work.
             .register_task(task!(task1))
             .register_task(task!(task2).set_weight(2)?)
         )
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())
@@ -476,7 +479,8 @@ All run-time options can be configured with custom defaults. For example, you ma
             .register_task(task!(loadtest_index))
         )
         .set_default(GooseDefault::Host, "http://local.dev/")?
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())
@@ -540,7 +544,8 @@ For example, without any run-time options the following load test would automati
         .set_default(GooseDefault::RunTime, 900)?
         .set_default(GooseDefault::RunningMetrics, 60)?
         .set_default(GooseDefault::StatusCodes, true)?
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())

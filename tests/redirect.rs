@@ -315,7 +315,7 @@ fn get_tasks(test_type: &TestType) -> GooseTaskSet {
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(test_type: TestType) {
+async fn run_standalone_test(test_type: TestType) {
     // Start the mock servers.
     let server1 = MockServer::start();
     let server2 = MockServer::start();
@@ -334,14 +334,15 @@ fn run_standalone_test(test_type: TestType) {
     common::run_load_test(
         common::build_load_test(configuration, &get_tasks(&test_type), None, None),
         None,
-    );
+    )
+    .await;
 
     // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
 
 // Helper to run all standalone tests.
-fn run_gaggle_test(test_type: TestType) {
+async fn run_gaggle_test(test_type: TestType) {
     // Start the mock servers.
     let server1 = MockServer::start();
     let server2 = MockServer::start();
@@ -375,60 +376,60 @@ fn run_gaggle_test(test_type: TestType) {
         common::build_load_test(manager_configuration, &get_tasks(&test_type), None, None);
 
     // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles));
+    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     // Confirm that the load test was actually redirected.
     validate_redirect(&test_type, &mock_endpoints);
 }
 
-#[test]
+#[tokio::test]
 // Request a page that redirects multiple times with different redirect headers.
-fn test_redirect() {
-    run_standalone_test(TestType::Chain);
+async fn test_redirect() {
+    run_standalone_test(TestType::Chain).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Request a page that redirects multiple times with different redirect headers,
 // in Gaggle mode.
-fn test_redirect_gaggle() {
-    run_gaggle_test(TestType::Chain);
+async fn test_redirect_gaggle() {
+    run_gaggle_test(TestType::Chain).await;
 }
 
-#[test]
+#[tokio::test]
 // Request a page that redirects to another domain.
 // Different domains are simulated with multiple mock servers running on different
 // ports.
-fn test_domain_redirect() {
-    run_standalone_test(TestType::Domain);
+async fn test_domain_redirect() {
+    run_standalone_test(TestType::Domain).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Request a page that redirects to another domain, in Gaggle mode.
 // Different domains are simulated with multiple mock servers running on different
 // ports.
-fn test_domain_redirect_gaggle() {
-    run_gaggle_test(TestType::Domain);
+async fn test_domain_redirect_gaggle() {
+    run_gaggle_test(TestType::Domain).await;
 }
 
-#[test]
+#[tokio::test]
 // Request a page that redirects to another domain with --sticky-follow enabled.
 // Different domains are simulated with multiple mock servers running on different
 // ports.
-fn test_sticky_domain_redirect() {
-    run_standalone_test(TestType::Sticky);
+async fn test_sticky_domain_redirect() {
+    run_standalone_test(TestType::Sticky).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Request a page that redirects to another domain with --sticky-follow enabled, in
 // Gaggle mode.
 // Different domains are simulated with multiple mock servers running on different
 // ports.
-fn test_sticky_domain_redirect_gaggle() {
-    run_gaggle_test(TestType::Sticky);
+async fn test_sticky_domain_redirect_gaggle() {
+    run_gaggle_test(TestType::Sticky).await;
 }

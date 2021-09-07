@@ -227,7 +227,7 @@ fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
 }
 
 // Helper to run all standalone tests.
-fn run_standalone_test(test_type: TestType) {
+async fn run_standalone_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -263,14 +263,14 @@ fn run_standalone_test(test_type: TestType) {
     }
 
     // Run the Goose Attack.
-    common::run_load_test(goose_attack, None);
+    common::run_load_test(goose_attack, None).await;
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
 }
 
 // Helper to run all gaggle tests.
-fn run_gaggle_test(test_type: TestType) {
+async fn run_gaggle_test(test_type: TestType) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -336,54 +336,54 @@ fn run_gaggle_test(test_type: TestType) {
     }
 
     // Run the Goose Attack.
-    common::run_load_test(manager_goose_attack, Some(worker_handles));
+    common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     // Confirm the load test ran correctly.
     validate_test(&test_type, &mock_endpoints);
 }
 
-#[test]
+#[tokio::test]
 // Load test with multiple tasks and no sequences defined.
-fn test_not_sequenced() {
-    run_standalone_test(TestType::NotSequenced);
+async fn test_not_sequenced() {
+    run_standalone_test(TestType::NotSequenced).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks and no sequences defined, in Gaggle mode.
-fn test_not_sequenced_gaggle() {
-    run_gaggle_test(TestType::NotSequenced);
+async fn test_not_sequenced_gaggle() {
+    run_gaggle_test(TestType::NotSequenced).await;
 }
 
-#[test]
+#[tokio::test]
 // Load test with multiple tasks and sequences defined, using the
 // round robin scheduler.
-fn test_sequenced_round_robin() {
-    run_standalone_test(TestType::SequencedRoundRobin);
+async fn test_sequenced_round_robin() {
+    run_standalone_test(TestType::SequencedRoundRobin).await;
 }
 
-#[test]
+#[tokio::test]
 // Load test with multiple tasks and sequences defined, using the
 // sequential scheduler.
-fn test_sequenced_sequential() {
-    run_standalone_test(TestType::SequencedSerial);
+async fn test_sequenced_sequential() {
+    run_standalone_test(TestType::SequencedSerial).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks and sequences defined, using the
 // round robin scheduler, in Gaggle mode.
-fn test_sequenced_round_robin_gaggle() {
-    run_gaggle_test(TestType::SequencedRoundRobin);
+async fn test_sequenced_round_robin_gaggle() {
+    run_gaggle_test(TestType::SequencedRoundRobin).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple tasks and sequences defined, using the
 // sequential scheduler, in Gaggle mode.
-fn test_sequenced_sequential_gaggle() {
-    run_gaggle_test(TestType::SequencedSerial);
+async fn test_sequenced_sequential_gaggle() {
+    run_gaggle_test(TestType::SequencedSerial).await;
 }

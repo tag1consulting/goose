@@ -109,7 +109,8 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! fn main() -> Result<(), GooseError> {
+//! #[tokio::main]
+//! async fn main() -> Result<(), GooseError> {
 //!     let _goose_metrics = GooseAttack::initialize()?
 //!         .register_taskset(taskset!("LoadtestTasks")
 //!             // Register the foo task, assigning it a weight of 10.
@@ -123,7 +124,8 @@
 //!         .set_default(GooseDefault::Host, "http://dev.local/")?
 //!         // We set a default run time so this test runs to completion.
 //!         .set_default(GooseDefault::RunTime, 1)?
-//!         .execute()?;
+//!         .execute()
+//!         .await?;
 //!
 //!     Ok(())
 //! }
@@ -469,7 +471,6 @@ use std::sync::{
 use std::time::Duration;
 use std::{fmt, io, time};
 use tokio::fs::File;
-use tokio::runtime::Runtime;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
@@ -876,7 +877,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .set_scheduler(GooseScheduler::Random)
     ///         .register_taskset(taskset!("A Tasks")
@@ -915,7 +917,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task))
@@ -963,7 +966,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .test_start(task!(setup));
     ///
@@ -992,7 +996,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .test_stop(task!(teardown));
     ///
@@ -1222,7 +1227,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2)?)
@@ -1232,7 +1238,8 @@ impl GooseAttack {
     ///         )
     ///         // Exit after one second so test doesn't run forever.
     ///         .set_default(GooseDefault::RunTime, 1)?
-    ///         .execute()?;
+    ///         .execute()
+    ///         .await?;
     ///
     ///     Ok(())
     /// }
@@ -1249,7 +1256,7 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     /// ```
-    pub fn execute(mut self) -> Result<GooseMetrics, GooseError> {
+    pub async fn execute(mut self) -> Result<GooseMetrics, GooseError> {
         // If version flag is set, display package name and version and exit.
         if self.configuration.version {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
@@ -1316,8 +1323,7 @@ impl GooseAttack {
         if self.attack_mode == AttackMode::Manager {
             #[cfg(feature = "gaggle")]
             {
-                let rt = Runtime::new().unwrap();
-                self = rt.block_on(manager::manager_main(self));
+                self = manager::manager_main(self).await;
             }
 
             #[cfg(not(feature = "gaggle"))]
@@ -1331,8 +1337,7 @@ impl GooseAttack {
         else if self.attack_mode == AttackMode::Worker {
             #[cfg(feature = "gaggle")]
             {
-                let rt = Runtime::new().unwrap();
-                self = rt.block_on(worker::worker_main(&self));
+                self = worker::worker_main(self).await;
             }
 
             #[cfg(not(feature = "gaggle"))]
@@ -1345,8 +1350,7 @@ impl GooseAttack {
         }
         // Start goose in single-process mode.
         else {
-            let rt = Runtime::new().unwrap();
-            self = rt.block_on(self.start_attack(None))?;
+            self = self.start_attack(None).await?;
         }
 
         Ok(self.metrics)

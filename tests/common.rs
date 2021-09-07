@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use gumdrop::Options;
 use httpmock::MockServer;
 use std::io::{self, BufRead};
@@ -7,7 +8,7 @@ use goose::goose::{GooseTask, GooseTaskSet};
 use goose::metrics::GooseMetrics;
 use goose::GooseAttack;
 
-type WorkerHandles = Vec<std::thread::JoinHandle<()>>;
+type WorkerHandles = Vec<tokio::task::JoinHandle<GooseMetrics>>;
 
 /// Not all functions are used by all tests, so we enable allow(dead_code) to avoid
 /// compiler warnings during testing.
@@ -75,10 +76,7 @@ pub fn launch_gaggle_workers<F: Fn() -> GooseAttack>(
     for _ in 0..expect_workers {
         let worker_goose_attack = goose_attack_provider();
         // Start worker instance of the load test.
-        worker_handles.push(std::thread::spawn(move || {
-            // Run the load test as configured.
-            run_load_test(worker_goose_attack, None);
-        }));
+        worker_handles.push(tokio::spawn(run_load_test(worker_goose_attack, None)));
     }
 
     worker_handles
@@ -110,19 +108,17 @@ pub fn build_load_test(
 }
 
 /// Run the actual load test, returning the GooseMetrics.
-pub fn run_load_test(
+pub async fn run_load_test(
     goose_attack: GooseAttack,
     worker_handles: Option<WorkerHandles>,
 ) -> GooseMetrics {
     // Execute the load test.
-    let goose_metrics = goose_attack.execute().unwrap();
+    let goose_metrics = goose_attack.execute().await.unwrap();
 
     // If this is a Manager test, first wait for the Workers to exit to return.
     if let Some(handles) = worker_handles {
         // Wait for both worker threads to finish and exit.
-        for handle in handles {
-            let _ = handle.join();
-        }
+        join_all(handles).await;
     }
 
     goose_metrics

@@ -108,7 +108,7 @@ fn get_tasks() -> GooseTaskSet {
 
 // Helper to run the test, takes a flag for indicating if running in standalone
 // mode or Gaggle mode.
-fn run_load_test(is_gaggle: bool) {
+async fn run_load_test(is_gaggle: bool) {
     // Start the mock server.
     let server = MockServer::start();
 
@@ -125,7 +125,8 @@ fn run_load_test(is_gaggle: bool) {
             common::run_load_test(
                 common::build_load_test(configuration, &get_tasks(), None, None),
                 None,
-            );
+            )
+            .await;
         }
         true => {
             // Build common configuration.
@@ -144,7 +145,8 @@ fn run_load_test(is_gaggle: bool) {
             common::run_load_test(
                 common::build_load_test(manager_configuration, &get_tasks(), None, None),
                 Some(worker_handles),
-            );
+            )
+            .await;
         }
     }
 
@@ -152,17 +154,17 @@ fn run_load_test(is_gaggle: bool) {
     validate_test(&mock_endpoints);
 }
 
-#[test]
+#[tokio::test]
 // Test taskset with only on_start() and on_stop() tasks.
-fn test_no_normal_tasks() {
+async fn test_no_normal_tasks() {
     // Run load test with is_gaggle set to false.
-    run_load_test(false);
+    run_load_test(false).await;
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 // Test taskset with only on_start() and on_stop() tasks, in Gaggle mode.
-fn test_no_normal_tasks_gaggle() {
+async fn test_no_normal_tasks_gaggle() {
     // Run load test with is_gaggle set to true.
-    run_load_test(true);
+    run_load_test(true).await;
 }
