@@ -29,7 +29,8 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! fn main() -> Result<(), GooseError> {
+//! #[tokio::main]
+//! async fn main() -> Result<(), GooseError> {
 //!     let mut foo_tasks = taskset!("FooTasks").set_weight(10)?;
 //!     let mut bar_tasks = taskset!("BarTasks").set_weight(5)?;
 //!
@@ -112,7 +113,8 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! fn main() -> Result<(), GooseError> {
+//! #[tokio::main]
+//! async fn main() -> Result<(), GooseError> {
 //!     let mut a_task = task!(a_task_function).set_weight(9)?;
 //!     let mut b_task = task!(b_task_function).set_weight(3)?;
 //!

@@ -877,7 +877,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .set_scheduler(GooseScheduler::Random)
     ///         .register_taskset(taskset!("A Tasks")
@@ -916,7 +917,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .register_taskset(taskset!("ExampleTasks")
     ///             .register_task(task!(example_task))
@@ -964,7 +966,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .test_start(task!(setup));
     ///
@@ -993,7 +996,8 @@ impl GooseAttack {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// fn main() -> Result<(), GooseError> {
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .test_stop(task!(teardown));
     ///

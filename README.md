@@ -88,7 +88,8 @@ async fn main() -> Result<(), GooseError> {
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))
         )
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())
@@ -437,7 +438,8 @@ The following simple example helps illustrate how the different schedulers work.
             .register_task(task!(task1))
             .register_task(task!(task2).set_weight(2)?)
         )
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())
@@ -477,7 +479,8 @@ All run-time options can be configured with custom defaults. For example, you ma
             .register_task(task!(loadtest_index))
         )
         .set_default(GooseDefault::Host, "http://local.dev/")?
-        .execute()?
+        .execute()
+        .await?
         .print();
 
     Ok(())
