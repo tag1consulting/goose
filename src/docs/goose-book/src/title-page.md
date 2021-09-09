@@ -1,20 +1,10 @@
-# Goose
-
-Have you ever been attacked by a goose?
-
-[![crates.io](https://img.shields.io/crates/v/goose.svg)](https://crates.io/crates/goose)
-[![Documentation](https://docs.rs/goose/badge.svg)](https://docs.rs/goose)
-[![Apache-2.0 licensed](https://img.shields.io/crates/l/goose.svg)](./LICENSE)
-[![CI](https://github.com/tag1consulting/goose/workflows/CI/badge.svg)](https://github.com/tag1consulting/goose/actions?query=workflow%3ACI)
-[![Docker Repository on Quay](https://quay.io/repository/tag1consulting/goose/status "Docker Repository on Quay")](https://quay.io/repository/tag1consulting/goose)
-
-## Overview
+# What Is Goose?
 
 Goose is a Rust load testing tool inspired by [Locust](https://locust.io/). User behavior is defined with standard Rust code. Load tests are applications that have a dependency on the Goose library. Web requests are made with the [Reqwest](https://docs.rs/reqwest) HTTP Client.
 
-### Documentation
+## Additional Documentation
 
-- [The Goose Book](https://github.com/tag1consulting/goose/TBD)
+- [README](https://github.com/tag1consulting/goose/blob/main/README.md)
 - [Developer documentation](https://docs.rs/goose/)
 - [Blogs and more](https://tag1.com/goose/)
   - [Goose vs Locust and jMeter](https://www.tag1consulting.com/blog/jmeter-vs-locust-vs-goose)
