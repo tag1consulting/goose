@@ -8,6 +8,6 @@ The throttle is specified as an integer and imposes a maximum number of requests
 
 In this example, Goose will launch 100 GooseUser threads, but the throttle will prevent them from generating a combined total of more than 5 requests per second.
 
-```rust
+```bash
 $ cargo run --release -- -H http://local.dev/ -u100 -r20 -v --throttle-requests 5
 ```

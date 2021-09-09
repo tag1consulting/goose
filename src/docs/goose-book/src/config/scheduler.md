@@ -6,30 +6,34 @@ The `GooseScheduler` can be configured to instead launch `GooseTaskSet`s and `Go
 
 Prior to Goose `0.10.6` `GooseTaskSet`s were allocated in a serial order. Prior to Goose `0.11.1` `GooseTask`s were allocated in a serial order. To restore the old behavior, you can use the `GooseAttack::set_scheduler()` method as follows:
 
-```rust
+```rust,ignore
     GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::Serial)
+        .set_scheduler(GooseScheduler::Serial);
 ```
 
 To instead randomize the order that `GooseTaskSet`s and `GooseTask`s are allocated, you can instead configure as follows:
 
-```rust
+```rust,ignore
     GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::Random)
+        .set_scheduler(GooseScheduler::Random);
 ```
 
 The following configuration is possible but superfluous because it is the scheduling default, and is therefor how Goose behaves even if the `.set_scheduler()` method is not called at all:
 
-```rust
+```rust,ignore
     GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::RoundRobin)
+        .set_scheduler(GooseScheduler::RoundRobin);
 ```
 
 ## Scheduling Example
 
 The following simple example helps illustrate how the different schedulers work.
 
-```rust
+```rust,ignore
+use goose::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
         .register_taskset(taskset!("TaskSet1")
             .register_task(task!(task1).set_weight(2)?)
@@ -45,6 +49,7 @@ The following simple example helps illustrate how the different schedulers work.
         .print();
 
     Ok(())
+}
 ```
 
 ## Round Robin Scheduler

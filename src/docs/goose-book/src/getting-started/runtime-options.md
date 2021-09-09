@@ -2,7 +2,7 @@
 
 The `-h` flag will show all run-time configuration options available to Goose load tests. For example, you can pass the `-h` flag to our example loadtest as follows, `cargo run --release -- -h`:
 
-```
+```bash
 Usage: target/release/loadtest [OPTIONS]
 
 Options available when launching a Goose load test.

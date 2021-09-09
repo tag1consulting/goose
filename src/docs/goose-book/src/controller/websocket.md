@@ -27,7 +27,7 @@ Responses will always be in the following format:
 ```
 
 For example:
-```
+```bash
 % websocat ws://127.0.0.1:5117
 foo
 {"response":"unable to parse json, see Goose README.md","success":false}

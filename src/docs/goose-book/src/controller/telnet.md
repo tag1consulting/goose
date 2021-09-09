@@ -3,7 +3,7 @@
 The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with `GooseDefault::TelnetHost`,`GooseDefault::TelnetPort`, and `GooseDefault::NoTelnet`.
 
 To learn about all available commands, telnet into the Controller thread and enter `help` (or `?`), for example:
-```
+```bash
 % telnet localhost 5116
 Trying 127.0.0.1...
 Connected to localhost.

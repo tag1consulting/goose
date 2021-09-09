@@ -4,14 +4,14 @@ Goose can optionally attempt to mitigate Coordinated Omission by back-filling th
 
 When Goose detects an abnormally slow request (one in which the individual request takes longer than the normal `user_cadence`), it will generate an INFO level message (which will be visible if Goose was started with the `-v` run time flag, or written to the log if started with the `-g` run time flag and `--goose-log` is configured). For example:
 
-```
+```bash
 13:10:30 [INFO] 11.401s into goose attack: "GET http://apache/node/1557" [200] took abnormally long (1814 ms), task name: "(Anon) node page"
 13:10:30 [INFO] 11.450s into goose attack: "GET http://apache/node/5016" [200] took abnormally long (1769 ms), task name: "(Anon) node page"
 ```
 
 If the `--request-log` is enabled, you can get more details, in this case by looking for elapsed times matching the above messages, specifically 1814 and 1769 respectively:
 
-```
+```json
 {"coordinated_omission_elapsed":0,"elapsed":11401,"error":"","final_url":"http://apache/node/1557","method":"Get","name":"(Anon) node page","redirected":false,"response_time":1814,"status_code":200,"success":true,"update":false,"url":"http://apache/node/1557","user":2,"user_cadence":1727}
 {"coordinated_omission_elapsed":0,"elapsed":11450,"error":"","final_url":"http://apache/node/5016","method":"Get","name":"(Anon) node page","redirected":false,"response_time":1769,"status_code":200,"success":true,"update":false,"url":"http://apache/node/5016","user":0,"user_cadence":1422}
 ```

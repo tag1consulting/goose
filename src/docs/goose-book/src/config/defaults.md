@@ -2,7 +2,7 @@
 
 All run-time options can be configured with custom defaults. For example, you may want to default to the the host name of your local development environment, only requiring that `--host` be set when running against a production environment. Assuming your local development environment is at "http://local.dev/" you can do this as follows:
 
-```rust
+```rust,ignore
     GooseAttack::initialize()?
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))
@@ -60,7 +60,7 @@ The following defaults can be configured with a `GooseCoordinatedOmissionMitigat
 
 For example, without any run-time options the following load test would automatically run against `local.dev`, logging metrics to `goose-metrics.log` and debug to `goose-debug.log`. It will automatically launch 20 users in 4 seconds, and run the load test for 15 minutes. Metrics will be displayed every minute during the test and will include additional status code metrics. The order the defaults are set is not important.
 
-```rust
+```rust,ignore
     GooseAttack::initialize()?
         .register_taskset(taskset!("LoadtestTasks")
             .register_task(task!(loadtest_index))

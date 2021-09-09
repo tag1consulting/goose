@@ -17,7 +17,7 @@ goose = "^0.14"
 
 At this point it's possible to compile all dependencies, though the resulting binary only displays "Hello, world!":
 
-```
+```bash
 $ cargo run
     Updating crates.io index
   Downloaded goose v0.14.0
@@ -31,7 +31,7 @@ Hello, world!
 
 To create an actual load test, you first have to add the following boilerplate to the top of `src/main.rs` to make Goose's functionality available to your code:
 
-```rust
+```rust,ignore
 use goose::prelude::*;
 ```
 
@@ -41,7 +41,9 @@ In load test functions you typically do not set the host, and instead configure 
 
 The following `loadtest_index` function simply loads the front page of our web page:
 
-```rust
+```rust,ignore
+use goose::prelude::*;
+
 async fn loadtest_index(user: &mut GooseUser) -> GooseTaskResult {
     let _goose_metrics = user.get("").await?;
 
@@ -55,7 +57,7 @@ When the GET request completes, Goose returns metrics which we store in the  `_g
 
 Now we have to tell Goose about our new task function. Edit the `main()` function, setting a return type and replacing the hello world text as follows:
 
-```rust
+```rust,ignore
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
