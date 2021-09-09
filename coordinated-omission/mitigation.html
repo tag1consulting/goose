@@ -1,0 +1,189 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Mitigation - The Goose Book</title>
+        <!-- Custom HTML head -->
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../title-page.html">What Is Goose?</a></li><li class="chapter-item expanded affix "><a href="../requirements.html">Requirements</a></li><li class="chapter-item expanded "><a href="../getting-started/overview.html"><strong aria-hidden="true">1.</strong> Getting Started</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/creating.html"><strong aria-hidden="true">1.1.</strong> Creating A Load test</a></li><li class="chapter-item expanded "><a href="../getting-started/running.html"><strong aria-hidden="true">1.2.</strong> Running A Load Test</a></li><li class="chapter-item expanded "><a href="../getting-started/runtime-options.html"><strong aria-hidden="true">1.3.</strong> Run-Time Options</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/common.html"><strong aria-hidden="true">1.3.1.</strong> Common Options</a></li><li class="chapter-item expanded "><a href="../getting-started/throttle.html"><strong aria-hidden="true">1.3.2.</strong> Throttle</a></li></ol></li><li class="chapter-item expanded "><a href="../getting-started/metrics.html"><strong aria-hidden="true">1.4.</strong> Metrics</a></li><li class="chapter-item expanded "><a href="../getting-started/tips.html"><strong aria-hidden="true">1.5.</strong> Tips</a></li></ol></li><li class="chapter-item expanded "><a href="../logging/overview.html"><strong aria-hidden="true">2.</strong> Logging</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../logging/requests.html"><strong aria-hidden="true">2.1.</strong> Request Log</a></li><li class="chapter-item expanded "><a href="../logging/tasks.html"><strong aria-hidden="true">2.2.</strong> Task Log</a></li><li class="chapter-item expanded "><a href="../logging/errors.html"><strong aria-hidden="true">2.3.</strong> Error Log</a></li><li class="chapter-item expanded "><a href="../logging/debug.html"><strong aria-hidden="true">2.4.</strong> Debug Log</a></li></ol></li><li class="chapter-item expanded "><a href="../config/overview.html"><strong aria-hidden="true">3.</strong> Configuration</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../config/defaults.html"><strong aria-hidden="true">3.1.</strong> Defaults</a></li><li class="chapter-item expanded "><a href="../config/scheduler.html"><strong aria-hidden="true">3.2.</strong> Scheduling Users And Tasks</a></li><li class="chapter-item expanded "><a href="../config/rustls.html"><strong aria-hidden="true">3.3.</strong> RustLS</a></li></ol></li><li class="chapter-item expanded "><a href="../examples/overview.html"><strong aria-hidden="true">4.</strong> Examples</a></li><li class="chapter-item expanded "><a href="../controller/overview.html"><strong aria-hidden="true">5.</strong> Controllers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../controller/telnet.html"><strong aria-hidden="true">5.1.</strong> Telnet Controller</a></li><li class="chapter-item expanded "><a href="../controller/websocket.html"><strong aria-hidden="true">5.2.</strong> WebSocket Controller</a></li></ol></li><li class="chapter-item expanded "><a href="../gaggle/overview.html"><strong aria-hidden="true">6.</strong> Gaggle: Distributed Load Test</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../gaggle/manager.html"><strong aria-hidden="true">6.1.</strong> Manager</a></li><li class="chapter-item expanded "><a href="../gaggle/worker.html"><strong aria-hidden="true">6.2.</strong> Worker</a></li><li class="chapter-item expanded "><a href="../gaggle/config.html"><strong aria-hidden="true">6.3.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../gaggle/technical.html"><strong aria-hidden="true">6.4.</strong> Technical details</a></li></ol></li><li class="chapter-item expanded "><a href="../coordinated-omission/overview.html"><strong aria-hidden="true">7.</strong> Coordinated Omission</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../coordinated-omission/mitigation.html" class="active"><strong aria-hidden="true">7.1.</strong> Mitigation</a></li><li class="chapter-item expanded "><a href="../coordinated-omission/metrics.html"><strong aria-hidden="true">7.2.</strong> Metrics</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="mitigation"><a class="header" href="#mitigation">Mitigation</a></h1>
+<p>Goose can optionally attempt to mitigate Coordinated Omission by back-filling the metrics with the statistically expected requests. To do this, it tracks the normal &quot;cadence&quot; of each <code>GooseUser</code>, timing how long it takes to loop through all <code>GooseTasks</code> in the assigned <code>GooseTaskSet</code>. By default, Goose will trigger Coordinated Omission Mitigation if the time to loop through a <code>GooseTaskSet</code> takes more than twice as long as the average time of all previous loops. In this case, on the next loop through the <code>GooseTaskSet</code> when tracking the actual metrics for each subsequent request in all <code>GooseTasks</code> it will also add in statistically generated &quot;requests&quot; with a <code>response_time</code> starting at the unexpectedly long request time, then again with that <code>response_time</code> minus the normal &quot;cadence&quot;, continuing to generate a metric then subtract the normal &quot;cadence&quot; until arriving at the expected <code>response_time</code>. In this way, Goose is able to estimate the actual effect of a slowdown.</p>
+<p>When Goose detects an abnormally slow request (one in which the individual request takes longer than the normal <code>user_cadence</code>), it will generate an INFO level message (which will be visible if Goose was started with the <code>-v</code> run time flag, or written to the log if started with the <code>-g</code> run time flag and <code>--goose-log</code> is configured). For example:</p>
+<pre><code class="language-bash">13:10:30 [INFO] 11.401s into goose attack: &quot;GET http://apache/node/1557&quot; [200] took abnormally long (1814 ms), task name: &quot;(Anon) node page&quot;
+13:10:30 [INFO] 11.450s into goose attack: &quot;GET http://apache/node/5016&quot; [200] took abnormally long (1769 ms), task name: &quot;(Anon) node page&quot;
+</code></pre>
+<p>If the <code>--request-log</code> is enabled, you can get more details, in this case by looking for elapsed times matching the above messages, specifically 1814 and 1769 respectively:</p>
+<pre><code class="language-json">{&quot;coordinated_omission_elapsed&quot;:0,&quot;elapsed&quot;:11401,&quot;error&quot;:&quot;&quot;,&quot;final_url&quot;:&quot;http://apache/node/1557&quot;,&quot;method&quot;:&quot;Get&quot;,&quot;name&quot;:&quot;(Anon) node page&quot;,&quot;redirected&quot;:false,&quot;response_time&quot;:1814,&quot;status_code&quot;:200,&quot;success&quot;:true,&quot;update&quot;:false,&quot;url&quot;:&quot;http://apache/node/1557&quot;,&quot;user&quot;:2,&quot;user_cadence&quot;:1727}
+{&quot;coordinated_omission_elapsed&quot;:0,&quot;elapsed&quot;:11450,&quot;error&quot;:&quot;&quot;,&quot;final_url&quot;:&quot;http://apache/node/5016&quot;,&quot;method&quot;:&quot;Get&quot;,&quot;name&quot;:&quot;(Anon) node page&quot;,&quot;redirected&quot;:false,&quot;response_time&quot;:1769,&quot;status_code&quot;:200,&quot;success&quot;:true,&quot;update&quot;:false,&quot;url&quot;:&quot;http://apache/node/5016&quot;,&quot;user&quot;:0,&quot;user_cadence&quot;:1422}
+</code></pre>
+<p>In the requests file, you can see that two different user threads triggered Coordinated Omission Mitigation, specifically threads 2 and 0. Both <code>GooseUser</code> threads were loading the same <code>GooseTask</code> as due to task weighting this is the task loaded the most frequently. Both <code>GooseUser</code> threads loop through all <code>GooseTasks</code> in a similar amount of time: thread 2 takes on average 1.727 seconds, thread 0 takes on average 1.422 seconds.</p>
+<p>Also if the <code>--request-log</code> is enabled, requests back-filled by Coordinated Omission Mitigation show up in the generated log file, even though they were not actually sent to the server. Normal requests not generated by Coordinated Omission Mitigation have a <code>coordinated_omission_elapsed</code> of 0.</p>
+<p>Coordinated Omission Mitigation is disabled by default. This experimental feature can be enabled by enabling the <code>--co-mitigation</code> run time option when starting Goose. It can be configured to use the <code>average</code>, <code>minimum</code>, or <code>maximum</code> <code>GoouseUser</code> cadence when backfilling statistics.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../coordinated-omission/overview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+                            <a rel="next" href="../coordinated-omission/metrics.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../coordinated-omission/overview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                    <a rel="next" href="../coordinated-omission/metrics.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        <script src="../elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../searcher.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+    </body>
+</html>

@@ -1,0 +1,252 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Running A Load Test - The Goose Book</title>
+        <!-- Custom HTML head -->
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../title-page.html">What Is Goose?</a></li><li class="chapter-item expanded affix "><a href="../requirements.html">Requirements</a></li><li class="chapter-item expanded "><a href="../getting-started/overview.html"><strong aria-hidden="true">1.</strong> Getting Started</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/creating.html"><strong aria-hidden="true">1.1.</strong> Creating A Load test</a></li><li class="chapter-item expanded "><a href="../getting-started/running.html" class="active"><strong aria-hidden="true">1.2.</strong> Running A Load Test</a></li><li class="chapter-item expanded "><a href="../getting-started/runtime-options.html"><strong aria-hidden="true">1.3.</strong> Run-Time Options</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/common.html"><strong aria-hidden="true">1.3.1.</strong> Common Options</a></li><li class="chapter-item expanded "><a href="../getting-started/throttle.html"><strong aria-hidden="true">1.3.2.</strong> Throttle</a></li></ol></li><li class="chapter-item expanded "><a href="../getting-started/metrics.html"><strong aria-hidden="true">1.4.</strong> Metrics</a></li><li class="chapter-item expanded "><a href="../getting-started/tips.html"><strong aria-hidden="true">1.5.</strong> Tips</a></li></ol></li><li class="chapter-item expanded "><a href="../logging/overview.html"><strong aria-hidden="true">2.</strong> Logging</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../logging/requests.html"><strong aria-hidden="true">2.1.</strong> Request Log</a></li><li class="chapter-item expanded "><a href="../logging/tasks.html"><strong aria-hidden="true">2.2.</strong> Task Log</a></li><li class="chapter-item expanded "><a href="../logging/errors.html"><strong aria-hidden="true">2.3.</strong> Error Log</a></li><li class="chapter-item expanded "><a href="../logging/debug.html"><strong aria-hidden="true">2.4.</strong> Debug Log</a></li></ol></li><li class="chapter-item expanded "><a href="../config/overview.html"><strong aria-hidden="true">3.</strong> Configuration</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../config/defaults.html"><strong aria-hidden="true">3.1.</strong> Defaults</a></li><li class="chapter-item expanded "><a href="../config/scheduler.html"><strong aria-hidden="true">3.2.</strong> Scheduling Users And Tasks</a></li><li class="chapter-item expanded "><a href="../config/rustls.html"><strong aria-hidden="true">3.3.</strong> RustLS</a></li></ol></li><li class="chapter-item expanded "><a href="../examples/overview.html"><strong aria-hidden="true">4.</strong> Examples</a></li><li class="chapter-item expanded "><a href="../controller/overview.html"><strong aria-hidden="true">5.</strong> Controllers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../controller/telnet.html"><strong aria-hidden="true">5.1.</strong> Telnet Controller</a></li><li class="chapter-item expanded "><a href="../controller/websocket.html"><strong aria-hidden="true">5.2.</strong> WebSocket Controller</a></li></ol></li><li class="chapter-item expanded "><a href="../gaggle/overview.html"><strong aria-hidden="true">6.</strong> Gaggle: Distributed Load Test</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../gaggle/manager.html"><strong aria-hidden="true">6.1.</strong> Manager</a></li><li class="chapter-item expanded "><a href="../gaggle/worker.html"><strong aria-hidden="true">6.2.</strong> Worker</a></li><li class="chapter-item expanded "><a href="../gaggle/config.html"><strong aria-hidden="true">6.3.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../gaggle/technical.html"><strong aria-hidden="true">6.4.</strong> Technical details</a></li></ol></li><li class="chapter-item expanded "><a href="../coordinated-omission/overview.html"><strong aria-hidden="true">7.</strong> Coordinated Omission</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../coordinated-omission/mitigation.html"><strong aria-hidden="true">7.1.</strong> Mitigation</a></li><li class="chapter-item expanded "><a href="../coordinated-omission/metrics.html"><strong aria-hidden="true">7.2.</strong> Metrics</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="running-a-load-test"><a class="header" href="#running-a-load-test">Running A Load Test</a></h1>
+<p>We will use Cargo to run our example load test application. It's best to get in the habit of setting the <code>--release</code> option whenever compiling or running load tests.</p>
+<pre><code class="language-bash">$ cargo run --release
+   Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
+    Finished dev [optimized] target(s) in 3.56s
+     Running `target/release/loadtest`
+Error: InvalidOption { option: &quot;--host&quot;, value: &quot;&quot;, detail: &quot;A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for LoadtestTasks).&quot; }
+</code></pre>
+<p>The load test fails with an error as it hasn't been told the host you want to load test. So, let's try again, this time passing in the <code>--host</code> flag. After running for a few seconds, press <code>ctrl-c</code> to stop the load test:</p>
+<pre><code class="language-bash">$ cargo run -- --host http://local.dev/
+    Finished dev [optimized] target(s) in 0.07s
+     Running `target/release/loadtest --host 'http://local.dev/'`
+
+=== PER TASK METRICS ===
+------------------------------------------------------------------------------
+ Name                    | # times run    | # fails        | task/s | fail/s
+ -----------------------------------------------------------------------------
+ 1: LoadtestTasks        |
+   1:                    | 2,240          | 0 (0%)         | 280.0  | 0.000
+-------------------------------------------------------------------------------
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
+ 1: LoadtestTasks        |
+   1:                    | 15.54      | 6          | 136        | 14
+
+=== PER REQUEST METRICS ===
+------------------------------------------------------------------------------
+ Name                    | # reqs         | # fails        | req/s  | fail/s
+ -----------------------------------------------------------------------------
+ GET /                   | 2,240          | 0 (0%)         | 280.0  | 0.000
+-------------------------------------------------------------------------------
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
+ GET /                   | 15.30      | 6          | 135        | 14
+
+All 8 users hatched, resetting metrics (disable with --no-reset-metrics).
+
+^C06:03:25 [ WARN] caught ctrl-c, stopping...
+
+=== PER TASK METRICS ===
+------------------------------------------------------------------------------
+ Name                    | # times run    | # fails        | task/s | fail/s
+ -----------------------------------------------------------------------------
+ 1: LoadtestTasks        |
+   1:                    | 2,054          | 0 (0%)         | 410.8  | 0.000
+-------------------------------------------------------------------------------
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
+ 1: LoadtestTasks        |
+   1:                    | 20.86      | 7          | 254        | 19
+
+=== PER REQUEST METRICS ===
+------------------------------------------------------------------------------
+ Name                    | # reqs         | # fails        | req/s  | fail/s
+ -----------------------------------------------------------------------------
+ GET /                   | 2,054          | 0 (0%)         | 410.8  | 0.000
+-------------------------------------------------------------------------------
+ Name                    | Avg (ms)   | Min        | Max        | Median
+ -----------------------------------------------------------------------------
+ GET /                   | 20.68      | 7          | 254        | 19
+-------------------------------------------------------------------------------
+ Slowest page load within specified percentile of requests (in ms):
+ ------------------------------------------------------------------------------
+ Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
+ -----------------------------------------------------------------------------
+ GET /                   | 19     | 21     | 53     | 69     | 250    | 250
+</code></pre>
+<p>By default, Goose will hatch 1 <code>GooseUser</code> per second, up to the number of CPU cores available on the server used for load testing. In the above example, the server has 8 CPU cores, so it took 8 seconds to hatch all users. After all users are hatched, Goose flushes all metrics collected during the hatching process so all subsequent metrics are taken with all users running. Before flushing the metrics, they are displayed to the console so the data is not lost.</p>
+<p>The same metrics are displayed per-task and per-request. In our simple example, our single task only makes one request, so in this case both metrics show the same results.</p>
+<p>The per-task metrics are displayed first, starting with the name of our Task Set, <code>LoadtestTasks</code>. Individual tasks in the Task Set are then listed in the order they are defined in our load test. We did not name our task, so it simply shows up as &quot;1: &quot;. All defined tasks will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected.</p>
+<p>Next comes the per-request metrics. Our single task makes a <code>GET</code> request for the <code>/</code> path, so it shows up in the metrics as <code>GET /</code>. Comparing the per-task metrics collected for <code>1: </code> to the per-request metrics collected for <code>GET /</code>, you can see that they are the same.</p>
+<p>There are two common tables found in each type of metrics. The first shows the total number of requests made (2,054), how many of those failed (0), the average number of requests per second (410.8), and the average number of failed requests per second (0).</p>
+<p>The second table shows the average time required to load a page (20.68 milliseconds), the minimum time to load a page (7 ms), the maximum time to load a page (254 ms) and the median time to load a page (19 ms).</p>
+<p>The per-request metrics include a third table, showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 19 ms. In the 75% fastest page loads, the slowest page loaded in 21 ms, etc.</p>
+<p>In real load tests, you'll most likely have multiple task sets each with multiple tasks, and Goose will show you metrics for each along with an aggregate of them all together.</p>
+<p>Refer to the <a href="https://github.com/tag1consulting/goose/tree/master/examples">examples directory</a> for more complicated and useful load test examples.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../getting-started/creating.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+                            <a rel="next" href="../getting-started/runtime-options.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../getting-started/creating.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                    <a rel="next" href="../getting-started/runtime-options.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        <script src="../elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../searcher.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+    </body>
+</html>
