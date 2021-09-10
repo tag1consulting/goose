@@ -134,11 +134,18 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="what-is-goose"><a class="header" href="#what-is-goose">What Is Goose?</a></h1>
+                        <h1 id="the-goose-book"><a class="header" href="#the-goose-book">The Goose Book</a></h1>
+<p>Have you ever been attacked by a goose?</p>
+<h2 id="what-is-goose"><a class="header" href="#what-is-goose">What Is Goose?</a></h2>
 <p>Goose is a Rust load testing tool inspired by <a href="https://locust.io/">Locust</a>. User behavior is defined with standard Rust code. Load tests are applications that have a dependency on the Goose library. Web requests are made with the <a href="https://docs.rs/reqwest">Reqwest</a> HTTP Client.</p>
+<h2 id="advantages"><a class="header" href="#advantages">Advantages</a></h2>
+<p>Goose generates at least 11x as much traffic as Locust per-CPU-core, with even larger gains for more complex load tests (such as those using third-party libraries to scrape form content). While Locust requires you to manage a distributed load test simply to use multiple CPU cores on a single server, Goose leverages all available CPU cores with a single process, drastically simplifying the process for running larger load tests. Ongoing improvements to the codebase continue to bring new features and faster performance. Goose scales far better than Locust, efficiently using available resources to accomplish its goal. It also supports asynchronous processes enabling many more simultaneous processes to ramp up thousands of users from a single server, easily and consistently.</p>
+<p>Goose’s distributed testing design is similar to Locust’s, in that it uses a one Manager to many Workers model. However, unlike Locust, you do not need to spin up a distributed load test to leverage all available cores on a single server, as a single Goose process will fully leverage all available cores. Goose distributed load tests scale near-perfectly as once started each Worker performs its load test without any direction from the Manager, and the Manager simply collects statistics from all the Workers for final reporting. In other words, one Manager controlling eight Workers on a single 8-CPU-core server generates the same amount of load as a single standalone Goose process independently leveraging all eight cores.</p>
+<p>Goose has a number of unique debugging and logging mechanisms not found in other load testing tools, simplifying the writing of load tests and the analysis of results. Goose also provides more comprehensive metrics with multiple simple views into the data, and makes it easy to confirm that the load test is doing what you expect it to as you scale it up or down. It exposes the algorithms used to allocate tasks and task sets, giving more granular control over the order and consistency of operations, important for easily repeatable testing.</p>
+<h2 id="whats-missing"><a class="header" href="#whats-missing">What's Missing</a></h2>
+<p>At this time, the biggest missing feature of Goose is a UI for controlling and monitoring load tests, but this is a work in progress. A recently completed first step toward this goal was the addition of an optional HTML report generated at the end of a load test.</p>
 <h2 id="additional-documentation"><a class="header" href="#additional-documentation">Additional Documentation</a></h2>
 <ul>
-<li><a href="https://github.com/tag1consulting/goose/blob/main/README.md">README</a></li>
 <li><a href="https://docs.rs/goose/">Developer documentation</a></li>
 <li><a href="https://tag1.com/goose/">Blogs and more</a>
 <ul>
