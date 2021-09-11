@@ -137,6 +137,13 @@
                         <h1 id="technical-details"><a class="header" href="#technical-details">Technical Details</a></h1>
 <p>Goose uses <a href="https://docs.rs/nng/"><code>nng</code></a> to send network messages between the Manager and all Workers. <a href="https://docs.serde.rs/serde/index.html">Serde</a> and <a href="https://github.com/pyfisch/cbor">Serde CBOR</a> are used to serialize messages into <a href="https://tools.ietf.org/html/rfc7049">Concise Binary Object Representation</a>.</p>
 <p>Workers initiate all network connections, and push metrics to the Manager process.</p>
+<h2 id="compile-time-feature"><a class="header" href="#compile-time-feature">Compile-time Feature</a></h2>
+<p>Gaggle support is a compile-time Cargo feature that must be enabled. Goose uses the <a href="https://docs.rs/nng/"><code>nng</code></a> library to manage network connections, and compiling <code>nng</code> requires that <code>cmake</code> be available.</p>
+<p>The <code>gaggle</code> feature can be enabled from the command line by adding <code>--features gaggle</code> to your cargo command.</p>
+<p>When writing load test applications, you can default to compiling in the Gaggle feature in the <code>dependencies</code> section of your <code>Cargo.toml</code>, for example:</p>
+<pre><code class="language-toml">[dependencies]
+goose = { version = &quot;^0.13&quot;, features = [&quot;gaggle&quot;] }
+</code></pre>
 
                     </main>
 
