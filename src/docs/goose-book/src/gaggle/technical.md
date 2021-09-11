@@ -4,3 +4,15 @@ Goose uses [`nng`](https://docs.rs/nng/) to send network messages between the Ma
 
 Workers initiate all network connections, and push metrics to the Manager process.
 
+## Compile-time Feature
+
+Gaggle support is a compile-time Cargo feature that must be enabled. Goose uses the [`nng`](https://docs.rs/nng/) library to manage network connections, and compiling `nng` requires that `cmake` be available.
+
+The `gaggle` feature can be enabled from the command line by adding `--features gaggle` to your cargo command.
+
+When writing load test applications, you can default to compiling in the Gaggle feature in the `dependencies` section of your `Cargo.toml`, for example:
+
+```toml
+[dependencies]
+goose = { version = "^0.13", features = ["gaggle"] }
+```

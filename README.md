@@ -14,7 +14,7 @@ Goose is a Rust load testing tool inspired by [Locust](https://locust.io/). User
 
 ### Documentation
 
-- [The Goose Book](https://github.com/tag1consulting/goose/TBD)
+- [The Goose Book](https://tag1consulting.github.io/goose)
 - [Developer documentation](https://docs.rs/goose/)
 - [Blogs and more](https://tag1.com/goose/)
   - [Goose vs Locust and jMeter](https://www.tag1consulting.com/blog/jmeter-vs-locust-vs-goose)

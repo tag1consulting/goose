@@ -18,6 +18,10 @@ Goose has a number of unique debugging and logging mechanisms not found in other
 
 At this time, the biggest missing feature of Goose is a UI for controlling and monitoring load tests, but this is a work in progress. A recently completed first step toward this goal was the addition of an optional HTML report generated at the end of a load test.
 
+## Brought To You By
+
+Goose development is sponsored by [Tag1 Consulting](https://tag1.com/), led by Tag1's CEO, Jeremy Andrews, along with many [community contributions](https://github.com/tag1consulting/goose/graphs/contributors). Tag1 is a [member of the Rust Foundation](https://www.tag1consulting.com/blog/tag1-joins-rust-foundation-first-silver-member).
+
 ## Additional Documentation
 
 - [Developer documentation](https://docs.rs/goose/)
