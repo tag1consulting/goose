@@ -14,5 +14,5 @@ When writing load test applications, you can default to compiling in the Gaggle 
 
 ```toml
 [dependencies]
-goose = { version = "^0.13", features = ["gaggle"] }
+goose = { version = "^0.14", features = ["gaggle"] }
 ```

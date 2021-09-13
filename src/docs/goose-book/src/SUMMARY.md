@@ -23,7 +23,10 @@
     - [Scheduling Users And Tasks](config/scheduler.md)
     - [RustLS](config/rustls.md)
 
-- [Examples](examples/overview.md)
+- [Examples](example/overview.md)
+    - [Simple](example/simple.md)
+    - [Simple Closure](example/simple-closure.md)
+    - [Simple Session](example/simple-session.md)
 
 - [Controllers](controller/overview.md)
     - [Telnet Controller](controller/telnet.md)

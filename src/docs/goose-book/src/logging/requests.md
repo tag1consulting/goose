@@ -1,10 +1,12 @@
 # Request Log
 
-Goose can optionally log details about all load test requests to a file. To enable, add the `--request-log request.log` command line option, where `request.log` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all the requests made during the load test to a file. This log file contains the running metrics Goose generates as the load test runs. To enable, add the `--request-log <request.log>` command line option, where `<request.log>` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
-If `--request-body` is enabled, the request log will also include the entire body of any client requests.
+If `--request-body` is also enabled, the request log will include the entire body of any client requests.
 
-When operating in Gaggle-mode, the `--request-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+Logs include the entire [`GooseRequestMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html) object which also includes the entire [`GooseRawRequest`](https://docs.rs/goose/*/goose/metrics/struct.GooseRawRequest.html) object, both created for all client requests.
+
+## Log Format
 
 By default, logs are written in JSON Lines format. For example (in this case with `--request-body` also enabled):
 
@@ -14,7 +16,8 @@ By default, logs are written in JSON Lines format. For example (in this case wit
 {"coordinated_omission_elapsed":0,"elapsed":13219,"error":"","final_url":"http://apache/misc/drupal.js?q9apdy","name":"static asset","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/misc/drupal.js?q9apdy"},"redirected":false,"response_time":7,"status_code":200,"success":true,"update":false,"user":0,"user_cadence":0}
 ```
 
-Logs include the entire [`GooseRequestMetric`] object which also includes the entire [`GooseRawRequest`] object, both defined in `src/goose.rs` and created for all client requests.
+The `--request-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html) object.
 
-By default Goose logs requests in JSON Lines format. The `--request-format` option can be used to log in `csv`, `json`, `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`] object.
+## Gaggle Mode
 
+When operating in Gaggle-mode, the `--request-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.

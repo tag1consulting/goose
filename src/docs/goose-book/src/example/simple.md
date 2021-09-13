@@ -1,13 +1,6 @@
-# Simple Example
+# Simple Example 
 
-Goose includes several examples to demonstrate load test functionality, including:
- - [Simple](https://github.com/tag1consulting/goose/blob/main/examples/simple.rs)
- - [Simple Closure](https://github.com/tag1consulting/goose/blob/main/examples/simple_closure.rs)
- - [Simple With Session](https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs)
- - [Drupal Loadtest](https://github.com/tag1consulting/goose/blob/main/examples/drupal_loadtest.rs)
- - [Umami](https://github.com/tag1consulting/goose/tree/main/examples/umami)
-
-The `examples/simple.rs` example copies the simple load test documented on the locust.io web page, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the user log in and then load a couple of pages.
+The [`examples/simple.rs`](https://github.com/tag1consulting/goose/blob/main/examples/simple.rs) example copies the simple load test documented on the [locust.io web page](https://locust.io/), rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the user log in and then load a couple of pages.
 
 Goose can make use of all available CPU cores. By default, it will launch 1 user per core, and it can be configured to launch many more. The following was configured instead to launch 1,024 users. Each user randomly pauses 5 to 15 seconds after each task is loaded, so it's possible to spin up a large number of users. Here is a snapshot of `top` when running this example on a 1-core VM with 10G of available RAM -- there were ample resources to launch considerably more "users", though `ulimit` had to be resized:
 
@@ -20,4 +13,10 @@ MiB Swap:  10237.0 total,  10237.0 free,      0.0 used.   8606.9 avail Mem
 
   PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
  1339 goose     20   0 1235480 758292   8984 R   3.0   7.4   0:06.56 simple
+```
+
+## Source Code
+
+```rust,ignore
+{{#include ../../../../../examples/simple.rs}}
 ```

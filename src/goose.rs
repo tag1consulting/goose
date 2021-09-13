@@ -810,11 +810,16 @@ impl GooseRequestCadence {
     }
 }
 
-/// Marker trait to represent user data that can
-/// be added to any [`GooseUser`](../goose/struct.GooseUser.html).
-/// There is need to implement it yourself, a
-/// blanc implementation is provided for every `T`
-/// that are `Send` and `Sync`.
+/// A marker trait representing user data of any type
+/// ([generic](https://doc.rust-lang.org/rust-by-example/generics.html)) that can
+/// be added to any [`GooseUser`](../goose/struct.GooseUser.html). The format of
+/// the data stored in `GooseUserData` must be defined in your load test, and by
+/// default supports any type that supports
+/// [`Send`](https://doc.rust-lang.org/std/marker/trait.Send.html) and
+/// [`Sync`](https://doc.rust-lang.org/std/marker/trait.Sync.html).
+///
+/// For an example, see
+/// [`examples/simple_with_session`](https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs).
 pub trait GooseUserData: Downcast + Send + Sync + 'static {}
 impl_downcast!(GooseUserData);
 impl<T: Send + Sync + 'static> GooseUserData for T {}

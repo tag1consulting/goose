@@ -99,8 +99,8 @@ All 1024 users hatched.
  Running:  2021-08-12 10:55:42 - 2021-08-12 11:05:09 (duration: 00:10:00)
  Stopping: 2021-08-12 11:05:09 - 2021-08-12 11:05:11 (duration: 00:00:02)
 
- goose v0.13.3
+ goose v0.14.0
  ------------------------------------------------------------------------------
 ```
 
-Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/0.13.3/goose/metrics/index.html).
+Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).

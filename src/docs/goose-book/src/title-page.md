@@ -4,7 +4,7 @@ Have you ever been attacked by a goose?
 
 ## What Is Goose?
 
-Goose is a Rust load testing tool inspired by [Locust](https://locust.io/). User behavior is defined with standard Rust code. Load tests are applications that have a dependency on the Goose library. Web requests are made with the [Reqwest](https://docs.rs/reqwest) HTTP Client.
+[Goose](https://docs.rs/goose) is a [Rust](https://www.rust-lang.org/) load testing tool inspired by [Locust](https://locust.io/). User behavior is defined with standard Rust code. Load tests are applications that have a dependency on the [Goose library](https://crates.io/crates/goose). Web requests are made with the [Reqwest](https://docs.rs/reqwest) HTTP Client.
 
 ## Advantages
 
