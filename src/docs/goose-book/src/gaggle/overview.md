@@ -1,6 +1,6 @@
 # Gaggle: Distributed Load Test
 
-Goose also supports distributed load testing. A Gaggle is one Goose process running in Manager mode, and 1 or more Goose processes running in Worker mode. The Manager coordinates starting and stopping the Workers, and collects aggregated metrics. Gaggle support is a cargo feature that must be enabled at compile-time as documented below. To launch a Gaggle, you must copy your load test application to all servers from which you wish to generate load.
+Goose also supports distributed load testing. A Gaggle is one Goose process running in [Manager mode](manager.md), and 1 or more Goose processes running in [Worker mode](worker.md). The Manager coordinates starting and stopping the Workers, and collects aggregated metrics. Gaggle support is a [cargo feature that must be enabled at compile-time](technical.md#compile-time-feature). To launch a Gaggle, you must copy your load test application to all servers from which you wish to generate load.
 
 It is strongly recommended that the same load test application be copied to all servers involved in a Gaggle. By default, Goose will verify that the load test is identical by comparing a hash of all load test rules. Telling it to skip this check can cause the load test to panic (for example, if a Worker defines a different number of tasks or task sets than the Manager).
 

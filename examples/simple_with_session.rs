@@ -1,5 +1,5 @@
-//! Simple Goose load test example. Duplicates the simple example on the
-//! Locust project page (https://locust.io/).
+//! Simple Goose load test example, leveraging the per-GooseUser `GooseUserData`
+//! field to store a per-user session JWT authentication token.
 //!
 //! ## License
 //!

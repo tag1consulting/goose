@@ -818,6 +818,12 @@ impl GooseRequestCadence {
 /// [`Send`](https://doc.rust-lang.org/std/marker/trait.Send.html) and
 /// [`Sync`](https://doc.rust-lang.org/std/marker/trait.Sync.html).
 ///
+/// Stored in the [`GooseUser`] object in a private `session_data` field. Per-user
+/// session data is stored by invoking [`GooseUser::set_session_data`]. The session
+/// data can be accessed by invoking [`GooseUser::get_session_data`],
+/// [`GooseUser::get_session_data_mut`], [`GooseUser::get_session_data_unchecked`],
+/// or [`GooseUser::get_session_data_unchecked_mut`].
+///
 /// For an example, see
 /// [`examples/simple_with_session`](https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs).
 pub trait GooseUserData: Downcast + Send + Sync + 'static {}
@@ -858,9 +864,10 @@ pub struct GooseUser {
     request_cadence: GooseRequestCadence,
     /// Tracks how much time is spent sleeping during a loop through all tasks.
     pub(crate) slept: u64,
-    /// Current task name
+    /// Current task name.
     pub(crate) task_name: Option<String>,
-
+    /// Optional per-user session data of a generic type implementing the
+    /// [`GooseUserData`] trait.
     session_data: Option<Box<dyn GooseUserData>>,
 }
 impl GooseUser {
@@ -911,11 +918,11 @@ impl GooseUser {
         Ok(single_user)
     }
 
-    /// Returns a reference to GooseUser's session data.
-    /// Leaves the session in-place, creating a new one Option with a reference
-    /// to the original session data.
+    /// Returns an optional reference to per-[`GooseUser`] session data.
     ///
-    /// Return none if no session data has been set or that the session data is not of type `T`
+    /// Leaves the session data in-place, returning an optional reference to the
+    /// original session data if existing and of the correct type. Returns [`None`]
+    /// if no session data has been set or the session data set is not of type `T`.
     ///
     /// # Example
     /// ```rust
@@ -940,14 +947,14 @@ impl GooseUser {
         }
     }
 
-    /// Returns a reference to GooseUser's session data, without doing bounds
-    /// checking.
+    /// Returns a reference to per-[`GooseUser`] session data, without doing any
+    /// validation that the session data exists and is of the correct type.
     ///
-    /// For a safe alternative see [`get_session_data`].
+    /// Leaves the session data in-place, returning a reference to the original
+    /// session data. Calling this method on a [`GooseUser`] object without
+    /// session data or with a different type `T` will panic.
     ///
-    /// # Safety
-    ///
-    /// Calling this method on an GooseUser without session data or with a different type `T` is *[undefined behavior]*
+    /// For a safe alternative see [`GooseUser::get_session_data`].
     ///
     /// # Example
     /// ```rust
@@ -973,9 +980,12 @@ impl GooseUser {
             .expect("Invalid session data!")
     }
 
-    /// Returns a mutable reference to GooseUser's session data.
+    /// Returns an optional mutable reference to per-[`GooseUser`] session data.
     ///
-    /// Return none if no session data has been set or that the session data is not of type `T`
+    /// Leaves the session data in-place, returning an optional mutable reference
+    /// to the original session data if existing and of the correct type. Returns
+    /// [`None`] if no session data has been set or the session data set is not of
+    /// type `T`.
     ///
     /// # Example
     /// ```rust
@@ -999,13 +1009,15 @@ impl GooseUser {
         }
     }
 
-    /// Returns a mutable reference to GooseUser's session data, without doing any type checking.
+    /// Returns a mutable reference to per-[`GooseUser`] session data, without
+    /// doing any validation that the session data exists and is of the correct
+    /// type.
     ///
-    /// For a safe alternative see [`get_mut_session_data`].
+    /// Leaves the session data in-place, returning a mutable reference to the
+    /// original session data. Calling this method on a [`GooseUser`] object
+    /// without session data or with a different type `T` will panic.
     ///
-    /// # Safety
-    ///
-    /// Calling this method on an GooseUser without session data or with a different type `T` is *[undefined behavior]*
+    /// For a safe alternative see [`GooseUser::get_session_data_mut`].
     ///
     /// # Example
     /// ```rust
@@ -1032,7 +1044,11 @@ impl GooseUser {
             .expect("Invalid session data!")
     }
 
-    /// Set session data for the current GooseUser. Will replace any session data previously set.
+    /// Sets session data for the current [`GooseUser`].
+    ///
+    /// If session data already exists for the current [`GooseUser`], it will be
+    /// replaced. Session data must be of a type implementing the
+    /// [`GooseUserData`] trait.
     ///
     /// # Example
     /// ```rust

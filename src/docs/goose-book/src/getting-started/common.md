@@ -73,3 +73,15 @@ _Run the load test for 30 minutes._
 ```bash
 cargo run --release -- -t 30m
 ```
+
+## Writing An HTML-formatted Report
+
+By default, Goose displays [text-formatted metrics](metrics.md) when a load test finishes. It can also optionally write an HTML-formatted report if you enable the `--report-file <NAME>` run-time option, where `<NAME>` is an absolute or relative path to the report file to generate. Any file that already exists at the specified path will be overwritten.
+
+### Example
+_Write an HTML-formatted report to `report.html` when the load test finishes._
+
+```bash
+cargo run --release -- --report-file report.html
+```
+

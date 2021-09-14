@@ -1,8 +1,10 @@
 # WebSocket Controller
 
-The host and port that the WebSocket Controller listens on can be configured at start time with `--websocket-host` and `--websocket-port`. The WebSocket Controller can be completely disabled with the `--no-websocket` command line option. The defaults can be changed with `GooseDefault::WebSocketHost`,`GooseDefault::WebSocketPort`, and `GooseDefault::NoWebSocket`.
+The host and port that the WebSocket Controller listens on can be configured at start time with `--websocket-host` and `--websocket-port`. The WebSocket Controller can be completely disabled with the `--no-websocket` command line option. The defaults can be changed with [`GooseDefault::WebSocketHost`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.WebSocketHost),[`GooseDefault::WebSocketPort`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.WebSocketPort), and [`GooseDefault::NoWebSocket`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoWebSocket).
 
-The WebSocket Controller supports the same commands listed above. Requests and Response are in JSON format.
+## Details
+
+The WebSocket Controller supports the same commands listed in the [telnet controller](telnet.md). Requests and Responses are in JSON format.
 
 Requests must be made in the following format:
 ```json

@@ -37,7 +37,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! goose = "0.13"
+//! goose = "0.14"
 //! ```
 //!
 //! Add the following boilerplate `use` declaration at the top of your `src/main.rs`:
@@ -413,7 +413,7 @@
 //!  During:  2021-08-12 15:42:31 - 2021-08-12 15:43:02 (duration: 00:00:30)
 //!  Stopping: 2021-08-12 15:43:02 - 2021-08-12 15:43:02 (duration: 00:00:00)
 //!
-//!  goose v0.13.3
+//!  goose v0.14.0
 //!  ------------------------------------------------------------------------------
 //! ```
 //!

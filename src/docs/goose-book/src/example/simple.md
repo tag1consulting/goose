@@ -15,7 +15,7 @@ MiB Swap:  10237.0 total,  10237.0 free,      0.0 used.   8606.9 avail Mem
  1339 goose     20   0 1235480 758292   8984 R   3.0   7.4   0:06.56 simple
 ```
 
-## Source Code
+## Complete Source Code
 
 ```rust,ignore
 {{#include ../../../../../examples/simple.rs}}

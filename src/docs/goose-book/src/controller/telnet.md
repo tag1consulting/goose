@@ -1,15 +1,17 @@
 # Telnet Controller
 
-The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with `GooseDefault::TelnetHost`,`GooseDefault::TelnetPort`, and `GooseDefault::NoTelnet`.
+The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with [`GooseDefault::TelnetHost`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetHost),[`GooseDefault::TelnetPort`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetPort), and [`GooseDefault::NoTelnet`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoTelnet).
 
-To learn about all available commands, telnet into the Controller thread and enter `help` (or `?`), for example:
+## Controller Commands
+
+To learn about all available commands, telnet into the Controller thread and enter `help` (or `?`). For example:
 ```bash
 % telnet localhost 5116
 Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose> ?
-goose 0.14.4 controller commands:
+goose 0.14.0 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  start              start an idle load test
