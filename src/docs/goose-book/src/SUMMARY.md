@@ -18,18 +18,6 @@
     - [Error Log](logging/errors.md)
     - [Debug Log](logging/debug.md)
 
-- [Configuration](config/overview.md)
-    - [Defaults](config/defaults.md)
-    - [Scheduling Users And Tasks](config/scheduler.md)
-    - [RustLS](config/rustls.md)
-
-- [Examples](example/overview.md)
-    - [Simple](example/simple.md)
-    - [Simple Closure](example/simple-closure.md)
-    - [Simple Session](example/simple-session.md)
-    - [Drupal Memcache](example/drupal-memcache.md)
-    - [Umami](example/umami.md)
-
 - [Controllers](controller/overview.md)
     - [Telnet Controller](controller/telnet.md)
     - [WebSocket Controller](controller/websocket.md)
@@ -43,3 +31,15 @@
 - [Coordinated Omission](coordinated-omission/overview.md)
     - [Mitigation](coordinated-omission/mitigation.md)
     - [Metrics](coordinated-omission/metrics.md)
+
+- [Configuration](config/overview.md)
+    - [Defaults](config/defaults.md)
+    - [Scheduling Users And Tasks](config/scheduler.md)
+    - [RustLS](config/rustls.md)
+
+- [Examples](example/overview.md)
+    - [Simple](example/simple.md)
+    - [Simple Closure](example/simple-closure.md)
+    - [Simple Session](example/simple-session.md)
+    - [Drupal Memcache](example/drupal-memcache.md)
+    - [Umami](example/umami.md)
