@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.14.1-dev
+ - [#364](https://github.com/tag1consulting/goose/pull/364) add link from the [Developer Documentation](https://docs.rs/goose) to [The Git Book](https://book.goose.rs)
 
 ## 0.14.0 September 15, 2021
  - [#361](https://github.com/tag1consulting/goose/pull/361) convert `README.md` (and enhance) into [`The Goose Book`](https://book.goose.rs/)

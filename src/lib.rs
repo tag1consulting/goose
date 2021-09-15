@@ -13,7 +13,7 @@
 //!
 //! ## Documentation
 //!
-//! - [README](https://github.com/tag1consulting/goose/blob/main/README.md)
+//! - [The Goose Book](https://book.goose.rs)
 //! - [Developer documentation](https://docs.rs/goose/)
 //! - [Blogs and more](https://tag1.com/goose/)
 //!   - [Goose vs Locust and jMeter](https://www.tag1consulting.com/blog/jmeter-vs-locust-vs-goose)
