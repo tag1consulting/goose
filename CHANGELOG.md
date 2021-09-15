@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.14.1-dev
+
 ## 0.14.0 September 15, 2021
  - [#361](https://github.com/tag1consulting/goose/pull/361) convert `README.md` (and enhance) into [`The Goose Book`](https://book.goose.rs/)
  - [#356](https://github.com/tag1consulting/goose/pull/356) **API change**: make `GooseAttack.execute` async, `main()` function signature changed to:

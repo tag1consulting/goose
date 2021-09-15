@@ -14,7 +14,7 @@ Goose is a [Rust](https://www.rust-lang.org/) load testing tool inspired by [Loc
 
 ### Documentation
 
-- [The Goose Book](https://tag1consulting.github.io/goose)
+- [The Goose Book](https://book.goose.rs)
 - [Developer documentation](https://docs.rs/goose/)
 - [Blogs and more](https://tag1.com/goose/)
   - [Goose vs Locust and jMeter](https://www.tag1consulting.com/blog/jmeter-vs-locust-vs-goose)

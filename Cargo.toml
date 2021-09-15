@@ -1,11 +1,11 @@
 [package]
 name = "goose"
-version = "0.14.0"
+version = "0.14.1-dev"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 description = "A load testing framework inspired by Locust."
 homepage = "https://tag1.com/goose"
-documentation = "https://docs.rs/goose/"
+documentation = "https://book.goose.rs"
 repository = "https://github.com/tag1consulting/goose"
 readme = "README.md"
 keywords = ["loadtesting", "performance", "web", "framework", "tool"]
