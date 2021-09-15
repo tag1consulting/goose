@@ -1,41 +1,48 @@
 # Changelog
 
-## 0.14.0-dev
- - add the possibility to attach custom session data `GooseUserData` to each `GooseUser` (API change)
- - change `GooseTask` signature to take a mutable reference of `GooseUser` (API change)
- - remove `Clone` trait from `GooseUser` and `GooseAttack`
- - update `GooseTaskSet::set_wait_time()` to accept `std::time::Duration` instead of `usize` allowing more granularity (API change)
- - use request name when displaying errors to avoid having a large volume of distinct error for the same endpoint when using path parameters
- - updated `tungstenite` dependency to [`0.15`](https://github.com/snapview/tungstenite-rs/blob/master/CHANGELOG.md)
- - Make `GooseAttack.execute` async
- - Convert `README.md` (and enhance) into [`The Goose Book`](https://book.goose.rs/)
+## 0.14.0 September 15, 2021
+ - [#361](https://github.com/tag1consulting/goose/pull/361) convert `README.md` (and enhance) into [`The Goose Book`](https://book.goose.rs/)
+ - [#356](https://github.com/tag1consulting/goose/pull/356) **API change**: make `GooseAttack.execute` async, `main()` function signature changed to:
+    ```rust
+    #[tokio::main]
+    fn main() -> Result<(), GooseError> {
+    ```
+ - [#355](https://github.com/tag1consulting/goose/pull/355) **API change**: add the possibility to attach custom session data `GooseUserData` to each `GooseUser`
+ - [#355](https://github.com/tag1consulting/goose/pull/355) **API change**: change `GooseTask` signature to take a mutable reference of `GooseUser`:
+     ```rust
+     async fn example_task_function(user: &mut GooseUser) -> GooseTaskResult {
+     ```
+ - [#358](https://github.com/tag1consulting/goose/pull/358) **API change**: update `GooseTaskSet::set_wait_time()` to accept `std::time::Duration` instead of `usize` allowing more granularity
+ - [#355](https://github.com/tag1consulting/goose/pull/355) remove `Clone` trait from `GooseUser` and `GooseAttack`
+ - [#359](https://github.com/tag1consulting/goose/pull/359) use request name when displaying errors to avoid having a large volume of distinct error for the same endpoint when using path parameters
+ - [#360](https://github.com/tag1consulting/goose/pull/360) updated `tungstenite` dependency to [`0.15`](https://github.com/snapview/tungstenite-rs/blob/master/CHANGELOG.md)
 
 ## 0.13.3 August 25, 2021
- - document GooseConfiguration fields that were only documented as gumpdrop parameters (in order to generate new lines in the help output) so now they're also documented in the code
- - fix panic when `--no-task-metrics` is enabled and metrics are printed; add tests to prevent further regressions
+ - [#351](https://github.com/tag1consulting/goose/pull/351) document GooseConfiguration fields that were only documented as gumpdrop parameters (in order to generate new lines in the help output) so now they're also documented in the code
+ - [#353](https://github.com/tag1consulting/goose/pull/353) fix panic when `--no-task-metrics` is enabled and metrics are printed; add tests to prevent further regressions
 
 ## 0.13.2 August 19, 2021
- - fix broken links within the documentation; general documentation cleanups
- - introduce `--startup-time` which can be set together with `--users` instead of using `--hatch-rate` to configure how quickly to start users
- - fix `--run-time` to always start counting after all users are fully started
- - include starting and stopping time in addition to running time in text metrics and html report
+ - [#349](https://github.com/tag1consulting/goose/pull/349), [#345](https://github.com/tag1consulting/goose/pull/345) fix broken links within the documentation; general documentation cleanups
+ - [#348](https://github.com/tag1consulting/goose/pull/348) introduce `--startup-time` which can be set together with `--users` instead of using `--hatch-rate` to configure how quickly to start users
+ - [#348](https://github.com/tag1consulting/goose/pull/348) fix `--run-time` to always start counting after all users are fully started
+ - [#348](https://github.com/tag1consulting/goose/pull/348) include starting and stopping time in addition to running time in text metrics and html report
 
 ## 0.13.1 August 13, 2021
- - add test to confirm a `base_url` can include a path and be joined with a relative path
- - fix documentation typo
- - introduce `pretty` log format for `--error-format`, `--debug-format`, `--request-format`, and `--task-format`
-  - clippy cleanups: don't borrow references that are immediately dereferenced by the compiler: https://rust-lang.github.io/rust-clippy/master/index.html#needless_borrow
-  - consistently report users simulated, target host(s), start and end times, and total duration of test both in text metrics and html report
-  - updated httpmock dev dependency to [`0.6`](https://github.com/alexliesenfeld/httpmock/blob/master/CHANGELOG.md)
+ - [#338](https://github.com/tag1consulting/goose/pull/338) add test to confirm a `base_url` can include a path and be joined with a relative path
+ - [#339](https://github.com/tag1consulting/goose/pull/339) fix documentation typo
+ - [#340](https://github.com/tag1consulting/goose/pull/340) introduce `pretty` log format for `--error-format`, `--debug-format`, `--request-format`, and `--task-format`
+  - [#341](https://github.com/tag1consulting/goose/pull/341) clippy cleanups: don't borrow references that are immediately dereferenced by the compiler: https://rust-lang.github.io/rust-clippy/master/index.html#needless_borrow
+  - [#342](https://github.com/tag1consulting/goose/pull/342) consistently report users simulated, target host(s), start and end times, and total duration of test both in text metrics and html report
+  - [#343](https://github.com/tag1consulting/goose/pull/343) updated httpmock dev dependency to [`0.6`](https://github.com/alexliesenfeld/httpmock/blob/master/CHANGELOG.md)
 
 ## 0.13.0 July 19, 2021
-  - enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) support and set Accept-Encoding header by default in the client; disable with `--no-gzip` or `GooseDefault::NoGzip`
-  - document how to add custom cookies (https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#custom-cookies)
-  - update [`rustc_version`](https://docs.rs/rustc_version) dependency to `0.4`
-  - include client request headers in `GooseRequestMetric` so they show up in the request log and the debug log
-  - introduce `GooseRawMetric` which contains the `method`, `url`, `headers` and `body` of the client request made, and is now contained in `raw` field of the `GooseRequestMetric` (API change)
-  - introduce `--request-body` (and `GooseDefault::RequestBody`) which when enabled shows up in the `body` field of the `GooseRawMetric`
-  - add `GooseRawMetric` to the request log, debug log and error log
+  - [#334](https://github.com/tag1consulting/goose/pull/334) **API change**: introduce `GooseRawMetric` which contains the `method`, `url`, `headers` and `body` of the client request made, and is now contained in `raw` field of the `GooseRequestMetric`
+  - [#328](https://github.com/tag1consulting/goose/pull/328) enable [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) support and set Accept-Encoding header by default in the client; disable with `--no-gzip` or `GooseDefault::NoGzip`
+  - [#330](https://github.com/tag1consulting/goose/pull/330) document how to add custom cookies (https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#custom-cookies)
+  - [#331](https://github.com/tag1consulting/goose/pull/331) update [`rustc_version`](https://docs.rs/rustc_version) dependency to `0.4`
+  - [#334](https://github.com/tag1consulting/goose/pull/334) include client request headers in `GooseRequestMetric` so they show up in the request log and the debug log
+  - [#334](https://github.com/tag1consulting/goose/pull/334) introduce `--request-body` (and `GooseDefault::RequestBody`) which when enabled shows up in the `body` field of the `GooseRawMetric`
+  - [#334](https://github.com/tag1consulting/goose/pull/334) add `GooseRawMetric` to the request log, debug log and error log
 
 ## 0.12.1 July 15, 2021
  - rename `rustls` feature to `rustls-tls` so `tests/controller.rs` can build with the `rustls` library; update `tungstenite` to `0.14` and `tokio-tungstenite` = `0.15` to allow building with `rustls`
@@ -44,7 +51,7 @@
   - moved `GooseConfiguration`, `GooseDefault`, and `GooseDefaultType` into new `src/config.rs` file; standardized configuration precedence through internal `GooseConfigure` trait defining `get_value()` for all supported types; general improvements to configuration documentation
 
 ## 0.12.0 July 8, 2021
- - remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library (API change)
+ - **API change**: remove internal-only functions and structures from documentation, exposing only what's useful to consumers of the Goose library
     o `goose::initialize_logger()`, `Socket` reduced to `pub(crate)` scope
     o `goose::controller::GooseControllerProtocol`, `GooseControllerRequestMessage`, `GooseControllerResponseMessage`, `GooseControllerRequest`, `GooseControllerResponse`, `GooseControllerState`, `::controller_main()` reduced to `pub(crate)` scope
     o `goose::manager::manager_main()` reduced to `pub(crate)` scope
@@ -57,7 +64,7 @@
     o `goose::logger::logger_main()` reduced to `pub(crate)` scope
     o `goose::user::user_main()` reduced to `pub(crate)` scope
     o `goose::worker::worker_main()` reduced to `pub(crate)` scope
- - move all metrics-related stuctures and methods into `metrics.rs`, rename for consistency, and improve documentation (API change)
+ - **API change**: move all metrics-related stuctures and methods into `metrics.rs`, rename for consistency, and improve documentation
     o `goose::GooseRawRequest` changed to `goose::metrics::GooseRequestMetric`
     o `goose::GooseRequest` changed to `goose::metrics::GooseRequestMetricAggregate`
     o `goose::GooseRawTask` changed to `goose::metrics::GooseTaskMetric`
@@ -135,7 +142,7 @@
 ## 0.11.0 April 9, 2021
  - capture errors and count frequency for each, including summary in metrics report; optionally disable with `--no-error-summary`
  - clippy cleanups (prepare for Rust 2021 https://blog.rust-lang.org/inside-rust/2021/03/04/planning-rust-2021.html):
-    o API change: all `GooseMethod`s renamed to enforce Rust naming conventions in regards to case, for example `GooseMethod::GET` becomes `GooseMethod::Get`
+    o **API change**: all `GooseMethod`s renamed to enforce Rust naming conventions in regards to case, for example `GooseMethod::GET` becomes `GooseMethod::Get`
     o use `vec![]` macro to avoid unnecessarily pushing data into mutable vectors
     o call `format!` macro directly for improved readability
     o remove unnecessary `panic!`
