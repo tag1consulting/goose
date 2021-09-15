@@ -8,6 +8,7 @@
  - use request name when displaying errors to avoid having a large volume of distinct error for the same endpoint when using path parameters
  - updated `tungstenite` dependency to [`0.15`](https://github.com/snapview/tungstenite-rs/blob/master/CHANGELOG.md)
  - Make `GooseAttack.execute` async
+ - Convert `README.md` (and enhance) into [`The Goose Book`](https://book.goose.rs/)
 
 ## 0.13.3 August 25, 2021
  - document GooseConfiguration fields that were only documented as gumpdrop parameters (in order to generate new lines in the help output) so now they're also documented in the code
