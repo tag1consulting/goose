@@ -1,0 +1,10 @@
+[book]
+authors = ["Jeremy Andrews"]
+language = "en"
+multilingual = false
+src = "src"
+title = "The Goose Book"
+
+[rust]
+edition = "2018"
+
