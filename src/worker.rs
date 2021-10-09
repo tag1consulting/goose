@@ -139,6 +139,8 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
         let user = GooseUser::new(
             initializer.task_sets_index,
             Url::parse(&initializer.base_url).unwrap(),
+            initializer.min_wait,
+            initializer.max_wait,
             &initializer.config,
             goose_attack.metrics.hash,
         )
