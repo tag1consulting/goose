@@ -75,7 +75,7 @@ pub(crate) async fn user_main(
                 let wait_time = if thread_user.max_wait.as_millis() > 0 {
                     rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
                 } else {
-                    std::time::Duration::from_secs(0)
+                    tokio::time::Duration::from_secs(0)
                 };
 
                 // Counter to track how long we've slept, waking regularly to check for messages.
@@ -102,7 +102,7 @@ pub(crate) async fn user_main(
                     if thread_user.max_wait.as_millis() > 0 {
                         let sleep_duration = if thread_user.max_wait.as_secs() >= 1 {
                             slept += 1000;
-                            std::time::Duration::from_secs(1)
+                            tokio::time::Duration::from_secs(1)
                         } else {
                             slept += thread_user.max_wait.as_millis();
                             thread_user.max_wait

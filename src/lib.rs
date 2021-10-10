@@ -84,13 +84,13 @@
 //! helper, for example to set a timeout on this specific request:
 //!
 //! ```rust
-//! use std::time;
+//! use tokio::time::Duration;
 //!
 //! use goose::prelude::*;
 //!
 //! async fn loadtest_bar(user: &mut GooseUser) -> GooseTaskResult {
 //!     let request_builder = user.goose_get("/path/to/bar")?;
-//!     let _goose = user.goose_send(request_builder.timeout(time::Duration::from_secs(3)), None).await?;
+//!     let _goose = user.goose_send(request_builder.timeout(Duration::from_secs(3)), None).await?;
 //!
 //!     Ok(())
 //! }
@@ -550,9 +550,9 @@ pub enum GooseError {
     /// Invalid wait time specified.
     InvalidWaitTime {
         // The specified minimum wait time.
-        min_wait: std::time::Duration,
+        min_wait: tokio::time::Duration,
         // The specified maximum wait time.
-        max_wait: std::time::Duration,
+        max_wait: tokio::time::Duration,
         /// An optional explanation of the error.
         detail: String,
     },

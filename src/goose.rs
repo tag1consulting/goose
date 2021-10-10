@@ -63,7 +63,7 @@
 //!
 //! ```rust
 //! use goose::prelude::*;
-//! use std::time::Duration;
+//! use tokio::time::Duration;
 //!
 //! let mut foo_tasks = taskset!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(3)).unwrap();
 //! let mut bar_tasks = taskset!("BarTasks").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
@@ -473,10 +473,10 @@ pub struct GooseTaskSet {
     pub weight: usize,
     /// A [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) indicating the
     /// minimum time a [`GooseUser`] will sleep after running a task.
-    pub min_wait: std::time::Duration,
+    pub min_wait: tokio::time::Duration,
     /// A [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) indicating the
     /// maximum time a [`GooseUser`] will sleep after running a task.
-    pub max_wait: std::time::Duration,
+    pub max_wait: tokio::time::Duration,
     /// A vector containing one copy of each [`GooseTask`](./struct.GooseTask.html) that will
     /// run by users running this task set.
     pub tasks: Vec<GooseTask>,
@@ -512,8 +512,8 @@ impl GooseTaskSet {
             name: name.to_string(),
             task_sets_index: usize::max_value(),
             weight: 1,
-            min_wait: std::time::Duration::from_secs(0),
-            max_wait: std::time::Duration::from_secs(0),
+            min_wait: tokio::time::Duration::from_secs(0),
+            max_wait: tokio::time::Duration::from_secs(0),
             tasks: Vec::new(),
             weighted_tasks: Vec::new(),
             weighted_on_start_tasks: Vec::new(),
@@ -602,7 +602,7 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
-    /// use std::time::Duration;
+    /// use tokio::time::Duration;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
@@ -613,8 +613,8 @@ impl GooseTaskSet {
     /// ```
     pub fn set_wait_time(
         mut self,
-        min_wait: std::time::Duration,
-        max_wait: std::time::Duration,
+        min_wait: tokio::time::Duration,
+        max_wait: tokio::time::Duration,
     ) -> Result<Self, GooseError> {
         trace!(
             "{} set_wait time: min: {:?} max: {:?}",
@@ -747,9 +747,9 @@ pub struct GaggleUser {
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
     /// Minimum amount of time to sleep after running a task.
-    pub min_wait: std::time::Duration,
+    pub min_wait: tokio::time::Duration,
     /// Maximum amount of time to sleep after running a task.
-    pub max_wait: std::time::Duration,
+    pub max_wait: tokio::time::Duration,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
     /// Load test hash.
@@ -760,8 +760,8 @@ impl GaggleUser {
     pub fn new(
         task_sets_index: usize,
         base_url: Url,
-        min_wait: std::time::Duration,
-        max_wait: std::time::Duration,
+        min_wait: tokio::time::Duration,
+        max_wait: tokio::time::Duration,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Self {
@@ -856,9 +856,9 @@ pub struct GooseUser {
     /// The base URL to prepend to all relative paths.
     pub base_url: Url,
     /// Minimum amount of time to sleep after running a task.
-    pub min_wait: std::time::Duration,
+    pub min_wait: tokio::time::Duration,
     /// Maximum amount of time to sleep after running a task.
-    pub max_wait: std::time::Duration,
+    pub max_wait: tokio::time::Duration,
     /// A local copy of the global [`GooseConfiguration`](../struct.GooseConfiguration.html).
     pub config: GooseConfiguration,
     /// Channel to logger.
@@ -892,8 +892,8 @@ impl GooseUser {
     pub fn new(
         task_sets_index: usize,
         base_url: Url,
-        min_wait: std::time::Duration,
-        max_wait: std::time::Duration,
+        min_wait: tokio::time::Duration,
+        max_wait: tokio::time::Duration,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Result<Self, GooseError> {
@@ -932,8 +932,8 @@ impl GooseUser {
         let mut single_user = GooseUser::new(
             0,
             base_url,
-            std::time::Duration::from_secs(0),
-            std::time::Duration::from_secs(0),
+            tokio::time::Duration::from_secs(0),
+            tokio::time::Duration::from_secs(0),
             configuration,
             0,
         )?;
@@ -2273,7 +2273,7 @@ impl GooseUser {
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
-    /// use std::time::Duration;
+    /// use tokio::time::Duration;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
@@ -2688,8 +2688,8 @@ mod tests {
         assert_eq!(task_set.name, "foo");
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(0));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(0));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(0));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(0));
         assert!(task_set.host.is_none());
         assert_eq!(task_set.tasks.len(), 0);
         assert_eq!(task_set.weighted_tasks.len(), 0);
@@ -2702,8 +2702,8 @@ mod tests {
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(0));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(0));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(0));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(0));
         assert!(task_set.host.is_none());
 
         // Different task can be registered.
@@ -2712,8 +2712,8 @@ mod tests {
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(0));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(0));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(0));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(0));
         assert!(task_set.host.is_none());
 
         // Same task can be registered again.
@@ -2722,8 +2722,8 @@ mod tests {
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
         assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(0));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(0));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(0));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(0));
         assert!(task_set.host.is_none());
 
         // Setting weight only affects weight field.
@@ -2732,8 +2732,8 @@ mod tests {
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(0));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(0));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(0));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(0));
         assert!(task_set.host.is_none());
 
         // Weight can be changed.
@@ -2747,8 +2747,8 @@ mod tests {
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(0));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(0));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(0));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(0));
 
         // Host field can be changed.
         task_set = task_set.set_host("https://bar.example.com/");
@@ -2757,12 +2757,12 @@ mod tests {
         // Wait time only affects wait time fields.
         task_set = task_set
             .set_wait_time(
-                std::time::Duration::from_secs(1),
-                std::time::Duration::from_secs(10),
+                tokio::time::Duration::from_secs(1),
+                tokio::time::Duration::from_secs(10),
             )
             .unwrap();
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(1));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(10));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(1));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(10));
         assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
         assert_eq!(task_set.weight, 5);
         assert_eq!(task_set.tasks.len(), 3);
@@ -2772,12 +2772,12 @@ mod tests {
         // Wait time can be changed.
         task_set = task_set
             .set_wait_time(
-                std::time::Duration::from_secs(3),
-                std::time::Duration::from_secs(9),
+                tokio::time::Duration::from_secs(3),
+                tokio::time::Duration::from_secs(9),
             )
             .unwrap();
-        assert_eq!(task_set.min_wait, std::time::Duration::from_secs(3));
-        assert_eq!(task_set.max_wait, std::time::Duration::from_secs(9));
+        assert_eq!(task_set.min_wait, tokio::time::Duration::from_secs(3));
+        assert_eq!(task_set.max_wait, tokio::time::Duration::from_secs(9));
     }
 
     #[test]
@@ -2868,15 +2868,15 @@ mod tests {
         let user = GooseUser::new(
             0,
             base_url,
-            std::time::Duration::from_secs(0),
-            std::time::Duration::from_secs(0),
+            tokio::time::Duration::from_secs(0),
+            tokio::time::Duration::from_secs(0),
             &configuration,
             0,
         )
         .unwrap();
         assert_eq!(user.task_sets_index, 0);
-        assert_eq!(user.min_wait, std::time::Duration::from_secs(0));
-        assert_eq!(user.max_wait, std::time::Duration::from_secs(0));
+        assert_eq!(user.min_wait, tokio::time::Duration::from_secs(0));
+        assert_eq!(user.max_wait, tokio::time::Duration::from_secs(0));
         assert_eq!(user.weighted_users_index, usize::max_value());
 
         // Confirm the URLs are correctly built using the default_host.
@@ -2905,14 +2905,14 @@ mod tests {
         let user2 = GooseUser::new(
             0,
             base_url,
-            std::time::Duration::from_secs(1),
-            std::time::Duration::from_secs(3),
+            tokio::time::Duration::from_secs(1),
+            tokio::time::Duration::from_secs(3),
             &configuration,
             0,
         )
         .unwrap();
-        assert_eq!(user2.min_wait, std::time::Duration::from_secs(1));
-        assert_eq!(user2.max_wait, std::time::Duration::from_secs(3));
+        assert_eq!(user2.min_wait, tokio::time::Duration::from_secs(1));
+        assert_eq!(user2.max_wait, tokio::time::Duration::from_secs(3));
 
         // Confirm the URLs are correctly built using the task_set_host.
         let url = user2.build_url("/foo").unwrap();
@@ -2974,8 +2974,8 @@ mod tests {
         let user = GooseUser::new(
             0,
             base_url,
-            std::time::Duration::from_secs(0),
-            std::time::Duration::from_secs(0),
+            tokio::time::Duration::from_secs(0),
+            tokio::time::Duration::from_secs(0),
             &configuration,
             0,
         )
