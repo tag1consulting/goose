@@ -26,9 +26,9 @@ pub struct GooseUserInitializer {
     /// The base_url for this user thread.
     pub base_url: String,
     /// Minimum amount of time to sleep after running a task.
-    pub min_wait: usize,
+    pub min_wait: std::time::Duration,
     /// Maximum amount of time to sleep after running a task.
-    pub max_wait: usize,
+    pub max_wait: std::time::Duration,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
     /// How long the load test should run, in seconds.

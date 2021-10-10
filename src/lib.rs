@@ -550,9 +550,9 @@ pub enum GooseError {
     /// Invalid wait time specified.
     InvalidWaitTime {
         // The specified minimum wait time.
-        min_wait: usize,
+        min_wait: std::time::Duration,
         // The specified maximum wait time.
-        max_wait: usize,
+        max_wait: std::time::Duration,
         /// An optional explanation of the error.
         detail: String,
     },

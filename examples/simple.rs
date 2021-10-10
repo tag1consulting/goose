@@ -18,6 +18,7 @@
 //! limitations under the License.
 
 use goose::prelude::*;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
@@ -26,7 +27,7 @@ async fn main() -> Result<(), GooseError> {
         .register_taskset(
             taskset!("WebsiteUser")
                 // After each task runs, sleep randomly from 5 to 15 seconds.
-                .set_wait_time(5, 15)?
+                .set_wait_time(Duration::from_secs(5), Duration::from_secs(15))?
                 // This task only runs one time when the user first starts.
                 .register_task(task!(website_login).set_on_start())
                 // These next two tasks run repeatedly as long as the load test is running.

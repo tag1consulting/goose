@@ -72,14 +72,14 @@ pub(crate) async fn user_main(
                 .await;
 
                 // Prepare to sleep for a random value from min_wait to max_wait.
-                let wait_time = if thread_user.max_wait > 0 {
+                let wait_time = if thread_user.max_wait.as_millis() > 0 {
                     rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
                 } else {
-                    0
+                    std::time::Duration::from_secs(0)
                 };
 
                 // Counter to track how long we've slept, waking regularly to check for messages.
-                let mut slept: usize = 0;
+                let mut slept: u128 = 0;
 
                 // Wake every second to check if the parent thread has told us to exit.
                 let mut in_sleep_loop = true;
@@ -99,15 +99,21 @@ pub(crate) async fn user_main(
                         }
                         message = thread_receiver.try_recv();
                     }
-                    if thread_user.max_wait > 0 {
-                        let sleep_duration = time::Duration::from_secs(1);
+                    if thread_user.max_wait.as_millis() > 0 {
+                        let sleep_duration = if thread_user.max_wait.as_secs() >= 1 {
+                            slept += 1000;
+                            std::time::Duration::from_secs(1)
+                        } else {
+                            slept += thread_user.max_wait.as_millis();
+                            thread_user.max_wait
+                        };
+
                         debug!(
-                            "user {} from {} sleeping {:?} second...",
+                            "user {} from {} sleeping {:?} ...",
                             thread_number, thread_task_set.name, sleep_duration
                         );
                         tokio::time::sleep(sleep_duration).await;
-                        slept += 1;
-                        if slept > wait_time {
+                        if slept > wait_time.as_millis() {
                             in_sleep_loop = false;
                         }
                     } else {
