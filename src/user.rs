@@ -55,6 +55,9 @@ pub(crate) async fn user_main(
             // Mitigation is enabled.
             thread_user.update_request_cadence(thread_number).await;
 
+            // When there is a delay between tasks, wake every second to check for messages.
+            let one_second = tokio::time::Duration::from_secs(1);
+
             for (thread_task_index, thread_task_name) in &thread_task_set.weighted_tasks {
                 // Determine which task we're going to run next.
                 let function = &thread_task_set.tasks[*thread_task_index].function;
@@ -77,6 +80,8 @@ pub(crate) async fn user_main(
                 } else {
                     tokio::time::Duration::from_secs(0)
                 };
+                // Also convert the duration to milliseconds.
+                let wait_time_millis = wait_time.as_millis();
 
                 // Counter to track how long we've slept, waking regularly to check for messages.
                 let mut slept: u128 = 0;
@@ -85,6 +90,7 @@ pub(crate) async fn user_main(
                 let mut in_sleep_loop = true;
                 // Track the time slept for Coordinated Omission Mitigation.
                 let sleep_timer = time::Instant::now();
+
                 while in_sleep_loop {
                     let mut message = thread_receiver.try_recv();
                     while message.is_ok() {
@@ -99,23 +105,28 @@ pub(crate) async fn user_main(
                         }
                         message = thread_receiver.try_recv();
                     }
-                    if thread_user.max_wait.as_millis() > 0 {
-                        let sleep_duration = if thread_user.max_wait.as_secs() >= 1 {
+
+                    if wait_time_millis > 0 {
+                        let sleep_duration = if wait_time_millis - slept >= 1000 {
                             slept += 1000;
-                            tokio::time::Duration::from_secs(1)
+                            if slept >= wait_time_millis {
+                                // Break out of sleep loop after next sleep.
+                                in_sleep_loop = false;
+                            }
+                            one_second
                         } else {
-                            slept += thread_user.max_wait.as_millis();
-                            thread_user.max_wait
+                            slept += wait_time_millis;
+                            // Break out of sleep loop after next sleep.
+                            in_sleep_loop = false;
+                            tokio::time::Duration::from_millis((wait_time_millis - slept) as u64)
                         };
 
                         debug!(
                             "user {} from {} sleeping {:?} ...",
                             thread_number, thread_task_set.name, sleep_duration
                         );
+
                         tokio::time::sleep(sleep_duration).await;
-                        if slept > wait_time.as_millis() {
-                            in_sleep_loop = false;
-                        }
                     } else {
                         in_sleep_loop = false;
                     }
