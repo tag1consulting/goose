@@ -50,13 +50,13 @@ pub(crate) async fn user_main(
 
     // If normal tasks are defined, loop launching tasks until parent tells us to stop.
     if !thread_task_set.weighted_tasks.is_empty() {
+        // When there is a delay between tasks, wake every second to check for messages.
+        let one_second = tokio::time::Duration::from_secs(1);
+
         'launch_tasks: loop {
             // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
             // Mitigation is enabled.
             thread_user.update_request_cadence(thread_number).await;
-
-            // When there is a delay between tasks, wake every second to check for messages.
-            let one_second = tokio::time::Duration::from_secs(1);
 
             for (thread_task_index, thread_task_name) in &thread_task_set.weighted_tasks {
                 // Determine which task we're going to run next.
@@ -75,38 +75,37 @@ pub(crate) async fn user_main(
                 .await;
 
                 // Prepare to sleep for a random value from min_wait to max_wait.
-                let wait_time = if thread_user.max_wait.as_millis() > 0 {
-                    rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
-                } else {
+                let wait_time = if thread_user.max_wait.is_zero() {
                     tokio::time::Duration::from_secs(0)
+                } else {
+                    rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
                 };
                 // Also convert the duration to milliseconds.
                 let wait_time_millis = wait_time.as_millis();
 
-                // Counter to track how long we've slept, waking regularly to check for messages.
-                let mut slept: u128 = 0;
+                if wait_time_millis > 0 {
+                    // Counter to track how long we've slept, waking regularly to check for messages.
+                    let mut slept: u128 = 0;
+                    // Wake every second to check if the parent thread has told us to exit.
+                    let mut in_sleep_loop = true;
+                    // Track the time slept for Coordinated Omission Mitigation.
+                    let sleep_timer = time::Instant::now();
 
-                // Wake every second to check if the parent thread has told us to exit.
-                let mut in_sleep_loop = true;
-                // Track the time slept for Coordinated Omission Mitigation.
-                let sleep_timer = time::Instant::now();
-
-                while in_sleep_loop {
-                    let mut message = thread_receiver.try_recv();
-                    while message.is_ok() {
-                        match message.unwrap() {
-                            // Time to exit, break out of launch_tasks loop.
-                            GooseUserCommand::Exit => {
-                                break 'launch_tasks;
+                    while in_sleep_loop {
+                        let mut message = thread_receiver.try_recv();
+                        while message.is_ok() {
+                            match message.unwrap() {
+                                // Time to exit, break out of launch_tasks loop.
+                                GooseUserCommand::Exit => {
+                                    break 'launch_tasks;
+                                }
+                                command => {
+                                    debug!("ignoring unexpected GooseUserCommand: {:?}", command);
+                                }
                             }
-                            command => {
-                                debug!("ignoring unexpected GooseUserCommand: {:?}", command);
-                            }
+                            message = thread_receiver.try_recv();
                         }
-                        message = thread_receiver.try_recv();
-                    }
 
-                    if wait_time_millis > 0 {
                         let sleep_duration = if wait_time_millis - slept >= 1000 {
                             slept += 1000;
                             if slept >= wait_time_millis {
@@ -127,13 +126,11 @@ pub(crate) async fn user_main(
                         );
 
                         tokio::time::sleep(sleep_duration).await;
-                    } else {
-                        in_sleep_loop = false;
                     }
+                    // Track how much time the GooseUser sleeps during this loop through all GooseTasks,
+                    // used by Coordinated Omission Mitigation.
+                    thread_user.slept += (time::Instant::now() - sleep_timer).as_millis() as u64;
                 }
-                // Track how much time the GooseUser sleeps during this loop through all GooseTasks,
-                // used by Coordinated Omission Mitigation.
-                thread_user.slept += (time::Instant::now() - sleep_timer).as_millis() as u64;
             }
         }
     }
