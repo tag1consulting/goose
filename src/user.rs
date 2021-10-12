@@ -74,6 +74,20 @@ pub(crate) async fn user_main(
                 )
                 .await;
 
+                let mut message = thread_receiver.try_recv();
+                while message.is_ok() {
+                    match message.unwrap() {
+                        // Time to exit, break out of launch_tasks loop.
+                        GooseUserCommand::Exit => {
+                            break 'launch_tasks;
+                        }
+                        command => {
+                            info!("ignoring unexpected GooseUserCommand: {:?}", command);
+                        }
+                    }
+                    message = thread_receiver.try_recv();
+                }
+
                 // Prepare to sleep for a random value from min_wait to max_wait.
                 let wait_time = if thread_user.max_wait.is_zero() {
                     tokio::time::Duration::from_secs(0)
@@ -92,7 +106,7 @@ pub(crate) async fn user_main(
                     let sleep_timer = time::Instant::now();
 
                     while in_sleep_loop {
-                        let mut message = thread_receiver.try_recv();
+                        message = thread_receiver.try_recv();
                         while message.is_ok() {
                             match message.unwrap() {
                                 // Time to exit, break out of launch_tasks loop.
