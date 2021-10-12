@@ -1137,8 +1137,6 @@ impl GooseAttack {
                 weighted_users.push(GooseUser::new(
                     self.task_sets[*task_sets_index].task_sets_index,
                     base_url,
-                    self.task_sets[*task_sets_index].min_wait,
-                    self.task_sets[*task_sets_index].max_wait,
                     &self.configuration,
                     self.metrics.hash,
                 )?);
@@ -1172,8 +1170,6 @@ impl GooseAttack {
                 weighted_users.push(GaggleUser::new(
                     self.task_sets[*task_sets_index].task_sets_index,
                     base_url,
-                    self.task_sets[*task_sets_index].min_wait,
-                    self.task_sets[*task_sets_index].max_wait,
                     &self.configuration,
                     self.metrics.hash,
                 ));

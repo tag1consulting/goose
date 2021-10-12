@@ -1,5 +1,6 @@
 use rand::Rng;
 use std::time;
+use tokio::time::Duration;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
@@ -51,7 +52,7 @@ pub(crate) async fn user_main(
     // If normal tasks are defined, loop launching tasks until parent tells us to stop.
     if !thread_task_set.weighted_tasks.is_empty() {
         // When there is a delay between tasks, wake every second to check for messages.
-        let one_second = tokio::time::Duration::from_secs(1);
+        let one_second = Duration::from_secs(1);
 
         'launch_tasks: loop {
             // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
@@ -74,30 +75,13 @@ pub(crate) async fn user_main(
                 )
                 .await;
 
-                let mut message = thread_receiver.try_recv();
-                while message.is_ok() {
-                    match message.unwrap() {
-                        // Time to exit, break out of launch_tasks loop.
-                        GooseUserCommand::Exit => {
-                            break 'launch_tasks;
-                        }
-                        command => {
-                            info!("ignoring unexpected GooseUserCommand: {:?}", command);
-                        }
-                    }
-                    message = thread_receiver.try_recv();
+                if received_exit(&thread_receiver) {
+                    break 'launch_tasks;
                 }
 
-                // Prepare to sleep for a random value from min_wait to max_wait.
-                let wait_time = if thread_user.max_wait.is_zero() {
-                    tokio::time::Duration::from_secs(0)
-                } else {
-                    rand::thread_rng().gen_range(thread_user.min_wait..thread_user.max_wait)
-                };
-                // Also convert the duration to milliseconds.
-                let wait_time_millis = wait_time.as_millis();
-
-                if wait_time_millis > 0 {
+                // If the task_wait is defined, wait for a random time between tasks.
+                if let Some((min, max)) = thread_task_set.task_wait {
+                    let wait_time = rand::thread_rng().gen_range(min..max).as_millis();
                     // Counter to track how long we've slept, waking regularly to check for messages.
                     let mut slept: u128 = 0;
                     // Wake every second to check if the parent thread has told us to exit.
@@ -106,32 +90,22 @@ pub(crate) async fn user_main(
                     let sleep_timer = time::Instant::now();
 
                     while in_sleep_loop {
-                        message = thread_receiver.try_recv();
-                        while message.is_ok() {
-                            match message.unwrap() {
-                                // Time to exit, break out of launch_tasks loop.
-                                GooseUserCommand::Exit => {
-                                    break 'launch_tasks;
-                                }
-                                command => {
-                                    debug!("ignoring unexpected GooseUserCommand: {:?}", command);
-                                }
-                            }
-                            message = thread_receiver.try_recv();
+                        if received_exit(&thread_receiver) {
+                            break 'launch_tasks;
                         }
 
-                        let sleep_duration = if wait_time_millis - slept >= 1000 {
+                        let sleep_duration = if wait_time - slept >= 1000 {
                             slept += 1000;
-                            if slept >= wait_time_millis {
+                            if slept >= wait_time {
                                 // Break out of sleep loop after next sleep.
                                 in_sleep_loop = false;
                             }
                             one_second
                         } else {
-                            slept += wait_time_millis;
+                            slept += wait_time;
                             // Break out of sleep loop after next sleep.
                             in_sleep_loop = false;
-                            tokio::time::Duration::from_millis((wait_time_millis - slept) as u64)
+                            tokio::time::Duration::from_millis((wait_time - slept) as u64)
                         };
 
                         debug!(
@@ -184,6 +158,25 @@ pub(crate) async fn user_main(
             thread_number, thread_task_set.name
         );
     }
+}
+
+// Determine if the parent has sent a GooseUserCommand::Exit message.
+fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
+    let mut message = thread_receiver.try_recv();
+    while message.is_ok() {
+        match message.unwrap() {
+            // GooseUserCommand::Exit received.
+            GooseUserCommand::Exit => {
+                return true;
+            }
+            command => {
+                debug!("ignoring unexpected GooseUserCommand: {:?}", command);
+            }
+        }
+        message = thread_receiver.try_recv();
+    }
+    // GooseUserCommand::Exit not received.
+    false
 }
 
 // Invoke the task function, collecting task metrics.

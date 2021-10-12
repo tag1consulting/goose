@@ -25,10 +25,6 @@ pub struct GooseUserInitializer {
     pub task_sets_index: usize,
     /// The base_url for this user thread.
     pub base_url: String,
-    /// Minimum amount of time to sleep after running a task.
-    pub min_wait: std::time::Duration,
-    /// Maximum amount of time to sleep after running a task.
-    pub max_wait: std::time::Duration,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
     /// How long the load test should run, in seconds.
@@ -474,8 +470,6 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             users.push(GooseUserInitializer {
                                 task_sets_index: user.task_sets_index,
                                 base_url: user.base_url.read().await.to_string(),
-                                min_wait: user.min_wait,
-                                max_wait: user.max_wait,
                                 config: user.config.clone(),
                                 run_time: goose_attack.run_time,
                                 worker_id: workers.len(),
