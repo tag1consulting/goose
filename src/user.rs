@@ -1,6 +1,5 @@
 use rand::Rng;
-use std::time;
-use std::time::Duration;
+use std::time::{self, Duration};
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};

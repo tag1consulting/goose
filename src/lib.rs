@@ -468,7 +468,8 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use std::{fmt, io, time};
+use std::time::{self, Duration};
+use std::{fmt, io};
 use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
@@ -550,9 +551,9 @@ pub enum GooseError {
     /// Invalid wait time specified.
     InvalidWaitTime {
         // The specified minimum wait time.
-        min_wait: std::time::Duration,
+        min_wait: Duration,
         // The specified maximum wait time.
-        max_wait: std::time::Duration,
+        max_wait: Duration,
         /// An optional explanation of the error.
         detail: String,
     },
@@ -1804,9 +1805,9 @@ impl GooseAttack {
             {
                 let sleep_delay = self.configuration.running_metrics.unwrap() * 1_000;
                 goose_attack_run_state.spawn_user_in_ms -= sleep_delay;
-                std::time::Duration::from_millis(sleep_delay as u64)
+                Duration::from_millis(sleep_delay as u64)
             } else {
-                std::time::Duration::from_millis(goose_attack_run_state.spawn_user_in_ms as u64)
+                Duration::from_millis(goose_attack_run_state.spawn_user_in_ms as u64)
             };
             debug!("sleeping {:?}...", sleep_duration);
             goose_attack_run_state.drift_timer =
@@ -1816,7 +1817,7 @@ impl GooseAttack {
         // If enough users have been spawned, move onto the next attack phase.
         if self.weighted_users.is_empty() {
             // Pause a tenth of a second waiting for the final user to fully start up.
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
 
             if self.attack_mode == AttackMode::Worker {
                 info!(
@@ -2049,7 +2050,7 @@ impl GooseAttack {
                     if self.configuration.no_autostart {
                         // Sleep then check for further instructions.
                         if goose_attack_run_state.idle_status_displayed {
-                            let sleep_duration = std::time::Duration::from_millis(250);
+                            let sleep_duration = Duration::from_millis(250);
                             debug!("sleeping {:?}...", sleep_duration);
                             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
                                 sleep_duration,
