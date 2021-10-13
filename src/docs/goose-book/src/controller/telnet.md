@@ -11,7 +11,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose> ?
-goose 0.14.0 controller commands:
+goose 0.14.1 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  start              start an idle load test
