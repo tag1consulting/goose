@@ -63,7 +63,7 @@
 //!
 //! ```rust
 //! use goose::prelude::*;
-//! use tokio::time::Duration;
+//! use std::time::Duration;
 //!
 //! let mut foo_tasks = taskset!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(3)).unwrap();
 //! let mut bar_tasks = taskset!("BarTasks").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
@@ -293,10 +293,10 @@ use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::time::Duration;
 use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
 use tokio::sync::RwLock;
-use tokio::time::Duration;
 use url::Url;
 
 use crate::logger::GooseLog;
@@ -599,7 +599,7 @@ impl GooseTaskSet {
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
-    /// use tokio::time::Duration;
+    /// use std::time::Duration;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
@@ -610,8 +610,8 @@ impl GooseTaskSet {
     /// ```
     pub fn set_wait_time(
         mut self,
-        min_wait: tokio::time::Duration,
-        max_wait: tokio::time::Duration,
+        min_wait: std::time::Duration,
+        max_wait: std::time::Duration,
     ) -> Result<Self, GooseError> {
         trace!(
             "{} set_wait time: min: {:?} max: {:?}",
@@ -2246,7 +2246,7 @@ impl GooseUser {
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
-    /// use tokio::time::Duration;
+    /// use std::time::Duration;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
@@ -2723,10 +2723,7 @@ mod tests {
 
         // Wait time only affects wait time fields.
         task_set = task_set
-            .set_wait_time(
-                tokio::time::Duration::from_secs(1),
-                tokio::time::Duration::from_secs(10),
-            )
+            .set_wait_time(Duration::from_secs(1), Duration::from_secs(10))
             .unwrap();
         assert_eq!(
             task_set.task_wait,
@@ -2740,10 +2737,7 @@ mod tests {
 
         // Wait time can be changed.
         task_set = task_set
-            .set_wait_time(
-                tokio::time::Duration::from_secs(3),
-                tokio::time::Duration::from_secs(9),
-            )
+            .set_wait_time(Duration::from_secs(3), Duration::from_secs(9))
             .unwrap();
         assert_eq!(
             task_set.task_wait,

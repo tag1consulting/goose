@@ -19,7 +19,7 @@
 
 use goose::prelude::*;
 use serde::Deserialize;
-use tokio::time::Duration;
+use std::time::Duration;
 
 struct Session {
     jwt_token: String,

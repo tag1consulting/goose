@@ -19,7 +19,7 @@
 use goose::prelude::*;
 use std::boxed::Box;
 use std::sync::Arc;
-use tokio::time::Duration;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {

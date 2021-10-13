@@ -82,11 +82,11 @@ pub fn parse_timespan(time_str: &str) -> usize {
 ///
 ///         // Do other stuff, in this case sleep 250 milliseconds. This is
 ///         // the "drift" that will be subtracted from the sleep time later.
-///         tokio::time::sleep(tokio::time::Duration::from_millis(250));
+///         tokio::time::sleep(std::time::Duration::from_millis(250));
 ///
 ///         // Sleep for 1 second minus the time spent doing other stuff.
 ///         drift_timer = util::sleep_minus_drift(
-///             tokio::time::Duration::from_secs(1),
+///             std::time::Duration::from_secs(1),
 ///             drift_timer,
 ///         ).await;
 ///
@@ -98,7 +98,7 @@ pub fn parse_timespan(time_str: &str) -> usize {
 /// }
 /// ```
 pub async fn sleep_minus_drift(
-    duration: tokio::time::Duration,
+    duration: std::time::Duration,
     drift: tokio::time::Instant,
 ) -> tokio::time::Instant {
     match duration.checked_sub(drift.elapsed()) {

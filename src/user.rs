@@ -1,6 +1,6 @@
 use rand::Rng;
 use std::time;
-use tokio::time::Duration;
+use std::time::Duration;
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
@@ -105,7 +105,7 @@ pub(crate) async fn user_main(
                             slept += wait_time;
                             // Break out of sleep loop after next sleep.
                             in_sleep_loop = false;
-                            tokio::time::Duration::from_millis((wait_time - slept) as u64)
+                            Duration::from_millis((wait_time - slept) as u64)
                         };
 
                         debug!(
