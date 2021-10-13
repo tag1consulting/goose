@@ -17,7 +17,6 @@
 //! limitations under the License.
 
 use goose::prelude::*;
-
 use std::boxed::Box;
 use std::sync::Arc;
 use std::time::Duration;

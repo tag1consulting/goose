@@ -17,9 +17,8 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::time::Duration;
-
 use goose::prelude::*;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {

@@ -55,17 +55,17 @@
 //!
 //! ### Task Set Wait Time
 //!
-//! Wait time is specified as a low-high duration range. Each time a task completes in
-//! the task set, the user will pause for a random number of milliseconds inclusively between
+//! Wait time is specified as a low-high Duration range. Each time a task completes in the
+//! task set, the user will pause for a random number of milliseconds inclusively between
 //! the low and high wait times. In the following example, users loading `foo` tasks will
-//! sleep 0 to 3 seconds after each task completes, and users loading `bar` tasks will
+//! sleep 0 to 2.5 seconds after each task completes, and users loading `bar` tasks will
 //! sleep 5 to 10 seconds after each task completes.
 //!
 //! ```rust
 //! use goose::prelude::*;
 //! use std::time::Duration;
 //!
-//! let mut foo_tasks = taskset!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(3)).unwrap();
+//! let mut foo_tasks = taskset!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_millis(2500)).unwrap();
 //! let mut bar_tasks = taskset!("BarTasks").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
 //! ```
 //! ## Creating Tasks
@@ -472,7 +472,8 @@ pub struct GooseTaskSet {
     pub task_sets_index: usize,
     /// An integer value that controls the frequency that this task set will be assigned to a user.
     pub weight: usize,
-    /// An range of duration indicating the interval a user will sleep after running a task.
+    /// A [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) range defining the
+    /// minimum and maximum time a [`GooseUser`] should sleep after running a task.
     pub task_wait: Option<(Duration, Duration)>,
     /// A vector containing one copy of each [`GooseTask`](./struct.GooseTask.html) that will
     /// run by users running this task set.
@@ -591,9 +592,8 @@ impl GooseTaskSet {
         self
     }
 
-    /// Configure a duration per task_set to pause after running each task. The length of the pause will be randomly
-    /// selected from `min_wait` to `max_wait` inclusively.  For example, if `min_wait` is `Duration::from_secs(0)` and
-    /// `max_wait` is `Duration::from_secs(2)`, the user will randomly sleep between 0 and 2_000 milliseconds after each task completes.
+    /// Configure a task_set to to pause after running each task. The length of the pause will be randomly
+    /// selected from `min_wait` to `max_wait` inclusively.
     ///
     /// # Example
     /// ```rust
@@ -613,12 +613,12 @@ impl GooseTaskSet {
         max_wait: Duration,
     ) -> Result<Self, GooseError> {
         trace!(
-            "{} set_wait time: min: {}ms max: {}ms",
+            "{} set_wait time: min: {:?} max: {:?}",
             self.name,
-            min_wait.as_millis(),
-            max_wait.as_millis()
+            min_wait,
+            max_wait
         );
-        if min_wait > max_wait {
+        if min_wait.as_millis() > max_wait.as_millis() {
             return Err(GooseError::InvalidWaitTime {
                 min_wait,
                 max_wait,
@@ -627,7 +627,7 @@ impl GooseTaskSet {
                         .to_string(),
             });
         }
-        self.task_wait.replace((min_wait, max_wait));
+        self.task_wait = Some((min_wait, max_wait));
 
         Ok(self)
     }
@@ -2714,6 +2714,7 @@ mod tests {
         assert_eq!(task_set.tasks.len(), 3);
         assert_eq!(task_set.weighted_tasks.len(), 0);
         assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(task_set.task_wait, None);
 
         // Host field can be changed.
         task_set = task_set.set_host("https://bar.example.com/");

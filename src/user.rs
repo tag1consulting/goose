@@ -1,7 +1,5 @@
-use futures::future::Fuse;
-use futures::{pin_mut, select, FutureExt};
 use rand::Rng;
-use std::time::{self, Duration, Instant};
+use std::time::{self, Duration};
 
 use crate::get_worker_id;
 use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
@@ -10,7 +8,7 @@ use crate::metrics::{GooseMetric, GooseTaskMetric};
 
 pub(crate) async fn user_main(
     thread_number: usize,
-    mut thread_task_set: GooseTaskSet,
+    thread_task_set: GooseTaskSet,
     mut thread_user: GooseUser,
     thread_receiver: flume::Receiver<GooseUserCommand>,
     worker: bool,
@@ -52,64 +50,73 @@ pub(crate) async fn user_main(
 
     // If normal tasks are defined, loop launching tasks until parent tells us to stop.
     if !thread_task_set.weighted_tasks.is_empty() {
-        let mut task_iter = thread_task_set.weighted_tasks.iter().cycle();
-        let next_task_delay = Fuse::terminated();
-        pin_mut!(next_task_delay);
+        // When there is a delay between tasks, wake every second to check for messages.
+        let one_second = Duration::from_secs(1);
 
-        let task_wait = match thread_task_set.task_wait.take() {
-            Some((min, max)) if min == max => min,
-            Some((min, max)) => Duration::from_millis(
-                rand::thread_rng().gen_range(min.as_millis()..max.as_millis()) as u64,
-            ),
-            None => Duration::from_millis(0),
-        };
+        'launch_tasks: loop {
+            // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
+            // Mitigation is enabled.
+            thread_user.update_request_cadence(thread_number).await;
 
-        next_task_delay.set(tokio::time::sleep(Duration::from_secs(0)).fuse());
-        loop {
-            select! {
-                _ = next_task_delay => {
-                    let (thread_task_index, thread_task_name) = task_iter.next().unwrap();
-                    if *thread_task_index == 0 {
-                        // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
-                        // Mitigation is enabled.
-                        thread_user.update_request_cadence(thread_number).await;
-                    }
+            for (thread_task_index, thread_task_name) in &thread_task_set.weighted_tasks {
+                // Determine which task we're going to run next.
+                let function = &thread_task_set.tasks[*thread_task_index].function;
+                debug!(
+                    "launching on_start {} task from {}",
+                    thread_task_name, thread_task_set.name
+                );
+                // Invoke the task function.
+                let _todo = invoke_task_function(
+                    function,
+                    &mut thread_user,
+                    *thread_task_index,
+                    thread_task_name,
+                )
+                .await;
 
-                    // Get a reference to the task function we're going to invoke next.
-                    let function = &thread_task_set.tasks[*thread_task_index].function;
-                    debug!(
-                        "launching on_start {} task from {}",
-                        thread_task_name, thread_task_set.name
-                    );
+                if received_exit(&thread_receiver) {
+                    break 'launch_tasks;
+                }
 
-                    let now = Instant::now();
-                    // Invoke the task function.
-                    let _ = invoke_task_function(
-                                    function,
-                                    &mut thread_user,
-                                    *thread_task_index,
-                                    thread_task_name,
-                                )
-                                .await;
+                // If the task_wait is defined, wait for a random time between tasks.
+                if let Some((min, max)) = thread_task_set.task_wait {
+                    let wait_time = rand::thread_rng().gen_range(min..max).as_millis();
+                    // Counter to track how long we've slept, waking regularly to check for messages.
+                    let mut slept: u128 = 0;
+                    // Wake every second to check if the parent thread has told us to exit.
+                    let mut in_sleep_loop = true;
+                    // Track the time slept for Coordinated Omission Mitigation.
+                    let sleep_timer = time::Instant::now();
 
-                    let elapsed = now.elapsed();
-
-                    if elapsed < task_wait {
-                        next_task_delay.set(tokio::time::sleep(task_wait - elapsed).fuse());
-                    } else {
-                        next_task_delay.set(tokio::time::sleep(Duration::from_millis(0)).fuse());
-                    }
-                },
-                message = thread_receiver.recv_async().fuse() => {
-                    match message {
-                        // Time to exit, break out of launch_tasks loop.
-                        Err(_) | Ok(GooseUserCommand::Exit) => {
-                            break ;
+                    while in_sleep_loop {
+                        if received_exit(&thread_receiver) {
+                            break 'launch_tasks;
                         }
-                        Ok(command) => {
-                            debug!("ignoring unexpected GooseUserCommand: {:?}", command);
-                        }
+
+                        let sleep_duration = if wait_time - slept >= 1000 {
+                            slept += 1000;
+                            if slept >= wait_time {
+                                // Break out of sleep loop after next sleep.
+                                in_sleep_loop = false;
+                            }
+                            one_second
+                        } else {
+                            slept += wait_time;
+                            // Break out of sleep loop after next sleep.
+                            in_sleep_loop = false;
+                            Duration::from_millis((wait_time - slept) as u64)
+                        };
+
+                        debug!(
+                            "user {} from {} sleeping {:?} ...",
+                            thread_number, thread_task_set.name, sleep_duration
+                        );
+
+                        tokio::time::sleep(sleep_duration).await;
                     }
+                    // Track how much time the GooseUser sleeps during this loop through all GooseTasks,
+                    // used by Coordinated Omission Mitigation.
+                    thread_user.slept += (time::Instant::now() - sleep_timer).as_millis() as u64;
                 }
             }
         }
@@ -150,6 +157,25 @@ pub(crate) async fn user_main(
             thread_number, thread_task_set.name
         );
     }
+}
+
+// Determine if the parent has sent a GooseUserCommand::Exit message.
+fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
+    let mut message = thread_receiver.try_recv();
+    while message.is_ok() {
+        match message.unwrap() {
+            // GooseUserCommand::Exit received.
+            GooseUserCommand::Exit => {
+                return true;
+            }
+            command => {
+                debug!("ignoring unexpected GooseUserCommand: {:?}", command);
+            }
+        }
+        message = thread_receiver.try_recv();
+    }
+    // GooseUserCommand::Exit not received.
+    false
 }
 
 // Invoke the task function, collecting task metrics.

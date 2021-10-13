@@ -3,9 +3,8 @@ mod common;
 mod english;
 mod spanish;
 
-use std::time::Duration;
-
 use goose::prelude::*;
+use std::time::Duration;
 
 use crate::admin::*;
 use crate::english::*;
@@ -73,7 +72,7 @@ async fn main() -> Result<(), GooseError> {
         .register_taskset(
             taskset!("Admin user")
                 .set_weight(1)?
-                .set_wait_time(Duration::from_secs(0), Duration::from_secs(3))?
+                .set_wait_time(Duration::from_secs(3), Duration::from_secs(10))?
                 .register_task(task!(log_in).set_on_start().set_name("auth /en/user/login"))
                 .register_task(task!(front_page_en).set_name("auth /").set_weight(2)?)
                 .register_task(task!(article_listing_en).set_name("auth /en/articles/"))
