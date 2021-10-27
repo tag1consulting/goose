@@ -8,11 +8,12 @@ $ cargo new loadtest
 $ cd loadtest/
 ```
 
-This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` and `loadtest/src/main.rs`. Editing `Cargo.toml` and add Goose under the dependencies heading:
+This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` and `loadtest/src/main.rs`. Editing `Cargo.toml` and add Goose and [`Tokio`](https://tokio.rs/) under the dependencies heading:
 
 ```toml
 [dependencies]
 goose = "^0.14"
+tokio = "^1.12"
 ```
 
 At this point it's possible to compile all dependencies, though the resulting binary only displays "Hello, world!":
