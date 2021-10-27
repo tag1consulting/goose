@@ -140,16 +140,17 @@
      Created binary (application) `loadtest` package
 $ cd loadtest/
 </code></pre>
-<p>This creates a new directory named <code>loadtest/</code> containing <code>loadtest/Cargo.toml</code> and <code>loadtest/src/main.rs</code>. Editing <code>Cargo.toml</code> and add Goose under the dependencies heading:</p>
+<p>This creates a new directory named <code>loadtest/</code> containing <code>loadtest/Cargo.toml</code> and <code>loadtest/src/main.rs</code>. Edit <code>Cargo.toml</code> and add Goose and <a href="https://tokio.rs/"><code>Tokio</code></a> under the dependencies heading:</p>
 <pre><code class="language-toml">[dependencies]
 goose = &quot;^0.14&quot;
+tokio = &quot;^1.12&quot;
 </code></pre>
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.14.0
+  Downloaded goose v0.14.1
       ...
-   Compiling goose v0.14.0
+   Compiling goose v0.14.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -158,6 +159,20 @@ Hello, world!
 <p>To create an actual load test, you first have to add the following boilerplate to the top of <code>src/main.rs</code> to make Goose's functionality available to your code:</p>
 <pre><code class="language-rust ignore">use goose::prelude::*;
 </code></pre>
+<blockquote>
+<p><strong>Note:</strong> Using the above prelude automatically adds the following <code>use</code> statements necessary when writing a load test, so you don't need to manually add all of them:</p>
+<pre><pre class="playground"><code class="language-rust edition2018">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crate::config::{GooseDefault, GooseDefaultType};
+use crate::goose::{
+    GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+};
+use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
+use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};
+<span class="boring">}
+</span></code></pre></pre>
+</blockquote>
 <p>Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the Reqwest library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.</p>
 <p>In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. Relative paths (not starting with a &quot;/&quot;) should be used.</p>
 <p>The following <code>loadtest_index</code> function simply loads the front page of our web page:</p>
@@ -185,10 +200,9 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
     Ok(())
 }
 </code></pre>
-<p>The <code>#[tokio::main]</code> at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing us to declare the <code>main()</code> function of our load test application as <code>async</code>.</p>
+<p>The <code>#[tokio::main]</code> at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing (and requiring) us to declare the <code>main()</code> function of our load test application as <code>async</code>.</p>
 <p>If you're new to Rust, <code>main()</code>'s return type of <code>Result&lt;(), GooseError&gt;</code> may look strange. It essentially says that <code>main</code> will return nothing (<code>()</code>) on success, and will return a <code>GooseError</code> on failure. This is helpful as several of <code>GooseAttack</code>'s methods can fail, returning an error. In our example, <code>initialize()</code> and <code>execute()</code> each may fail. The <code>?</code> that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the <code>.execute()</code> method is asynchronous, so it must be followed with <code>.await</code>, and as it can return an error it alsos has a <code>?</code>. The <code>print()</code> method consumes the <code>GooseMetrics</code> object returned by <code>GooseAttack.execute()</code> and prints a summary if metrics are enabled. The final line, <code>Ok(())</code> returns the empty result expected on success.</p>
 <p>And that's it, you've created your first load test! Read on to see how to run it and what it does.</p>
-<p>Or, refer to the <a href="https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test">developer documentation</a> for a slightly more complicated example.</p>
 
                     </main>
 

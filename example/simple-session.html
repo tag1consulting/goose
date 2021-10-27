@@ -141,20 +141,20 @@
 <pre><pre class="playground"><code class="language-rust edition2018">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>struct Session {
-    jwt_token: String,
+</span>    jwt_token: String,
 }
+
 <span class="boring">}
 </span></code></pre></pre>
 <p>The session data structure is created from json-formatted response data returned by an authentication request, uniquely stored in each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> instance:</p>
-<pre><code class="language-rust ignore">    user.set_session_data(Session {
-        jwt_token: response.jwt_token,
+<pre><code class="language-rust ignore">        jwt_token: response.jwt_token,
     });
+
 </code></pre>
 <p>The session data is retrieved from the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with each subsequent request. To keep the example simple no validation is done:</p>
-<pre><code class="language-rust ignore">    // This will panic if the session is missing or if the session is not of the right type
-    // use `get_session_data` to handle missing session
+<pre><code class="language-rust ignore">    // use `get_session_data` to handle missing session
     let session = user.get_session_data_unchecked::&lt;Session&gt;();
+    let request = user.goose_get(&quot;/&quot;)?.bearer_auth(&amp;session.jwt_token);
 </code></pre>
 <p><em>This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token.</em></p>
 <h2 id="complete-source-code"><a class="header" href="#complete-source-code">Complete Source Code</a></h2>
@@ -177,10 +177,9 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::time::Duration;
-
 use goose::prelude::*;
 use serde::Deserialize;
+use std::time::Duration;
 
 struct Session {
     jwt_token: String,

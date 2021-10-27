@@ -141,12 +141,11 @@
 <pre><pre class="playground"><code class="language-rust edition2018">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>    let paths = vec![&quot;/&quot;, &quot;/about&quot;, &quot;/our-team&quot;];
+</span>    for request_path in paths {
 <span class="boring">}
 </span></code></pre></pre>
 <p>A task function for each path is then dynamically created as a closure:</p>
-<pre><code class="language-rust ignore">    for request_path in paths {
-        let path = request_path;
+<pre><code class="language-rust ignore">        let path = request_path;
 
         let closure: GooseTaskFunction = Arc::new(move |user| {
             Box::pin(async move {
@@ -155,6 +154,7 @@
                 Ok(())
             })
         });
+
 </code></pre>
 <h2 id="complete-source-code"><a class="header" href="#complete-source-code">Complete Source Code</a></h2>
 <pre><code class="language-rust ignore">//! Simple Goose load test example using closures.
@@ -176,7 +176,6 @@
 //! limitations under the License.
 
 use goose::prelude::*;
-
 use std::boxed::Box;
 use std::sync::Arc;
 use std::time::Duration;

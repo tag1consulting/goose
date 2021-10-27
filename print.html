@@ -142,11 +142,11 @@
 <h2 id="advantages"><a class="header" href="#advantages">Advantages</a></h2>
 <p>Goose generates at least 11x as much traffic as Locust per-CPU-core, with even larger gains for more complex load tests (such as those using third-party libraries to scrape form content). While Locust requires you to manage a distributed load test simply to use multiple CPU cores on a single server, Goose leverages all available CPU cores with a single process, drastically simplifying the process for running larger load tests. Ongoing improvements to the codebase continue to bring new features and faster performance. Goose scales far better than Locust, efficiently using available resources to accomplish its goal. It also supports asynchronous processes enabling many more simultaneous processes to ramp up thousands of users from a single server, easily and consistently.</p>
 <p>Goose’s distributed testing design is similar to Locust’s, in that it uses a one Manager to many Workers model. However, unlike Locust, you do not need to spin up a distributed load test to leverage all available cores on a single server, as a single Goose process will fully leverage all available cores. Goose distributed load tests scale near-perfectly as once started each Worker performs its load test without any direction from the Manager, and the Manager simply collects statistics from all the Workers for final reporting. In other words, one Manager controlling eight Workers on a single 8-CPU-core server generates the same amount of load as a single standalone Goose process independently leveraging all eight cores.</p>
-<p>Goose has a number of unique debugging and logging mechanisms not found in other load testing tools, simplifying the writing of load tests and the analysis of results. Goose also provides more comprehensive metrics with multiple simple views into the data, and makes it easy to confirm that the load test is doing what you expect it to as you scale it up or down. It exposes the algorithms used to allocate tasks and task sets, giving more granular control over the order and consistency of operations, important for easily repeatable testing.</p>
+<p>Goose has a number of unique <a href="./logging/overview.html">debugging and logging mechanisms</a> not found in other load testing tools, simplifying the writing of load tests and the analysis of results. Goose also provides more <a href="./getting-started/metrics.html">comprehensive metrics</a> with multiple simple views into the data, and makes it easy to confirm that the load test is doing what you expect it to as you scale it up or down. It exposes the algorithms used to allocate tasks and task sets, giving <a href="./config/scheduler.html">more granular control</a> over the order and consistency of operations, important for easily repeatable testing.</p>
 <h2 id="whats-missing"><a class="header" href="#whats-missing">What's Missing</a></h2>
-<p>At this time, the biggest missing feature of Goose is a UI for controlling and monitoring load tests, but this is a work in progress. A recently completed first step toward this goal was the addition of an optional HTML report generated at the end of a load test.</p>
+<p>At this time, the biggest missing feature of Goose is a UI for controlling and monitoring load tests, but this is a work in progress. A recently completed first step toward this goal was the addition of an <a href="./getting-started/common.html#writing-an-html-formatted-report">optional HTML report</a> generated at the end of a load test.</p>
 <h2 id="brought-to-you-by"><a class="header" href="#brought-to-you-by">Brought To You By</a></h2>
-<p>Goose development is sponsored by <a href="https://tag1.com/">Tag1 Consulting</a>, led by Tag1's CEO, Jeremy Andrews, along with many <a href="https://github.com/tag1consulting/goose/graphs/contributors">community contributions</a>. Tag1 is a <a href="https://www.tag1consulting.com/blog/tag1-joins-rust-foundation-first-silver-member">member of the Rust Foundation</a>.</p>
+<p>Goose development is sponsored by <a href="https://tag1.com/">Tag1 Consulting</a>, led by Tag1's CEO, <a href="https://foundation.rust-lang.org/posts/2021-10-26-member-spotlight-tag1/">Jeremy Andrews</a>, along with many <a href="https://github.com/tag1consulting/goose/graphs/contributors">community contributions</a>. Tag1 is a <a href="https://www.tag1consulting.com/blog/tag1-joins-rust-foundation-first-silver-member">member of the Rust Foundation</a>.</p>
 <h2 id="additional-documentation"><a class="header" href="#additional-documentation">Additional Documentation</a></h2>
 <ul>
 <li><a href="https://docs.rs/goose/">Developer documentation</a></li>
@@ -181,16 +181,17 @@
      Created binary (application) `loadtest` package
 $ cd loadtest/
 </code></pre>
-<p>This creates a new directory named <code>loadtest/</code> containing <code>loadtest/Cargo.toml</code> and <code>loadtest/src/main.rs</code>. Editing <code>Cargo.toml</code> and add Goose under the dependencies heading:</p>
+<p>This creates a new directory named <code>loadtest/</code> containing <code>loadtest/Cargo.toml</code> and <code>loadtest/src/main.rs</code>. Edit <code>Cargo.toml</code> and add Goose and <a href="https://tokio.rs/"><code>Tokio</code></a> under the dependencies heading:</p>
 <pre><code class="language-toml">[dependencies]
 goose = &quot;^0.14&quot;
+tokio = &quot;^1.12&quot;
 </code></pre>
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.14.0
+  Downloaded goose v0.14.1
       ...
-   Compiling goose v0.14.0
+   Compiling goose v0.14.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -199,6 +200,20 @@ Hello, world!
 <p>To create an actual load test, you first have to add the following boilerplate to the top of <code>src/main.rs</code> to make Goose's functionality available to your code:</p>
 <pre><code class="language-rust ignore">use goose::prelude::*;
 </code></pre>
+<blockquote>
+<p><strong>Note:</strong> Using the above prelude automatically adds the following <code>use</code> statements necessary when writing a load test, so you don't need to manually add all of them:</p>
+<pre><pre class="playground"><code class="language-rust edition2018">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crate::config::{GooseDefault, GooseDefaultType};
+use crate::goose::{
+    GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+};
+use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
+use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};
+<span class="boring">}
+</span></code></pre></pre>
+</blockquote>
 <p>Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the Reqwest library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.</p>
 <p>In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. Relative paths (not starting with a &quot;/&quot;) should be used.</p>
 <p>The following <code>loadtest_index</code> function simply loads the front page of our web page:</p>
@@ -226,10 +241,9 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
     Ok(())
 }
 </code></pre>
-<p>The <code>#[tokio::main]</code> at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing us to declare the <code>main()</code> function of our load test application as <code>async</code>.</p>
+<p>The <code>#[tokio::main]</code> at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing (and requiring) us to declare the <code>main()</code> function of our load test application as <code>async</code>.</p>
 <p>If you're new to Rust, <code>main()</code>'s return type of <code>Result&lt;(), GooseError&gt;</code> may look strange. It essentially says that <code>main</code> will return nothing (<code>()</code>) on success, and will return a <code>GooseError</code> on failure. This is helpful as several of <code>GooseAttack</code>'s methods can fail, returning an error. In our example, <code>initialize()</code> and <code>execute()</code> each may fail. The <code>?</code> that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the <code>.execute()</code> method is asynchronous, so it must be followed with <code>.await</code>, and as it can return an error it alsos has a <code>?</code>. The <code>print()</code> method consumes the <code>GooseMetrics</code> object returned by <code>GooseAttack.execute()</code> and prints a summary if metrics are enabled. The final line, <code>Ok(())</code> returns the empty result expected on success.</p>
 <p>And that's it, you've created your first load test! Read on to see how to run it and what it does.</p>
-<p>Or, refer to the <a href="https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test">developer documentation</a> for a slightly more complicated example.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="running-a-load-test"><a class="header" href="#running-a-load-test">Running A Load Test</a></h1>
 <p>We will use Cargo to run our example load test application. It's best to get in the habit of setting the <code>--release</code> option whenever compiling or running load tests.</p>
 <pre><code class="language-bash">$ cargo run --release
@@ -305,7 +319,7 @@ All 8 users hatched, resetting metrics (disable with --no-reset-metrics).
 <p>The second table shows the average time required to load a page (20.68 milliseconds), the minimum time to load a page (7 ms), the maximum time to load a page (254 ms) and the median time to load a page (19 ms).</p>
 <p>The per-request metrics include a third table, showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 19 ms. In the 75% fastest page loads, the slowest page loaded in 21 ms, etc.</p>
 <p>In real load tests, you'll most likely have multiple task sets each with multiple tasks, and Goose will show you metrics for each along with an aggregate of them all together.</p>
-<p>Refer to the <a href="https://github.com/tag1consulting/goose/tree/master/examples">examples directory</a> for more complicated and useful load test examples.</p>
+<p>Refer to the <a href="getting-started/../example/overview.html">examples</a> included with Goose for more complicated and useful load test examples.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="run-time-options"><a class="header" href="#run-time-options">Run-Time Options</a></h1>
 <p>The <code>-h</code> flag will show all run-time configuration options available to Goose load tests. For example, you can pass the <code>-h</code> flag to our example loadtest as follows, <code>cargo run --release -- -h</code>:</p>
 <pre><code class="language-ignore">Usage: target/release/loadtest [OPTIONS]
@@ -519,7 +533,7 @@ All 1024 users hatched.
  Running:  2021-08-12 10:55:42 - 2021-08-12 11:05:09 (duration: 00:10:00)
  Stopping: 2021-08-12 11:05:09 - 2021-08-12 11:05:11 (duration: 00:00:02)
 
- goose v0.14.0
+ goose v0.14.1
  ------------------------------------------------------------------------------
 </code></pre>
 <p>Additional details about how metrics are collected, stored, and displayed can be found <a href="https://docs.rs/goose/*/goose/metrics/index.html">in the developer documentation</a>.</p>
@@ -607,7 +621,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.14.0 controller commands:
+goose 0.14.1 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  start              start an idle load test
@@ -932,7 +946,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <pre><code class="language-toml">[dependencies]
 goose = { version = &quot;^0.14&quot;, default-features = false, features = [&quot;rustls-tls&quot;] }
 </code></pre>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="simple-example"><a class="header" href="#simple-example">Simple Example</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="examples-2"><a class="header" href="#examples-2">Examples</a></h1>
 <p>Goose includes several examples to demonstrate load test functionality, including:</p>
 <ul>
 <li><a href="https://github.com/tag1consulting/goose/blob/main/examples/simple.rs">Simple</a></li>
@@ -941,7 +955,7 @@ goose = { version = &quot;^0.14&quot;, default-features = false, features = [&qu
 <li><a href="https://github.com/tag1consulting/goose/blob/main/examples/drupal_memcache.rs">Drupal Memcache</a></li>
 <li><a href="https://github.com/tag1consulting/goose/tree/main/examples/umami">Umami</a></li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="simple-example-1"><a class="header" href="#simple-example-1">Simple Example</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="simple-example"><a class="header" href="#simple-example">Simple Example</a></h1>
 <p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/simple.rs"><code>examples/simple.rs</code></a> example copies the simple load test documented on the <a href="https://locust.io/">locust.io web page</a>, rewritten in Rust for Goose. It uses minimal advanced functionality, but demonstrates how to GET and POST pages. It defines a single Task Set which has the user log in and then load a couple of pages.</p>
 <p>Goose can make use of all available CPU cores. By default, it will launch 1 user per core, and it can be configured to launch many more. The following was configured instead to launch 1,024 users. Each user randomly pauses 5 to 15 seconds after each task is loaded, so it's possible to spin up a large number of users. Here is a snapshot of <code>top</code> when running this example on a 1-core VM with 10G of available RAM -- there were ample resources to launch considerably more &quot;users&quot;, though <code>ulimit</code> had to be resized:</p>
 <pre><code class="language-bash">top - 06:56:06 up 15 days,  3:13,  2 users,  load average: 0.22, 0.10, 0.04
@@ -973,9 +987,8 @@ MiB Swap:  10237.0 total,  10237.0 free,      0.0 used.   8606.9 avail Mem
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::time::Duration;
-
 use goose::prelude::*;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -&gt; Result&lt;(), GooseError&gt; {
@@ -1031,12 +1044,11 @@ async fn website_about(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
 <pre><pre class="playground"><code class="language-rust edition2018">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>    let paths = vec![&quot;/&quot;, &quot;/about&quot;, &quot;/our-team&quot;];
+</span>    for request_path in paths {
 <span class="boring">}
 </span></code></pre></pre>
 <p>A task function for each path is then dynamically created as a closure:</p>
-<pre><code class="language-rust ignore">    for request_path in paths {
-        let path = request_path;
+<pre><code class="language-rust ignore">        let path = request_path;
 
         let closure: GooseTaskFunction = Arc::new(move |user| {
             Box::pin(async move {
@@ -1045,6 +1057,7 @@ async fn website_about(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
                 Ok(())
             })
         });
+
 </code></pre>
 <h2 id="complete-source-code-1"><a class="header" href="#complete-source-code-1">Complete Source Code</a></h2>
 <pre><code class="language-rust ignore">//! Simple Goose load test example using closures.
@@ -1066,7 +1079,6 @@ async fn website_about(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
 //! limitations under the License.
 
 use goose::prelude::*;
-
 use std::boxed::Box;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1114,20 +1126,20 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <pre><pre class="playground"><code class="language-rust edition2018">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>struct Session {
-    jwt_token: String,
+</span>    jwt_token: String,
 }
+
 <span class="boring">}
 </span></code></pre></pre>
 <p>The session data structure is created from json-formatted response data returned by an authentication request, uniquely stored in each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> instance:</p>
-<pre><code class="language-rust ignore">    user.set_session_data(Session {
-        jwt_token: response.jwt_token,
+<pre><code class="language-rust ignore">        jwt_token: response.jwt_token,
     });
+
 </code></pre>
 <p>The session data is retrieved from the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with each subsequent request. To keep the example simple no validation is done:</p>
-<pre><code class="language-rust ignore">    // This will panic if the session is missing or if the session is not of the right type
-    // use `get_session_data` to handle missing session
+<pre><code class="language-rust ignore">    // use `get_session_data` to handle missing session
     let session = user.get_session_data_unchecked::&lt;Session&gt;();
+    let request = user.goose_get(&quot;/&quot;)?.bearer_auth(&amp;session.jwt_token);
 </code></pre>
 <p><em>This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token.</em></p>
 <h2 id="complete-source-code-2"><a class="header" href="#complete-source-code-2">Complete Source Code</a></h2>
@@ -1150,10 +1162,9 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use std::time::Duration;
-
 use goose::prelude::*;
 use serde::Deserialize;
+use std::time::Duration;
 
 struct Session {
     jwt_token: String,
