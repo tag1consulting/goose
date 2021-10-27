@@ -8,11 +8,12 @@ $ cargo new loadtest
 $ cd loadtest/
 ```
 
-This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` and `loadtest/src/main.rs`. Editing `Cargo.toml` and add Goose under the dependencies heading:
+This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` and `loadtest/src/main.rs`. Edit `Cargo.toml` and add Goose and [`Tokio`](https://tokio.rs/) under the dependencies heading:
 
 ```toml
 [dependencies]
 goose = "^0.14"
+tokio = "^1.12"
 ```
 
 At this point it's possible to compile all dependencies, though the resulting binary only displays "Hello, world!":
@@ -34,6 +35,17 @@ To create an actual load test, you first have to add the following boilerplate t
 ```rust,ignore
 use goose::prelude::*;
 ```
+
+> **Note:** Using the above prelude automatically adds the following `use` statements necessary when writing a load test, so you don't need to manually add all of them:
+>
+> ```rust
+> use crate::config::{GooseDefault, GooseDefaultType};
+> use crate::goose::{
+>     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+> };
+> use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
+> use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};
+> ```
 
 Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the Reqwest library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.
 
@@ -72,10 +84,8 @@ async fn main() -> Result<(), GooseError> {
 }
 ```
 
-The `#[tokio::main]` at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing us to declare the `main()` function of our load test application as `async`.
+The `#[tokio::main]` at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing (and requiring) us to declare the `main()` function of our load test application as `async`.
 
 If you're new to Rust, `main()`'s return type of `Result<(), GooseError>` may look strange. It essentially says that `main` will return nothing (`()`) on success, and will return a `GooseError` on failure. This is helpful as several of `GooseAttack`'s methods can fail, returning an error. In our example, `initialize()` and `execute()` each may fail. The `?` that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the `.execute()` method is asynchronous, so it must be followed with `.await`, and as it can return an error it alsos has a `?`. The `print()` method consumes the `GooseMetrics` object returned by `GooseAttack.execute()` and prints a summary if metrics are enabled. The final line, `Ok(())` returns the empty result expected on success.
 
 And that's it, you've created your first load test! Read on to see how to run it and what it does.
-
-Or, refer to the [developer documentation](https://docs.rs/goose/*/goose/#creating-a-simple-goose-load-test) for a slightly more complicated example.
