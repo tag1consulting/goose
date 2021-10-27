@@ -1,4 +1,4 @@
-# Simple Example
+# Examples
 
 Goose includes several examples to demonstrate load test functionality, including:
  - [Simple](https://github.com/tag1consulting/goose/blob/main/examples/simple.rs)

@@ -12,15 +12,15 @@ Goose generates at least 11x as much traffic as Locust per-CPU-core, with even l
 
 Goose’s distributed testing design is similar to Locust’s, in that it uses a one Manager to many Workers model. However, unlike Locust, you do not need to spin up a distributed load test to leverage all available cores on a single server, as a single Goose process will fully leverage all available cores. Goose distributed load tests scale near-perfectly as once started each Worker performs its load test without any direction from the Manager, and the Manager simply collects statistics from all the Workers for final reporting. In other words, one Manager controlling eight Workers on a single 8-CPU-core server generates the same amount of load as a single standalone Goose process independently leveraging all eight cores.
 
-Goose has a number of unique [debugging and logging mechanisms](https://book.goose.rs/logging/overview.html) not found in other load testing tools, simplifying the writing of load tests and the analysis of results. Goose also provides more [comprehensive metrics](https://book.goose.rs/getting-started/metrics.html) with multiple simple views into the data, and makes it easy to confirm that the load test is doing what you expect it to as you scale it up or down. It exposes the algorithms used to allocate tasks and task sets, giving [more granular control](https://book.goose.rs/config/scheduler.html) over the order and consistency of operations, important for easily repeatable testing.
+Goose has a number of unique [debugging and logging mechanisms](./logging/overview.html) not found in other load testing tools, simplifying the writing of load tests and the analysis of results. Goose also provides more [comprehensive metrics](./getting-started/metrics.html) with multiple simple views into the data, and makes it easy to confirm that the load test is doing what you expect it to as you scale it up or down. It exposes the algorithms used to allocate tasks and task sets, giving [more granular control](./config/scheduler.html) over the order and consistency of operations, important for easily repeatable testing.
 
 ## What's Missing
 
-At this time, the biggest missing feature of Goose is a UI for controlling and monitoring load tests, but this is a work in progress. A recently completed first step toward this goal was the addition of an [optional HTML report](https://book.goose.rs/getting-started/common.html#writing-an-html-formatted-report) generated at the end of a load test.
+At this time, the biggest missing feature of Goose is a UI for controlling and monitoring load tests, but this is a work in progress. A recently completed first step toward this goal was the addition of an [optional HTML report](./getting-started/common.html#writing-an-html-formatted-report) generated at the end of a load test.
 
 ## Brought To You By
 
-Goose development is sponsored by [Tag1 Consulting](https://tag1.com/), led by Tag1's CEO, Jeremy Andrews, along with many [community contributions](https://github.com/tag1consulting/goose/graphs/contributors). Tag1 is a [member of the Rust Foundation](https://www.tag1consulting.com/blog/tag1-joins-rust-foundation-first-silver-member).
+Goose development is sponsored by [Tag1 Consulting](https://tag1.com/), led by Tag1's CEO, [Jeremy Andrews](https://foundation.rust-lang.org/posts/2021-10-26-member-spotlight-tag1/), along with many [community contributions](https://github.com/tag1consulting/goose/graphs/contributors). Tag1 is a [member of the Rust Foundation](https://www.tag1consulting.com/blog/tag1-joins-rust-foundation-first-silver-member).
 
 ## Additional Documentation
 

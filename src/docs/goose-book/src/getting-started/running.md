@@ -88,4 +88,4 @@ The per-request metrics include a third table, showing the slowest page load tim
 
 In real load tests, you'll most likely have multiple task sets each with multiple tasks, and Goose will show you metrics for each along with an aggregate of them all together.
 
-Refer to the [examples directory](https://github.com/tag1consulting/goose/tree/master/examples) for more complicated and useful load test examples.
+Refer to the [examples](../example/overview.html) included with Goose for more complicated and useful load test examples.
