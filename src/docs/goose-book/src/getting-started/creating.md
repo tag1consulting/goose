@@ -36,6 +36,17 @@ To create an actual load test, you first have to add the following boilerplate t
 use goose::prelude::*;
 ```
 
+> **Note:** Using the above prelude will automatically add the following `use` statements necessary when writing a load test, so you don't need to manually add all of them:
+>
+> ```rust
+> use crate::config::{GooseDefault, GooseDefaultType};
+> use crate::goose::{
+>     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+> };
+> use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
+> use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};
+> ```
+
 Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the Reqwest library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.
 
 In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. Relative paths (not starting with a "/") should be used.
