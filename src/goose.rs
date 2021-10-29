@@ -670,7 +670,7 @@ impl fmt::Display for GooseMethod {
     }
 }
 
-/// Convert [`http::method::Method`](https://docs.rs/http/0.2.4/http/method/struct.Method.html)
+/// Convert [`http::method::Method`](https://docs.rs/http/*/http/method/struct.Method.html)
 /// to [`GooseMethod`](./enum.GooseMethod.html).
 pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskError> {
     Ok(match method {
@@ -1119,40 +1119,7 @@ impl GooseUser {
     /// }
     /// ```
     pub async fn get(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_get(path)?;
-
-        Ok(self.goose_send(request_builder, None).await?)
-    }
-
-    /// A helper to make a named `GET` request of a path and collect relevant metrics.
-    /// Automatically prepends the correct host. Naming a request only affects collected
-    /// metrics.
-    ///
-    /// Calls to `get_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(get_function);
-    ///
-    /// /// A very simple task that makes a GET request.
-    /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get_named("/path/to/foo/", "foo").await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn get_named(
-        &mut self,
-        path: &str,
-        request_name: &str,
-    ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_get(path)?;
-
-        Ok(self.goose_send(request_builder, Some(request_name)).await?)
+        Ok(self.request(GooseRequest::get(path)).await?)
     }
 
     /// A helper to make a `POST` request of a path and collect relevant metrics.
@@ -1181,42 +1148,34 @@ impl GooseUser {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn post(&mut self, path: &str, body: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_post(path)?.body(body.to_string());
-
-        Ok(self.goose_send(request_builder, None).await?)
-    }
-
-    /// A helper to make a named `POST` request of a path and collect relevant metrics.
-    /// Automatically prepends the correct host. Naming a request only affects collected
-    /// metrics.
-    ///
-    /// Calls to `post_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(post_function);
-    ///
-    /// /// A very simple task that makes a POST request.
-    /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.post_named("/path/to/foo/", "foo", "BODY BEING POSTED").await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn post_named(
+    pub async fn post<T: Into<reqwest::Body>>(
         &mut self,
         path: &str,
-        request_name: &str,
-        body: &str,
+        body: T,
     ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_post(path)?.body(body.to_string());
+        let url = self.build_url(path)?;
+        let request_builder = self.client.post(url);
+        let goose_request = GooseRequest::builder()
+            .method(GooseMethod::Post)
+            .request_builder(request_builder.body(body))
+            .build();
 
-        Ok(self.goose_send(request_builder, Some(request_name)).await?)
+        Ok(self.request(goose_request).await?)
+    }
+
+    pub async fn post_form<T: Serialize + ?Sized>(
+        &mut self,
+        path: &str,
+        form: &T,
+    ) -> Result<GooseResponse, GooseTaskError> {
+        let url = self.build_url(path)?;
+        let request_builder = self.client.post(url);
+        let goose_request = GooseRequest::builder()
+            .method(GooseMethod::Post)
+            .request_builder(request_builder.form(&form))
+            .build();
+
+        Ok(self.request(goose_request).await?)
     }
 
     /// A helper to make a `HEAD` request of a path and collect relevant metrics.
@@ -1246,40 +1205,7 @@ impl GooseUser {
     /// }
     /// ```
     pub async fn head(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_head(path)?;
-
-        Ok(self.goose_send(request_builder, None).await?)
-    }
-
-    /// A helper to make a named `HEAD` request of a path and collect relevant metrics.
-    /// Automatically prepends the correct host. Naming a request only affects collected
-    /// metrics.
-    ///
-    /// Calls to `head_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(head_function);
-    ///
-    /// /// A very simple task that makes a HEAD request.
-    /// async fn head_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.head_named("/path/to/foo/", "foo").await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn head_named(
-        &mut self,
-        path: &str,
-        request_name: &str,
-    ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_head(path)?;
-
-        Ok(self.goose_send(request_builder, Some(request_name)).await?)
+        Ok(self.request(GooseRequest::head(path)).await?)
     }
 
     /// A helper to make a `DELETE` request of a path and collect relevant metrics.
@@ -1309,208 +1235,7 @@ impl GooseUser {
     /// }
     /// ```
     pub async fn delete(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_delete(path)?;
-
-        Ok(self.goose_send(request_builder, None).await?)
-    }
-
-    /// A helper to make a named `DELETE` request of a path and collect relevant metrics.
-    /// Automatically prepends the correct host. Naming a request only affects collected
-    /// metrics.
-    ///
-    /// Calls to `delete_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
-    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
-    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(delete_function);
-    ///
-    /// /// A very simple task that makes a DELETE request.
-    /// async fn delete_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.delete_named("/path/to/foo/", "foo").await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn delete_named(
-        &mut self,
-        path: &str,
-        request_name: &str,
-    ) -> Result<GooseResponse, GooseTaskError> {
-        let request_builder = self.goose_delete(path)?;
-
-        Ok(self.goose_send(request_builder, Some(request_name)).await?)
-    }
-
-    /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object for making a `GET` request.
-    ///
-    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
-    /// object to actually execute the request.)
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(get_function);
-    ///
-    /// /// A simple task that makes a GET request, exposing the Reqwest
-    /// /// request builder.
-    /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let request_builder = user.goose_get("/path/to/foo")?;
-    ///     let _goose = user.goose_send(request_builder, None).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn goose_get(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
-        let url = self.build_url(path)?;
-
-        Ok(self.client.get(&url))
-    }
-
-    /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object for making a `POST` request.
-    ///
-    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
-    /// object to actually execute the request.)
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(post_function);
-    ///
-    /// /// A simple task that makes a POST request, exposing the Reqwest
-    /// /// request builder.
-    /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let request_builder = user.goose_post("/path/to/foo")?;
-    ///     let _goose = user.goose_send(request_builder, None).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn goose_post(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
-        let url = self.build_url(path)?;
-
-        Ok(self.client.post(&url))
-    }
-
-    /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object for making a `HEAD` request.
-    ///
-    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
-    /// object to actually execute the request.)
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(head_function);
-    ///
-    /// /// A simple task that makes a HEAD request, exposing the Reqwest
-    /// /// request builder.
-    /// async fn head_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let request_builder = user.goose_head("/path/to/foo")?;
-    ///     let _goose = user.goose_send(request_builder, None).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn goose_head(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
-        let url = self.build_url(path)?;
-
-        Ok(self.client.head(&url))
-    }
-
-    /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object for making a `PUT` request.
-    ///
-    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
-    /// object to actually execute the request.)
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(put_function);
-    ///
-    /// /// A simple task that makes a PUT request, exposing the Reqwest
-    /// /// request builder.
-    /// async fn put_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let request_builder = user.goose_put("/path/to/foo")?;
-    ///     let _goose = user.goose_send(request_builder, None).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn goose_put(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
-        let url = self.build_url(path)?;
-
-        Ok(self.client.put(&url))
-    }
-
-    /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object for making a `PATCH` request.
-    ///
-    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
-    /// object to actually execute the request.)
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(patch_function);
-    ///
-    /// /// A simple task that makes a PUT request, exposing the Reqwest
-    /// /// request builder.
-    /// async fn patch_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let request_builder = user.goose_patch("/path/to/foo")?;
-    ///     let _goose = user.goose_send(request_builder, None).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn goose_patch(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
-        let url = self.build_url(path)?;
-
-        Ok(self.client.patch(&url))
-    }
-
-    /// Prepends the correct host on the path, then prepares a
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object for making a `DELETE` request.
-    ///
-    /// (You must then call [`goose_send`](./struct.GooseUser.html#method.goose_send) on this
-    /// object to actually execute the request.)
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// let mut task = task!(delete_function);
-    ///
-    /// /// A simple task that makes a DELETE request, exposing the Reqwest
-    /// /// request builder.
-    /// async fn delete_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let request_builder = user.goose_delete("/path/to/foo")?;
-    ///     let _goose = user.goose_send(request_builder, None).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn goose_delete(&self, path: &str) -> Result<RequestBuilder, GooseTaskError> {
-        let url = self.build_url(path)?;
-
-        Ok(self.client.delete(&url))
+        Ok(self.request(GooseRequest::delete(path)).await?)
     }
 
     /// Builds the provided
@@ -1539,20 +1264,36 @@ impl GooseUser {
     ///
     /// /// A simple task that makes a GET request, exposing the Reqwest
     /// /// request builder.
+    /// /// @TODO
     /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let request_builder = user.goose_get("/path/to/foo")?;
-    ///     let goose = user.goose_send(request_builder, None).await?;
+    ///     let goose = user.get("/path/to/foo").await?;
     ///
     ///     // Do stuff with goose.request and/or goose.response here.
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub async fn goose_send(
+    pub async fn request<'a>(
         &mut self,
-        request_builder: RequestBuilder,
-        request_name: Option<&str>,
+        mut request: GooseRequest<'_>,
     ) -> Result<GooseResponse, GooseTaskError> {
+        let request_builder = if request.request_builder.is_some() {
+            request.request_builder.take().unwrap()
+        } else {
+            let url = self.build_url(request.path)?;
+            match request.method {
+                GooseMethod::Delete => self.client.delete(&url),
+                GooseMethod::Get => self.client.get(&url),
+                GooseMethod::Head => self.client.head(&url),
+                GooseMethod::Patch => self.client.patch(&url),
+                GooseMethod::Post => self.client.post(&url),
+                GooseMethod::Put => self.client.put(&url),
+            }
+        };
+
+        // Determine the name for this request.
+        let request_name = self.get_request_name(&request);
+
         // If throttle-requests is enabled...
         if self.is_throttled && self.throttle.is_some() {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
@@ -1561,24 +1302,24 @@ impl GooseUser {
             self.throttle.clone().unwrap().send_async(true).await?;
         };
 
+        // The request is officially started
         let started = Instant::now();
-        let request = request_builder.build()?;
+
+        let built_request = request_builder.build()?;
 
         // String version of request path.
-        let path = match Url::parse(&request.url().to_string()) {
+        let path = match Url::parse(&built_request.url().to_string()) {
             Ok(u) => u.path().to_string(),
             Err(e) => {
                 error!("failed to parse url: {}", e);
                 "".to_string()
             }
         };
-        let method = goose_method_from_method(request.method().clone())?;
-        let request_name = self.get_request_name(&path, request_name);
 
         // Grab a copy of any headers set by this request, included in the request log
         // and the debug log.
         let mut headers: Vec<String> = Vec::new();
-        for header in request.headers() {
+        for header in built_request.headers() {
             headers.push(format!("{:?}", header));
         }
 
@@ -1586,7 +1327,7 @@ impl GooseUser {
         // the debug log.
         let body = if self.config.request_body {
             // Get a bytes representation of the body, if any.
-            let body_bytes = match request.body() {
+            let body_bytes = match built_request.body() {
                 Some(b) => b.as_bytes().unwrap_or(b""),
                 None => b"",
             };
@@ -1597,7 +1338,12 @@ impl GooseUser {
         };
 
         // Record the complete client request, included in the request log and the debug log.
-        let raw_request = GooseRawRequest::new(method, request.url().as_str(), headers, body);
+        let raw_request = GooseRawRequest::new(
+            request.method.clone(),
+            built_request.url().as_str(),
+            headers,
+            body,
+        );
 
         // Record information about the request.
         let mut request_metric = GooseRequestMetric::new(
@@ -1608,18 +1354,24 @@ impl GooseUser {
         );
 
         // Make the actual request.
-        let response = self.client.execute(request).await;
+        let response = self.client.execute(built_request).await;
         request_metric.set_response_time(started.elapsed().as_millis());
 
         match &response {
             Ok(r) => {
                 let status_code = r.status();
                 debug!("{:?}: status_code {}", &path, status_code);
-                // @TODO: match/handle all is_foo() https://docs.rs/http/0.2.1/http/status/struct.StatusCode.html
-                if !status_code.is_success() {
+
+                if let Some(expect_status_code) = request.expect_status_code {
+                    if status_code != expect_status_code {
+                        request_metric.success = false;
+                        request_metric.error = format!("{}: {}", status_code, request_name);
+                    }
+                } else if !status_code.is_success() {
                     request_metric.success = false;
                     request_metric.error = format!("{}: {}", status_code, request_name);
                 }
+
                 request_metric.set_status_code(Some(status_code));
                 request_metric.set_final_url(r.url().as_str());
 
@@ -1830,18 +1582,17 @@ impl GooseUser {
 
     /// If `request_name` is set, unwrap and use this. Otherwise, if the GooseTask has a name
     /// set use it. Otherwise use the path.
-    fn get_request_name<'a>(&'a self, path: &'a str, request_name: Option<&'a str>) -> &'a str {
-        match request_name {
-            // If a request_name was passed in, unwrap and return a copy of it.
+    fn get_request_name<'a>(&'a self, request: &'a GooseRequest) -> &'a str {
+        match request.name {
+            // If a request.name is set, unwrap and return it.
             Some(rn) => rn,
             None => {
-                // Otherwise determine if the current GooseTask is named, and if so return
-                // a copy of it.
+                // Otherwise determine if the current GooseTask is named, and if so return it.
                 if let Some(task_name) = &self.task_name {
                     task_name
                 } else {
                     // Otherwise return a copy of the the path.
-                    path
+                    request.path
                 }
             }
         }
@@ -1916,7 +1667,7 @@ impl GooseUser {
     /// let mut task = task!(loadtest_index_page);
     ///
     /// async fn loadtest_index_page(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let mut goose = user.get_named("/", "index").await?;
+    ///     let mut goose = user.get("/").await?;
     ///
     ///     if let Ok(response) = goose.response {
     ///         // We only need to check pages that returned a success status code.
@@ -2283,6 +2034,112 @@ impl GooseUser {
     pub fn set_base_url(&mut self, host: &str) -> Result<(), GooseTaskError> {
         self.base_url = Url::parse(host)?;
         Ok(())
+    }
+}
+
+/// A GooseRequest ...
+pub struct GooseRequest<'a> {
+    // Defaults to ""
+    path: &'a str,
+    // Defaults to GET
+    method: GooseMethod,
+    // Defaults to None
+    name: Option<&'a str>,
+    // Defaults to None
+    expect_status_code: Option<u16>,
+    // Defaults to None
+    request_builder: Option<RequestBuilder>,
+}
+impl<'a> GooseRequest<'a> {
+    /// Convenience function to bring [`GooseRequestBuilder`] into scope.
+    pub fn builder() -> GooseRequestBuilder<'a> {
+        GooseRequestBuilder::new()
+    }
+
+    pub fn get(path: &str) -> GooseRequest {
+        GooseRequest::builder().path(path).build()
+    }
+
+    pub fn post(path: &str) -> GooseRequest {
+        GooseRequest::builder()
+            .path(path)
+            .method(GooseMethod::Post)
+            .build()
+    }
+
+    pub fn head(path: &str) -> GooseRequest {
+        GooseRequest::builder()
+            .path(path)
+            .method(GooseMethod::Head)
+            .build()
+    }
+
+    pub fn delete(path: &str) -> GooseRequest {
+        GooseRequest::builder()
+            .path(path)
+            .method(GooseMethod::Delete)
+            .build()
+    }
+}
+
+pub struct GooseRequestBuilder<'a> {
+    path: &'a str,
+    method: GooseMethod,
+    name: Option<&'a str>,
+    expect_status_code: Option<u16>,
+    request_builder: Option<RequestBuilder>,
+}
+impl<'a> GooseRequestBuilder<'a> {
+    fn new() -> Self {
+        Self {
+            path: "",
+            method: GooseMethod::Get,
+            name: None,
+            expect_status_code: None,
+            request_builder: None,
+        }
+    }
+
+    pub fn path(mut self, path: impl Into<&'a str>) -> Self {
+        self.path = path.into();
+        self
+    }
+
+    pub fn method(mut self, method: GooseMethod) -> Self {
+        self.method = method;
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<&'a str>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn expect_status_code(mut self, status_code: u16) -> Self {
+        self.expect_status_code = Some(status_code);
+        self
+    }
+
+    pub fn request_builder(mut self, request_builder: RequestBuilder) -> Self {
+        self.request_builder = Some(request_builder);
+        self
+    }
+
+    pub fn build(self) -> GooseRequest<'a> {
+        let Self {
+            path,
+            method,
+            name,
+            expect_status_code,
+            request_builder,
+        } = self;
+        GooseRequest {
+            path,
+            method,
+            name,
+            expect_status_code,
+            request_builder,
+        }
     }
 }
 
@@ -2866,52 +2723,6 @@ mod tests {
         let url = user2.build_url("https://example.com/foo").unwrap();
         assert_eq!(url, "https://example.com/foo");
 
-        // Recreate user2.
-        let server = MockServer::start();
-        let user2 = setup_user(&server).unwrap();
-
-        // Create a GET request.
-        let mut goose_request = user2.goose_get("/foo").unwrap();
-        let mut built_request = goose_request.build().unwrap();
-        assert_eq!(built_request.method(), &Method::GET);
-        assert_eq!(built_request.url().as_str(), server.url("/foo"));
-        assert_eq!(built_request.timeout(), None);
-
-        // Create a POST request.
-        goose_request = user2.goose_post("/path/to/post").unwrap();
-        built_request = goose_request.build().unwrap();
-        assert_eq!(built_request.method(), &Method::POST);
-        assert_eq!(built_request.url().as_str(), server.url("/path/to/post"));
-        assert_eq!(built_request.timeout(), None);
-
-        // Create a PUT request.
-        goose_request = user2.goose_put("/path/to/put").unwrap();
-        built_request = goose_request.build().unwrap();
-        assert_eq!(built_request.method(), &Method::PUT);
-        assert_eq!(built_request.url().as_str(), server.url("/path/to/put"));
-        assert_eq!(built_request.timeout(), None);
-
-        // Create a PATCH request.
-        goose_request = user2.goose_patch("/path/to/patch").unwrap();
-        built_request = goose_request.build().unwrap();
-        assert_eq!(built_request.method(), &Method::PATCH);
-        assert_eq!(built_request.url().as_str(), server.url("/path/to/patch"));
-        assert_eq!(built_request.timeout(), None);
-
-        // Create a DELETE request.
-        goose_request = user2.goose_delete("/path/to/delete").unwrap();
-        built_request = goose_request.build().unwrap();
-        assert_eq!(built_request.method(), &Method::DELETE);
-        assert_eq!(built_request.url().as_str(), server.url("/path/to/delete"));
-        assert_eq!(built_request.timeout(), None);
-
-        // Create a HEAD request.
-        goose_request = user2.goose_head("/path/to/head").unwrap();
-        built_request = goose_request.build().unwrap();
-        assert_eq!(built_request.method(), &Method::HEAD);
-        assert_eq!(built_request.url().as_str(), server.url("/path/to/head"));
-        assert_eq!(built_request.timeout(), None);
-
         // Confirm Goose can build a base_url that includes a path.
         const HOST_WITH_PATH: &str = "http://example.com/with/path/";
         let base_url = get_base_url(Some(HOST_WITH_PATH.to_string()), None, None).unwrap();
@@ -2999,7 +2810,6 @@ mod tests {
         let body = unwrapped_response.text().await.unwrap();
         assert_eq!(body, "foo");
         assert_eq!(goose.request.raw.method, GooseMethod::Post);
-        assert_eq!(goose.request.name, COMMENT_PATH);
         assert!(goose.request.success);
         assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);

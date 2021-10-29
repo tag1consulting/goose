@@ -24,9 +24,8 @@ const RUN_TIME: usize = 2;
 
 // Test task.
 pub async fn login(user: &mut GooseUser) -> GooseTaskResult {
-    let request_builder = user.goose_post(LOGIN_PATH)?;
     let params = [("username", "me"), ("password", "s3crET!")];
-    let _goose = user.goose_send(request_builder.form(&params), None).await?;
+    let _goose = user.post_form(LOGIN_PATH, &params).await?;
     Ok(())
 }
 

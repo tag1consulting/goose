@@ -66,8 +66,7 @@ pub async fn log_in(user: &mut GooseUser) -> GooseTaskResult {
                         ("form_id", &"user_login_form".to_string()),
                         ("op", &"Log+in".to_string()),
                     ];
-                    let request_builder = user.goose_post("/en/user/login")?;
-                    logged_in_user = user.goose_send(request_builder.form(&params), None).await?;
+                    logged_in_user = user.post_form("/en/user/login", &params).await?;
 
                     // A successful log in is redirected.
                     if !logged_in_user.request.redirected {
@@ -169,9 +168,9 @@ pub async fn edit_article(user: &mut GooseUser) -> GooseTaskResult {
                         ("form_id", &"node_article_edit_form".to_string()),
                         ("op", &"Save (this translation)".to_string()),
                     ];
-                    let request_builder =
-                        user.goose_post(&format!("/en/node/{}/edit", article.unwrap().nid))?;
-                    saved_article = user.goose_send(request_builder.form(&params), None).await?;
+                    saved_article = user
+                        .post_form(&format!("/en/node/{}/edit", article.unwrap().nid), &params)
+                        .await?;
 
                     // A successful node save is redirected.
                     if !saved_article.request.redirected {

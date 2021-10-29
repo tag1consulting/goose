@@ -1,7 +1,8 @@
 # Changelog
 
-## 0.14.2-dev
+## 0.15.0-dev
  - [#372](https://github.com/tag1consulting/goose/pull/372) de-deduplicate documentation, favoring [The Goose Book](https://book.goose.rs)
+ - @TODO: errors ...
 
 ## 0.14.1 October 13, 2021
  - [#364](https://github.com/tag1consulting/goose/pull/364) add link from the [Developer Documentation](https://docs.rs/goose) to [The Git Book](https://book.goose.rs)

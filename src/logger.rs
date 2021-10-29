@@ -84,8 +84,7 @@
 //!         None,
 //!     )?;
 //!
-//!     let request_builder = user.goose_post(path)?;
-//!     let goose = user.goose_send(request_builder.form(&params), None).await?;
+//!     let goose = user.post_form(path, &params).await?;
 //!
 //!     // Log the form parameters that were posted together with details about the entire
 //!     // request that was sent to the server.

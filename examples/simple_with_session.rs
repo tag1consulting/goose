@@ -55,11 +55,9 @@ async fn main() -> Result<(), GooseError> {
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
 async fn website_signup(user: &mut GooseUser) -> GooseTaskResult {
-    let request_builder = user.goose_post("/signup")?;
-    // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [("username", "test_user"), ("password", "")];
     let response = user
-        .goose_send(request_builder.form(&params), None)
+        .post_form("/signup", &params)
         .await?
         .response?
         .json::<AuthenticationResponse>()
@@ -77,8 +75,13 @@ async fn authenticated_index(user: &mut GooseUser) -> GooseTaskResult {
     // This will panic if the session is missing or if the session is not of the right type
     // use `get_session_data` to handle missing session
     let session = user.get_session_data_unchecked::<Session>();
-    let request = user.goose_get("/")?.bearer_auth(&session.jwt_token);
-    let _goose = user.goose_send(request, None).await?;
+    let url = user.build_url("/")?;
+    let request_builder = user.client.get(url).bearer_auth(&session.jwt_token);
+    let goose_request = GooseRequest::builder()
+        .request_builder(request_builder)
+        .build();
+
+    user.request(goose_request).await?;
 
     Ok(())
 }
