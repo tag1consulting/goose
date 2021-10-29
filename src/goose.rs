@@ -1238,6 +1238,22 @@ impl GooseUser {
         Ok(self.request(GooseRequest::delete(path)).await?)
     }
 
+    pub fn request_builder(
+        &self,
+        method: &GooseMethod,
+        path: &str,
+    ) -> Result<RequestBuilder, GooseTaskError> {
+        let url = self.build_url(path)?;
+        Ok(match method {
+            GooseMethod::Delete => self.client.delete(&url),
+            GooseMethod::Get => self.client.get(&url),
+            GooseMethod::Head => self.client.head(&url),
+            GooseMethod::Patch => self.client.patch(&url),
+            GooseMethod::Post => self.client.post(&url),
+            GooseMethod::Put => self.client.put(&url),
+        })
+    }
+
     /// Builds the provided
     /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
     /// object and then executes the response. If metrics are being displayed, it
@@ -1280,15 +1296,7 @@ impl GooseUser {
         let request_builder = if request.request_builder.is_some() {
             request.request_builder.take().unwrap()
         } else {
-            let url = self.build_url(request.path)?;
-            match request.method {
-                GooseMethod::Delete => self.client.delete(&url),
-                GooseMethod::Get => self.client.get(&url),
-                GooseMethod::Head => self.client.head(&url),
-                GooseMethod::Patch => self.client.patch(&url),
-                GooseMethod::Post => self.client.post(&url),
-                GooseMethod::Put => self.client.put(&url),
-            }
+            self.request_builder(&request.method, request.path)?
         };
 
         // Determine the name for this request.
