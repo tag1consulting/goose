@@ -77,7 +77,7 @@ async fn authenticated_index(user: &mut GooseUser) -> GooseTaskResult {
     let session = user.get_session_data_unchecked::<Session>();
     let goose_request = GooseRequest::builder()
         .request_builder(
-            user.request_builder(&GooseMethod::Get, "/")?
+            user.get_request_builder(&GooseMethod::Get, "/")?
                 .bearer_auth(&session.jwt_token),
         )
         .build();

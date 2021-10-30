@@ -2,10 +2,10 @@
 //!
 //! Goose manages load tests with a series of objects:
 //!
-//! - [`GooseTaskSet`](./struct.GooseTaskSet.html) each user is assigned a task set, which is a collection of tasks.
-//! - [`GooseTask`](./struct.GooseTask.html) tasks define one or more web requests and are assigned to task sets.
-//! - [`GooseUser`](./struct.GooseUser.html) a user state responsible for repeatedly running all tasks in the assigned task set.
-//! - [`GooseRequest`](./struct.GooseRequest.html) optional metrics collected for each URL/method pair.
+//! - [`GooseTaskSet`] each user is assigned a task set, which is a collection of tasks.
+//! - [`GooseTask`] tasks define one or more web requests and are assigned to task sets.
+//! - [`GooseUser`] a user state responsible for repeatedly running all tasks in the assigned task set.
+//! - [`GooseRequestMetric`] optional metrics collected for each URL/method pair.
 //!
 //! ## Creating Task Sets
 //!
@@ -686,7 +686,7 @@ pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTask
     })
 }
 
-/// The response to a GooseRequest
+/// The response to a [`GooseRequestMetric`].
 #[derive(Debug)]
 pub struct GooseResponse {
     /// The request that this is a response to.
@@ -1093,17 +1093,13 @@ impl GooseUser {
     /// A helper to make a `GET` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
-    /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call [`goose_get`](./struct.GooseUser.html#method.goose_get)
-    /// which returns a
-    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
-    /// then call
-    /// [`goose_send`](./struct.GooseUser.html#method.goose_send) to invoke the request.)
-    ///
     /// Calls to `get()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
     /// ```rust
@@ -1125,15 +1121,13 @@ impl GooseUser {
     /// A helper to make a `POST` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
-    /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call `goose_post` which returns a
-    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
-    /// then call `goose_send` to invoke the request.)
-    ///
     /// Calls to `post()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
     /// ```rust
@@ -1163,6 +1157,31 @@ impl GooseUser {
         Ok(self.request(goose_request).await?)
     }
 
+    /// A helper to make a `POST` request of a form on a path and collect relevant metrics.
+    /// Automatically prepends the correct host.
+    ///
+    /// Calls to `post_form()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object, refer to [`GooseUser::get_request_builder`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut task = task!(post_function);
+    ///
+    /// /// A very simple task that POSTs form parameters.
+    /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let params = [("foo", "bar"), ("foo2", "bar2")];
+    ///     let _goose = user.post_form("path/to/foo/", &params).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn post_form<T: Serialize + ?Sized>(
         &mut self,
         path: &str,
@@ -1181,15 +1200,13 @@ impl GooseUser {
     /// A helper to make a `HEAD` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
-    /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call `goose_head` which returns a
-    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
-    /// then call `goose_send` to invoke the request.)
-    ///
     /// Calls to `head()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
     /// ```rust
@@ -1211,15 +1228,13 @@ impl GooseUser {
     /// A helper to make a `DELETE` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
-    /// (If you need to set headers, change timeouts, or otherwise make use of the
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object, you can instead call `goose_delete` which returns a
-    /// [`RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html),
-    /// then call `goose_send` to invoke the request.)
-    ///
     /// Calls to `delete()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
     /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
     /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
     /// ```rust
@@ -1238,12 +1253,54 @@ impl GooseUser {
         Ok(self.request(GooseRequest::delete(path)).await?)
     }
 
-    pub fn request_builder(
+    /// Used to get a [`reqwest::RequestBuilder`] object. If no [`reqwest::RequestBuilder`] is
+    /// already defined in the [`GooseRequest`] passed to [`GooseUser::request`] it will automatically
+    /// invoke this function.
+    ///
+    /// The HTTP request method must be defined as a [`GooseMethod`], and the path that will be requested
+    /// must be defined as a [`&str`].
+    ///
+    /// It is possible to use this function to directly interact with the [`reqwest::RequestBuilder`]
+    /// object and the [`GooseRequest`] object during load tests. In the following example, we set a
+    /// timeout on the Request, and tell Goose to expect a 404 HTTP response status code.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut task = task!(test_404);
+    ///
+    /// async fn test_404(user: &mut GooseUser) -> GooseTaskResult {
+    ///     use std::time::Duration;
+    ///
+    ///     // Manually interact with the Reqwest RequestBuilder object.
+    ///     let request_builder = user.get_request_builder(&GooseMethod::Get, "no/such/path")?
+    ///         // Configure the request to timeout if it takes longer than 500 milliseconds.
+    ///         .timeout(Duration::from_millis(500));
+    ///
+    ///     // Manually build a GooseRequest.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Manually add our custom RequestBuilder object.
+    ///         .request_builder(request_builder)
+    ///         // Tell Goose to expect a 404 status code.
+    ///         .expect_status_code(404)
+    ///         // Turn the GooseRequestBuilder object into a GooseRequest.
+    ///         .build();
+    ///
+    ///     // Finaly make the actual request with our custom GooseRequest object.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn get_request_builder(
         &self,
         method: &GooseMethod,
         path: &str,
     ) -> Result<RequestBuilder, GooseTaskError> {
+        // Prepend the `base_url` to all relative paths.
         let url = self.build_url(path)?;
+        // Invoke Reqwest function appropriate to the request method.
         Ok(match method {
             GooseMethod::Delete => self.client.delete(&url),
             GooseMethod::Get => self.client.get(&url),
@@ -1254,18 +1311,10 @@ impl GooseUser {
         })
     }
 
-    /// Builds the provided
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object and then executes the response. If metrics are being displayed, it
-    /// also captures request metrics.
+    /// Makes a request for the provided [`GooseRequest`] object, and if metrics are enabled
+    /// captures relevant metrics.
     ///
-    /// It is possible to build and execute a
-    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
-    /// object directly with [`reqwest`](https://docs.rs/reqwest/) without using this helper
-    /// function, but then Goose is unable to capture metrics.
-    ///
-    /// Calls to `goose_send()` returns a `Result` containing a
-    /// [`GooseResponse`](./struct.GooseResponse.html) on success, and a
+    /// Calls to `request()` return a [`Result`] containing a [`GooseResponse`] on success, and a
     /// [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html)`<bool>`,
     /// on failure. Failure only happens when `--throttle-requests` is enabled and the load test
     /// completes. The [`GooseResponse`](./struct.GooseResponse.html) object contains a copy of
@@ -1278,11 +1327,16 @@ impl GooseUser {
     ///
     /// let mut task = task!(get_function);
     ///
-    /// /// A simple task that makes a GET request, exposing the Reqwest
-    /// /// request builder.
-    /// /// @TODO
+    /// /// A simple task that makes a GET request.
     /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let goose = user.get("/path/to/foo").await?;
+    ///     let goose_request = GooseRequest::builder()
+    ///       // Goose will prepend a host name to this path.
+    ///       .path("path/to/loadtest")
+    ///       // GET is the default method, this is not necessary.
+    ///       .method(GooseMethod::Get)
+    ///       // Assemble the `GooseRequestBuilder` into a `GooseRequest.
+    ///       .build();
+    ///     let goose = user.request(goose_request).await?;
     ///
     ///     // Do stuff with goose.request and/or goose.response here.
     ///
@@ -1293,10 +1347,12 @@ impl GooseUser {
         &mut self,
         mut request: GooseRequest<'_>,
     ) -> Result<GooseResponse, GooseTaskError> {
+        // If the RequestBuilder is already defined in the GooseRequest use it.
         let request_builder = if request.request_builder.is_some() {
             request.request_builder.take().unwrap()
+        // Otherwise get a new RequestBuilder.
         } else {
-            self.request_builder(&request.method, request.path)?
+            self.get_request_builder(&request.method, request.path)?
         };
 
         // Determine the name for this request.
@@ -1310,12 +1366,13 @@ impl GooseUser {
             self.throttle.clone().unwrap().send_async(true).await?;
         };
 
-        // The request is officially started
+        // Once past the throttle, the request is officially started.
         let started = Instant::now();
 
+        // Create a Reqwest Request object from the RequestBuilder.
         let built_request = request_builder.build()?;
 
-        // String version of request path.
+        // Get a string version of request path for logging.
         let path = match Url::parse(&built_request.url().to_string()) {
             Ok(u) => u.path().to_string(),
             Err(e) => {
@@ -1365,23 +1422,28 @@ impl GooseUser {
         let response = self.client.execute(built_request).await;
         request_metric.set_response_time(started.elapsed().as_millis());
 
+        // Determine if the request suceeded or failed.
         match &response {
             Ok(r) => {
                 let status_code = r.status();
                 debug!("{:?}: status_code {}", &path, status_code);
 
+                // Update the request_metric object.
+                request_metric.set_status_code(Some(status_code));
+                request_metric.set_final_url(r.url().as_str());
+
+                // Check if we were expecting a specific status code.
                 if let Some(expect_status_code) = request.expect_status_code {
+                    // Record a failure if the expected status code was not returned.
                     if status_code != expect_status_code {
                         request_metric.success = false;
                         request_metric.error = format!("{}: {}", status_code, request_name);
                     }
+                // Otherwise record a failure if the returned status code was not a success.
                 } else if !status_code.is_success() {
                     request_metric.success = false;
                     request_metric.error = format!("{}: {}", status_code, request_name);
                 }
-
-                request_metric.set_status_code(Some(status_code));
-                request_metric.set_final_url(r.url().as_str());
 
                 // Load test user was redirected.
                 if self.config.sticky_follow && request_metric.raw.url != request_metric.final_url {
