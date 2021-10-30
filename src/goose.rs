@@ -1115,7 +1115,14 @@ impl GooseUser {
     /// }
     /// ```
     pub async fn get(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        Ok(self.request(GooseRequest::get(path)).await?)
+        Ok(self
+            .request(
+                GooseRequest::builder()
+                    .method(GooseMethod::Get)
+                    .path(path)
+                    .build(),
+            )
+            .await?)
     }
 
     /// A helper to make a `POST` request of a path and collect relevant metrics.
@@ -1151,7 +1158,7 @@ impl GooseUser {
         let request_builder = self.client.post(url);
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Post)
-            .request_builder(request_builder.body(body))
+            .set_request_builder(request_builder.body(body))
             .build();
 
         Ok(self.request(goose_request).await?)
@@ -1191,7 +1198,7 @@ impl GooseUser {
         let request_builder = self.client.post(url);
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Post)
-            .request_builder(request_builder.form(&form))
+            .set_request_builder(request_builder.form(&form))
             .build();
 
         Ok(self.request(goose_request).await?)
@@ -1222,7 +1229,14 @@ impl GooseUser {
     /// }
     /// ```
     pub async fn head(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        Ok(self.request(GooseRequest::head(path)).await?)
+        Ok(self
+            .request(
+                GooseRequest::builder()
+                    .method(GooseMethod::Head)
+                    .path(path)
+                    .build(),
+            )
+            .await?)
     }
 
     /// A helper to make a `DELETE` request of a path and collect relevant metrics.
@@ -1250,7 +1264,14 @@ impl GooseUser {
     /// }
     /// ```
     pub async fn delete(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
-        Ok(self.request(GooseRequest::delete(path)).await?)
+        Ok(self
+            .request(
+                GooseRequest::builder()
+                    .method(GooseMethod::Delete)
+                    .path(path)
+                    .build(),
+            )
+            .await?)
     }
 
     /// Used to get a [`reqwest::RequestBuilder`] object. If no [`reqwest::RequestBuilder`] is
@@ -1281,7 +1302,7 @@ impl GooseUser {
     ///     // Manually build a GooseRequest.
     ///     let goose_request = GooseRequest::builder()
     ///         // Manually add our custom RequestBuilder object.
-    ///         .request_builder(request_builder)
+    ///         .set_request_builder(request_builder)
     ///         // Tell Goose to expect a 404 status code.
     ///         .expect_status_code(404)
     ///         // Turn the GooseRequestBuilder object into a GooseRequest.
@@ -2125,33 +2146,11 @@ impl<'a> GooseRequest<'a> {
     pub fn builder() -> GooseRequestBuilder<'a> {
         GooseRequestBuilder::new()
     }
-
-    pub fn get(path: &str) -> GooseRequest {
-        GooseRequest::builder().path(path).build()
-    }
-
-    pub fn post(path: &str) -> GooseRequest {
-        GooseRequest::builder()
-            .path(path)
-            .method(GooseMethod::Post)
-            .build()
-    }
-
-    pub fn head(path: &str) -> GooseRequest {
-        GooseRequest::builder()
-            .path(path)
-            .method(GooseMethod::Head)
-            .build()
-    }
-
-    pub fn delete(path: &str) -> GooseRequest {
-        GooseRequest::builder()
-            .path(path)
-            .method(GooseMethod::Delete)
-            .build()
-    }
 }
 
+/// Used to build a [`GooseRequest`] object, necessary to make a request with Goose.
+///
+/// # Example
 pub struct GooseRequestBuilder<'a> {
     path: &'a str,
     method: GooseMethod,
@@ -2160,6 +2159,7 @@ pub struct GooseRequestBuilder<'a> {
     request_builder: Option<RequestBuilder>,
 }
 impl<'a> GooseRequestBuilder<'a> {
+    // Internal helper to build a [`GooseRequest`] from a [`GooseRequestBuilder`].
     fn new() -> Self {
         Self {
             path: "",
@@ -2190,7 +2190,7 @@ impl<'a> GooseRequestBuilder<'a> {
         self
     }
 
-    pub fn request_builder(mut self, request_builder: RequestBuilder) -> Self {
+    pub fn set_request_builder(mut self, request_builder: RequestBuilder) -> Self {
         self.request_builder = Some(request_builder);
         self
     }
