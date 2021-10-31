@@ -72,16 +72,22 @@ async fn website_signup(user: &mut GooseUser) -> GooseTaskResult {
 
 /// A very simple task that simply loads the front page.
 async fn authenticated_index(user: &mut GooseUser) -> GooseTaskResult {
-    // This will panic if the session is missing or if the session is not of the right type
-    // use `get_session_data` to handle missing session
+    // This will panic if the session is missing or if the session is not of the right type.
+    // Use `get_session_data` to handle a missing session.
     let session = user.get_session_data_unchecked::<Session>();
+
+    // Create a Reqwest RequestBuilder object and configure bearer authentication when making
+    // a GET request for the index.
+    let reqwest_request_builder = user
+        .get_request_builder(&GooseMethod::Get, "/")?
+        .bearer_auth(&session.jwt_token);
+
+    // Add the manually created RequestBuilder and build a GooseRequest object.
     let goose_request = GooseRequest::builder()
-        .request_builder(
-            user.get_request_builder(&GooseMethod::Get, "/")?
-                .bearer_auth(&session.jwt_token),
-        )
+        .set_request_builder(reqwest_request_builder)
         .build();
 
+    // Make the actual request.
     user.request(goose_request).await?;
 
     Ok(())

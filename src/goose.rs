@@ -80,7 +80,7 @@
 //!
 //! /// A very simple task that loads the front page.
 //! async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/").await?;
+//!     let _goose = user.get("").await?;
 //!
 //!     Ok(())
 //! }
@@ -98,7 +98,7 @@
 //!
 //! /// A very simple task that loads the front page.
 //! async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/").await?;
+//!     let _goose = user.get("").await?;
 //!
 //!     Ok(())
 //! }
@@ -123,14 +123,14 @@
 //!
 //! /// A very simple task that loads the "a" page.
 //! async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/a/").await?;
+//!     let _goose = user.get("a/").await?;
 //!
 //!     Ok(())
 //! }
 //!
 //! /// Another very simple task that loads the "b" page.
 //! async fn b_task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/b/").await?;
+//!     let _goose = user.get("b/").await?;
 //!
 //!     Ok(())
 //! }
@@ -155,21 +155,21 @@
 //!
 //! /// A very simple task that loads the "a" page.
 //! async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/a/").await?;
+//!     let _goose = user.get("a/").await?;
 //!
 //!     Ok(())
 //! }
 //!
 //! /// Another very simple task that loads the "b" page.
 //! async fn b_task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/b/").await?;
+//!     let _goose = user.get("b/").await?;
 //!
 //!     Ok(())
 //! }
 //!
 //! /// Another very simple task that loads the "c" page.
 //! async fn c_task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/c/").await?;
+//!     let _goose = user.get("c/").await?;
 //!
 //!     Ok(())
 //! }
@@ -190,7 +190,7 @@
 //!
 //! /// A very simple task that loads the "a" page.
 //! async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/a/").await?;
+//!     let _goose = user.get("a/").await?;
 //!
 //!     Ok(())
 //! }
@@ -211,7 +211,7 @@
 //!
 //! /// Another very simple task that loads the "b" page.
 //! async fn b_task_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/b/").await?;
+//!     let _goose = user.get("b/").await?;
 //!
 //!     Ok(())
 //! }
@@ -242,7 +242,7 @@
 //!
 //! /// A very simple task that makes a GET request.
 //! async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.get("/path/to/foo/").await?;
+//!     let _goose = user.get("path/to/foo/").await?;
 //!
 //!     Ok(())
 //! }
@@ -265,7 +265,7 @@
 //!
 //! /// A very simple task that makes a POST request.
 //! async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
-//!     let _goose = user.post("/path/to/foo/", "string value to post").await?;
+//!     let _goose = user.post("path/to/foo/", "string value to post").await?;
 //!
 //!     Ok(())
 //! }
@@ -533,7 +533,7 @@ impl GooseTaskSet {
     ///
     /// /// A very simple task that loads the "a" page.
     /// async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/a/").await?;
+    ///     let _goose = user.get("a/").await?;
     ///
     ///     Ok(())
     /// }
@@ -1109,7 +1109,7 @@ impl GooseUser {
     ///
     /// /// A very simple task that makes a GET request.
     /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/path/to/foo/").await?;
+    ///     let _goose = user.get("path/to/foo/").await?;
     ///
     ///     Ok(())
     /// }
@@ -1144,7 +1144,7 @@ impl GooseUser {
     ///
     /// /// A very simple task that makes a POST request.
     /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.post("/path/to/foo/", "BODY BEING POSTED").await?;
+    ///     let _goose = user.post("path/to/foo/", "BODY BEING POSTED").await?;
     ///
     ///     Ok(())
     /// }
@@ -1223,7 +1223,7 @@ impl GooseUser {
     ///
     /// /// A very simple task that makes a HEAD request.
     /// async fn head_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.head("/path/to/foo/").await?;
+    ///     let _goose = user.head("path/to/foo/").await?;
     ///
     ///     Ok(())
     /// }
@@ -1258,7 +1258,7 @@ impl GooseUser {
     ///
     /// /// A very simple task that makes a DELETE request.
     /// async fn delete_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.delete("/path/to/foo/").await?;
+    ///     let _goose = user.delete("path/to/foo/").await?;
     ///
     ///     Ok(())
     /// }
@@ -1704,7 +1704,7 @@ impl GooseUser {
     ///
     /// /// A simple task that makes a GET request.
     /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let mut goose = user.get("/404").await?;
+    ///     let mut goose = user.get("404").await?;
     ///
     ///     if let Ok(response) = &goose.response {
     ///         // We expect a 404 here.
@@ -1758,7 +1758,7 @@ impl GooseUser {
     /// let mut task = task!(loadtest_index_page);
     ///
     /// async fn loadtest_index_page(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let mut goose = user.get("/").await?;
+    ///     let mut goose = user.get("").await?;
     ///
     ///     if let Ok(response) = goose.response {
     ///         // We only need to check pages that returned a success status code.
@@ -1837,7 +1837,7 @@ impl GooseUser {
     /// let mut task = task!(loadtest_index_page);
     ///
     /// async fn loadtest_index_page(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let mut goose = user.get("/").await?;
+    ///     let mut goose = user.get("").await?;
     ///
     ///     match goose.response {
     ///         Ok(response) => {
@@ -2107,7 +2107,7 @@ impl GooseUser {
     /// }
     ///
     /// async fn task_foo(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/").await?;
+    ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
@@ -2117,7 +2117,7 @@ impl GooseUser {
     ///     // http://foo.example.com, after this task runs all subsequent
     ///     // requests are made against http://bar.example.com/.
     ///     user.set_base_url("http://bar.example.com/");
-    ///     let _goose = user.get("/").await?;
+    ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
@@ -2128,7 +2128,9 @@ impl GooseUser {
     }
 }
 
-/// A GooseRequest ...
+/// Every HTTP request that Goose must be first defined as a GooseRequest. To create a
+/// GooseRequest, use [`GooseRequest::builder`] which returns a [`GooseRequestBuilder`]
+/// object.
 pub struct GooseRequest<'a> {
     // Defaults to ""
     path: &'a str,
@@ -2151,6 +2153,28 @@ impl<'a> GooseRequest<'a> {
 /// Used to build a [`GooseRequest`] object, necessary to make a request with Goose.
 ///
 /// # Example
+/// ```rust
+/// use goose::prelude::*;
+///
+/// let mut a_task = task!(task_function);
+///
+/// // A simple task that loads a relative path.
+/// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+///     // Manually create a GooseRequestBuilder object.
+///     let goose_request = GooseRequest::builder()
+///         // Set a relative path to request.
+///         .path("about")
+///         // Name the request in the metircs.
+///         .name("About page")
+///         // Build the GooseRequest object.
+///         .build();
+///
+///     // Make the configured request.
+///     let _goose = user.request(goose_request).await?;
+///
+///     Ok(())
+/// }
+/// ```
 pub struct GooseRequestBuilder<'a> {
     path: &'a str,
     method: GooseMethod,
@@ -2170,31 +2194,184 @@ impl<'a> GooseRequestBuilder<'a> {
         }
     }
 
+    /// Set the path to request.
+    ///
+    /// Typically is a relative path allowing Goose to append a configurable base_url.
+    ///
+    /// Defaults to "" (the main index).
+    ///
+    /// # Example
+    /// This can be implemented in a simpler way using the [`GooseUser::get`] helper function.
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut a_task = task!(task_function);
+    ///
+    /// // A simple task that loads a relative path.
+    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     // Manually create a GooseRequestBuilder object.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Set a relative path to request.
+    ///         .path("a/relative/path")
+    ///         // Build the GooseRequest object.
+    ///         .build();
+    ///
+    ///     // Make the configured request.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn path(mut self, path: impl Into<&'a str>) -> Self {
         self.path = path.into();
         self
     }
 
+    /// Set the method of the request.
+    ///
+    /// Must be set to a [`GooseMethod`].
+    ///
+    /// Defaults to [`GooseMethod::Get`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut a_task = task!(task_function);
+    ///
+    /// // Make a DELETE request.
+    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     // Manually create a GooseRequestBuilder object.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Set a relative path to request.
+    ///         .path("path/to/delete")
+    ///         // Set the method to DELETE.
+    ///         .method(GooseMethod::Delete)
+    ///         // Build the GooseRequest object.
+    ///         .build();
+    ///
+    ///     // Make the configured DELETE request.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn method(mut self, method: GooseMethod) -> Self {
         self.method = method;
         self
     }
 
+    /// Set a name for the request, affecting how it shows up in metrics.
+    ///
+    /// Must be set to a [`GooseMethod`].
+    ///
+    /// Defaults to [`GooseMethod::Get`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut a_task = task!(task_function);
+    ///
+    /// // Make a named request.
+    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     // Manually create a GooseRequestBuilder object.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Set a relative path to request.
+    ///         .path("path/to/request")
+    ///         // Name the request in the metrics.
+    ///         .name("custom name")
+    ///         // Build the GooseRequest object.
+    ///         .build();
+    ///
+    ///     // Make the configured request.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn name(mut self, name: impl Into<&'a str>) -> Self {
         self.name = Some(name.into());
         self
     }
 
+    /// Manually configure the expected HTTP response status code.
+    ///
+    /// Defaults to [`reqwest::StatusCode::is_success`].
+    ///
+    /// # Example
+    /// Intentionally request a 404 page, and do not trigger an error.
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut a_task = task!(task_function);
+    ///
+    /// // Make a named request.
+    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     // Manually create a GooseRequestBuilder object.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Set a relative path to request.
+    ///         .path("no/such/path")
+    ///         // Tell Goose to expect a 404 HTTP response status code.
+    ///         .expect_status_code(404)
+    ///         // Build the GooseRequest object.
+    ///         .build();
+    ///
+    ///     // Make the configured request.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn expect_status_code(mut self, status_code: u16) -> Self {
         self.expect_status_code = Some(status_code);
         self
     }
 
+    /// Manually create the [`reqwest::RequestBuilder`] used to make a request.
+    ///
+    /// # Example
+    /// Manually create a `RequestBuilder` in order to set a timeout.
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut a_task = task!(task_function);
+    ///
+    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     use std::time::Duration;
+    ///
+    ///     // Manually interact with the Reqwest RequestBuilder object.
+    ///     let request_builder = user.get_request_builder(&GooseMethod::Get, "no/such/path")?
+    ///         // Configure the request to timeout if it takes longer than 500 milliseconds.
+    ///         .timeout(Duration::from_millis(500));
+    ///
+    ///     // Manually build a GooseRequest in order to set our custom RequestBuilder.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Manually add our custom RequestBuilder object.
+    ///         .set_request_builder(request_builder)
+    ///         // Turn the GooseRequestBuilder object into a GooseRequest.
+    ///         .build();
+    ///
+    ///     // Finaly make the actual request with our custom GooseRequest object.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn set_request_builder(mut self, request_builder: RequestBuilder) -> Self {
         self.request_builder = Some(request_builder);
         self
     }
 
+    /// Build the [`GooseRequest`] object which is then passed to [`GooseUser::request`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// // Build the default "GET /".
+    /// let goose_request = GooseRequest::builder().build();
+    /// ```
     pub fn build(self) -> GooseRequest<'a> {
         let Self {
             path,
@@ -2345,7 +2522,7 @@ impl GooseTask {
     /// task!(my_task_function).set_name("foo");
     ///
     /// async fn my_task_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/").await?;
+    ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
@@ -2373,7 +2550,7 @@ impl GooseTask {
     /// task!(my_on_start_function).set_on_start();
     ///
     /// async fn my_on_start_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/").await?;
+    ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
@@ -2401,7 +2578,7 @@ impl GooseTask {
     /// task!(my_on_stop_function).set_on_stop();
     ///
     /// async fn my_on_stop_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/").await?;
+    ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
@@ -2428,7 +2605,7 @@ impl GooseTask {
     /// }
     ///
     /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/").await?;
+    ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
@@ -2469,19 +2646,19 @@ impl GooseTask {
     /// let runs_last = task!(third_task_function);
     ///
     /// async fn first_task_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/1").await?;
+    ///     let _goose = user.get("1").await?;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn second_task_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/2").await?;
+    ///     let _goose = user.get("2").await?;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn third_task_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/3").await?;
+    ///     let _goose = user.get("3").await?;
     ///
     ///     Ok(())
     /// }
@@ -2504,19 +2681,19 @@ impl GooseTask {
     /// }
     ///
     /// async fn first_task_function(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/1").await?;
+    ///     let _goose = user.get("1").await?;
     ///
     ///     Ok(())
     /// }
     ///
     /// async fn second_task_function_a(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/2a").await?;
+    ///     let _goose = user.get("2a").await?;
     ///
     ///     Ok(())
     /// }
     ///
     ///     async fn second_task_function_b(user: &mut GooseUser) -> GooseTaskResult {
-    ///       let _goose = user.get("/2b").await?;
+    ///       let _goose = user.get("2b").await?;
     ///
     ///       Ok(())
     ///     }
