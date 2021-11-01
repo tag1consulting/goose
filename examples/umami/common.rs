@@ -443,7 +443,7 @@ pub async fn load_static_elements(user: &mut GooseUser, html: &str) {
 
     // Load all the static assets found on the page.
     for asset in &urls {
-        let _ = user.get_named(&*asset.to_string(), "static asset").await;
+        let _ = user.get_named(asset, "static asset").await;
     }
 }
 
