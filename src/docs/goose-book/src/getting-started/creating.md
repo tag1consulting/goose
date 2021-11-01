@@ -12,7 +12,7 @@ This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` 
 
 ```toml
 [dependencies]
-goose = "^0.14"
+goose = "^0.15"
 tokio = "^1.12"
 ```
 
@@ -21,9 +21,9 @@ At this point it's possible to compile all dependencies, though the resulting bi
 ```bash
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.14.1
+  Downloaded goose v0.15.0
       ...
-   Compiling goose v0.14.1
+   Compiling goose v0.15.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -41,7 +41,8 @@ use goose::prelude::*;
 > ```rust
 > use crate::config::{GooseDefault, GooseDefaultType};
 > use crate::goose::{
->     GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+>     GooseMethod, GooseRequest, GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult,
+>     GooseTaskSet, GooseUser,
 > };
 > use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
 > use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};

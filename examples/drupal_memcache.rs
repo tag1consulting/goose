@@ -104,14 +104,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> GooseTaskResult {
                         }
                     }
                     for asset in &urls {
-                        let _ = user
-                            .request(
-                                GooseRequest::builder()
-                                    .path(&*asset.to_string())
-                                    .name("static asset")
-                                    .build(),
-                            )
-                            .await;
+                        let _ = user.get_named(&*asset.to_string(), "static asset").await;
                     }
                 }
                 Err(e) => {

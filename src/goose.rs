@@ -1102,6 +1102,7 @@ impl GooseUser {
     /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
+    /// GET a URL.
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1125,6 +1126,47 @@ impl GooseUser {
             .await?)
     }
 
+    /// A helper to make a named `GET` request of a path and collect relevant metrics.
+    /// Automatically prepends the correct host.
+    ///
+    /// Calls to `get_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object, refer to [`GooseUser::get_request_builder`].
+    ///
+    /// # Example
+    /// GET a URL and name the request in collected metrics.
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut task = task!(get_function);
+    ///
+    /// /// A very simple task that makes a GET request, naming it for metrics.
+    /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let _goose = user.get_named("path/to/foo/", "foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn get_named(
+        &mut self,
+        path: &str,
+        name: &str,
+    ) -> Result<GooseResponse, GooseTaskError> {
+        Ok(self
+            .request(
+                GooseRequest::builder()
+                    .method(GooseMethod::Get)
+                    .path(path)
+                    .name(name)
+                    .build(),
+            )
+            .await?)
+    }
+
     /// A helper to make a `POST` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
@@ -1137,6 +1179,7 @@ impl GooseUser {
     /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
+    /// POST an arbitrary body.
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1176,6 +1219,7 @@ impl GooseUser {
     /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
+    /// POST a form.
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1204,6 +1248,50 @@ impl GooseUser {
         Ok(self.request(goose_request).await?)
     }
 
+    /// A helper to make a `POST` request of json on a path and collect relevant metrics.
+    /// Automatically prepends the correct host.
+    ///
+    /// Calls to `post_json()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// If you need to set headers, change timeouts, or otherwise make use of the
+    /// [`reqwest::RequestBuilder`](https://docs.rs/reqwest/*/reqwest/struct.RequestBuilder.html)
+    /// object, refer to [`GooseUser::get_request_builder`].
+    ///
+    /// # Example
+    /// POST an arbitrary JSON object.
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut task = task!(post_function);
+    ///
+    /// /// A very simple task that POSTs an arbitrary json object.
+    /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     let json = &serde_json::json!({
+    ///         "foo": "bar",
+    ///         "foo2": "bar2"
+    ///     });
+    ///     let _goose = user.post_json("path/to/foo/", &json).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn post_json<T: Serialize + ?Sized>(
+        &mut self,
+        path: &str,
+        json: &T,
+    ) -> Result<GooseResponse, GooseTaskError> {
+        let url = self.build_url(path)?;
+        let request_builder = self.client.post(url);
+        let goose_request = GooseRequest::builder()
+            .method(GooseMethod::Post)
+            .set_request_builder(request_builder.json(&json))
+            .build();
+
+        Ok(self.request(goose_request).await?)
+    }
+
     /// A helper to make a `HEAD` request of a path and collect relevant metrics.
     /// Automatically prepends the correct host.
     ///
@@ -1216,6 +1304,7 @@ impl GooseUser {
     /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
+    /// Make a HEAD request.
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1251,6 +1340,7 @@ impl GooseUser {
     /// object, refer to [`GooseUser::get_request_builder`].
     ///
     /// # Example
+    /// Make a DELETE request.
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1286,6 +1376,7 @@ impl GooseUser {
     /// timeout on the Request, and tell Goose to expect a 404 HTTP response status code.
     ///
     /// # Example
+    /// Request a non-existent page, timing out after 500 milliseconds.
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1343,6 +1434,7 @@ impl GooseUser {
     /// response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
     ///
     /// # Example
+    /// Make a GET request.
     /// ```rust
     /// use goose::prelude::*;
     ///
@@ -1691,10 +1783,13 @@ impl GooseUser {
 
     /// Manually mark a request as a success.
     ///
-    /// By default, Goose will consider any response with a 2xx status code as a success.
-    /// It may be valid in your test for a non-2xx HTTP status code to be returned. A copy
-    /// of your original request is returned with the response, and a mutable copy must be
-    /// included when setting a request as a success.
+    /// Goose determines if a request was successful based on the the HTTP response status
+    /// code. By default, it uses [`reqwest::StatusCode::is_success`]. If an alternative
+    /// HTTP response code is expected, use [`GooseRequestBuilder::expect_status_code`]. If
+    /// validation requires additional logic, you can use set_success().
+    ///
+    /// A copy of your original request is returned with the response, and a mutable copy
+    /// must be included when setting a request as a success.
     ///
     /// # Example
     /// ```rust
@@ -2128,19 +2223,24 @@ impl GooseUser {
     }
 }
 
-/// Every HTTP request that Goose must be first defined as a GooseRequest. To create a
-/// GooseRequest, use [`GooseRequest::builder`] which returns a [`GooseRequestBuilder`]
-/// object.
+/// Defines the HTTP requests that Goose makes.
+///
+/// Can be manually created and configured with [`GooseRequest::builder`], but it's typically
+/// more convenient to use the [`GooseUser::get`], [`GooseUser::get_named`], [`GooseUser::post`],
+/// [`GooseUser::post_form`], [`GooseUser::post_json`], [`GooseUser::head`] and
+/// [`GooseUser::delete`] helpers.
+///
+/// For complete instructions review [`GooseRequestBuilder`].
 pub struct GooseRequest<'a> {
-    // Defaults to ""
+    // Defaults to `""`.
     path: &'a str,
-    // Defaults to GET
+    // Defaults to [`GooseMethod::Get`].
     method: GooseMethod,
-    // Defaults to None
+    // Defaults to [`None`].
     name: Option<&'a str>,
-    // Defaults to None
+    // Defaults to [`None`].
     expect_status_code: Option<u16>,
-    // Defaults to None
+    // Defaults to [`None`].
     request_builder: Option<RequestBuilder>,
 }
 impl<'a> GooseRequest<'a> {
@@ -2151,6 +2251,10 @@ impl<'a> GooseRequest<'a> {
 }
 
 /// Used to build a [`GooseRequest`] object, necessary to make a request with Goose.
+///
+/// It's only necessary to build manually if the [`GooseUser::get`], [`GooseUser::get_named`],
+/// [`GooseUser::post`], [`GooseUser::post_form`], [`GooseUser::post_json`], [`GooseUser::head`]
+/// and [`GooseUser::delete`] helpers don't provide you with enough flexibility.
 ///
 /// # Example
 /// ```rust
@@ -2198,7 +2302,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///
     /// Typically is a relative path allowing Goose to append a configurable base_url.
     ///
-    /// Defaults to "" (the main index).
+    /// Defaults to `""` (the main index).
     ///
     /// # Example
     /// This can be implemented in a simpler way using the [`GooseUser::get`] helper function.
@@ -2510,10 +2614,8 @@ impl GooseTask {
     /// Set an optional name for the task, used when displaying metrics about
     /// requests made by the task.
     ///
-    /// Individual requests can also be named withing your load test if you use the
-    /// `_named` version of each method, for example
-    /// [`get_named`](./struct.GooseUser.html#method.get_named) or
-    /// [`post_named`](./struct.GooseUser.html#method.post_named).
+    /// Individual requests can also be named using [`GooseRequestBuilder`], or for GET
+    /// requests with the [`GooseUser::get_named`] helper.
     ///
     /// # Example
     /// ```rust
