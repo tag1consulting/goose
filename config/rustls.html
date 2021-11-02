@@ -137,7 +137,7 @@
                         <h1 id="rustls"><a class="header" href="#rustls">RustLS</a></h1>
 <p>By default Reqwest (and therefore Goose) uses the system-native transport layer security to make HTTPS requests. This means <code>schannel</code> on Windows, <code>Security-Framework</code> on macOS, and <code>OpenSSL</code> on Linux. If you'd prefer to use a <a href="https://github.com/ctz/rustls">pure Rust TLS implementation</a>, disable default features and enable <code>rustls-tls</code> in <code>Cargo.toml</code> as follows:</p>
 <pre><code class="language-toml">[dependencies]
-goose = { version = &quot;^0.14&quot;, default-features = false, features = [&quot;rustls-tls&quot;] }
+goose = { version = &quot;^0.15&quot;, default-features = false, features = [&quot;rustls-tls&quot;] }
 </code></pre>
 
                     </main>

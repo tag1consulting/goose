@@ -147,14 +147,14 @@
 <span class="boring">}
 </span></code></pre></pre>
 <p>The session data structure is created from json-formatted response data returned by an authentication request, uniquely stored in each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> instance:</p>
-<pre><code class="language-rust ignore">        jwt_token: response.jwt_token,
-    });
-
+<pre><code class="language-rust ignore">
+    Ok(())
+}
 </code></pre>
 <p>The session data is retrieved from the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with each subsequent request. To keep the example simple no validation is done:</p>
-<pre><code class="language-rust ignore">    // use `get_session_data` to handle missing session
-    let session = user.get_session_data_unchecked::&lt;Session&gt;();
-    let request = user.goose_get(&quot;/&quot;)?.bearer_auth(&amp;session.jwt_token);
+<pre><code class="language-rust ignore">
+    // Create a Reqwest RequestBuilder object and configure bearer authentication when making
+    // a GET request for the index.
 </code></pre>
 <p><em>This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token.</em></p>
 <h2 id="complete-source-code"><a class="header" href="#complete-source-code">Complete Source Code</a></h2>
@@ -215,11 +215,9 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
 async fn website_signup(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    let request_builder = user.goose_post(&quot;/signup&quot;)?;
-    // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [(&quot;username&quot;, &quot;test_user&quot;), (&quot;password&quot;, &quot;&quot;)];
     let response = user
-        .goose_send(request_builder.form(&amp;params), None)
+        .post_form(&quot;/signup&quot;, &amp;params)
         .await?
         .response?
         .json::&lt;AuthenticationResponse&gt;()
@@ -234,11 +232,23 @@ async fn website_signup(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
 
 /// A very simple task that simply loads the front page.
 async fn authenticated_index(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    // This will panic if the session is missing or if the session is not of the right type
-    // use `get_session_data` to handle missing session
+    // This will panic if the session is missing or if the session is not of the right type.
+    // Use `get_session_data` to handle a missing session.
     let session = user.get_session_data_unchecked::&lt;Session&gt;();
-    let request = user.goose_get(&quot;/&quot;)?.bearer_auth(&amp;session.jwt_token);
-    let _goose = user.goose_send(request, None).await?;
+
+    // Create a Reqwest RequestBuilder object and configure bearer authentication when making
+    // a GET request for the index.
+    let reqwest_request_builder = user
+        .get_request_builder(&amp;GooseMethod::Get, &quot;/&quot;)?
+        .bearer_auth(&amp;session.jwt_token);
+
+    // Add the manually created RequestBuilder and build a GooseRequest object.
+    let goose_request = GooseRequest::builder()
+        .set_request_builder(reqwest_request_builder)
+        .build();
+
+    // Make the actual request.
+    user.request(goose_request).await?;
 
     Ok(())
 }

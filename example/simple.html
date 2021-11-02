@@ -194,10 +194,8 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
 async fn website_login(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    let request_builder = user.goose_post(&quot;/login&quot;)?;
-    // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [(&quot;username&quot;, &quot;test_user&quot;), (&quot;password&quot;, &quot;&quot;)];
-    let _goose = user.goose_send(request_builder.form(&amp;params), None).await?;
+    let _goose = user.post_form(&quot;/login&quot;, &amp;params).await?;
 
     Ok(())
 }

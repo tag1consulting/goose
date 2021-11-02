@@ -161,8 +161,8 @@
                         (&quot;form_id&quot;, &quot;user_login&quot;),
                         (&quot;op&quot;, &quot;Log+in&quot;),
                     ];
-                    let request_builder = user.goose_post(&quot;/user&quot;)?;
-                    let _goose = user.goose_send(request_builder.form(&amp;params), None).await;
+                    let _goose = user.post_form(&quot;/user&quot;, &amp;params).await?;
+                    // @TODO: verify that we actually logged in.
 </code></pre>
 <p>The test also includes an example of how to post a comment during a load test:</p>
 <pre><code class="language-rust ignore">                .register_task(
@@ -360,8 +360,7 @@ async fn drupal_memcache_login(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
                         (&quot;form_id&quot;, &quot;user_login&quot;),
                         (&quot;op&quot;, &quot;Log+in&quot;),
                     ];
-                    let request_builder = user.goose_post(&quot;/user&quot;)?;
-                    let _goose = user.goose_send(request_builder.form(&amp;params), None).await;
+                    let _goose = user.post_form(&quot;/user&quot;, &amp;params).await?;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) =&gt; {
@@ -477,8 +476,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; GooseTaskR
                     ];
 
                     // Post the comment.
-                    let request_builder = user.goose_post(&amp;comment_path)?;
-                    let mut goose = user.goose_send(request_builder.form(&amp;params), None).await?;
+                    let mut goose = user.post_form(&amp;comment_path, &amp;params).await?;
 
                     // Verify that the comment posted.
                     match goose.response {

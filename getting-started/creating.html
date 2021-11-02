@@ -142,15 +142,15 @@ $ cd loadtest/
 </code></pre>
 <p>This creates a new directory named <code>loadtest/</code> containing <code>loadtest/Cargo.toml</code> and <code>loadtest/src/main.rs</code>. Edit <code>Cargo.toml</code> and add Goose and <a href="https://tokio.rs/"><code>Tokio</code></a> under the dependencies heading:</p>
 <pre><code class="language-toml">[dependencies]
-goose = &quot;^0.14&quot;
+goose = &quot;^0.15&quot;
 tokio = &quot;^1.12&quot;
 </code></pre>
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.14.1
+  Downloaded goose v0.15.0
       ...
-   Compiling goose v0.14.1
+   Compiling goose v0.15.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -166,7 +166,8 @@ Hello, world!
 </span><span class="boring">fn main() {
 </span>use crate::config::{GooseDefault, GooseDefaultType};
 use crate::goose::{
-    GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+    GooseMethod, GooseRequest, GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult,
+    GooseTaskSet, GooseUser,
 };
 use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
 use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};

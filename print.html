@@ -183,15 +183,15 @@ $ cd loadtest/
 </code></pre>
 <p>This creates a new directory named <code>loadtest/</code> containing <code>loadtest/Cargo.toml</code> and <code>loadtest/src/main.rs</code>. Edit <code>Cargo.toml</code> and add Goose and <a href="https://tokio.rs/"><code>Tokio</code></a> under the dependencies heading:</p>
 <pre><code class="language-toml">[dependencies]
-goose = &quot;^0.14&quot;
+goose = &quot;^0.15&quot;
 tokio = &quot;^1.12&quot;
 </code></pre>
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.14.1
+  Downloaded goose v0.15.0
       ...
-   Compiling goose v0.14.1
+   Compiling goose v0.15.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -207,7 +207,8 @@ Hello, world!
 </span><span class="boring">fn main() {
 </span>use crate::config::{GooseDefault, GooseDefaultType};
 use crate::goose::{
-    GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+    GooseMethod, GooseRequest, GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult,
+    GooseTaskSet, GooseUser,
 };
 use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
 use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};
@@ -533,7 +534,7 @@ All 1024 users hatched.
  Running:  2021-08-12 10:55:42 - 2021-08-12 11:05:09 (duration: 00:10:00)
  Stopping: 2021-08-12 11:05:09 - 2021-08-12 11:05:11 (duration: 00:00:02)
 
- goose v0.14.1
+ goose v0.15.0
  ------------------------------------------------------------------------------
 </code></pre>
 <p>Additional details about how metrics are collected, stored, and displayed can be found <a href="https://docs.rs/goose/*/goose/metrics/index.html">in the developer documentation</a>.</p>
@@ -621,7 +622,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.14.1 controller commands:
+goose 0.15.0 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  start              start an idle load test
@@ -717,7 +718,7 @@ foo
 <p>The <code>gaggle</code> feature can be enabled from the command line by adding <code>--features gaggle</code> to your cargo command.</p>
 <p>When writing load test applications, you can default to compiling in the Gaggle feature in the <code>dependencies</code> section of your <code>Cargo.toml</code>, for example:</p>
 <pre><code class="language-toml">[dependencies]
-goose = { version = &quot;^0.14&quot;, features = [&quot;gaggle&quot;] }
+goose = { version = &quot;^0.15&quot;, features = [&quot;gaggle&quot;] }
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="coordinated-omission"><a class="header" href="#coordinated-omission">Coordinated Omission</a></h1>
 <p>When Coordinated Omission mitigation is enabled, Goose attempts to mitigate the loss of metrics data (Coordinated Omission) caused by an abnormally lengthy response to a request.</p>
@@ -944,7 +945,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <div style="break-before: page; page-break-before: always;"></div><h1 id="rustls"><a class="header" href="#rustls">RustLS</a></h1>
 <p>By default Reqwest (and therefore Goose) uses the system-native transport layer security to make HTTPS requests. This means <code>schannel</code> on Windows, <code>Security-Framework</code> on macOS, and <code>OpenSSL</code> on Linux. If you'd prefer to use a <a href="https://github.com/ctz/rustls">pure Rust TLS implementation</a>, disable default features and enable <code>rustls-tls</code> in <code>Cargo.toml</code> as follows:</p>
 <pre><code class="language-toml">[dependencies]
-goose = { version = &quot;^0.14&quot;, default-features = false, features = [&quot;rustls-tls&quot;] }
+goose = { version = &quot;^0.15&quot;, default-features = false, features = [&quot;rustls-tls&quot;] }
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="examples-2"><a class="header" href="#examples-2">Examples</a></h1>
 <p>Goose includes several examples to demonstrate load test functionality, including:</p>
@@ -1015,10 +1016,8 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
 async fn website_login(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    let request_builder = user.goose_post(&quot;/login&quot;)?;
-    // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [(&quot;username&quot;, &quot;test_user&quot;), (&quot;password&quot;, &quot;&quot;)];
-    let _goose = user.goose_send(request_builder.form(&amp;params), None).await?;
+    let _goose = user.post_form(&quot;/login&quot;, &amp;params).await?;
 
     Ok(())
 }
@@ -1132,14 +1131,14 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <span class="boring">}
 </span></code></pre></pre>
 <p>The session data structure is created from json-formatted response data returned by an authentication request, uniquely stored in each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> instance:</p>
-<pre><code class="language-rust ignore">        jwt_token: response.jwt_token,
-    });
-
+<pre><code class="language-rust ignore">
+    Ok(())
+}
 </code></pre>
 <p>The session data is retrieved from the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with each subsequent request. To keep the example simple no validation is done:</p>
-<pre><code class="language-rust ignore">    // use `get_session_data` to handle missing session
-    let session = user.get_session_data_unchecked::&lt;Session&gt;();
-    let request = user.goose_get(&quot;/&quot;)?.bearer_auth(&amp;session.jwt_token);
+<pre><code class="language-rust ignore">
+    // Create a Reqwest RequestBuilder object and configure bearer authentication when making
+    // a GET request for the index.
 </code></pre>
 <p><em>This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token.</em></p>
 <h2 id="complete-source-code-2"><a class="header" href="#complete-source-code-2">Complete Source Code</a></h2>
@@ -1200,11 +1199,9 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 /// on_start task when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
 async fn website_signup(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    let request_builder = user.goose_post(&quot;/signup&quot;)?;
-    // https://docs.rs/reqwest/*/reqwest/blocking/struct.RequestBuilder.html#method.form
     let params = [(&quot;username&quot;, &quot;test_user&quot;), (&quot;password&quot;, &quot;&quot;)];
     let response = user
-        .goose_send(request_builder.form(&amp;params), None)
+        .post_form(&quot;/signup&quot;, &amp;params)
         .await?
         .response?
         .json::&lt;AuthenticationResponse&gt;()
@@ -1219,11 +1216,23 @@ async fn website_signup(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
 
 /// A very simple task that simply loads the front page.
 async fn authenticated_index(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    // This will panic if the session is missing or if the session is not of the right type
-    // use `get_session_data` to handle missing session
+    // This will panic if the session is missing or if the session is not of the right type.
+    // Use `get_session_data` to handle a missing session.
     let session = user.get_session_data_unchecked::&lt;Session&gt;();
-    let request = user.goose_get(&quot;/&quot;)?.bearer_auth(&amp;session.jwt_token);
-    let _goose = user.goose_send(request, None).await?;
+
+    // Create a Reqwest RequestBuilder object and configure bearer authentication when making
+    // a GET request for the index.
+    let reqwest_request_builder = user
+        .get_request_builder(&amp;GooseMethod::Get, &quot;/&quot;)?
+        .bearer_auth(&amp;session.jwt_token);
+
+    // Add the manually created RequestBuilder and build a GooseRequest object.
+    let goose_request = GooseRequest::builder()
+        .set_request_builder(reqwest_request_builder)
+        .build();
+
+    // Make the actual request.
+    user.request(goose_request).await?;
 
     Ok(())
 }
@@ -1255,8 +1264,8 @@ async fn authenticated_index(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
                         (&quot;form_id&quot;, &quot;user_login&quot;),
                         (&quot;op&quot;, &quot;Log+in&quot;),
                     ];
-                    let request_builder = user.goose_post(&quot;/user&quot;)?;
-                    let _goose = user.goose_send(request_builder.form(&amp;params), None).await;
+                    let _goose = user.post_form(&quot;/user&quot;, &amp;params).await?;
+                    // @TODO: verify that we actually logged in.
 </code></pre>
 <p>The test also includes an example of how to post a comment during a load test:</p>
 <pre><code class="language-rust ignore">                .register_task(
@@ -1454,8 +1463,7 @@ async fn drupal_memcache_login(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
                         (&quot;form_id&quot;, &quot;user_login&quot;),
                         (&quot;op&quot;, &quot;Log+in&quot;),
                     ];
-                    let request_builder = user.goose_post(&quot;/user&quot;)?;
-                    let _goose = user.goose_send(request_builder.form(&amp;params), None).await;
+                    let _goose = user.post_form(&quot;/user&quot;, &amp;params).await?;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) =&gt; {
@@ -1571,8 +1579,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; GooseTaskR
                     ];
 
                     // Post the comment.
-                    let request_builder = user.goose_post(&amp;comment_path)?;
-                    let mut goose = user.goose_send(request_builder.form(&amp;params), None).await?;
+                    let mut goose = user.post_form(&amp;comment_path, &amp;params).await?;
 
                     // Verify that the comment posted.
                     match goose.response {
