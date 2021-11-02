@@ -185,8 +185,7 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> GooseTaskResult {
                         ("form_id", "user_login"),
                         ("op", "Log+in"),
                     ];
-                    let request_builder = user.goose_post("/user")?;
-                    let _goose = user.goose_send(request_builder.form(&params), None).await;
+                    let _goose = user.post_form("/user", &params).await?;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) => {
@@ -302,8 +301,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> GooseTaskResult {
                     ];
 
                     // Post the comment.
-                    let request_builder = user.goose_post(&comment_path)?;
-                    let mut goose = user.goose_send(request_builder.form(&params), None).await?;
+                    let mut goose = user.post_form(&comment_path, &params).await?;
 
                     // Verify that the comment posted.
                     match goose.response {

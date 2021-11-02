@@ -62,8 +62,8 @@ pub(crate) async fn user_main(
                 // Determine which task we're going to run next.
                 let function = &thread_task_set.tasks[*thread_task_index].function;
                 debug!(
-                    "launching on_start {} task from {}",
-                    thread_task_name, thread_task_set.name
+                    "[user {}]: launching {} task from {}",
+                    thread_number, thread_task_name, thread_task_set.name
                 );
                 // Invoke the task function.
                 let _todo = invoke_task_function(

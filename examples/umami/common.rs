@@ -565,8 +565,7 @@ pub async fn anonymous_contact_form(user: &mut GooseUser, english: bool) -> Goos
                         ("form_id", "contact_message_feedback_form"),
                         ("op", "Send+message"),
                     ];
-                    let request_builder = user.goose_post(contact_form_url)?;
-                    contact_form = user.goose_send(request_builder.form(&params), None).await?;
+                    contact_form = user.post_form(contact_form_url, &params).await?;
                 }
                 Err(e) => {
                     return user.set_failure(
@@ -694,8 +693,7 @@ pub async fn search(user: &mut GooseUser, english: bool) -> GooseTaskResult {
                         ("form_id", "search_form"),
                         ("op", "Search"),
                     ];
-                    let request_builder = user.goose_post(search_form_url)?;
-                    search_form = user.goose_send(request_builder.form(&params), None).await?;
+                    search_form = user.post_form(search_form_url, &params).await?;
 
                     // A successful search is redirected.
                     if !search_form.request.redirected {

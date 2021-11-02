@@ -1,7 +1,12 @@
 # Changelog
 
-## 0.14.2-dev
+## 0.15.0-dev
  - [#372](https://github.com/tag1consulting/goose/pull/372) de-deduplicate documentation, favoring [The Goose Book](https://book.goose.rs)
+ - [#373](https://github.com/tag1consulting/goose/pull/373) **API change**: introduce `GooseRequest` and `GooseRequestBuilder` for more flexibility when making requests
+    o remove `GooseUser::post_named`, `GooseUser::head_named`, `GooseUser::delete_named`, `GooseUser::goose_get`, `GooseUser::goose_put`, `GooseUser::goose_head`, `GooseUser::goose_put`, `GooseUser::goose_patch`, `GooseUser::goose_delete`, and `GooseUser::goose_send`
+    o adds or modifies helpers `GooseUser::get`, `GooseUser::get_named`, `GooseUser::post`, `GooseUser::post_form`, `GooseUser::post_json`, `GooseUser::head`, and `GooseUser::delete`
+    o replaces `GooseUser::goose_send` with `GooseUser::request` which accepts a `GooseRequest` object
+    o fixes [#370] (see `GooseRequestBuilder::expect_status_code`)
 
 ## 0.14.1 October 13, 2021
  - [#364](https://github.com/tag1consulting/goose/pull/364) add link from the [Developer Documentation](https://docs.rs/goose) to [The Git Book](https://book.goose.rs)

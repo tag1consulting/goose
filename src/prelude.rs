@@ -9,7 +9,8 @@
 
 pub use crate::config::{GooseDefault, GooseDefaultType};
 pub use crate::goose::{
-    GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult, GooseTaskSet, GooseUser,
+    GooseMethod, GooseRequest, GooseTask, GooseTaskError, GooseTaskFunction, GooseTaskResult,
+    GooseTaskSet, GooseUser,
 };
 pub use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
 pub use crate::{task, taskset, GooseAttack, GooseError, GooseScheduler};
