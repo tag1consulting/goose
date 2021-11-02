@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.0-dev
+## 0.15.0 November 2, 2021
  - [#372](https://github.com/tag1consulting/goose/pull/372) de-deduplicate documentation, favoring [The Goose Book](https://book.goose.rs)
  - [#373](https://github.com/tag1consulting/goose/pull/373) **API change**: introduce `GooseRequest` and `GooseRequestBuilder` for more flexibility when making requests
     o remove `GooseUser::post_named`, `GooseUser::head_named`, `GooseUser::delete_named`, `GooseUser::goose_get`, `GooseUser::goose_put`, `GooseUser::goose_head`, `GooseUser::goose_put`, `GooseUser::goose_patch`, `GooseUser::goose_delete`, and `GooseUser::goose_send`
