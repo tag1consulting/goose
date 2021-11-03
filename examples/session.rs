@@ -1,5 +1,5 @@
-//! Simple Goose load test example, leveraging the per-GooseUser `GooseUserData`
-//! field to store a per-user session JWT authentication token.
+//! Goose load test example, leveraging the per-GooseUser `GooseUserData` field to store
+//! a per-user session JWT authentication token.
 //!
 //! ## License
 //!
