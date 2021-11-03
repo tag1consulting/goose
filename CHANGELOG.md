@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.15.1-dev
+ - [#374](https://github.com/tag1consulting/goose/pull/374) renamed `simple-with-session.rs` to `session.rs` and `simple-closure.rs` to `closure.rs` to avoid confusion with the `simple.rs` example as they all do different things
+
 ## 0.15.0 November 2, 2021
  - [#372](https://github.com/tag1consulting/goose/pull/372) de-deduplicate documentation, favoring [The Goose Book](https://book.goose.rs)
  - [#373](https://github.com/tag1consulting/goose/pull/373) **API change**: introduce `GooseRequest` and `GooseRequestBuilder` for more flexibility when making requests
