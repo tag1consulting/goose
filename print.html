@@ -951,8 +951,8 @@ goose = { version = &quot;^0.15&quot;, default-features = false, features = [&qu
 <p>Goose includes several examples to demonstrate load test functionality, including:</p>
 <ul>
 <li><a href="https://github.com/tag1consulting/goose/blob/main/examples/simple.rs">Simple</a></li>
-<li><a href="https://github.com/tag1consulting/goose/blob/main/examples/simple_closure.rs">Simple Closure</a></li>
-<li><a href="https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs">Simple With Session</a></li>
+<li><a href="https://github.com/tag1consulting/goose/blob/main/examples/closure.rs">Closure</a></li>
+<li><a href="https://github.com/tag1consulting/goose/blob/main/examples/session.rs">Session</a></li>
 <li><a href="https://github.com/tag1consulting/goose/blob/main/examples/drupal_memcache.rs">Drupal Memcache</a></li>
 <li><a href="https://github.com/tag1consulting/goose/tree/main/examples/umami">Umami</a></li>
 </ul>
@@ -1036,214 +1036,15 @@ async fn website_about(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
     Ok(())
 }
 </code></pre>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="simple-closure-example"><a class="header" href="#simple-closure-example">Simple Closure Example</a></h1>
-<p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/simple_closure.rs"><code>examples/simple_closure.rs</code></a> example loads three different pages on a web site. Instead of defining a hard coded <a href="https://docs.rs/goose/*/goose/goose/struct.GooseTask.html"><code>GooseTask</code></a> function for each, the paths are passed in via a <a href="https://doc.rust-lang.org/std/vec/index.html">vector</a> and the <a href="https://docs.rs/goose/*/goose/goose/type.GooseTaskFunction.html">GooseTaskFunction</a> is dynamically created in a <a href="https://doc.rust-lang.org/rust-by-example/fn/closures.html">closure</a>.</p>
-<h2 id="details-1"><a class="header" href="#details-1">Details</a></h2>
-<p>The paths to be loaded are first defiend in a vector:</p>
-<pre><pre class="playground"><code class="language-rust edition2018">
-<span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>    for request_path in paths {
-<span class="boring">}
-</span></code></pre></pre>
-<p>A task function for each path is then dynamically created as a closure:</p>
-<pre><code class="language-rust ignore">        let path = request_path;
-
-        let closure: GooseTaskFunction = Arc::new(move |user| {
-            Box::pin(async move {
-                let _goose = user.get(path).await?;
-
-                Ok(())
-            })
-        });
-
-</code></pre>
-<h2 id="complete-source-code-1"><a class="header" href="#complete-source-code-1">Complete Source Code</a></h2>
-<pre><code class="language-rust ignore">//! Simple Goose load test example using closures.
-//!
-//! ## License
-//!
-//! Copyright 2020 Fabian Franz
-//!
-//! Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
-//! you may not use this file except in compliance with the License.
-//! You may obtain a copy of the License at
-//!
-//! http://www.apache.org/licenses/LICENSE-2.0
-//!
-//! Unless required by applicable law or agreed to in writing, software
-//! distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
-//! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//! See the License for the specific language governing permissions and
-//! limitations under the License.
-
-use goose::prelude::*;
-use std::boxed::Box;
-use std::sync::Arc;
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() -&gt; Result&lt;(), GooseError&gt; {
-    let mut taskset = taskset!(&quot;WebsiteUser&quot;)
-        // After each task runs, sleep randomly from 5 to 15 seconds.
-        .set_wait_time(Duration::from_secs(5), Duration::from_secs(15))?;
-
-    let paths = vec![&quot;/&quot;, &quot;/about&quot;, &quot;/our-team&quot;];
-    for request_path in paths {
-        let path = request_path;
-
-        let closure: GooseTaskFunction = Arc::new(move |user| {
-            Box::pin(async move {
-                let _goose = user.get(path).await?;
-
-                Ok(())
-            })
-        });
-
-        let task = GooseTask::new(closure);
-        // We need to do the variable dance as taskset.register_task returns self and hence moves
-        // self out of `taskset`. By storing it in a new local variable and then moving it over
-        // we can avoid that error.
-        let new_taskset = taskset.register_task(task);
-        taskset = new_taskset;
-    }
-
-    GooseAttack::initialize()?
-        // In this example, we only create a single taskset, named &quot;WebsiteUser&quot;.
-        .register_taskset(taskset)
-        .execute()
-        .await?
-        .print();
-
-    Ok(())
-}
-</code></pre>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="simple-with-session-example"><a class="header" href="#simple-with-session-example">Simple With Session Example</a></h1>
-<p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs"><code>examples/simple_with_session.rs</code></a> example demonstrates how you can add JWT authentication support to your load test, making use of the <a href="https://docs.rs/goose/*/goose/goose/trait.GooseUserData.html"><code>GooseUserData</code></a> marker trait. In this example, the session is recorded in the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_session_data"><code>set_session_data</code></a>, and retrieved with <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.get_session_data_unchecked"><code>get_session_data_unchecked</code></a>.</p>
-<h2 id="details-2"><a class="header" href="#details-2">Details</a></h2>
-<p>In this example, the <a href="https://docs.rs/goose/*/goose/goose/trait.GooseUserData.html"><code>GooseUserData</code></a> is a simple struct containing a string:</p>
-<pre><pre class="playground"><code class="language-rust edition2018">
-<span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>    jwt_token: String,
-}
-
-<span class="boring">}
-</span></code></pre></pre>
-<p>The session data structure is created from json-formatted response data returned by an authentication request, uniquely stored in each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> instance:</p>
-<pre><code class="language-rust ignore">
-    Ok(())
-}
-</code></pre>
-<p>The session data is retrieved from the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with each subsequent request. To keep the example simple no validation is done:</p>
-<pre><code class="language-rust ignore">
-    // Create a Reqwest RequestBuilder object and configure bearer authentication when making
-    // a GET request for the index.
-</code></pre>
-<p><em>This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token.</em></p>
-<h2 id="complete-source-code-2"><a class="header" href="#complete-source-code-2">Complete Source Code</a></h2>
-<pre><code class="language-rust ignore">//! Simple Goose load test example, leveraging the per-GooseUser `GooseUserData`
-//! field to store a per-user session JWT authentication token.
-//!
-//! ## License
-//!
-//! Copyright 2020 Jeremy Andrews
-//!
-//! Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
-//! you may not use this file except in compliance with the License.
-//! You may obtain a copy of the License at
-//!
-//! http://www.apache.org/licenses/LICENSE-2.0
-//!
-//! Unless required by applicable law or agreed to in writing, software
-//! distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
-//! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//! See the License for the specific language governing permissions and
-//! limitations under the License.
-
-use goose::prelude::*;
-use serde::Deserialize;
-use std::time::Duration;
-
-struct Session {
-    jwt_token: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = &quot;camelCase&quot;)]
-struct AuthenticationResponse {
-    jwt_token: String,
-}
-
-#[tokio::main]
-async fn main() -&gt; Result&lt;(), GooseError&gt; {
-    GooseAttack::initialize()?
-        // In this example, we only create a single taskset, named &quot;WebsiteUser&quot;.
-        .register_taskset(
-            taskset!(&quot;WebsiteUser&quot;)
-                // After each task runs, sleep randomly from 5 to 15 seconds.
-                .set_wait_time(Duration::from_secs(5), Duration::from_secs(15))?
-                // This task only runs one time when the user first starts.
-                .register_task(task!(website_signup).set_on_start())
-                // These next two tasks run repeatedly as long as the load test is running.
-                .register_task(task!(authenticated_index)),
-        )
-        .execute()
-        .await?
-        .print();
-
-    Ok(())
-}
-
-/// Demonstrates how to log in and set a session when a user starts. We flag this task as an
-/// on_start task when registering it above. This means it only runs one time
-/// per user, when the user thread first starts.
-async fn website_signup(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    let params = [(&quot;username&quot;, &quot;test_user&quot;), (&quot;password&quot;, &quot;&quot;)];
-    let response = user
-        .post_form(&quot;/signup&quot;, &amp;params)
-        .await?
-        .response?
-        .json::&lt;AuthenticationResponse&gt;()
-        .await?;
-
-    user.set_session_data(Session {
-        jwt_token: response.jwt_token,
-    });
-
-    Ok(())
-}
-
-/// A very simple task that simply loads the front page.
-async fn authenticated_index(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
-    // This will panic if the session is missing or if the session is not of the right type.
-    // Use `get_session_data` to handle a missing session.
-    let session = user.get_session_data_unchecked::&lt;Session&gt;();
-
-    // Create a Reqwest RequestBuilder object and configure bearer authentication when making
-    // a GET request for the index.
-    let reqwest_request_builder = user
-        .get_request_builder(&amp;GooseMethod::Get, &quot;/&quot;)?
-        .bearer_auth(&amp;session.jwt_token);
-
-    // Add the manually created RequestBuilder and build a GooseRequest object.
-    let goose_request = GooseRequest::builder()
-        .set_request_builder(reqwest_request_builder)
-        .build();
-
-    // Make the actual request.
-    user.request(goose_request).await?;
-
-    Ok(())
-}
-</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="simple-closure"><a class="header" href="#simple-closure">Simple Closure</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="simple-session"><a class="header" href="#simple-session">Simple Session</a></h1>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="drupal-memcache-example"><a class="header" href="#drupal-memcache-example">Drupal Memcache Example</a></h1>
 <p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/drupal_memcache.rs"><code>examples/drupal_memcache.rs</code></a> example is used to validate the performance of each release of the <a href="https://www.drupal.org/project/memcache">Drupal Memcache Module</a>.</p>
 <h2 id="background"><a class="header" href="#background">Background</a></h2>
 <p>Prior to every release of the <a href="https://www.drupal.org/project/memcache">Drupal Memcache Module</a>, <a href="https://www.tag1.com/">Tag1 Consulting</a> has run a load test to ensure consistent performance of the module which is dependend on by <a href="https://www.drupal.org/project/usage/memcache">tens of thousands of Drupal websites</a>.</p>
 <p>The load test was initially implemented as a <a href="https://github.com/tag1consulting/drupal-loadtest/tree/206716d2bd3fdd199febba34a964117e1fd0fbde">JMeter testplan</a>. It was later converted to a <a href="https://github.com/tag1consulting/drupal-loadtest">Locust testplan</a>. Most recently it was converted to a <a href="https://github.com/tag1consulting/goose/blob/main/examples/drupal_memcache.rs">Goose testplan</a>.</p>
 <p>Thie testplan is maintained as a simple real-world Goose load test example.</p>
-<h2 id="details-3"><a class="header" href="#details-3">Details</a></h2>
+<h2 id="details-1"><a class="header" href="#details-1">Details</a></h2>
 <p>The authenticated <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> is labeled as <code>AuthBrowsingUser</code> and demonstrates logging in one time at the start of the load test:</p>
 <pre><code class="language-rust ignore">            taskset!(&quot;AuthBrowsingUser&quot;)
                 .set_weight(1)?
@@ -1275,7 +1076,7 @@ async fn authenticated_index(user: &amp;mut GooseUser) -&gt; GooseTaskResult {
                 ),
 </code></pre>
 <p>Note that much of this functionality can be simplified by using the <a href="https://docs.rs/goose-eggs">Goose Eggs library</a> which includes some <a href="https://docs.rs/goose-eggs/*/goose_eggs/drupal/index.html">Drupal-specific functionality</a>.</p>
-<h2 id="complete-source-code-3"><a class="header" href="#complete-source-code-3">Complete Source Code</a></h2>
+<h2 id="complete-source-code-1"><a class="header" href="#complete-source-code-1">Complete Source Code</a></h2>
 <pre><code class="language-rust ignore">//! Conversion of Locust load test used for the Drupal memcache module, from
 //! https://github.com/tag1consulting/drupal-loadtest/
 //!
@@ -1667,7 +1468,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; GooseTaskR
 <p>Read the blog <a href="https://www.tag1consulting.com/blog/goose-clouds-load-testing-scale">A Goose In The Clouds: Load Testing At Scale</a> for a demonstration of using this example, and learn more about the testplan from the <a href="https://github.com/tag1consulting/goose/blob/main/examples/umami/README.md">README</a>.</p>
 <h2 id="alternative"><a class="header" href="#alternative">Alternative</a></h2>
 <p>The <a href="https://docs.rs/goose-eggs/">Goose Eggs library</a> contains <a href="https://github.com/tag1consulting/goose-eggs/tree/main/examples/umami">a variation of the Umami example</a>.</p>
-<h2 id="complete-source-code-4"><a class="header" href="#complete-source-code-4">Complete Source Code</a></h2>
+<h2 id="complete-source-code-2"><a class="header" href="#complete-source-code-2">Complete Source Code</a></h2>
 <p>This example is more complex than the other examples, and is split into multiple files, all of which can be found within <a href="https://github.com/tag1consulting/goose/tree/main/examples/umami"><code>examples/umami</code></a>.</p>
 
                     </main>
