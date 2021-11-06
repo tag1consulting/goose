@@ -39,7 +39,7 @@
 
 - [Examples](example/overview.md)
     - [Simple](example/simple.md)
-    - [Simple Closure](example/simple-closure.md)
-    - [Simple Session](example/simple-session.md)
+    - [Closure](example/closure.md)
+    - [Session](example/session.md)
     - [Drupal Memcache](example/drupal-memcache.md)
     - [Umami](example/umami.md)
