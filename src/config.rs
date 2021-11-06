@@ -47,8 +47,9 @@ const DEFAULT_PORT: &str = "5115";
 /// -r, --hatch-rate RATE      Sets per-second user hatch rate (default: 1)
 /// -t, --run-time TIME        Stops after (30s, 20m, 3h, 1h30m, etc)
 /// -G, --goose-log NAME       Enables Goose log file and sets name
-/// -g, --log-level            Sets Goose log level (-g, -gg, etc)
-/// -v, --verbose              Sets Goose verbosity (-v, -vv, etc)
+/// -g, --log-level            Increases Goose log level (-g, -gg, etc)
+/// -q, --quiet                Decreases Goose verbosity (-q, -qq, etc)
+/// -v, --verbose              Increases Goose verbosity (-v, -vv, etc)
 ///
 /// Metrics:
 /// --running-metrics TIME     How often to optionally print running metrics
@@ -127,15 +128,18 @@ pub struct GooseConfiguration {
     /// Enables Goose log file and sets name
     #[options(short = "G", meta = "NAME")]
     pub goose_log: String,
-    /// Sets Goose log level (-g, -gg, etc)
+    /// Inreases Goose log level (-g, -gg, etc)
     #[options(short = "g", count)]
     pub log_level: u8,
-    /// Sets Goose verbosity (-v, -vv, etc)
+    /// Decreases Goose verbosity (-q, -qq, etc)
+    #[options(count, short = "q", help = "Decreases Goose verbosity (-q, -qq, etc)")]
+    pub quiet: u8,
+    /// Increases Goose verbosity (-v, -vv, etc)
     #[options(
         count,
         short = "v",
         // Add a blank line and then a 'Metrics:' header after this option
-        help = "Sets Goose verbosity (-v, -vv, etc)\n\nMetrics:"
+        help = "Increases Goose verbosity (-v, -vv, etc)\n\nMetrics:"
     )]
     pub verbose: u8,
 
@@ -277,6 +281,8 @@ pub(crate) struct GooseDefaults {
     pub log_level: Option<u8>,
     /// An optional default for the goose log file name.
     pub goose_log: Option<String>,
+    /// An optional default value for quiet level.
+    pub quiet: Option<u8>,
     /// An optional default value for verbosity level.
     pub verbose: Option<u8>,
     /// An optional default for printing running metrics.
@@ -375,6 +381,8 @@ pub enum GooseDefault {
     LogLevel,
     /// An optional default for the log file name.
     GooseLog,
+    /// An optional default value for quiet level.
+    Quiet,
     /// An optional default value for verbosity level.
     Verbose,
     /// An optional default for printing running metrics.
@@ -503,6 +511,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::RunTime`]
 ///  - [`GooseDefault::RunningMetrics`]
 ///  - [`GooseDefault::LogLevel`]
+///  - [`GooseDefault::Quiet`]
 ///  - [`GooseDefault::Verbose`]
 ///  - [`GooseDefault::ThrottleRequests`]
 ///  - [`GooseDefault::ExpectWorkers`]
@@ -551,8 +560,8 @@ pub trait GooseDefaultType<T> {
     ///     GooseAttack::initialize()?
     ///         // Do not reset the metrics after the load test finishes starting.
     ///         .set_default(GooseDefault::NoResetMetrics, true)?
-    ///         // Display info level logs while the test runs.
-    ///         .set_default(GooseDefault::Verbose, 1)?
+    ///         // Do not display info level logs while the test runs.
+    ///         .set_default(GooseDefault::Quiet, 1)?
     ///         // Log all requests made during the test to `./goose-request.log`.
     ///         .set_default(GooseDefault::RequestLog, "goose-request.log")?;
     ///
@@ -586,6 +595,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
+            | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
@@ -663,6 +673,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
             GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
+            GooseDefault::Quiet => self.defaults.quiet = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
             GooseDefault::ExpectWorkers => self.defaults.expect_workers = Some(value),
@@ -791,6 +802,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
+            | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
@@ -895,6 +907,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
+            | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
@@ -992,6 +1005,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
+            | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::ExpectWorkers
@@ -1191,6 +1205,24 @@ impl GooseConfigure<GooseCoordinatedOmissionMitigation> for GooseConfiguration {
 impl GooseConfiguration {
     /// Implement precedence rules for all [`GooseConfiguration`] values.
     pub(crate) fn configure(&mut self, defaults: &GooseDefaults) {
+        // Configure `quiet`.
+        self.quiet = self
+            .get_value(vec![
+                // Use --quiet if set.
+                GooseValue {
+                    value: Some(self.quiet),
+                    filter: self.quiet == 0,
+                    message: "",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.quiet,
+                    filter: defaults.quiet.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(0);
+
         // Configure `verbose`.
         self.verbose = self
             .get_value(vec![
@@ -2073,6 +2105,16 @@ impl GooseConfiguration {
             }
         }
 
+        // Can't set both --verbose and --quiet.
+        if self.verbose > 0 && self.quiet > 0 {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.verbose`".to_string(),
+                value: self.verbose.to_string(),
+                detail: "`configuration.verbose` can not be set with `configuration.quiet`."
+                    .to_string(),
+            });
+        }
+
         // If set, hatch rate must be non-zero.
         if let Some(hatch_rate) = self.hatch_rate.as_ref() {
             if hatch_rate == "0" {
@@ -2242,9 +2284,11 @@ impl GooseConfiguration {
     pub(crate) fn initialize_goose_logger(&self) {
         // Configure debug output level.
         let debug_level = match self.verbose {
-            0 => LevelFilter::Warn,
-            1 => LevelFilter::Info,
-            2 => LevelFilter::Debug,
+            0 => match self.quiet {
+                0 => LevelFilter::Info,
+                _ => LevelFilter::Warn,
+            },
+            1 => LevelFilter::Debug,
             _ => LevelFilter::Trace,
         };
 
@@ -2306,6 +2350,7 @@ mod test {
         let timeout = "45".to_string();
         let log_level: usize = 1;
         let goose_log = "custom-goose.log".to_string();
+        let quiet: usize = 0;
         let verbose: usize = 0;
         let report_file = "custom-goose-report.html".to_string();
         let request_log = "custom-goose-request.log".to_string();
@@ -2332,6 +2377,8 @@ mod test {
             .set_default(GooseDefault::LogLevel, log_level)
             .unwrap()
             .set_default(GooseDefault::GooseLog, goose_log.as_str())
+            .unwrap()
+            .set_default(GooseDefault::Quiet, quiet)
             .unwrap()
             .set_default(GooseDefault::Verbose, verbose)
             .unwrap()
@@ -2413,6 +2460,7 @@ mod test {
         assert!(goose_attack.defaults.goose_log == Some(goose_log));
         assert!(goose_attack.defaults.request_body == Some(true));
         assert!(goose_attack.defaults.no_debug_body == Some(true));
+        assert!(goose_attack.defaults.quiet == Some(quiet as u8));
         assert!(goose_attack.defaults.verbose == Some(verbose as u8));
         assert!(goose_attack.defaults.running_metrics == Some(15));
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));

@@ -1,20 +1,24 @@
 # Changelog
 
 ## 0.16.0-dev
-- [#406](https://github.com/tag1consulting/goose/pull/406) make sure that the graphs are built correctly if the load test is interrupted during the starting phase
-- [#408](https://github.com/tag1consulting/goose/pull/408) update 'Running the load test' page in the Goose book to show HTML report
-- [#411](https://github.com/tag1consulting/goose/pull/411) **API change**: some public APIs have been made private or removed
-    o `util::MovingAverage` structure and all related functions have been moved to a different namespace and made private
-    o `GooseRequestMetricAggregate::requests_per_second`, `GooseRequestMetricAggregate::errors_per_second` and `GooseRequestMetricAggregate::average_response_time_per_second` have been removed
-    o `GooseTaskMetricAggregate::tasks_per_second` has been removed
-    o `GooseMetrics::users_per_second` has been removed
-    o formerly public methods `report::task_metrics_template()` and `report::errors_template()` have been made private
-    o `report::graph_rps_template()`, `report::graph_eps_template()`, `report::graph_average_response_time_template()`, `report::graph_users_per_second_template()` and `report::graph_tasks_per_second_template()` have been removed
+ - [#406](https://github.com/tag1consulting/goose/pull/406) make sure that the graphs are built correctly if the load test is interrupted during the starting phase
+ - [#408](https://github.com/tag1consulting/goose/pull/408) update 'Running the load test' page in the Goose book to show HTML report
+ - [#411](https://github.com/tag1consulting/goose/pull/411) **API change**: some public APIs have been made private or removed
+   o `util::MovingAverage` structure and all related functions have been moved to a different namespace and made private
+   o `GooseRequestMetricAggregate::requests_per_second`, `GooseRequestMetricAggregate::errors_per_second` and `GooseRequestMetricAggregate::average_response_time_per_second` have been removed
+   o `GooseTaskMetricAggregate::tasks_per_second` has been removed
+   o `GooseMetrics::users_per_second` has been removed
+   o formerly public methods `report::task_metrics_template()` and `report::errors_template()` have been made private
+   o `report::graph_rps_template()`, `report::graph_eps_template()`, `report::graph_average_response_time_template()`, `report::graph_users_per_second_template()` and `report::graph_tasks_per_second_template()` have been removed
+ - default to `INFO` level verbosity, introduce `-q` to reduce Goose verbosity
+   o **note**: `-v` now sets Goose to `DEBUG` level verbosity which when enabled will negatively impact load test performance
+>>>>>>> 824b685 (change -v default, introduce -q)
     
 ## 0.15.2 December 13, 2021
  - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends
  - [#394](https://github.com/tag1consulting/goose/pull/394) add additional graphs to the HTML report: errors per second, average response time, active users, active tasks
  - [#403](https://github.com/tag1consulting/goose/pull/403) wake up a couple times a second to handle message and allow for a quick shutdown if the load test is canceled during startup
+ - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends
 
 ## 0.15.1 November 19, 2021
  - [#374](https://github.com/tag1consulting/goose/pull/374) renamed `simple-with-session.rs` to `session.rs` and `simple-closure.rs` to `closure.rs` to avoid confusion with the `simple.rs` example as they all do different things
