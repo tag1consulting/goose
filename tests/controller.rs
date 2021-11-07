@@ -98,7 +98,8 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
 // the same to simplify reuse, accepting the MockServer but not using it.
 fn common_build_configuration(_server: &MockServer, custom: &mut Vec<&str>) -> GooseConfiguration {
     // Common elements in all our tests.
-    let mut configuration: Vec<&str> = vec!["--no-autostart", "--co-mitigation", "disabled"];
+    let mut configuration: Vec<&str> =
+        vec!["--quiet", "--no-autostart", "--co-mitigation", "disabled"];
 
     // Custom elements in some tests.
     configuration.append(custom);

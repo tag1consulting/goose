@@ -19,8 +19,9 @@ Optional arguments:
   -s, --startup-time TIME    Starts users for up to (30s, 20m, 3h, 1h30m, etc)
   -t, --run-time TIME        Stops load test after (30s, 20m, 3h, 1h30m, etc)
   -G, --goose-log NAME       Enables Goose log file and sets name
-  -g, --log-level            Sets Goose log level (-g, -gg, etc)
-  -v, --verbose              Sets Goose verbosity (-v, -vv, etc)
+  -g, --log-level            Inreases Goose log level (-g, -gg, etc)
+  -q, --quiet                Decreases Goose verbosity (-q, -qq, etc)
+  -v, --verbose              Increases Goose verbosity (-v, -vv, etc)
 
 Metrics:
   --running-metrics TIME     How often to optionally print running metrics

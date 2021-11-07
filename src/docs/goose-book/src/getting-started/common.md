@@ -2,17 +2,6 @@
 
 As seen on the previous page, Goose has a lot of run time options which can be overwhelming. The following are a few of the more common and more important options to be familiar with. In these examples we only demonstrate one option at a time, but it's generally useful to combine many options.
 
-## Verbose Output
-
-By default Goose is not very verbose, and only outputs metrics at the end of a load test. It can be preferable to get more insight into what's going by enabling the `-v` flag to increase verbosity.
-
-### Example
-_Enable verbose output while running load test._
-
-```bash
-cargo run --release -- -v
-```
-
 ## Host to load test
 
 Load test plans typically contain relative paths, and so Goose must be told which host to run the load test against in order for it to start. This allows a single load test plan to be used for testing different environments, for example "http://local.example.com", "https://qa.example.com", and "https://www.example.com".
