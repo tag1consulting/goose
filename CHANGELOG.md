@@ -10,9 +10,9 @@
    o `GooseMetrics::users_per_second` has been removed
    o formerly public methods `report::task_metrics_template()` and `report::errors_template()` have been made private
    o `report::graph_rps_template()`, `report::graph_eps_template()`, `report::graph_average_response_time_template()`, `report::graph_users_per_second_template()` and `report::graph_tasks_per_second_template()` have been removed
- - default to `INFO` level verbosity, introduce `-q` to reduce Goose verbosity
-   o **note**: `-v` now sets Goose to `DEBUG` level verbosity which when enabled will negatively impact load test performance
->>>>>>> 824b685 (change -v default, introduce -q)
+ - [#379](https://github.com/tag1consulting/goose/pull/379) **API change**: default to `INFO` level verbosity, introduce `-q` to reduce Goose verbosity
+   o **note**: `-v` now sets Goose to `DEBUG` level verbosity which when enabled will negatively impact load test performance; set `-q` to restore previous level of verbosity
+ - [#379](https://github.com/tag1consulting/goose/pull/379) **API change**: remove `.print()` which is no longer required to display metrics after a load test, disable with `--no-print-metrics` or `GooseDefault::NoPrintMetrics`
     
 ## 0.15.2 December 13, 2021
  - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends

@@ -1924,7 +1924,7 @@ impl GooseUser {
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;
 
-        // Print log to stdout if `-v` is enabled.
+        // Print log to stdout.
         info!("set_failure: {}", tag);
 
         Err(GooseTaskError::RequestFailed {

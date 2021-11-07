@@ -51,8 +51,7 @@ async fn main() -> Result<(), GooseError> {
         // In this example, we only create a single taskset, named "WebsiteUser".
         .register_taskset(taskset)
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 }

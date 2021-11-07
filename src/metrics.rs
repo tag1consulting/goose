@@ -938,42 +938,6 @@ impl GooseMetrics {
         Ok(())
     }
 
-    /// Consumes and display all enabled metrics from a completed load test.
-    ///
-    /// # Example
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), GooseError> {
-    ///     GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("ExampleUsers")
-    ///             .register_task(task!(example_task))
-    ///         )
-    ///         // Set a default host so the load test will start.
-    ///         .set_default(GooseDefault::Host, "http://localhost/")?
-    ///         // Set a default run time so this test runs to completion.
-    ///         .set_default(GooseDefault::RunTime, 1)?
-    ///         .execute()
-    ///         .await?
-    ///         .print();
-    ///
-    ///     Ok(())
-    /// }
-    ///
-    /// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
-    ///     let _goose = user.get("/").await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn print(&self) {
-        if self.display_metrics {
-            info!("printing final metrics after {} seconds...", self.duration);
-            print!("{}", self);
-        }
-    }
-
     /// Displays metrics while a load test is running.
     ///
     /// This function is invoked one time immediately after all GooseUsers are

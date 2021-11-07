@@ -961,6 +961,14 @@ impl GooseAttack {
             self = self.start_attack(None).await?;
         }
 
+        if self.metrics.display_metrics {
+            info!(
+                "printing final metrics after {} seconds...",
+                self.metrics.duration
+            );
+            print!("{}", self.metrics);
+        }
+
         Ok(self.metrics)
     }
 

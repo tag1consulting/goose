@@ -212,9 +212,6 @@ async fn test_defaults() {
         &[request_log],
         &[debug_log],
     );
-
-    // Confirm Goose doesn't panic when printing metrics.
-    goose_metrics.print();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -341,9 +338,6 @@ async fn test_defaults_gaggle() {
         debug_logs.push(file);
     }
     validate_test(&goose_metrics, &mock_endpoints, &request_logs, &debug_logs);
-
-    // Confirm Goose doesn't panic when printing metrics.
-    goose_metrics.print();
 }
 
 #[tokio::test]
@@ -414,9 +408,6 @@ async fn test_no_defaults() {
         &[requests_file],
         &[debug_file],
     );
-
-    // Confirm Goose doesn't panic when printing metrics.
-    goose_metrics.print();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -529,9 +520,6 @@ async fn test_no_defaults_gaggle() {
         &requests_files,
         &debug_files,
     );
-
-    // Confirm Goose doesn't panic when printing metrics.
-    goose_metrics.print();
 }
 
 #[tokio::test]
@@ -575,7 +563,4 @@ async fn test_defaults_no_metrics() {
     assert!(goose_metrics.tasks.is_empty());
     assert!(goose_metrics.users == USERS);
     assert!(goose_metrics.duration == RUN_TIME);
-
-    // Confirm Goose doesn't panic when printing empty metrics.
-    goose_metrics.print();
 }
