@@ -57,6 +57,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --no-metrics               Doesn't track metrics
 /// --no-task-metrics          Doesn't track task metrics
 /// --no-error-summary         Doesn't display an error summary
+/// --no-print-metrics         Doesn't display metrics at end of load test
 /// --report-file NAME         Create an html-formatted report
 /// -R, --request-log NAME     Sets request log file name
 /// --request-format FORMAT    Sets request log format (csv, json, raw, pretty)
@@ -155,6 +156,9 @@ pub struct GooseConfiguration {
     /// Doesn't track task metrics
     #[options(no_short)]
     pub no_task_metrics: bool,
+    /// Doesn't display metrics at end of load test
+    #[options(no_short)]
+    pub no_print_metrics: bool,
     /// Doesn't display an error summary
     #[options(no_short)]
     pub no_error_summary: bool,
@@ -293,6 +297,8 @@ pub(crate) struct GooseDefaults {
     pub no_metrics: Option<bool>,
     /// An optional default for not tracking task metrics.
     pub no_task_metrics: Option<bool>,
+    /// An optional default for not displaying metrics at the end of the load test.
+    pub no_print_metrics: Option<bool>,
     /// An optional default for not displaying an error summary.
     pub no_error_summary: Option<bool>,
     /// An optional default for the html-formatted report file name.
@@ -393,6 +399,8 @@ pub enum GooseDefault {
     NoMetrics,
     /// An optional default for not tracking task metrics.
     NoTaskMetrics,
+    /// An optional default for not displaying metrics at end of load test.
+    NoPrintMetrics,
     /// An optional default for not displaying an error summary.
     NoErrorSummary,
     /// An optional default for the report file name.
@@ -526,6 +534,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoMetrics`]
 ///  - [`GooseDefault::NoTaskMetrics`]
 ///  - [`GooseDefault::RequestBody`]
+///  - [`GooseDefault::NoPrintMetrics`]
 ///  - [`GooseDefault::NoErrorSummary`]
 ///  - [`GooseDefault::NoDebugBody`]
 ///  - [`GooseDefault::NoTelnet`]
@@ -617,6 +626,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
             | GooseDefault::RequestBody
+            | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -708,6 +718,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
             | GooseDefault::RequestBody
+            | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -763,6 +774,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
             GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
             GooseDefault::RequestBody => self.defaults.request_body = Some(value),
+            GooseDefault::NoPrintMetrics => self.defaults.no_print_metrics = Some(value),
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
@@ -860,6 +872,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
             | GooseDefault::RequestBody
+            | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -958,6 +971,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoMetrics
             | GooseDefault::NoTaskMetrics
             | GooseDefault::RequestBody
+            | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
@@ -1481,6 +1495,24 @@ impl GooseConfiguration {
                     value: defaults.no_task_metrics,
                     filter: defaults.no_task_metrics.is_none() || self.worker,
                     message: "no_task_metrics",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `no_print_metrics`.
+        self.no_print_metrics = self
+            .get_value(vec![
+                // Use --no-print-metrics if set.
+                GooseValue {
+                    value: Some(self.no_print_metrics),
+                    filter: !self.no_print_metrics,
+                    message: "no_print_metrics",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.no_print_metrics,
+                    filter: defaults.no_print_metrics.is_none() || self.worker,
+                    message: "no_print_metrics",
                 },
             ])
             .unwrap_or(false);
@@ -2011,6 +2043,14 @@ impl GooseConfiguration {
                     detail: "`configuration.no_task_metrics` can not be set in Worker mode."
                         .to_string(),
                 });
+            // Can't set `no_print_metrics` on Worker.
+            } else if self.no_print_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_print_metrics".to_string(),
+                    value: self.no_print_metrics.to_string(),
+                    detail: "`configuration.no_print_metrics` can not be set in Worker mode."
+                        .to_string(),
+                });
             // Can't set `no_error_summary` on Worker.
             } else if self.no_error_summary {
                 return Err(GooseError::InvalidOption {
@@ -2392,6 +2432,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoTaskMetrics, true)
             .unwrap()
+            .set_default(GooseDefault::NoPrintMetrics, true)
+            .unwrap()
             .set_default(GooseDefault::NoErrorSummary, true)
             .unwrap()
             .set_default(GooseDefault::NoTelnet, true)
@@ -2466,6 +2508,7 @@ mod test {
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_task_metrics == Some(true));
+        assert!(goose_attack.defaults.no_print_metrics == Some(true));
         assert!(goose_attack.defaults.no_error_summary == Some(true));
         assert!(goose_attack.defaults.no_telnet == Some(true));
         assert!(goose_attack.defaults.no_websocket == Some(true));
