@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::mem;
 
 use serde::Serialize;
+use serde_json::json;
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
@@ -17,6 +18,7 @@ pub struct GooseReportTemplates<'a> {
     pub tasks_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
+    pub graph_rps_template: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -404,6 +406,48 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
     )
 }
 
+pub fn graph_rps_template(rps: Vec<f32>, bucket_size: usize) -> String {
+    let values = json!(rps);
+    let buckets = json!((0..rps.len())
+        .map(|bucket| format!(
+            "{}s - {}s",
+            (bucket * bucket_size),
+            ((bucket + 1) * bucket_size)
+        ))
+        .collect::<Vec<_>>());
+
+    format!(
+        r#"<div class="graph-rps">
+        <h2>Requests per second</h2>
+            <div id="main" style="width: 1000px; height:660px; background: white;"></div>
+
+            <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
+            <script type="text/javascript">
+                var chartDom = document.getElementById('main');
+                var myChart = echarts.init(chartDom);
+
+                myChart.setOption({{
+                    xAxis: {{
+                        type: 'category',
+                        data: {buckets}
+                    }},
+                    yAxis: {{
+                        type: 'value'
+                    }},
+                    series: [
+                        {{
+                            data: {values},
+                            type: 'line'
+                        }}
+                    ]
+                }});
+            </script>
+        </div>"#,
+        values = values,
+        buckets = buckets,
+    )
+}
+
 /// Build the html report.
 pub fn build_report(
     users: &str,
@@ -539,6 +583,8 @@ pub fn build_report(
 
         {errors_template}
 
+        {graph_rps_template}
+
     </div>
 </body>
 </html>"#,
@@ -554,5 +600,6 @@ pub fn build_report(
         tasks_template = templates.tasks_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
+        graph_rps_template = templates.graph_rps_template,
     )
 }
