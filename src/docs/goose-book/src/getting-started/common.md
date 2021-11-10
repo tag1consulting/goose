@@ -78,6 +78,8 @@ cargo run --release -- -t 30m
 
 By default, Goose displays [text-formatted metrics](metrics.md) when a load test finishes. It can also optionally write an HTML-formatted report if you enable the `--report-file <NAME>` run-time option, where `<NAME>` is an absolute or relative path to the report file to generate. Any file that already exists at the specified path will be overwritten.
 
+HTML report includes some graphs that rely on [eCharts JavaScript library](https://echarts.apache.org). HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.
+
 ### Example
 _Write an HTML-formatted report to `report.html` when the load test finishes._
 
