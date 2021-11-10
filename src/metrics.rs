@@ -15,7 +15,7 @@ use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
-use std::cmp::Ordering;
+use std::cmp::{max, Ordering};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
@@ -396,10 +396,8 @@ pub struct GooseRequestMetricAggregate {
     /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
     /// that all Workers are running the same load test plan.
     pub load_test_hash: u64,
-    // Timestamp when the metric collection was started.
-    start_time: i64,
-    // Counts requests per time bucket for time-based requests per second metric calculation.
-    pub requests_per_second: HashMap<usize, u64>,
+    // Counts requests per second. Each element of the vector represents one second.
+    pub requests_per_second: Vec<u32>,
 }
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
@@ -414,8 +412,7 @@ impl GooseRequestMetricAggregate {
             success_count: 0,
             fail_count: 0,
             load_test_hash,
-            start_time: Utc::now().timestamp(),
-            requests_per_second: HashMap::new(),
+            requests_per_second: Vec::new(),
         }
     }
 
@@ -459,28 +456,18 @@ impl GooseRequestMetricAggregate {
     }
 
     /// Record request in requests per second metric.
-    pub(crate) fn record_requests_per_second(&mut self) {
-        let time_bucket = (Utc::now().timestamp() - self.start_time) as usize / 10;
-
-        let counter = match self.requests_per_second.get(&time_bucket) {
-            Some(previous_count) => {
-                debug!(
-                    "got time bucket {:?} counter: {}",
-                    time_bucket, previous_count
-                );
-                *previous_count + 1
+    pub(crate) fn record_requests_per_second(&mut self, second: usize) {
+        if self.requests_per_second.len() <= second {
+            for _ in 0..=(second - self.requests_per_second.len() + 1) {
+                self.requests_per_second.push(0);
             }
+        }
 
-            None => {
-                debug!("no match for time bucket counter: {}", time_bucket);
-                1
-            }
-        };
+        self.requests_per_second[second] += 1;
 
-        self.requests_per_second.insert(time_bucket, counter);
         debug!(
-            "incremented time bucket {} counter: {}",
-            time_bucket, counter
+            "incremented second {} counter: {}",
+            second, self.requests_per_second[second]
         );
     }
 }
@@ -2448,7 +2435,7 @@ impl GooseAttack {
                 merge_request.set_status_code(request_metric.status_code);
             }
             if !self.configuration.report_file.is_empty() {
-                merge_request.record_requests_per_second();
+                merge_request.record_requests_per_second(self.metrics.duration);
             }
             if request_metric.success {
                 merge_request.success_count += 1;
@@ -2988,27 +2975,19 @@ impl GooseAttack {
 
             let graph_rps_template: String;
             if !self.configuration.report_file.is_empty() {
-                let mut aggregated_count: HashMap<usize, usize> = HashMap::new();
+                let mut count = 0;
                 for (_path, path_metric) in self.metrics.requests.iter() {
-                    for (bucket, count) in path_metric.requests_per_second.iter() {
-                        let count = match aggregated_count.get(bucket) {
-                            Some(prev) => prev + *count as usize,
+                    count = max(count, path_metric.requests_per_second.len());
+                }
 
-                            None => *count as usize,
-                        };
-                        aggregated_count.insert(*bucket, count);
+                let mut rps = vec![0; count];
+                for (_path, path_metric) in self.metrics.requests.iter() {
+                    for (second, count) in path_metric.requests_per_second.iter().enumerate() {
+                        rps[second] += count;
                     }
                 }
 
-                let mut rps: Vec<f32> = vec![0.0; aggregated_count.len()];
-                for (bucket, count) in aggregated_count.iter() {
-                    let (requests_per_second, _failures_per_second) =
-                        per_second_calculations(10, *count, 0);
-
-                    rps[*bucket as usize] = requests_per_second;
-                }
-
-                graph_rps_template = report::graph_rps_template(rps, 10);
+                graph_rps_template = report::graph_rps_template(rps);
             } else {
                 graph_rps_template = "".to_string();
             }

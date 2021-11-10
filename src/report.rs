@@ -406,16 +406,7 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
     )
 }
 
-pub fn graph_rps_template(rps: Vec<f32>, bucket_size: usize) -> String {
-    let values = json!(rps);
-    let buckets = json!((0..rps.len())
-        .map(|bucket| format!(
-            "{}s - {}s",
-            (bucket * bucket_size),
-            ((bucket + 1) * bucket_size)
-        ))
-        .collect::<Vec<_>>());
-
+pub fn graph_rps_template(rps: Vec<u32>) -> String {
     format!(
         r#"<div class="graph-rps">
         <h2>Requests per second</h2>
@@ -428,23 +419,29 @@ pub fn graph_rps_template(rps: Vec<f32>, bucket_size: usize) -> String {
 
                 myChart.setOption({{
                     xAxis: {{
-                        type: 'category',
-                        data: {buckets}
+                        name: 'Time [s]',
+                        nameLocation: 'center',
+                        nameGap: 25,
+                        type: 'value',
                     }},
                     yAxis: {{
+                        name: 'Requests per second',
+                        nameLocation: 'center',
+                        nameRotate: 90,
+                        nameGap: 45,
                         type: 'value'
                     }},
                     series: [
                         {{
                             data: {values},
-                            type: 'line'
+                            type: 'line',
+                            symbol: 'none'
                         }}
                     ]
                 }});
             </script>
         </div>"#,
-        values = values,
-        buckets = buckets,
+        values = json!(rps.iter().enumerate().collect::<Vec<_>>()),
     )
 }
 
