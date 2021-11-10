@@ -459,8 +459,8 @@ impl GooseRequestMetricAggregate {
     }
 
     /// Record request in requests per second metric.
-    pub(crate) fn record_requests_per_second(&mut self, bucket_size: usize) {
-        let time_bucket = (Utc::now().timestamp() - self.start_time) as usize / bucket_size;
+    pub(crate) fn record_requests_per_second(&mut self) {
+        let time_bucket = (Utc::now().timestamp() - self.start_time) as usize / 10;
 
         let counter = match self.requests_per_second.get(&time_bucket) {
             Some(previous_count) => {
@@ -2447,8 +2447,8 @@ impl GooseAttack {
             if self.configuration.status_codes {
                 merge_request.set_status_code(request_metric.status_code);
             }
-            if self.configuration.requests_per_second {
-                merge_request.record_requests_per_second(self.configuration.rps_bucket);
+            if !self.configuration.report_file.is_empty() {
+                merge_request.record_requests_per_second();
             }
             if request_metric.success {
                 merge_request.success_count += 1;
@@ -2987,7 +2987,7 @@ impl GooseAttack {
             }
 
             let graph_rps_template: String;
-            if self.configuration.requests_per_second {
+            if !self.configuration.report_file.is_empty() {
                 let mut aggregated_count: HashMap<usize, usize> = HashMap::new();
                 for (_path, path_metric) in self.metrics.requests.iter() {
                     for (bucket, count) in path_metric.requests_per_second.iter() {
@@ -3003,12 +3003,12 @@ impl GooseAttack {
                 let mut rps: Vec<f32> = vec![0.0; aggregated_count.len()];
                 for (bucket, count) in aggregated_count.iter() {
                     let (requests_per_second, _failures_per_second) =
-                        per_second_calculations(self.configuration.rps_bucket, *count, 0);
+                        per_second_calculations(10, *count, 0);
 
                     rps[*bucket as usize] = requests_per_second;
                 }
 
-                graph_rps_template = report::graph_rps_template(rps, self.configuration.rps_bucket);
+                graph_rps_template = report::graph_rps_template(rps, 10);
             } else {
                 graph_rps_template = "".to_string();
             }

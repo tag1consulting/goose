@@ -68,8 +68,6 @@ const DEFAULT_PORT: &str = "5115";
 /// --debug-format FORMAT      Sets debug log format (csv, json, raw, pretty)
 /// --no-debug-body            Do not include the response body in the debug log
 /// --status-codes             Tracks additional status code metrics
-/// --requests-per-second      Tracks additional requests per second metrics
-/// --rps-bucket               Size (in seconds) of the time-based requests per second bucket (default: 10)
 ///
 /// Advanced:
 /// --no-telnet                Doesn't enable telnet Controller
@@ -190,18 +188,8 @@ pub struct GooseConfiguration {
     #[options(no_short)]
     pub no_debug_body: bool,
     /// Tracks additional status code metrics
-    #[options(no_short, help = "Tracks additional status code metrics")]
+    #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
-    /// Tracks additional request per second metrics
-    #[options(no_short, help = "Tracks additional request per second metrics")]
-    pub requests_per_second: bool,
-    // Size (in seconds) of the time-based requests per second bucket (default: 10)
-    // Add a blank line and then an Advanced: header after this option
-    #[options(
-        no_short,
-        help = "Size of the time bucket in time-based requests per second calculations\n\nAdvanced:"
-    )]
-    pub rps_bucket: usize,
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
@@ -335,10 +323,6 @@ pub(crate) struct GooseDefaults {
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     /// An optional default to track additional status code metrics.
     pub status_codes: Option<bool>,
-    /// An optional default to track requests per second metrics.
-    pub requests_per_second: Option<bool>,
-    // An optional default size of the requests per second bucket size.
-    pub rps_bucket: Option<usize>,
     /// An optional default maximum requests per second.
     pub throttle_requests: Option<usize>,
     /// An optional default to follows base_url redirect with subsequent request.
@@ -1539,42 +1523,6 @@ impl GooseConfiguration {
                 },
             ])
             .unwrap_or(false);
-
-        // Configure `requests_per_second`.
-        self.requests_per_second = self
-            .get_value(vec![
-                // Use --requests-per-second if set.
-                GooseValue {
-                    value: Some(self.requests_per_second),
-                    filter: !self.requests_per_second,
-                    message: "requests_per_second",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.requests_per_second,
-                    filter: defaults.requests_per_second.is_none() || self.worker,
-                    message: "requests_per_second",
-                },
-            ])
-            .unwrap_or(false);
-
-        // Configure `rps_bucket`.
-        self.rps_bucket = self
-            .get_value(vec![
-                // Use --requests-per-second-bucket if set.
-                GooseValue {
-                    value: Some(self.rps_bucket),
-                    filter: self.rps_bucket == 0,
-                    message: "rps_bucket",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.rps_bucket,
-                    filter: defaults.rps_bucket.is_none() || self.worker,
-                    message: "rps_bucket",
-                },
-            ])
-            .unwrap_or(10);
 
         // Configure `no_telnet`.
         self.no_telnet = self
