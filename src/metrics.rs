@@ -9,7 +9,6 @@
 //! [`GooseErrorMetrics`] are displayed in tables.
 
 use chrono::prelude::*;
-use chrono::Utc;
 use http::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
