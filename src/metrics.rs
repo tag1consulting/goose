@@ -2435,7 +2435,11 @@ impl GooseAttack {
                 merge_request.set_status_code(request_metric.status_code);
             }
             if !self.configuration.report_file.is_empty() {
-                merge_request.record_requests_per_second(self.metrics.duration);
+                if let Some(starting) = self.metrics.starting {
+                    merge_request.record_requests_per_second(
+                        (Utc::now().timestamp() - starting.timestamp()) as usize,
+                    );
+                }
             }
             if request_metric.success {
                 merge_request.success_count += 1;
@@ -2973,25 +2977,6 @@ impl GooseAttack {
                 errors_template = "".to_string();
             }
 
-            let graph_rps_template: String;
-            if !self.configuration.report_file.is_empty() {
-                let mut count = 0;
-                for (_path, path_metric) in self.metrics.requests.iter() {
-                    count = max(count, path_metric.requests_per_second.len());
-                }
-
-                let mut rps = vec![0; count];
-                for (_path, path_metric) in self.metrics.requests.iter() {
-                    for (second, count) in path_metric.requests_per_second.iter().enumerate() {
-                        rps[second] += count;
-                    }
-                }
-
-                graph_rps_template = report::graph_rps_template(rps);
-            } else {
-                graph_rps_template = "".to_string();
-            }
-
             // Only build the status_code template if --status-codes is enabled.
             let status_code_template: String;
             if self.configuration.status_codes {
@@ -3043,6 +3028,44 @@ impl GooseAttack {
             } else {
                 // If --status-codes is not enabled, return an empty template.
                 status_code_template = "".to_string();
+            }
+
+            let graph_rps_template: String;
+            if Some(starting) == self.metrics.starting
+                && Some(started) == self.metrics.started
+                && Some(stopping) == self.metrics.stopping
+                && Some(stopped) == self.metrics.stopped
+            {
+                let mut count = 0;
+                for (_path, path_metric) in self.metrics.requests.iter() {
+                    count = max(count, path_metric.requests_per_second.len());
+                }
+
+                let mut rps = vec![0; count];
+                for (_path, path_metric) in self.metrics.requests.iter() {
+                    for (second, count) in path_metric.requests_per_second.iter().enumerate() {
+                        rps[second] += count;
+                    }
+                }
+
+                let rps = rps
+                    .iter()
+                    .enumerate()
+                    .map(|(second, &count)| {
+                        (
+                            Local
+                                .timestamp(second as i64 + starting.timestamp(), 0)
+                                .format("%Y-%m-%d %H:%M:%S")
+                                .to_string(),
+                            count,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                graph_rps_template =
+                    report::graph_rps_template(rps, starting, started, stopping, stopped);
+            } else {
+                graph_rps_template = "".to_string();
             }
 
             // Compile the report template.

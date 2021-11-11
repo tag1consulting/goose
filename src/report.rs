@@ -5,6 +5,7 @@ use crate::metrics;
 use std::collections::BTreeMap;
 use std::mem;
 
+use chrono::prelude::*;
 use serde::Serialize;
 use serde_json::json;
 
@@ -406,7 +407,13 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
     )
 }
 
-pub fn graph_rps_template(rps: Vec<u32>) -> String {
+pub fn graph_rps_template(
+    rps: Vec<(String, u32)>,
+    starting: DateTime<Local>,
+    started: DateTime<Local>,
+    stopping: DateTime<Local>,
+    stopped: DateTime<Local>,
+) -> String {
     format!(
         r#"<div class="graph-rps">
         <h2>Requests per second</h2>
@@ -418,11 +425,31 @@ pub fn graph_rps_template(rps: Vec<u32>) -> String {
                 var myChart = echarts.init(chartDom);
 
                 myChart.setOption({{
+                    tooltip: {{
+                        trigger: 'axis',
+                    }},
+                    toolbox: {{
+                        feature: {{
+                            dataZoom: {{
+                                yAxisIndex: 'none'
+                            }},
+                            restore: {{}},
+                            saveAsImage: {{}}
+                        }}
+                    }},
+                    dataZoom: [
+                        {{
+                            type: 'inside',
+                            start: 0,
+                            end: 100
+                        }},
+                        {{
+                            start: 0,
+                            end: 100
+                        }}
+                    ],
                     xAxis: {{
-                        name: 'Time [s]',
-                        nameLocation: 'center',
-                        nameGap: 25,
-                        type: 'value',
+                        type: 'time',
                     }},
                     yAxis: {{
                         name: 'Requests per second',
@@ -433,15 +460,46 @@ pub fn graph_rps_template(rps: Vec<u32>) -> String {
                     }},
                     series: [
                         {{
-                            data: {values},
                             type: 'line',
-                            symbol: 'none'
+                            symbol: 'none',
+                            sampling: 'lttb',
+                            areaStyle: {{}},
+                            markArea: {{
+                                itemStyle: {{
+                                    color: 'rgba(255, 173, 177, 0.4)'
+                                }},
+                                data: [
+                                    [
+                                        {{
+                                            name: 'Starting',
+                                            xAxis: '{starting}'
+                                        }},
+                                        {{
+                                            xAxis: '{started}'
+                                        }}
+                                    ],
+                                    [
+                                        {{
+                                            name: 'Stopping',
+                                            xAxis: '{stopping}'
+                                        }},
+                                        {{
+                                            xAxis: '{stopped}'
+                                        }}
+                                    ]
+                                ]
+                            }},
+                            data: {values},
                         }}
                     ]
                 }});
             </script>
         </div>"#,
-        values = json!(rps.iter().enumerate().collect::<Vec<_>>())
+        values = json!(rps),
+        starting = starting.format("%Y-%m-%d %H:%M:%S"),
+        started = started.format("%Y-%m-%d %H:%M:%S"),
+        stopping = stopping.format("%Y-%m-%d %H:%M:%S"),
+        stopped = stopped.format("%Y-%m-%d %H:%M:%S"),
     )
 }
 
