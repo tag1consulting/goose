@@ -3063,7 +3063,7 @@ impl GooseAttack {
             );
 
             // Write the report to file.
-            if let Err(e) = report_file.write(report.as_ref()).await {
+            if let Err(e) = report_file.write_all(report.as_ref()).await {
                 return Err(GooseError::InvalidOption {
                     option: "--report-file".to_string(),
                     value: self.get_report_file_path().unwrap(),

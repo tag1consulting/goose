@@ -410,11 +410,11 @@ pub fn graph_rps_template(rps: Vec<u32>) -> String {
     format!(
         r#"<div class="graph-rps">
         <h2>Requests per second</h2>
-            <div id="main" style="width: 1000px; height:660px; background: white;"></div>
+            <div id="graph-rps" style="width: 1000px; height:660px; background: white;"></div>
 
             <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
             <script type="text/javascript">
-                var chartDom = document.getElementById('main');
+                var chartDom = document.getElementById('graph-rps');
                 var myChart = echarts.init(chartDom);
 
                 myChart.setOption({{
@@ -441,7 +441,7 @@ pub fn graph_rps_template(rps: Vec<u32>) -> String {
                 }});
             </script>
         </div>"#,
-        values = json!(rps.iter().enumerate().collect::<Vec<_>>()),
+        values = json!(rps.iter().enumerate().collect::<Vec<_>>())
     )
 }
 
