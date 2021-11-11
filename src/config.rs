@@ -188,8 +188,10 @@ pub struct GooseConfiguration {
     #[options(no_short)]
     pub no_debug_body: bool,
     /// Tracks additional status code metrics
+    // Add a blank line and then an Advanced: header after this option
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
+
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
