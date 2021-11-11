@@ -308,6 +308,9 @@ use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
 /// By default Goose sets the following User-Agent header when making requests.
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
+/// By default Goose times out requests after 60,000 milliseconds.
+static GOOSE_REQUEST_TIMEOUT: u64 = 60_000;
+
 /// `task!(foo)` expands to `GooseTask::new(foo)`, but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
 macro_rules! task {
@@ -879,9 +882,21 @@ impl GooseUser {
         load_test_hash: u64,
     ) -> Result<Self, GooseError> {
         trace!("new GooseUser");
+
+        // Either use manually configured timeout, or default.
+        let timeout = if configuration.timeout.is_some() {
+            match crate::util::get_float_from_string(configuration.timeout.clone()) {
+                Some(f) => f as u64 * 1_000,
+                None => GOOSE_REQUEST_TIMEOUT,
+            }
+        } else {
+            GOOSE_REQUEST_TIMEOUT
+        };
+
         let client = Client::builder()
             .user_agent(APP_USER_AGENT)
             .cookie_store(true)
+            .timeout(Duration::from_millis(timeout))
             // Enable gzip unless `--no-gzip` flag is enabled.
             .gzip(!configuration.no_gzip)
             .build()?;
@@ -2020,26 +2035,31 @@ impl GooseUser {
     /// Manually build a
     /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html).
     ///
-    /// By default, Goose configures two options when building a
-    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html). The first
-    /// configures Goose to report itself as the
-    /// [`user_agent`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.user_agent)
-    /// requesting web pages (ie `goose/0.11.2`). The second option configures
-    /// [`reqwest`](https://docs.rs/reqwest/) to
-    /// [store cookies](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store),
-    /// which is generally necessary if you aim to simulate logged in users.
+    /// By default, Goose configures the following options when building a
+    /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html):
+    ///  - reports itself as the
+    ///    [`user_agent`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.user_agent)
+    ///    requesting web pages (ie `goose/0.15.0`);
+    ///  - [stores cookies](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store),
+    ///    generally necessary if you aim to simulate logged in users;
+    ///  - enables
+    ///    [`gzip`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.gzip) compression;
+    ///  - sets a 60 second [`timeout`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.timeout) all
+    ///    on all requests.
     ///
     /// # Default configuration:
     ///
     /// ```rust
     /// use reqwest::Client;
+    /// use core::time::Duration;
     ///
     /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
     ///
     /// let builder = Client::builder()
     ///   .user_agent(APP_USER_AGENT)
     ///   .cookie_store(true)
-    ///   .gzip(true);
+    ///   .gzip(true)
+    ///   .timeout(Duration::from_secs(60));
     /// ```
     ///
     /// Alternatively, you can use this function to manually build a
@@ -2068,11 +2088,13 @@ impl GooseUser {
     ///    [`.cookie_store(true)`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store).
     ///
     /// In the following example, the Goose client is configured with a different user agent,
-    /// sets a default header on every request, stores cookies, and supports gzip compression.
+    /// sets a default header on every request, stores cookies, supports gzip compression, and
+    /// times out requests after 30 seconds.
     ///
     /// ## Example
     /// ```rust
     /// use goose::prelude::*;
+    /// use core::time::Duration;
     ///
     /// task!(setup_custom_client).set_on_start();
     ///
@@ -2088,7 +2110,8 @@ impl GooseUser {
     ///         .default_headers(headers)
     ///         .user_agent("custom user agent")
     ///         .cookie_store(true)
-    ///         .gzip(true);
+    ///         .gzip(true)
+    ///         .timeout(Duration::from_secs(30));
     ///
     ///     // Assign the custom client to this GooseUser.
     ///     user.set_client_builder(builder).await?;
