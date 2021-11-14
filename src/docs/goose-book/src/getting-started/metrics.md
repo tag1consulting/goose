@@ -1,9 +1,9 @@
 # Metrics
 
-Here's the output of running the loadtest. The `-v` flag sends `INFO` and more critical messages to stdout (in addition to the log file, if enabled). The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to track all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the `--only-summary` flag tells Goose to only display the final metrics after the load test finishes, otherwise it would display running metrics every 15 seconds for the duration of the test.
+Here's the output of running the loadtest. The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to track all metrics, instead of the default which is to flush all metrics collected during start up.
 
 ```bash
-$ cargo run --release -- --host http://local.dev -v -u1024 -r32 -t10m --status-codes --no-reset-metrics --only-summary
+$ cargo run --release -- --host http://local.dev -u1024 -r32 -t10m --status-codes --no-reset-metrics
     Finished release [optimized] target(s) in 0.09s
      Running `target/release/examples/simple --host 'http://local.dev' -v -u1024 -r32 -t10m --status-codes --no-reset-metrics --only-summary`
 10:55:04 [ INFO] Output verbosity level: INFO
@@ -99,7 +99,7 @@ All 1024 users hatched.
  Running:  2021-08-12 10:55:42 - 2021-08-12 11:05:09 (duration: 00:10:00)
  Stopping: 2021-08-12 11:05:09 - 2021-08-12 11:05:11 (duration: 00:00:02)
 
- goose v0.15.2
+ goose v0.16.0
  ------------------------------------------------------------------------------
 ```
 

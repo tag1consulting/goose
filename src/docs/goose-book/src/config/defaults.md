@@ -9,8 +9,7 @@ All run-time options can be configured with custom defaults. For example, you ma
         )
         .set_default(GooseDefault::Host, "http://local.dev/")?
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 ```
@@ -45,6 +44,7 @@ The following defaults can be configured with a `usize` integer:
 The following defaults can be configured with a `bool`:
  - do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
  - do not track metrics: `GooseDefault::NoMetrics`
+ - do not print metrics: `GooseDefault::NoPrintMetrics`
  - do not track task metrics: `GooseDefault::NoTaskMetrics`
  - do not start telnet Controller thread: `GooseDefault::NoTelnet`
  - do not start WebSocket Controller thread: `GooseDefault::NoWebSocket`
@@ -74,8 +74,7 @@ For example, without any run-time options the following load test would automati
         .set_default(GooseDefault::RunningMetrics, 60)?
         .set_default(GooseDefault::StatusCodes, true)?
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 ```

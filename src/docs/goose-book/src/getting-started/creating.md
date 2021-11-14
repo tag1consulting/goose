@@ -12,7 +12,7 @@ This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` 
 
 ```toml
 [dependencies]
-goose = "^0.15"
+goose = "^0.16"
 tokio = "^1.12"
 ```
 
@@ -21,9 +21,9 @@ At this point it's possible to compile all dependencies, though the resulting bi
 ```bash
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.15.2
+  Downloaded goose v0.16.0
       ...
-   Compiling goose v0.15.2
+   Compiling goose v0.16.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -78,8 +78,7 @@ async fn main() -> Result<(), GooseError> {
             .register_task(task!(loadtest_index))
         )
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 }
@@ -87,6 +86,6 @@ async fn main() -> Result<(), GooseError> {
 
 The `#[tokio::main]` at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing (and requiring) us to declare the `main()` function of our load test application as `async`.
 
-If you're new to Rust, `main()`'s return type of `Result<(), GooseError>` may look strange. It essentially says that `main` will return nothing (`()`) on success, and will return a `GooseError` on failure. This is helpful as several of `GooseAttack`'s methods can fail, returning an error. In our example, `initialize()` and `execute()` each may fail. The `?` that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the `.execute()` method is asynchronous, so it must be followed with `.await`, and as it can return an error it alsos has a `?`. The `print()` method consumes the `GooseMetrics` object returned by `GooseAttack.execute()` and prints a summary if metrics are enabled. The final line, `Ok(())` returns the empty result expected on success.
+If you're new to Rust, `main()`'s return type of `Result<(), GooseError>` may look strange. It essentially says that `main` will return nothing (`()`) on success, and will return a `GooseError` on failure. This is helpful as several of `GooseAttack`'s methods can fail, returning an error. In our example, `initialize()` and `execute()` each may fail. The `?` that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the `.execute()` method is asynchronous, so it must be followed with `.await`, and as it can return an error it alsos has a `?`. The final line, `Ok(())` returns the empty result expected on success.
 
 And that's it, you've created your first load test! Read on to see how to run it and what it does.

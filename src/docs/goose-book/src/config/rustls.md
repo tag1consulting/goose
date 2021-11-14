@@ -4,5 +4,5 @@ By default Reqwest (and therefore Goose) uses the system-native transport layer 
 
 ```toml
 [dependencies]
-goose = { version = "^0.15", default-features = false, features = ["rustls-tls"] }
+goose = { version = "^0.16", default-features = false, features = ["rustls-tls"] }
 ```

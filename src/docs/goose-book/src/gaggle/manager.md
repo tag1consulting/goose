@@ -7,5 +7,5 @@ To launch a Gaggle, you first must start a Goose application in Manager mode. Al
 _Configure a Goose Manager to listen on all interfaces on the default port (0.0.0.0:5115), waiting for 2 Goose Worker processes._
 
 ```bash
-cargo run --features gaggle --example simple -- --manager --expect-workers 2 --host http://local.dev/ -v
+cargo run --features gaggle --example simple -- --manager --expect-workers 2 --host http://local.dev/
 ```

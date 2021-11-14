@@ -28,6 +28,7 @@ Metrics:
   --no-reset-metrics         Doesn't reset metrics after all users have started
   --no-metrics               Doesn't track metrics
   --no-task-metrics          Doesn't track task metrics
+  --no-print-metrics         Doesn't display metrics at end of load test
   --no-error-summary         Doesn't display an error summary
   --report-file NAME         Create an html-formatted report
   -R, --request-log NAME     Sets request log file name

@@ -761,7 +761,7 @@ impl GooseTaskMetricAggregate {
 ///
 ///     /**
 ///     // For example:
-///     $ cargo run -- -H http://example.com -v -u1 -t1
+///     $ cargo run -- -H http://example.com -u1 -t1
 ///     GooseMetrics {
 ///         hash: 0,
 ///         started: Some(
