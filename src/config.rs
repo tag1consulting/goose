@@ -1357,7 +1357,7 @@ impl GooseConfiguration {
             // Use --running-metrics if set.
             GooseValue {
                 value: self.running_metrics,
-                filter: self.running_metrics.is_some(),
+                filter: self.running_metrics.is_none(),
                 message: "running_metrics",
             },
             // Otherwise use GooseDefault if set.
