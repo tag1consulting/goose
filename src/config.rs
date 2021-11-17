@@ -2084,9 +2084,12 @@ impl GooseConfiguration {
             }
         }
 
-        // If set, timeout must be non-zero.
+        // If set, timeout must be greater than zero.
         if let Some(timeout) = self.timeout.as_ref() {
-            if timeout == "0" {
+            if crate::util::get_float_from_string(self.timeout.clone())
+                .expect("failed to re-convert string to float")
+                <= 0.0
+            {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.timeout`".to_string(),
                     value: timeout.to_string(),
