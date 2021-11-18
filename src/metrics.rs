@@ -3034,43 +3034,64 @@ impl GooseAttack {
                 status_code_template = "".to_string();
             }
 
-            let graph_rps_template: String;
-            if Some(starting) == self.metrics.starting
-                && Some(started) == self.metrics.started
-                && Some(stopping) == self.metrics.stopping
-                && Some(stopped) == self.metrics.stopped
-            {
-                let mut count = 0;
-                for path_metric in self.metrics.requests.values() {
-                    count = max(count, path_metric.requests_per_second.len());
-                }
-
-                let mut rps = vec![0; count];
-                for path_metric in self.metrics.requests.values() {
-                    for (second, count) in path_metric.requests_per_second.iter().enumerate() {
-                        rps[second] += count;
-                    }
-                }
-
-                let rps = rps
-                    .iter()
-                    .enumerate()
-                    .map(|(second, &count)| {
-                        (
-                            Local
-                                .timestamp(second as i64 + starting.timestamp(), 0)
-                                .format("%Y-%m-%d %H:%M:%S")
-                                .to_string(),
-                            count,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                graph_rps_template =
-                    report::graph_rps_template(rps, starting, started, stopping, stopped);
-            } else {
-                graph_rps_template = "".to_string();
+            // Generate RPS graph.
+            let mut count = 0;
+            for path_metric in self.metrics.requests.values() {
+                count = max(count, path_metric.requests_per_second.len());
             }
+
+            let mut rps = vec![0; count];
+            for path_metric in self.metrics.requests.values() {
+                for (second, count) in path_metric.requests_per_second.iter().enumerate() {
+                    rps[second] += count;
+                }
+            }
+
+            let rps = rps
+                .iter()
+                .enumerate()
+                .filter(|(second, _)| {
+                    if self.configuration.no_reset_metrics {
+                        true
+                    } else {
+                        *second as i64 + starting.timestamp() >= started.timestamp()
+                    }
+                })
+                .map(|(second, &count)| {
+                    (
+                        Local
+                            .timestamp(second as i64 + starting.timestamp(), 0)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string(),
+                        count,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            // If the metrics were reset when the load test was started we don't display
+            // the starting period on the graph.
+            let (starting, started) = if self.configuration.no_reset_metrics
+                && Some(starting) == self.metrics.starting
+                && Some(started) == self.metrics.started
+            {
+                (Some(starting), Some(started))
+            } else {
+                (None, None)
+            };
+
+            // If stopping was done in less than a second do not display it as it won't be visible
+            // on the graph.
+            let (stopping, stopped) = if Some(stopping) == self.metrics.stopping
+                && Some(stopped) == self.metrics.stopped
+                && stopped == stopping
+            {
+                (Some(stopping), Some(stopped))
+            } else {
+                (None, None)
+            };
+
+            let graph_rps_template =
+                report::graph_rps_template(rps, starting, started, stopping, stopped);
 
             // Compile the report template.
             let report = report::build_report(

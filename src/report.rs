@@ -409,11 +409,49 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
 
 pub fn graph_rps_template(
     rps: Vec<(String, u32)>,
-    starting: DateTime<Local>,
-    started: DateTime<Local>,
-    stopping: DateTime<Local>,
-    stopped: DateTime<Local>,
+    starting: Option<DateTime<Local>>,
+    started: Option<DateTime<Local>>,
+    stopping: Option<DateTime<Local>>,
+    stopped: Option<DateTime<Local>>,
 ) -> String {
+    let datetime_format = "%Y-%m-%d %H:%M:%S";
+
+    let starting_area = if starting.is_some() && started.is_some() {
+        format!(
+            r#"[
+                {{
+                    name: 'Starting',
+                    xAxis: '{starting}'
+                }},
+                {{
+                    xAxis: '{started}'
+                }}
+            ],"#,
+            starting = starting.unwrap().format(datetime_format),
+            started = started.unwrap().format(datetime_format),
+        )
+    } else {
+        "".to_string()
+    };
+
+    let stopping_area = if stopping.is_some() && stopped.is_some() {
+        format!(
+            r#"[
+                {{
+                    name: 'Stopping',
+                    xAxis: '{stopping}'
+                }},
+                {{
+                    xAxis: '{stopped}'
+                }}
+            ],"#,
+            stopping = stopping.unwrap().format(datetime_format),
+            stopped = stopped.unwrap().format(datetime_format),
+        )
+    } else {
+        "".to_string()
+    };
+
     format!(
         r#"<div class="graph-rps">
         <h2>Requests per second</h2>
@@ -444,7 +482,16 @@ pub fn graph_rps_template(
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }}
                             }}
-                        }}
+                        }},
+                        {{
+                            start: 0,
+                            end: 100,
+                            fillerColor: 'rgba(34, 80, 61, 0.25)',
+                            selectedDataBackground: {{
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }}
+                            }}
+                        }},
                     ],
                     xAxis: {{ type: 'time' }},
                     yAxis: {{
@@ -464,24 +511,8 @@ pub fn graph_rps_template(
                             markArea: {{
                                 itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
                                 data: [
-                                    [
-                                        {{
-                                            name: 'Starting',
-                                            xAxis: '{starting}'
-                                        }},
-                                        {{
-                                            xAxis: '{started}'
-                                        }}
-                                    ],
-                                    [
-                                        {{
-                                            name: 'Stopping',
-                                            xAxis: '{stopping}'
-                                        }},
-                                        {{
-                                            xAxis: '{stopped}'
-                                        }}
-                                    ]
+                                    {starting_area}
+                                    {stopping_area}
                                 ]
                             }},
                             data: {values},
@@ -491,10 +522,8 @@ pub fn graph_rps_template(
             </script>
         </div>"#,
         values = json!(rps),
-        starting = starting.format("%Y-%m-%d %H:%M:%S"),
-        started = started.format("%Y-%m-%d %H:%M:%S"),
-        stopping = stopping.format("%Y-%m-%d %H:%M:%S"),
-        stopped = stopped.format("%Y-%m-%d %H:%M:%S"),
+        starting_area = starting_area,
+        stopping_area = stopping_area
     )
 }
 
