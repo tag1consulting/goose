@@ -457,6 +457,10 @@ impl GooseRequestMetricAggregate {
 
     /// Record request in requests per second metric.
     pub(crate) fn record_requests_per_second(&mut self, second: usize) {
+        // Each element in self.requests_per_second vector is count for a given
+        // second since the start of the test. Since we don't know how long the
+        // test will at the beginning we need to push new elements (second
+        // counters) as the test is running.
         if self.requests_per_second.len() <= second {
             for _ in 0..=(second - self.requests_per_second.len() + 1) {
                 self.requests_per_second.push(0);
@@ -3037,12 +3041,12 @@ impl GooseAttack {
                 && Some(stopped) == self.metrics.stopped
             {
                 let mut count = 0;
-                for (_path, path_metric) in self.metrics.requests.iter() {
+                for path_metric in self.metrics.requests.values() {
                     count = max(count, path_metric.requests_per_second.len());
                 }
 
                 let mut rps = vec![0; count];
-                for (_path, path_metric) in self.metrics.requests.iter() {
+                for path_metric in self.metrics.requests.values() {
                     for (second, count) in path_metric.requests_per_second.iter().enumerate() {
                         rps[second] += count;
                     }
