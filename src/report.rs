@@ -425,14 +425,11 @@ pub fn graph_rps_template(
                 var myChart = echarts.init(chartDom);
 
                 myChart.setOption({{
-                    tooltip: {{
-                        trigger: 'axis',
-                    }},
+                    color: ['#2c664f'],
+                    tooltip: {{ trigger: 'axis' }},
                     toolbox: {{
                         feature: {{
-                            dataZoom: {{
-                                yAxisIndex: 'none'
-                            }},
+                            dataZoom: {{ yAxisIndex: 'none' }},
                             restore: {{}},
                             saveAsImage: {{}}
                         }}
@@ -441,16 +438,15 @@ pub fn graph_rps_template(
                         {{
                             type: 'inside',
                             start: 0,
-                            end: 100
-                        }},
-                        {{
-                            start: 0,
-                            end: 100
+                            end: 100,
+                            fillerColor: 'rgba(34, 80, 61, 0.25)',
+                            selectedDataBackground: {{
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }}
+                            }}
                         }}
                     ],
-                    xAxis: {{
-                        type: 'time',
-                    }},
+                    xAxis: {{ type: 'time' }},
                     yAxis: {{
                         name: 'Requests per second',
                         nameLocation: 'center',
@@ -463,11 +459,10 @@ pub fn graph_rps_template(
                             type: 'line',
                             symbol: 'none',
                             sampling: 'lttb',
-                            areaStyle: {{}},
+                            lineStyle: {{ color: '#2c664f' }},
+                            areaStyle: {{ color: '#378063' }},
                             markArea: {{
-                                itemStyle: {{
-                                    color: 'rgba(255, 173, 177, 0.4)'
-                                }},
+                                itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
                                 data: [
                                     [
                                         {{
