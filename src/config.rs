@@ -78,6 +78,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --websocket-port PORT      Sets WebSocket Controller TCP port (default: 5117)
 /// --no-autostart             Doesn't automatically start load test
 /// --no-gzip                  Doesn't set the gzip Accept-Encoding header
+/// --timeout VALUE            Sets per-request timeout, in seconds (default: 60)
 /// --co-mitigation STRATEGY   Sets coordinated omission mitigation strategy
 /// --throttle-requests VALUE  Sets maximum requests per second
 /// --sticky-follow            Follows base_url redirect with subsequent requests
@@ -215,6 +216,9 @@ pub struct GooseConfiguration {
     /// Doesn't set the gzip Accept-Encoding header
     #[options(no_short)]
     pub no_gzip: bool,
+    /// Sets per-request timeout, in seconds (default: 60)
+    #[options(no_short, meta = "VALUE")]
+    pub timeout: Option<String>,
     /// Sets coordinated omission mitigation strategy
     #[options(no_short, meta = "STRATEGY")]
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
@@ -315,6 +319,8 @@ pub(crate) struct GooseDefaults {
     pub no_autostart: Option<bool>,
     /// An optional default for not setting the gzip Accept-Encoding header.
     pub no_gzip: Option<bool>,
+    /// An optional default number of seconds to timeout requests.
+    pub timeout: Option<String>,
     /// An optional default for coordinated omission mitigation.
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     /// An optional default to track additional status code metrics.
@@ -411,6 +417,8 @@ pub enum GooseDefault {
     CoordinatedOmissionMitigation,
     /// An optional default for not automatically starting load test.
     NoAutoStart,
+    /// An optional default timeout for all requests, in seconds.
+    Timeout,
     /// An optional default for not setting the gzip Accept-Encoding header.
     NoGzip,
     /// An optional default to track additional status code metrics.
@@ -559,6 +567,7 @@ impl GooseDefaultType<&str> for GooseAttack {
         match key {
             // Set valid defaults.
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
+            GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
             GooseDefault::Host => self.defaults.host = Some(value.to_string()),
             GooseDefault::GooseLog => self.defaults.goose_log = Some(value.to_string()),
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
@@ -664,6 +673,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
             | GooseDefault::HatchRate
+            | GooseDefault::Timeout
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
@@ -777,6 +787,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             }
             GooseDefault::Users
             | GooseDefault::HatchRate
+            | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
@@ -880,6 +891,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             }
             GooseDefault::Users
             | GooseDefault::HatchRate
+            | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
@@ -976,6 +988,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             }
             GooseDefault::Users
             | GooseDefault::HatchRate
+            | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
             | GooseDefault::LogLevel
@@ -1348,6 +1361,24 @@ impl GooseConfiguration {
                     value: Some(util::get_hatch_rate(defaults.hatch_rate.clone())),
                     filter: defaults.hatch_rate.is_none() || self.worker,
                     message: "hatch_rate",
+                },
+            ])
+            .map(|v| v.to_string());
+
+        // Configure `timeout`.
+        self.timeout = self
+            .get_value(vec![
+                // Use --timeout if set.
+                GooseValue {
+                    value: util::get_float_from_string(self.timeout.clone()),
+                    filter: self.timeout.is_none(),
+                    message: "timeout",
+                },
+                // Otherwise use GooseDefault if set and not on Worker.
+                GooseValue {
+                    value: util::get_float_from_string(defaults.timeout.clone()),
+                    filter: defaults.timeout.is_none() || self.worker,
+                    message: "timeout",
                 },
             ])
             .map(|v| v.to_string());
@@ -1910,6 +1941,13 @@ impl GooseConfiguration {
                     value: self.hatch_rate.as_ref().unwrap().to_string(),
                     detail: "`configuration.hatch_rate` can not be set in Worker mode.".to_string(),
                 });
+            // Can't set `timeout` on Worker.
+            } else if self.timeout.is_some() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.timeout`".to_string(),
+                    value: self.timeout.as_ref().unwrap().to_string(),
+                    detail: "`configuration.timeout` can not be set in Worker mode.".to_string(),
+                });
             // Can't set `running_metrics` on Worker.
             } else if self.running_metrics.is_some() {
                 return Err(GooseError::InvalidOption {
@@ -2042,6 +2080,20 @@ impl GooseConfiguration {
                     option: "`configuration.hatch_rate`".to_string(),
                     value: hatch_rate.to_string(),
                     detail: "`configuration.hatch_rate` must be set to at least 1.".to_string(),
+                });
+            }
+        }
+
+        // If set, timeout must be greater than zero.
+        if let Some(timeout) = self.timeout.as_ref() {
+            if crate::util::get_float_from_string(self.timeout.clone())
+                .expect("failed to re-convert string to float")
+                <= 0.0
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.timeout`".to_string(),
+                    value: timeout.to_string(),
+                    detail: "`configuration.timeout` must be greater than 0.".to_string(),
                 });
             }
         }
@@ -2251,6 +2303,7 @@ mod test {
         let users: usize = 10;
         let run_time: usize = 10;
         let hatch_rate = "2".to_string();
+        let timeout = "45".to_string();
         let log_level: usize = 1;
         let goose_log = "custom-goose.log".to_string();
         let verbose: usize = 0;
@@ -2281,6 +2334,8 @@ mod test {
             .set_default(GooseDefault::GooseLog, goose_log.as_str())
             .unwrap()
             .set_default(GooseDefault::Verbose, verbose)
+            .unwrap()
+            .set_default(GooseDefault::Timeout, timeout.as_str())
             .unwrap()
             .set_default(GooseDefault::RunningMetrics, 15)
             .unwrap()
@@ -2367,6 +2422,7 @@ mod test {
         assert!(goose_attack.defaults.no_telnet == Some(true));
         assert!(goose_attack.defaults.no_websocket == Some(true));
         assert!(goose_attack.defaults.no_autostart == Some(true));
+        assert!(goose_attack.defaults.timeout == Some(timeout));
         assert!(goose_attack.defaults.no_gzip == Some(true));
         assert!(goose_attack.defaults.report_file == Some(report_file));
         assert!(goose_attack.defaults.request_log == Some(request_log));

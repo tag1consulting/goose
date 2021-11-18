@@ -355,18 +355,44 @@ pub fn ms_timer_expired(started: time::Instant, elapsed: usize) -> bool {
 /// assert_eq!(util::get_hatch_rate(None), 1.0);
 /// ```
 pub fn get_hatch_rate(hatch_rate: Option<String>) -> f32 {
-    match hatch_rate {
-        Some(h) => match h.parse::<f32>() {
-            Ok(rate) => rate,
+    if let Some(value) = get_float_from_string(hatch_rate) {
+        value
+    } else {
+        1.0
+    }
+}
+
+/// Convert optional string to f32, otherwise return None.
+///
+/// # Example
+/// ```rust
+/// use goose::util;
+///
+/// // No decimal returns a proper float.
+/// assert_eq!(util::get_float_from_string(Some("1".to_string())), Some(1.0));
+///
+/// // Leading decimal returns a proper float.
+/// assert_eq!(util::get_float_from_string(Some(".1".to_string())), Some(0.1));
+///
+/// // Valid float string returns a proper float.
+/// assert_eq!(util::get_float_from_string(Some("1.1".to_string())), Some(1.1));
+///
+/// // Invalid number with too many decimals returns None.
+/// assert_eq!(util::get_float_from_string(Some("1.1.1".to_string())), None);
+///
+/// // No number returns None.
+/// assert_eq!(util::get_float_from_string(None), None);
+/// ```
+pub fn get_float_from_string(string: Option<String>) -> Option<f32> {
+    match string {
+        Some(s) => match s.parse::<f32>() {
+            Ok(value) => Some(value),
             Err(e) => {
-                warn!(
-                    "failed to convert hatch rate {} to float: {}, defaulting to 1.0",
-                    h, e
-                );
-                1.0
+                warn!("failed to convert {} to float: {}", s, e);
+                None
             }
         },
-        None => 1.0,
+        None => None,
     }
 }
 
