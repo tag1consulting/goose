@@ -4,6 +4,7 @@
  - [#374](https://github.com/tag1consulting/goose/pull/374) renamed `simple-with-session.rs` to `session.rs` and `simple-closure.rs` to `closure.rs` to avoid confusion with the `simple.rs` example as they all do different things
  - [#385](https://github.com/tag1consulting/goose/pull/385) properly configure `--running-metrics VALUE` when set manually
  - [#382](https://github.com/tag1consulting/goose/pull/382) set client timeout to 60 seconds by default, used for all requests made; introduce `--timeout VALUE` where VALUE is seconds as integer or a float; timeout can be configured programatically using `GooseDefault::Timeout`
+ - [#381](https://github.com/tag1consulting/goose/pull/381) display requests per second graph on the HTML report
 
 ## 0.15.0 November 2, 2021
  - [#372](https://github.com/tag1consulting/goose/pull/372) de-deduplicate documentation, favoring [The Goose Book](https://book.goose.rs)
