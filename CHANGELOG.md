@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.1-dev
+## 0.15.1 November 19, 2021
  - [#374](https://github.com/tag1consulting/goose/pull/374) renamed `simple-with-session.rs` to `session.rs` and `simple-closure.rs` to `closure.rs` to avoid confusion with the `simple.rs` example as they all do different things
  - [#385](https://github.com/tag1consulting/goose/pull/385) properly configure `--running-metrics VALUE` when set manually
  - [#382](https://github.com/tag1consulting/goose/pull/382) set client timeout to 60 seconds by default, used for all requests made; introduce `--timeout VALUE` where VALUE is seconds as integer or a float; timeout can be configured programatically using `GooseDefault::Timeout`
