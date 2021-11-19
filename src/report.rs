@@ -5,7 +5,9 @@ use crate::metrics;
 use std::collections::BTreeMap;
 use std::mem;
 
+use chrono::prelude::*;
 use serde::Serialize;
+use serde_json::json;
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
@@ -17,6 +19,7 @@ pub struct GooseReportTemplates<'a> {
     pub tasks_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
+    pub graph_rps_template: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -404,6 +407,126 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
     )
 }
 
+pub fn graph_rps_template(
+    rps: Vec<(String, u32)>,
+    starting: Option<DateTime<Local>>,
+    started: Option<DateTime<Local>>,
+    stopping: Option<DateTime<Local>>,
+    stopped: Option<DateTime<Local>>,
+) -> String {
+    let datetime_format = "%Y-%m-%d %H:%M:%S";
+
+    let starting_area = if starting.is_some() && started.is_some() {
+        format!(
+            r#"[
+                {{
+                    name: 'Starting',
+                    xAxis: '{starting}'
+                }},
+                {{
+                    xAxis: '{started}'
+                }}
+            ],"#,
+            starting = starting.unwrap().format(datetime_format),
+            started = started.unwrap().format(datetime_format),
+        )
+    } else {
+        "".to_string()
+    };
+
+    let stopping_area = if stopping.is_some() && stopped.is_some() {
+        format!(
+            r#"[
+                {{
+                    name: 'Stopping',
+                    xAxis: '{stopping}'
+                }},
+                {{
+                    xAxis: '{stopped}'
+                }}
+            ],"#,
+            stopping = stopping.unwrap().format(datetime_format),
+            stopped = stopped.unwrap().format(datetime_format),
+        )
+    } else {
+        "".to_string()
+    };
+
+    format!(
+        r#"<div class="graph-rps">
+        <h2>Requests per second</h2>
+            <div id="graph-rps" style="width: 1000px; height:500px; background: white;"></div>
+
+            <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
+            <script type="text/javascript">
+                var chartDom = document.getElementById('graph-rps');
+                var myChart = echarts.init(chartDom);
+
+                myChart.setOption({{
+                    color: ['#2c664f'],
+                    tooltip: {{ trigger: 'axis' }},
+                    toolbox: {{
+                        feature: {{
+                            dataZoom: {{ yAxisIndex: 'none' }},
+                            restore: {{}},
+                            saveAsImage: {{}}
+                        }}
+                    }},
+                    dataZoom: [
+                        {{
+                            type: 'inside',
+                            start: 0,
+                            end: 100,
+                            fillerColor: 'rgba(34, 80, 61, 0.25)',
+                            selectedDataBackground: {{
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }}
+                            }}
+                        }},
+                        {{
+                            start: 0,
+                            end: 100,
+                            fillerColor: 'rgba(34, 80, 61, 0.25)',
+                            selectedDataBackground: {{
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }}
+                            }}
+                        }},
+                    ],
+                    xAxis: {{ type: 'time' }},
+                    yAxis: {{
+                        name: 'Requests per second',
+                        nameLocation: 'center',
+                        nameRotate: 90,
+                        nameGap: 45,
+                        type: 'value'
+                    }},
+                    series: [
+                        {{
+                            type: 'line',
+                            symbol: 'none',
+                            sampling: 'lttb',
+                            lineStyle: {{ color: '#2c664f' }},
+                            areaStyle: {{ color: '#378063' }},
+                            markArea: {{
+                                itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
+                                data: [
+                                    {starting_area}
+                                    {stopping_area}
+                                ]
+                            }},
+                            data: {values},
+                        }}
+                    ]
+                }});
+            </script>
+        </div>"#,
+        values = json!(rps),
+        starting_area = starting_area,
+        stopping_area = stopping_area
+    )
+}
+
 /// Build the html report.
 pub fn build_report(
     users: &str,
@@ -539,6 +662,8 @@ pub fn build_report(
 
         {errors_template}
 
+        {graph_rps_template}
+
     </div>
 </body>
 </html>"#,
@@ -554,5 +679,6 @@ pub fn build_report(
         tasks_template = templates.tasks_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
+        graph_rps_template = templates.graph_rps_template,
     )
 }

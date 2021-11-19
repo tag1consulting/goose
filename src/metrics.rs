@@ -15,7 +15,7 @@ use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
-use std::cmp::Ordering;
+use std::cmp::{max, Ordering};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
@@ -396,6 +396,8 @@ pub struct GooseRequestMetricAggregate {
     /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
     /// that all Workers are running the same load test plan.
     pub load_test_hash: u64,
+    // Counts requests per second. Each element of the vector represents one second.
+    pub requests_per_second: Vec<u32>,
 }
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
@@ -410,6 +412,7 @@ impl GooseRequestMetricAggregate {
             success_count: 0,
             fail_count: 0,
             load_test_hash,
+            requests_per_second: Vec::new(),
         }
     }
 
@@ -450,6 +453,26 @@ impl GooseRequestMetricAggregate {
         };
         self.status_code_counts.insert(status_code, counter);
         debug!("incremented {} counter: {}", status_code, counter);
+    }
+
+    /// Record request in requests per second metric.
+    pub(crate) fn record_requests_per_second(&mut self, second: usize) {
+        // Each element in self.requests_per_second vector is count for a given
+        // second since the start of the test. Since we don't know how long the
+        // test will at the beginning we need to push new elements (second
+        // counters) as the test is running.
+        if self.requests_per_second.len() <= second {
+            for _ in 0..=(second - self.requests_per_second.len() + 1) {
+                self.requests_per_second.push(0);
+            }
+        }
+
+        self.requests_per_second[second] += 1;
+
+        debug!(
+            "incremented second {} counter: {}",
+            second, self.requests_per_second[second]
+        );
     }
 }
 /// Implement ordering for GooseRequestMetricAggregate.
@@ -2415,6 +2438,13 @@ impl GooseAttack {
             if self.configuration.status_codes {
                 merge_request.set_status_code(request_metric.status_code);
             }
+            if !self.configuration.report_file.is_empty() {
+                if let Some(starting) = self.metrics.starting {
+                    merge_request.record_requests_per_second(
+                        (Utc::now().timestamp() - starting.timestamp()) as usize,
+                    );
+                }
+            }
             if request_metric.success {
                 merge_request.success_count += 1;
             } else {
@@ -3004,6 +3034,65 @@ impl GooseAttack {
                 status_code_template = "".to_string();
             }
 
+            // Generate RPS graph.
+            let mut count = 0;
+            for path_metric in self.metrics.requests.values() {
+                count = max(count, path_metric.requests_per_second.len());
+            }
+
+            let mut rps = vec![0; count];
+            for path_metric in self.metrics.requests.values() {
+                for (second, count) in path_metric.requests_per_second.iter().enumerate() {
+                    rps[second] += count;
+                }
+            }
+
+            let rps = rps
+                .iter()
+                .enumerate()
+                .filter(|(second, _)| {
+                    if self.configuration.no_reset_metrics {
+                        true
+                    } else {
+                        *second as i64 + starting.timestamp() >= started.timestamp()
+                    }
+                })
+                .map(|(second, &count)| {
+                    (
+                        Local
+                            .timestamp(second as i64 + starting.timestamp(), 0)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string(),
+                        count,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            // If the metrics were reset when the load test was started we don't display
+            // the starting period on the graph.
+            let (starting, started) = if self.configuration.no_reset_metrics
+                && Some(starting) == self.metrics.starting
+                && Some(started) == self.metrics.started
+            {
+                (Some(starting), Some(started))
+            } else {
+                (None, None)
+            };
+
+            // If stopping was done in less than a second do not display it as it won't be visible
+            // on the graph.
+            let (stopping, stopped) = if Some(stopping) == self.metrics.stopping
+                && Some(stopped) == self.metrics.stopped
+                && stopped == stopping
+            {
+                (Some(stopping), Some(stopped))
+            } else {
+                (None, None)
+            };
+
+            let graph_rps_template =
+                report::graph_rps_template(rps, starting, started, stopping, stopped);
+
             // Compile the report template.
             let report = report::build_report(
                 &users,
@@ -3017,11 +3106,12 @@ impl GooseAttack {
                     tasks_template: &tasks_template,
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
+                    graph_rps_template: &graph_rps_template,
                 },
             );
 
             // Write the report to file.
-            if let Err(e) = report_file.write(report.as_ref()).await {
+            if let Err(e) = report_file.write_all(report.as_ref()).await {
                 return Err(GooseError::InvalidOption {
                     option: "--report-file".to_string(),
                     value: self.get_report_file_path().unwrap(),
