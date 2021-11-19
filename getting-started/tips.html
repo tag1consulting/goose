@@ -143,10 +143,25 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="tips"><a class="header" href="#tips">Tips</a></h1>
+<h2 id="best-practices"><a class="header" href="#best-practices">Best Practices</a></h2>
 <ul>
 <li>When writing load tests, avoid <a href="https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap"><code>unwrap()</code></a> (and variations) in your task functions -- Goose generates a lot of load, and this tends to trigger errors. Embrace Rust's warnings and properly handle all possible errors, this will save you time debugging later.</li>
 <li>When running your load test, use the cargo <code>--release</code> flag to generate optimized code. This can generate considerably more load test traffic. Learn more about this and other optimizations in <a href="https://www.tag1consulting.com/blog/golden-goose-egg-compile-time-adventure">&quot;The golden Goose egg, a compile-time adventure&quot;</a>.</li>
 </ul>
+<h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
+<h3 id="timeouts"><a class="header" href="#timeouts">Timeouts</a></h3>
+<p>By default, Goose will time out requests that take longer than 60 seconds to return, and display a <code>WARN</code> level message saying, &quot;operation timed out&quot;. For example:</p>
+<pre><code>11:52:17 [WARN] &quot;/node/3672&quot;: error sending request for url (http://apache/node/3672): operation timed out
+</code></pre>
+<p>These will also show up in the error summary displayed with the final metrics. For example:</p>
+<pre><code> === ERRORS ===
+ ------------------------------------------------------------------------------
+ Count       | Error
+ ------------------------------------------------------------------------------
+ 51            GET (Auth) comment form: error sending request (Auth) comment form: operation timed out
+</code></pre>
+<p>To change how long before requests time out, use <code>--timeout VALUE</code> when starting a load test, for example <code>--timeout 30</code> will time out requests that take longer than 30 seconds to return. To configure the timeout programatically, use <a href="https://docs.rs/goose/*/goose/config/trait.GooseDefaultType.html#tymethod.set_default"><code>.set_default()</code></a> to set <a href="https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.Timeout">GooseDefault::Timeout</a>.</p>
+<p>To completely disable timeouts, you must build a custom Reqwest Client with <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder"><code>GooseUser::set_client_builder</code></a>. Alternatively, you can just set a very high timeout, for example <code>--timeout 86400</code> will let a request take up to 24 hours.</p>
 
                     </main>
 

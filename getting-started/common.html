@@ -185,6 +185,8 @@
 </code></pre>
 <h2 id="writing-an-html-formatted-report"><a class="header" href="#writing-an-html-formatted-report">Writing An HTML-formatted Report</a></h2>
 <p>By default, Goose displays <a href="metrics.html">text-formatted metrics</a> when a load test finishes. It can also optionally write an HTML-formatted report if you enable the <code>--report-file &lt;NAME&gt;</code> run-time option, where <code>&lt;NAME&gt;</code> is an absolute or relative path to the report file to generate. Any file that already exists at the specified path will be overwritten.</p>
+<p>The HTML report includes some graphs that rely on the <a href="https://echarts.apache.org">eCharts JavaScript library</a>. The HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.</p>
+<p><img src="rps.png" alt="Requests per second graph" /></p>
 <h3 id="example-6"><a class="header" href="#example-6">Example</a></h3>
 <p><em>Write an HTML-formatted report to <code>report.html</code> when the load test finishes.</em></p>
 <pre><code class="language-bash">cargo run --release -- --report-file report.html

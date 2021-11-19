@@ -197,9 +197,9 @@ tokio = &quot;^1.12&quot;
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.15.0
+  Downloaded goose v0.15.1
       ...
-   Compiling goose v0.15.0
+   Compiling goose v0.15.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -377,6 +377,8 @@ Advanced:
   --websocket-host HOST      Sets WebSocket Controller host (default: 0.0.0.0)
   --websocket-port PORT      Sets WebSocket Controller TCP port (default: 5117)
   --no-autostart             Doesn't automatically start load test
+  --no-gzip                  Doesn't set the gzip Accept-Encoding header
+  --timeout VALUE            Sets per-request timeout, in seconds (default: 60)
   --co-mitigation STRATEGY   Sets coordinated omission mitigation strategy
   --throttle-requests VALUE  Sets maximum requests per second
   --sticky-follow            Follows base_url redirect with subsequent requests
@@ -435,6 +437,8 @@ Gaggle:
 </code></pre>
 <h2 id="writing-an-html-formatted-report"><a class="header" href="#writing-an-html-formatted-report">Writing An HTML-formatted Report</a></h2>
 <p>By default, Goose displays <a href="getting-started/metrics.html">text-formatted metrics</a> when a load test finishes. It can also optionally write an HTML-formatted report if you enable the <code>--report-file &lt;NAME&gt;</code> run-time option, where <code>&lt;NAME&gt;</code> is an absolute or relative path to the report file to generate. Any file that already exists at the specified path will be overwritten.</p>
+<p>The HTML report includes some graphs that rely on the <a href="https://echarts.apache.org">eCharts JavaScript library</a>. The HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.</p>
+<p><img src="getting-started/rps.png" alt="Requests per second graph" /></p>
 <h3 id="example-6"><a class="header" href="#example-6">Example</a></h3>
 <p><em>Write an HTML-formatted report to <code>report.html</code> when the load test finishes.</em></p>
 <pre><code class="language-bash">cargo run --release -- --report-file report.html
@@ -542,15 +546,30 @@ All 1024 users hatched.
  Running:  2021-08-12 10:55:42 - 2021-08-12 11:05:09 (duration: 00:10:00)
  Stopping: 2021-08-12 11:05:09 - 2021-08-12 11:05:11 (duration: 00:00:02)
 
- goose v0.15.0
+ goose v0.15.1
  ------------------------------------------------------------------------------
 </code></pre>
 <p>Additional details about how metrics are collected, stored, and displayed can be found <a href="https://docs.rs/goose/*/goose/metrics/index.html">in the developer documentation</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="tips"><a class="header" href="#tips">Tips</a></h1>
+<h2 id="best-practices"><a class="header" href="#best-practices">Best Practices</a></h2>
 <ul>
 <li>When writing load tests, avoid <a href="https://doc.rust-lang.org/std/option/enum.Option.html#method.unwrap"><code>unwrap()</code></a> (and variations) in your task functions -- Goose generates a lot of load, and this tends to trigger errors. Embrace Rust's warnings and properly handle all possible errors, this will save you time debugging later.</li>
 <li>When running your load test, use the cargo <code>--release</code> flag to generate optimized code. This can generate considerably more load test traffic. Learn more about this and other optimizations in <a href="https://www.tag1consulting.com/blog/golden-goose-egg-compile-time-adventure">&quot;The golden Goose egg, a compile-time adventure&quot;</a>.</li>
 </ul>
+<h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
+<h3 id="timeouts"><a class="header" href="#timeouts">Timeouts</a></h3>
+<p>By default, Goose will time out requests that take longer than 60 seconds to return, and display a <code>WARN</code> level message saying, &quot;operation timed out&quot;. For example:</p>
+<pre><code>11:52:17 [WARN] &quot;/node/3672&quot;: error sending request for url (http://apache/node/3672): operation timed out
+</code></pre>
+<p>These will also show up in the error summary displayed with the final metrics. For example:</p>
+<pre><code> === ERRORS ===
+ ------------------------------------------------------------------------------
+ Count       | Error
+ ------------------------------------------------------------------------------
+ 51            GET (Auth) comment form: error sending request (Auth) comment form: operation timed out
+</code></pre>
+<p>To change how long before requests time out, use <code>--timeout VALUE</code> when starting a load test, for example <code>--timeout 30</code> will time out requests that take longer than 30 seconds to return. To configure the timeout programatically, use <a href="https://docs.rs/goose/*/goose/config/trait.GooseDefaultType.html#tymethod.set_default"><code>.set_default()</code></a> to set <a href="https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.Timeout">GooseDefault::Timeout</a>.</p>
+<p>To completely disable timeouts, you must build a custom Reqwest Client with <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder"><code>GooseUser::set_client_builder</code></a>. Alternatively, you can just set a very high timeout, for example <code>--timeout 86400</code> will let a request take up to 24 hours.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="logging"><a class="header" href="#logging">Logging</a></h1>
 <p>With logging, it's possible to record all Goose activity. This can be useful for debugging errors, for validating the load test, and for creating graphs.</p>
 <p>When logging is enabled, a central logging thread maintains a buffer to minimize the IO overhead, and controls the writing to ensure that multiple threads don't corrupt each other's messages. All log messages are sent through a channel to the logging thread and written asynchronously, minimizing the impact on the load test.</p>
@@ -630,7 +649,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.15.0 controller commands:
+goose 0.15.1 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  start              start an idle load test
