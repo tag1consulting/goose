@@ -3091,7 +3091,7 @@ impl GooseAttack {
             };
 
             let graph_rps_template =
-                report::graph_rps_template(rps, starting, started, stopping, stopped);
+                report::graph_rps_template(&rps, starting, started, stopping, stopped);
 
             // Compile the report template.
             let report = report::build_report(

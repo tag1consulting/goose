@@ -408,7 +408,7 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
 }
 
 pub fn graph_rps_template(
-    rps: Vec<(String, u32)>,
+    rps: &[(String, u32)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
     stopping: Option<DateTime<Local>>,
@@ -681,4 +681,197 @@ pub fn build_report(
         errors_template = templates.errors_template,
         graph_rps_template = templates.graph_rps_template,
     )
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_graph_rps_template() {
+        let expected_prefix = r#"<div class="graph-rps">
+        <h2>Requests per second</h2>
+            <div id="graph-rps" style="width: 1000px; height:500px; background: white;"></div>
+
+            <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
+            <script type="text/javascript">
+                var chartDom = document.getElementById('graph-rps');
+                var myChart = echarts.init(chartDom);
+
+                myChart.setOption({
+                    color: ['#2c664f'],
+                    tooltip: { trigger: 'axis' },
+                    toolbox: {
+                        feature: {
+                            dataZoom: { yAxisIndex: 'none' },
+                            restore: {},
+                            saveAsImage: {}
+                        }
+                    },
+                    dataZoom: [
+                        {
+                            type: 'inside',
+                            start: 0,
+                            end: 100,
+                            fillerColor: 'rgba(34, 80, 61, 0.25)',
+                            selectedDataBackground: {
+                                lineStyle: { color: '#2c664f' },
+                                areaStyle: { color: '#378063' }
+                            }
+                        },
+                        {
+                            start: 0,
+                            end: 100,
+                            fillerColor: 'rgba(34, 80, 61, 0.25)',
+                            selectedDataBackground: {
+                                lineStyle: { color: '#2c664f' },
+                                areaStyle: { color: '#378063' }
+                            }
+                        },
+                    ],
+                    xAxis: { type: 'time' },
+                    yAxis: {
+                        name: 'Requests per second',
+                        nameLocation: 'center',
+                        nameRotate: 90,
+                        nameGap: 45,
+                        type: 'value'
+                    },
+                    series: [
+                        {
+                            type: 'line',
+                            symbol: 'none',
+                            sampling: 'lttb',
+                            lineStyle: { color: '#2c664f' },
+                            areaStyle: { color: '#378063' },
+                            markArea: {
+                                itemStyle: { color: 'rgba(6, 6, 6, 0.10)' },
+"#;
+
+        let data = vec![
+            ("2021-11-21 21:20:32".to_string(), 123),
+            ("2021-11-21 21:20:33".to_string(), 111),
+            ("2021-11-21 21:20:34".to_string(), 99),
+            ("2021-11-21 21:20:35".to_string(), 134),
+        ];
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(graph_rps_template(&data, None, None, None, None), expected);
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_rps_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                None,
+                None
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_rps_template(
+                &data,
+                None,
+                None,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34))
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:36'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:38'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_rps_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 36)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 38))
+            ),
+            expected
+        );
+    }
 }
