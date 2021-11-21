@@ -393,7 +393,17 @@ async fn test_no_defaults() {
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
         .register_taskset(taskset!("Index").register_task(task!(get_index)))
-        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .register_taskset(
+            taskset!("About")
+                .register_task(task!(get_about))
+                // Be sure shutdown happens quickly and cleanly even when there's a large
+                // wait time.
+                .set_wait_time(
+                    std::time::Duration::from_secs(100),
+                    std::time::Duration::from_secs(100),
+                )
+                .unwrap(),
+        )
         .execute()
         .await
         .unwrap();

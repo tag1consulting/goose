@@ -50,9 +50,6 @@ pub(crate) async fn user_main(
 
     // If normal tasks are defined, loop launching tasks until parent tells us to stop.
     if !thread_task_set.weighted_tasks.is_empty() {
-        // When there is a delay between tasks, wake every second to check for messages.
-        let one_second = Duration::from_secs(1);
-
         'launch_tasks: loop {
             // Tracks the time it takes to loop through all GooseTasks when Coordinated Omission
             // Mitigation is enabled.
@@ -80,31 +77,26 @@ pub(crate) async fn user_main(
 
                 // If the task_wait is defined, wait for a random time between tasks.
                 if let Some((min, max)) = thread_task_set.task_wait {
-                    let wait_time = rand::thread_rng().gen_range(min..max).as_millis();
-                    // Counter to track how long we've slept, waking regularly to check for messages.
-                    let mut slept: u128 = 0;
-                    // Wake every second to check if the parent thread has told us to exit.
-                    let mut in_sleep_loop = true;
+                    // Total time left to wait before running the next task.
+                    let mut wait_time = rand::thread_rng().gen_range(min..max).as_millis();
                     // Track the time slept for Coordinated Omission Mitigation.
                     let sleep_timer = time::Instant::now();
 
-                    while in_sleep_loop {
+                    while wait_time > 0 {
+                        // Exit immediately if message received from parent.
                         if received_exit(&thread_receiver) {
                             break 'launch_tasks;
                         }
 
-                        let sleep_duration = if wait_time - slept >= 1000 {
-                            slept += 1000;
-                            if slept >= wait_time {
-                                // Break out of sleep loop after next sleep.
-                                in_sleep_loop = false;
-                            }
-                            one_second
+                        // Sleep a maximum of 500 milliseconds, waking regularly to detect a
+                        // possible shutdown message from the parent.
+                        let sleep_duration = if wait_time > 500 {
+                            wait_time -= 500;
+                            Duration::from_millis(500)
                         } else {
-                            slept += wait_time;
-                            // Break out of sleep loop after next sleep.
-                            in_sleep_loop = false;
-                            Duration::from_millis((wait_time - slept) as u64)
+                            let sleep_duration = Duration::from_millis(wait_time as u64);
+                            wait_time = 0;
+                            sleep_duration
                         };
 
                         debug!(
