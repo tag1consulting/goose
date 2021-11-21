@@ -462,7 +462,7 @@ impl GooseRequestMetricAggregate {
         // test will at the beginning we need to push new elements (second
         // counters) as the test is running.
         if self.requests_per_second.len() <= second {
-            for _ in 0..=(second - self.requests_per_second.len() + 1) {
+            for _ in 0..(second - self.requests_per_second.len() + 1) {
                 self.requests_per_second.push(0);
             }
         }
@@ -3596,5 +3596,45 @@ mod test {
         assert_eq!(request.raw_data.maximum_time, 987654321);
         assert_eq!(request.raw_data.total_time, 987657045);
         assert_eq!(request.raw_data.counter, 8);
+    }
+
+    #[test]
+    fn goose_record_requests_per_second() {
+        // Should be initialized with empty requests per second vector.
+        let mut metric_aggregate = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        assert_eq!(metric_aggregate.requests_per_second.len(), 0);
+
+        metric_aggregate.record_requests_per_second(0);
+        metric_aggregate.record_requests_per_second(0);
+        metric_aggregate.record_requests_per_second(0);
+        metric_aggregate.record_requests_per_second(1);
+        metric_aggregate.record_requests_per_second(2);
+        metric_aggregate.record_requests_per_second(2);
+        metric_aggregate.record_requests_per_second(2);
+        metric_aggregate.record_requests_per_second(2);
+        metric_aggregate.record_requests_per_second(2);
+        assert_eq!(metric_aggregate.requests_per_second.len(), 3);
+        assert_eq!(metric_aggregate.requests_per_second[0], 3);
+        assert_eq!(metric_aggregate.requests_per_second[1], 1);
+        assert_eq!(metric_aggregate.requests_per_second[2], 5);
+
+        metric_aggregate.record_requests_per_second(100);
+        metric_aggregate.record_requests_per_second(100);
+        metric_aggregate.record_requests_per_second(100);
+        metric_aggregate.record_requests_per_second(0);
+        metric_aggregate.record_requests_per_second(1);
+        metric_aggregate.record_requests_per_second(2);
+        metric_aggregate.record_requests_per_second(5);
+        assert_eq!(metric_aggregate.requests_per_second.len(), 101);
+        assert_eq!(metric_aggregate.requests_per_second[0], 4);
+        assert_eq!(metric_aggregate.requests_per_second[1], 2);
+        assert_eq!(metric_aggregate.requests_per_second[2], 6);
+        assert_eq!(metric_aggregate.requests_per_second[3], 0);
+        assert_eq!(metric_aggregate.requests_per_second[4], 0);
+        assert_eq!(metric_aggregate.requests_per_second[5], 1);
+        assert_eq!(metric_aggregate.requests_per_second[100], 3);
+        for second in 6..100 {
+            assert_eq!(metric_aggregate.requests_per_second[second], 0);
+        }
     }
 }
