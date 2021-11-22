@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.15.2-dev
+ - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends
 
 ## 0.15.1 November 19, 2021
  - [#374](https://github.com/tag1consulting/goose/pull/374) renamed `simple-with-session.rs` to `session.rs` and `simple-closure.rs` to `closure.rs` to avoid confusion with the `simple.rs` example as they all do different things
