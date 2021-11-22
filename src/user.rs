@@ -81,6 +81,9 @@ pub(crate) async fn user_main(
                     let mut wait_time = rand::thread_rng().gen_range(min..max).as_millis();
                     // Track the time slept for Coordinated Omission Mitigation.
                     let sleep_timer = time::Instant::now();
+                    // Never sleep more than 500 milliseconds, allowing a sleeping task to shut
+                    // down quickly when the load test ends.
+                    let maximum_sleep_time = 500;
 
                     while wait_time > 0 {
                         // Exit immediately if message received from parent.
@@ -88,11 +91,10 @@ pub(crate) async fn user_main(
                             break 'launch_tasks;
                         }
 
-                        // Sleep a maximum of 500 milliseconds, waking regularly to detect a
-                        // possible shutdown message from the parent.
-                        let sleep_duration = if wait_time > 500 {
-                            wait_time -= 500;
-                            Duration::from_millis(500)
+                        // Wake regularly to detect if the load test has shut down.
+                        let sleep_duration = if wait_time > maximum_sleep_time {
+                            wait_time -= maximum_sleep_time;
+                            Duration::from_millis(maximum_sleep_time as u64)
                         } else {
                             let sleep_duration = Duration::from_millis(wait_time as u64);
                             wait_time = 0;
