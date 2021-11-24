@@ -20,6 +20,7 @@ pub struct GooseReportTemplates<'a> {
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
     pub graph_rps_template: &'a str,
+    pub graph_eps_template: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -414,6 +415,44 @@ pub fn graph_rps_template(
     stopping: Option<DateTime<Local>>,
     stopped: Option<DateTime<Local>>,
 ) -> String {
+    graph_template(
+        "Requests per second",
+        "graph-rps",
+        rps,
+        starting,
+        started,
+        stopping,
+        stopped,
+    )
+}
+
+pub fn graph_eps_template(
+    rps: &[(String, u32)],
+    starting: Option<DateTime<Local>>,
+    started: Option<DateTime<Local>>,
+    stopping: Option<DateTime<Local>>,
+    stopped: Option<DateTime<Local>>,
+) -> String {
+    graph_template(
+        "Errors per second",
+        "graph-eps",
+        rps,
+        starting,
+        started,
+        stopping,
+        stopped,
+    )
+}
+
+fn graph_template(
+    title: &str,
+    html_id: &str,
+    data: &[(String, u32)],
+    starting: Option<DateTime<Local>>,
+    started: Option<DateTime<Local>>,
+    stopping: Option<DateTime<Local>>,
+    stopped: Option<DateTime<Local>>,
+) -> String {
     let datetime_format = "%Y-%m-%d %H:%M:%S";
 
     let starting_area = if starting.is_some() && started.is_some() {
@@ -453,13 +492,12 @@ pub fn graph_rps_template(
     };
 
     format!(
-        r#"<div class="graph-rps">
-        <h2>Requests per second</h2>
-            <div id="graph-rps" style="width: 1000px; height:500px; background: white;"></div>
+        r#"<div class="{html_id}">
+        <h2>{title}</h2>
+            <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
 
-            <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
             <script type="text/javascript">
-                var chartDom = document.getElementById('graph-rps');
+                var chartDom = document.getElementById('{html_id}');
                 var myChart = echarts.init(chartDom);
 
                 myChart.setOption({{
@@ -495,7 +533,7 @@ pub fn graph_rps_template(
                     ],
                     xAxis: {{ type: 'time' }},
                     yAxis: {{
-                        name: 'Requests per second',
+                        name: '{title}',
                         nameLocation: 'center',
                         nameRotate: 90,
                         nameGap: 45,
@@ -521,7 +559,9 @@ pub fn graph_rps_template(
                 }});
             </script>
         </div>"#,
-        values = json!(rps),
+        title = title,
+        html_id = html_id,
+        values = json!(data),
         starting_area = starting_area,
         stopping_area = stopping_area
     )
@@ -536,6 +576,14 @@ pub fn build_report(
 ) -> String {
     let pkg_name = env!("CARGO_PKG_NAME");
     let pkg_version = env!("CARGO_PKG_VERSION");
+
+    let echarts_include;
+    if !templates.graph_rps_template.is_empty() || !templates.graph_eps_template.is_empty() {
+        echarts_include = "<script src=\"https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js\"></script>".to_string();
+    } else {
+        echarts_include = "".to_string();
+    }
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -595,6 +643,7 @@ pub fn build_report(
             color: #00ca5a;
         }}
     </style>
+    {echarts}
 </head>
 <body>
     <div class="container">
@@ -664,6 +713,8 @@ pub fn build_report(
 
         {graph_rps_template}
 
+        {graph_eps_template}
+
     </div>
 </body>
 </html>"#,
@@ -679,7 +730,9 @@ pub fn build_report(
         tasks_template = templates.tasks_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
+        echarts = echarts_include,
         graph_rps_template = templates.graph_rps_template,
+        graph_eps_template = templates.graph_eps_template,
     )
 }
 
@@ -687,66 +740,73 @@ pub fn build_report(
 mod test {
     use super::*;
 
-    #[test]
-    fn test_graph_rps_template() {
-        let expected_prefix = r#"<div class="graph-rps">
-        <h2>Requests per second</h2>
-            <div id="graph-rps" style="width: 1000px; height:500px; background: white;"></div>
+    fn expected_graph_html_prefix(title: &str, html_id: &str) -> String {
+        format!(
+            r#"<div class="{html_id}">
+        <h2>{title}</h2>
+            <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
 
-            <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
             <script type="text/javascript">
-                var chartDom = document.getElementById('graph-rps');
+                var chartDom = document.getElementById('{html_id}');
                 var myChart = echarts.init(chartDom);
 
-                myChart.setOption({
+                myChart.setOption({{
                     color: ['#2c664f'],
-                    tooltip: { trigger: 'axis' },
-                    toolbox: {
-                        feature: {
-                            dataZoom: { yAxisIndex: 'none' },
-                            restore: {},
-                            saveAsImage: {}
-                        }
-                    },
+                    tooltip: {{ trigger: 'axis' }},
+                    toolbox: {{
+                        feature: {{
+                            dataZoom: {{ yAxisIndex: 'none' }},
+                            restore: {{}},
+                            saveAsImage: {{}}
+                        }}
+                    }},
                     dataZoom: [
-                        {
+                        {{
                             type: 'inside',
                             start: 0,
                             end: 100,
                             fillerColor: 'rgba(34, 80, 61, 0.25)',
-                            selectedDataBackground: {
-                                lineStyle: { color: '#2c664f' },
-                                areaStyle: { color: '#378063' }
-                            }
-                        },
-                        {
+                            selectedDataBackground: {{
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }}
+                            }}
+                        }},
+                        {{
                             start: 0,
                             end: 100,
                             fillerColor: 'rgba(34, 80, 61, 0.25)',
-                            selectedDataBackground: {
-                                lineStyle: { color: '#2c664f' },
-                                areaStyle: { color: '#378063' }
-                            }
-                        },
+                            selectedDataBackground: {{
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }}
+                            }}
+                        }},
                     ],
-                    xAxis: { type: 'time' },
-                    yAxis: {
-                        name: 'Requests per second',
+                    xAxis: {{ type: 'time' }},
+                    yAxis: {{
+                        name: '{title}',
                         nameLocation: 'center',
                         nameRotate: 90,
                         nameGap: 45,
                         type: 'value'
-                    },
+                    }},
                     series: [
-                        {
+                        {{
                             type: 'line',
                             symbol: 'none',
                             sampling: 'lttb',
-                            lineStyle: { color: '#2c664f' },
-                            areaStyle: { color: '#378063' },
-                            markArea: {
-                                itemStyle: { color: 'rgba(6, 6, 6, 0.10)' },
-"#;
+                            lineStyle: {{ color: '#2c664f' }},
+                            areaStyle: {{ color: '#378063' }},
+                            markArea: {{
+                                itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
+"#,
+            title = title,
+            html_id = html_id
+        )
+    }
+
+    #[test]
+    fn test_graph_rps_template() {
+        let expected_prefix = expected_graph_html_prefix("Requests per second", "graph-rps");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
@@ -834,7 +894,7 @@ mod test {
             expected
         );
 
-        let mut expected = expected_prefix.to_owned();
+        let mut expected = expected_prefix;
         expected.push_str(r#"                                data: [
                                     [
                 {
@@ -865,6 +925,137 @@ mod test {
         );
         assert_eq!(
             graph_rps_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 36)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 38))
+            ),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_graph_eps_template() {
+        let expected_prefix = expected_graph_html_prefix("Errors per second", "graph-eps");
+
+        let data = vec![
+            ("2021-11-21 21:20:32".to_string(), 123),
+            ("2021-11-21 21:20:33".to_string(), 111),
+            ("2021-11-21 21:20:34".to_string(), 99),
+            ("2021-11-21 21:20:35".to_string(), 134),
+        ];
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(graph_eps_template(&data, None, None, None, None), expected);
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_eps_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                None,
+                None
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_eps_template(
+                &data,
+                None,
+                None,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34))
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix;
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:36'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:38'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_eps_template(
                 &data,
                 Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
                 Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
