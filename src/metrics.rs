@@ -367,7 +367,7 @@ impl GooseRequestMetric {
 /// [`GooseRequestMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
 /// threads to the Goose parent process where they are aggregated together into this
 /// structure, and stored in [`GooseMetrics::requests`].
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequestMetricAggregate {
     /// The request path for which metrics are being collected.
     ///
@@ -400,6 +400,8 @@ pub struct GooseRequestMetricAggregate {
     pub requests_per_second: Vec<u32>,
     // Counts errors per second. Each element of the vector represents one second.
     pub errors_per_second: Vec<u32>,
+    // Maintains average response time per second. Each element of the vector represents one second.
+    pub average_response_time_per_second: Vec<(u32, f32)>,
 }
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
@@ -416,6 +418,7 @@ impl GooseRequestMetricAggregate {
             load_test_hash,
             requests_per_second: Vec::new(),
             errors_per_second: Vec::new(),
+            average_response_time_per_second: Vec::new(),
         }
     }
 
@@ -460,7 +463,7 @@ impl GooseRequestMetricAggregate {
 
     /// Record requests per second metric.
     pub(crate) fn record_requests_per_second(&mut self, second: usize) {
-        expand_per_second_metric_array(&mut self.requests_per_second, second);
+        expand_per_second_metric_array(&mut self.requests_per_second, second, 0);
         self.requests_per_second[second] += 1;
 
         debug!(
@@ -471,7 +474,7 @@ impl GooseRequestMetricAggregate {
 
     /// Record errors per second metric.
     pub(crate) fn record_errors_per_second(&mut self, second: usize) {
-        expand_per_second_metric_array(&mut self.errors_per_second, second);
+        expand_per_second_metric_array(&mut self.errors_per_second, second, 0);
         self.errors_per_second[second] += 1;
 
         debug!(
@@ -479,19 +482,45 @@ impl GooseRequestMetricAggregate {
             second, self.errors_per_second[second]
         );
     }
+
+    /// Record average response time per second metric.
+    pub(crate) fn record_average_response_time_per_second(
+        &mut self,
+        second: usize,
+        response_time: u64,
+    ) {
+        expand_per_second_metric_array(
+            &mut self.average_response_time_per_second,
+            second,
+            (0, 0.0),
+        );
+        self.average_response_time_per_second[second].0 += 1;
+        self.average_response_time_per_second[second].1 += (response_time as f32
+            - self.average_response_time_per_second[second].1)
+            / self.average_response_time_per_second[second].0 as f32;
+
+        debug!(
+            "updated second {} for average response time per second: {}",
+            second, self.average_response_time_per_second[second].1
+        );
+    }
 }
 
-fn expand_per_second_metric_array(data: &mut Vec<u32>, second: usize) {
+fn expand_per_second_metric_array<T: Clone>(data: &mut Vec<T>, second: usize, initial: T) {
     // Each element in per second metric vectors (self.requests_per_second,
     // self.errors_per_second, ...) is count for a given second since the start
     // of the test. Since we don't know how long the test will at the beginning
     // we need to push new elements (second counters) as the test is running.
     if data.len() <= second {
         for _ in 0..(second - data.len() + 1) {
-            data.push(0);
+            data.push(initial.clone());
         }
     };
 }
+
+/// Implement equality for GooseRequestMetricAggregate. We can't simply derive since
+/// we have floats in the struct.
+impl Eq for GooseRequestMetricAggregate {}
 
 /// Implement ordering for GooseRequestMetricAggregate.
 impl Ord for GooseRequestMetricAggregate {
@@ -505,6 +534,7 @@ impl PartialOrd for GooseRequestMetricAggregate {
         Some(self.cmp(other))
     }
 }
+
 /// Collects per-request timing metrics.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequestMetricTimingData {
@@ -2462,6 +2492,10 @@ impl GooseAttack {
                         (Utc::now().timestamp() - starting.timestamp()) as usize;
 
                     merge_request.record_requests_per_second(second_since_start);
+                    merge_request.record_average_response_time_per_second(
+                        second_since_start,
+                        request_metric.response_time,
+                    );
 
                     if !request_metric.success {
                         merge_request.record_errors_per_second(second_since_start);
@@ -3121,6 +3155,33 @@ impl GooseAttack {
                 graph_stopped,
             );
 
+            // Generate average response times per second graph.
+            let mut response_times = vec![(0, 0.0); count];
+            for path_metric in self.metrics.requests.values() {
+                for (second, avg) in path_metric
+                    .average_response_time_per_second
+                    .iter()
+                    .enumerate()
+                {
+                    response_times[second].0 += 1;
+                    response_times[second].1 +=
+                        avg.1 - response_times[second].1 / response_times[second].0 as f32;
+                }
+            }
+
+            let response_times = response_times
+                .iter()
+                .map(|(_, average)| *average as u32)
+                .collect::<Vec<_>>();
+
+            let graph_average_response_time_template = report::graph_average_response_time_template(
+                &self.add_timestamp_to_html_graph_data(response_times, &starting, &started),
+                graph_starting,
+                graph_started,
+                graph_stopping,
+                graph_stopped,
+            );
+
             // Compile the report template.
             let report = report::build_report(
                 &users,
@@ -3136,6 +3197,7 @@ impl GooseAttack {
                     errors_template: &errors_template,
                     graph_rps_template: &graph_rps_template,
                     graph_eps_template: &graph_eps_template,
+                    graph_average_response_time_template: &graph_average_response_time_template,
                 },
             );
 
@@ -3731,6 +3793,79 @@ mod test {
         assert_eq!(metric_aggregate.errors_per_second[100], 3);
         for second in 6..100 {
             assert_eq!(metric_aggregate.errors_per_second[second], 0);
+        }
+    }
+
+    #[test]
+    fn goose_record_average_response_time_per_second() {
+        // Should be initialized with empty errors per second vector.
+        let mut metric_aggregate = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        assert_eq!(metric_aggregate.average_response_time_per_second.len(), 0);
+
+        metric_aggregate.record_average_response_time_per_second(0, 5);
+        metric_aggregate.record_average_response_time_per_second(0, 4);
+        metric_aggregate.record_average_response_time_per_second(0, 3);
+        metric_aggregate.record_average_response_time_per_second(1, 1);
+        metric_aggregate.record_average_response_time_per_second(2, 4);
+        metric_aggregate.record_average_response_time_per_second(2, 8);
+        metric_aggregate.record_average_response_time_per_second(2, 12);
+        metric_aggregate.record_average_response_time_per_second(2, 4);
+        metric_aggregate.record_average_response_time_per_second(2, 4);
+        assert_eq!(metric_aggregate.average_response_time_per_second.len(), 3);
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[0],
+            (3, 4.0)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[1],
+            (1, 1.0)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[2],
+            (5, 6.4)
+        );
+
+        metric_aggregate.record_average_response_time_per_second(100, 5);
+        metric_aggregate.record_average_response_time_per_second(100, 9);
+        metric_aggregate.record_average_response_time_per_second(100, 7);
+        metric_aggregate.record_average_response_time_per_second(0, 2);
+        metric_aggregate.record_average_response_time_per_second(1, 2);
+        metric_aggregate.record_average_response_time_per_second(2, 5);
+        metric_aggregate.record_average_response_time_per_second(5, 2);
+        assert_eq!(metric_aggregate.average_response_time_per_second.len(), 101);
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[0],
+            (4, 3.5)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[1],
+            (2, 1.5)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[2],
+            (6, 6.166667)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[3],
+            (0, 0.)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[4],
+            (0, 0.)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[5],
+            (1, 2.)
+        );
+        assert_eq!(
+            metric_aggregate.average_response_time_per_second[100],
+            (3, 7.)
+        );
+        for second in 6..100 {
+            assert_eq!(
+                metric_aggregate.average_response_time_per_second[second],
+                (0, 0.)
+            );
         }
     }
 }

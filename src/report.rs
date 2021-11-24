@@ -21,6 +21,7 @@ pub struct GooseReportTemplates<'a> {
     pub errors_template: &'a str,
     pub graph_rps_template: &'a str,
     pub graph_eps_template: &'a str,
+    pub graph_average_response_time_template: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -418,6 +419,7 @@ pub fn graph_rps_template(
     graph_template(
         "Requests per second",
         "graph-rps",
+        "Requests #",
         rps,
         starting,
         started,
@@ -427,7 +429,7 @@ pub fn graph_rps_template(
 }
 
 pub fn graph_eps_template(
-    rps: &[(String, u32)],
+    eps: &[(String, u32)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
     stopping: Option<DateTime<Local>>,
@@ -436,7 +438,8 @@ pub fn graph_eps_template(
     graph_template(
         "Errors per second",
         "graph-eps",
-        rps,
+        "Errors #",
+        eps,
         starting,
         started,
         stopping,
@@ -444,9 +447,30 @@ pub fn graph_eps_template(
     )
 }
 
+pub fn graph_average_response_time_template(
+    response_times: &[(String, u32)],
+    starting: Option<DateTime<Local>>,
+    started: Option<DateTime<Local>>,
+    stopping: Option<DateTime<Local>>,
+    stopped: Option<DateTime<Local>>,
+) -> String {
+    graph_template(
+        "Average response time",
+        "graph-avg-response-time",
+        "Response time [ms]",
+        response_times,
+        starting,
+        started,
+        stopping,
+        stopped,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn graph_template(
     title: &str,
     html_id: &str,
+    y_axis_label: &str,
     data: &[(String, u32)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
@@ -533,7 +557,7 @@ fn graph_template(
                     ],
                     xAxis: {{ type: 'time' }},
                     yAxis: {{
-                        name: '{title}',
+                        name: '{y_axis_label}',
                         nameLocation: 'center',
                         nameRotate: 90,
                         nameGap: 45,
@@ -563,7 +587,8 @@ fn graph_template(
         html_id = html_id,
         values = json!(data),
         starting_area = starting_area,
-        stopping_area = stopping_area
+        stopping_area = stopping_area,
+        y_axis_label = y_axis_label,
     )
 }
 
@@ -578,7 +603,10 @@ pub fn build_report(
     let pkg_version = env!("CARGO_PKG_VERSION");
 
     let echarts_include;
-    if !templates.graph_rps_template.is_empty() || !templates.graph_eps_template.is_empty() {
+    if !templates.graph_rps_template.is_empty()
+        || !templates.graph_eps_template.is_empty()
+        || !templates.graph_average_response_time_template.is_empty()
+    {
         echarts_include = "<script src=\"https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js\"></script>".to_string();
     } else {
         echarts_include = "".to_string();
@@ -715,6 +743,8 @@ pub fn build_report(
 
         {graph_eps_template}
 
+        {graph_average_response_time_template}
+
     </div>
 </body>
 </html>"#,
@@ -733,6 +763,7 @@ pub fn build_report(
         echarts = echarts_include,
         graph_rps_template = templates.graph_rps_template,
         graph_eps_template = templates.graph_eps_template,
+        graph_average_response_time_template = templates.graph_average_response_time_template,
     )
 }
 
@@ -740,7 +771,7 @@ pub fn build_report(
 mod test {
     use super::*;
 
-    fn expected_graph_html_prefix(title: &str, html_id: &str) -> String {
+    fn expected_graph_html_prefix(title: &str, html_id: &str, y_axis_label: &str) -> String {
         format!(
             r#"<div class="{html_id}">
         <h2>{title}</h2>
@@ -783,7 +814,7 @@ mod test {
                     ],
                     xAxis: {{ type: 'time' }},
                     yAxis: {{
-                        name: '{title}',
+                        name: '{y_axis_label}',
                         nameLocation: 'center',
                         nameRotate: 90,
                         nameGap: 45,
@@ -800,13 +831,15 @@ mod test {
                                 itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
 "#,
             title = title,
-            html_id = html_id
+            html_id = html_id,
+            y_axis_label = y_axis_label
         )
     }
 
     #[test]
     fn test_graph_rps_template() {
-        let expected_prefix = expected_graph_html_prefix("Requests per second", "graph-rps");
+        let expected_prefix =
+            expected_graph_html_prefix("Requests per second", "graph-rps", "Requests #");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
@@ -937,7 +970,8 @@ mod test {
 
     #[test]
     fn test_graph_eps_template() {
-        let expected_prefix = expected_graph_html_prefix("Errors per second", "graph-eps");
+        let expected_prefix =
+            expected_graph_html_prefix("Errors per second", "graph-eps", "Errors #");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
@@ -1056,6 +1090,144 @@ mod test {
         );
         assert_eq!(
             graph_eps_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 36)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 38))
+            ),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_graph_average_response_time_template() {
+        let expected_prefix = expected_graph_html_prefix(
+            "Average response time",
+            "graph-avg-response-time",
+            "Response time [ms]",
+        );
+
+        let data = vec![
+            ("2021-11-21 21:20:32".to_string(), 123),
+            ("2021-11-21 21:20:33".to_string(), 111),
+            ("2021-11-21 21:20:34".to_string(), 99),
+            ("2021-11-21 21:20:35".to_string(), 134),
+        ];
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_average_response_time_template(&data, None, None, None, None),
+            expected
+        );
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_average_response_time_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                None,
+                None
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_average_response_time_template(
+                &data,
+                None,
+                None,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34))
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix;
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:36'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:38'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_average_response_time_template(
                 &data,
                 Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
                 Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
