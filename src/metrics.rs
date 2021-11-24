@@ -915,6 +915,9 @@ pub struct GooseMetrics {
     /// This value may be smaller than what was configured at start time if the test
     /// didn't run long enough for all configured users to start.
     pub users: usize,
+    /// Number of users at the end of each second of the test. Each element of the vector
+    /// represents one second.
+    pub users_per_second: Vec<u32>,
     /// Tracks details about each request made during the load test.
     ///
     /// Can be disabled with the `--no-metrics` run-time option, or with
@@ -2207,6 +2210,14 @@ impl GooseMetrics {
 
         Ok(())
     }
+
+    pub(crate) fn record_users_per_second(&mut self) {
+        if let Some(starting) = self.starting {
+            let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
+            expand_per_second_metric_array(&mut self.users_per_second, second, 0);
+            self.users_per_second[second] = self.users as u32;
+        }
+    }
 }
 
 impl Serialize for GooseMetrics {
@@ -2523,6 +2534,7 @@ impl GooseAttack {
     ) -> Result<bool, GooseError> {
         let mut received_message = false;
         let mut message = goose_attack_run_state.metrics_rx.try_recv();
+        self.metrics.record_users_per_second();
 
         // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
         let receive_timeout = 400;
@@ -3122,6 +3134,10 @@ impl GooseAttack {
             for path_metric in self.metrics.requests.values() {
                 count = max(count, path_metric.errors_per_second.len());
             }
+            for path_metric in self.metrics.requests.values() {
+                count = max(count, path_metric.average_response_time_per_second.len());
+            }
+            count = max(count, self.metrics.users_per_second.len());
 
             // Generate requests per second graph.
             let mut rps = vec![0; count];
@@ -3182,6 +3198,19 @@ impl GooseAttack {
                 graph_stopped,
             );
 
+            // Generate active users graph.
+            let graph_users_per_second_template = report::graph_users_per_second_template(
+                &self.add_timestamp_to_html_graph_data(
+                    self.metrics.users_per_second.clone(),
+                    &starting,
+                    &started,
+                ),
+                graph_starting,
+                graph_started,
+                graph_stopping,
+                graph_stopped,
+            );
+
             // Compile the report template.
             let report = report::build_report(
                 &users,
@@ -3198,6 +3227,7 @@ impl GooseAttack {
                     graph_rps_template: &graph_rps_template,
                     graph_eps_template: &graph_eps_template,
                     graph_average_response_time_template: &graph_average_response_time_template,
+                    graph_users_per_second_template: &graph_users_per_second_template,
                 },
             );
 
