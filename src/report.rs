@@ -23,6 +23,7 @@ pub struct GooseReportTemplates<'a> {
     pub graph_eps_template: &'a str,
     pub graph_average_response_time_template: &'a str,
     pub graph_users_per_second_template: &'a str,
+    pub graph_tasks_per_second_template: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -486,6 +487,25 @@ pub fn graph_users_per_second_template(
     )
 }
 
+pub fn graph_tasks_per_second_template(
+    tasks: &[(String, u32)],
+    starting: Option<DateTime<Local>>,
+    started: Option<DateTime<Local>>,
+    stopping: Option<DateTime<Local>>,
+    stopped: Option<DateTime<Local>>,
+) -> String {
+    graph_template(
+        "Active tasks",
+        "graph-active-tasks",
+        "Active tasks #",
+        tasks,
+        starting,
+        started,
+        stopping,
+        stopped,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn graph_template(
     title: &str,
@@ -627,6 +647,7 @@ pub fn build_report(
         || !templates.graph_eps_template.is_empty()
         || !templates.graph_average_response_time_template.is_empty()
         || !templates.graph_users_per_second_template.is_empty()
+        || !templates.graph_tasks_per_second_template.is_empty()
     {
         echarts_include = "<script src=\"https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js\"></script>".to_string();
     } else {
@@ -768,6 +789,8 @@ pub fn build_report(
 
         {graph_users_per_second_template}
 
+        {graph_tasks_per_second_template}
+
     </div>
 </body>
 </html>"#,
@@ -788,6 +811,7 @@ pub fn build_report(
         graph_eps_template = templates.graph_eps_template,
         graph_average_response_time_template = templates.graph_average_response_time_template,
         graph_users_per_second_template = templates.graph_users_per_second_template,
+        graph_tasks_per_second_template = templates.graph_tasks_per_second_template,
     )
 }
 
@@ -1387,6 +1411,141 @@ mod test {
         );
         assert_eq!(
             graph_users_per_second_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 36)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 38))
+            ),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_graph_tasks_per_second_template() {
+        let expected_prefix =
+            expected_graph_html_prefix("Active tasks", "graph-active-tasks", "Active tasks #");
+
+        let data = vec![
+            ("2021-11-21 21:20:32".to_string(), 123),
+            ("2021-11-21 21:20:33".to_string(), 111),
+            ("2021-11-21 21:20:34".to_string(), 99),
+            ("2021-11-21 21:20:35".to_string(), 134),
+        ];
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_tasks_per_second_template(&data, None, None, None, None),
+            expected
+        );
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_tasks_per_second_template(
+                &data,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                None,
+                None
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix.to_owned();
+        expected.push_str(r#"                                data: [
+                                    
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_tasks_per_second_template(
+                &data,
+                None,
+                None,
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34))
+            ),
+            expected
+        );
+
+        let mut expected = expected_prefix;
+        expected.push_str(r#"                                data: [
+                                    [
+                {
+                    name: 'Starting',
+                    xAxis: '2021-11-21 21:20:32'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:34'
+                }
+            ],
+                                    [
+                {
+                    name: 'Stopping',
+                    xAxis: '2021-11-21 21:20:36'
+                },
+                {
+                    xAxis: '2021-11-21 21:20:38'
+                }
+            ],
+                                ]
+                            },
+                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                        }
+                    ]
+                });
+            </script>
+        </div>"#
+        );
+        assert_eq!(
+            graph_tasks_per_second_template(
                 &data,
                 Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 32)),
                 Some(Local.ymd(2021, 11, 21).and_hms(21, 20, 34)),

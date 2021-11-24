@@ -930,6 +930,9 @@ pub struct GooseMetrics {
     /// [GooseDefault::NoTaskMetrics](../config/enum.GooseDefault.html#variant.NoTaskMetrics) or
     /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub tasks: GooseTaskMetrics,
+    /// Number of tasks at the end of each second of the test. Each element of the vector
+    /// represents one second.
+    pub tasks_per_second: Vec<u32>,
     /// Tracks and counts each time an error is detected during the load test.
     ///
     /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
@@ -2211,11 +2214,15 @@ impl GooseMetrics {
         Ok(())
     }
 
-    pub(crate) fn record_users_per_second(&mut self) {
+    pub(crate) fn record_users_tasks_per_second(&mut self, tasks: u32) {
         if let Some(starting) = self.starting {
             let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
+
             expand_per_second_metric_array(&mut self.users_per_second, second, 0);
             self.users_per_second[second] = self.users as u32;
+
+            expand_per_second_metric_array(&mut self.tasks_per_second, second, 0);
+            self.tasks_per_second[second] = tasks;
         }
     }
 }
@@ -2534,7 +2541,12 @@ impl GooseAttack {
     ) -> Result<bool, GooseError> {
         let mut received_message = false;
         let mut message = goose_attack_run_state.metrics_rx.try_recv();
-        self.metrics.record_users_per_second();
+
+        let mut tasks = 0;
+        for set in self.task_sets.iter() {
+            tasks += set.tasks.len();
+        }
+        self.metrics.record_users_tasks_per_second(tasks as u32);
 
         // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
         let receive_timeout = 400;
@@ -3211,6 +3223,19 @@ impl GooseAttack {
                 graph_stopped,
             );
 
+            // Generate active tasks graph.
+            let graph_tasks_per_second_template = report::graph_tasks_per_second_template(
+                &self.add_timestamp_to_html_graph_data(
+                    self.metrics.tasks_per_second.clone(),
+                    &starting,
+                    &started,
+                ),
+                graph_starting,
+                graph_started,
+                graph_stopping,
+                graph_stopped,
+            );
+
             // Compile the report template.
             let report = report::build_report(
                 &users,
@@ -3228,6 +3253,7 @@ impl GooseAttack {
                     graph_eps_template: &graph_eps_template,
                     graph_average_response_time_template: &graph_average_response_time_template,
                     graph_users_per_second_template: &graph_users_per_second_template,
+                    graph_tasks_per_second_template: &graph_tasks_per_second_template,
                 },
             );
 
