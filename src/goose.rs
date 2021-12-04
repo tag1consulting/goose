@@ -1774,7 +1774,10 @@ impl GooseUser {
         }
     }
 
-    fn send_request_metric_to_parent(&self, request_metric: GooseRequestMetric) -> GooseTaskResult {
+    pub fn send_request_metric_to_parent(
+        &self,
+        request_metric: GooseRequestMetric,
+    ) -> GooseTaskResult {
         // If requests-file is enabled, send a copy of the raw request to the logger thread.
         if !self.config.request_log.is_empty() {
             if let Some(logger) = self.logger.as_ref() {
