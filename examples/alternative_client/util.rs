@@ -33,8 +33,10 @@ pub(crate) fn build_request_metric(
     status: http::StatusCode,
 ) -> GooseRequestMetric {
     let mut h: Vec<String> = Vec::new();
-    for header in headers {
-        h.push(format!("{:?}", header));
+    if let Some(hs) = headers {
+        for header in hs {
+            h.push(format!("{:?}", header));
+        }
     }
 
     // Record information about the request.
