@@ -42,13 +42,12 @@ async fn main() -> Result<(), GooseError> {
                     task!(drupal_memcache_node_page)
                         .set_weight(10)?
                         .set_name("(Anon) node page"),
-                ), /*
-                   .register_task(
-                       task!(drupal_memcache_profile_page)
-                           .set_weight(3)?
-                           .set_name("(Anon) user page"),
-                   ),
-                   */
+                )
+                .register_task(
+                    task!(drupal_memcache_profile_page)
+                        .set_weight(3)?
+                        .set_name("(Anon) user page"),
+                ),
         )
         /*
         .register_taskset(
@@ -130,7 +129,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> GooseTaskResult {
                     request_metric.name = "/".to_string();
                     user.send_request_metric_to_parent(request_metric.clone())?;
                     return user.set_failure(
-                        &format!("front_page: failed to parse page: {}", e),
+                        &format!("front page: failed to parse page: {}", e),
                         &mut request_metric,
                         Some(headers),
                         None,
@@ -151,7 +150,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> GooseTaskResult {
             request_metric.name = "/".to_string();
             user.send_request_metric_to_parent(request_metric.clone())?;
             return user.set_failure(
-                &format!("front_page: no response from server: {}", e),
+                &format!("front page: no response from server: {}", e),
                 &mut request_metric,
                 None,
                 None,
@@ -200,7 +199,56 @@ async fn drupal_memcache_node_page(user: &mut GooseUser) -> GooseTaskResult {
             request_metric.name = "/node/{}".to_string();
             user.send_request_metric_to_parent(request_metric.clone())?;
             return user.set_failure(
-                &format!("front_page: no response from server: {}", e),
+                &format!("node page: no response from server: {}", e),
+                &mut request_metric,
+                None,
+                None,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// View a profile from 2 to 5,001, created by preptest.sh.
+async fn drupal_memcache_profile_page(user: &mut GooseUser) -> GooseTaskResult {
+    let started = std::time::Instant::now();
+    let uid = rand::thread_rng().gen_range(2..5_001);
+    let url = user.build_url(format!("/user/{}", &uid).as_str()).unwrap();
+    let response = isahc::get_async(&url).await;
+
+    match response {
+        Ok(mut r) => {
+            // Copy the headers so we have them for logging if there are errors.
+            let headers = &r.headers().clone();
+            let status = r.status();
+            let mut request_metric = util::build_request_metric(
+                user,
+                GooseMethod::Get,
+                &url,
+                Some(headers),
+                "",
+                started,
+                status,
+            );
+            request_metric.name = "/user/{}".to_string();
+            r.consume().await.unwrap();
+            user.send_request_metric_to_parent(request_metric)?;
+        }
+        Err(e) => {
+            let mut request_metric = util::build_request_metric(
+                user,
+                GooseMethod::Get,
+                &url,
+                None,
+                &e.to_string(),
+                started,
+                http::StatusCode::from_u16(500).unwrap(),
+            );
+            request_metric.name = "/user/{}".to_string();
+            user.send_request_metric_to_parent(request_metric.clone())?;
+            return user.set_failure(
+                &format!("user page: no response from server: {}", e),
                 &mut request_metric,
                 None,
                 None,
