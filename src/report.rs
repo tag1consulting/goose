@@ -20,10 +20,7 @@ pub struct GooseReportTemplates<'a> {
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
     pub graph_rps_template: &'a str,
-    pub graph_eps_template: &'a str,
     pub graph_average_response_time_template: &'a str,
-    pub graph_users_per_second_template: &'a str,
-    pub graph_tasks_per_second_template: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -318,10 +315,19 @@ pub fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
 }
 
 /// If task metrics are enabled, add a task metrics table to the html report.
-pub fn task_metrics_template(task_rows: &str) -> String {
+pub fn task_metrics_template(
+    task_rows: &str,
+    graph_tasks_per_second: &str,
+    graph_users_per_second: &str,
+) -> String {
     format!(
         r#"<div class="tasks">
         <h2>Task Metrics</h2>
+
+        {graph_tasks_per_second}
+
+        {graph_users_per_second}
+
         <table>
             <thead>
                 <tr>
@@ -341,6 +347,8 @@ pub fn task_metrics_template(task_rows: &str) -> String {
         </table>
     </div>"#,
         task_rows = task_rows,
+        graph_users_per_second = graph_users_per_second,
+        graph_tasks_per_second = graph_tasks_per_second,
     )
 }
 
@@ -379,10 +387,13 @@ pub fn task_metrics_row(metric: TaskMetric) -> String {
 }
 
 /// If there are errors, add an errors table to the html report.
-pub fn errors_template(error_rows: &str) -> String {
+pub fn errors_template(error_rows: &str, graph: &str) -> String {
     format!(
         r#"<div class="errors">
         <h2>Errors</h2>
+
+        {graph}
+
         <table>
             <thead>
                 <tr>
@@ -396,6 +407,7 @@ pub fn errors_template(error_rows: &str) -> String {
         </table>
     </div>"#,
         error_rows = error_rows,
+        graph = graph,
     )
 }
 
@@ -419,7 +431,6 @@ pub fn graph_rps_template(
     stopped: Option<DateTime<Local>>,
 ) -> String {
     graph_template(
-        "Requests per second",
         "graph-rps",
         "Requests #",
         rps,
@@ -438,7 +449,6 @@ pub fn graph_eps_template(
     stopped: Option<DateTime<Local>>,
 ) -> String {
     graph_template(
-        "Errors per second",
         "graph-eps",
         "Errors #",
         eps,
@@ -457,7 +467,6 @@ pub fn graph_average_response_time_template(
     stopped: Option<DateTime<Local>>,
 ) -> String {
     graph_template(
-        "Average response time",
         "graph-avg-response-time",
         "Response time [ms]",
         response_times,
@@ -476,7 +485,6 @@ pub fn graph_users_per_second_template(
     stopped: Option<DateTime<Local>>,
 ) -> String {
     graph_template(
-        "Active users",
         "graph-active-users",
         "Active users #",
         users,
@@ -495,7 +503,6 @@ pub fn graph_tasks_per_second_template(
     stopped: Option<DateTime<Local>>,
 ) -> String {
     graph_template(
-        "Active tasks",
         "graph-active-tasks",
         "Active tasks #",
         tasks,
@@ -508,7 +515,6 @@ pub fn graph_tasks_per_second_template(
 
 #[allow(clippy::too_many_arguments)]
 fn graph_template(
-    title: &str,
     html_id: &str,
     y_axis_label: &str,
     data: &[(String, u32)],
@@ -556,8 +562,7 @@ fn graph_template(
     };
 
     format!(
-        r#"<div class="{html_id}">
-        <h2>{title}</h2>
+        r#"<div class="graph">
             <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
 
             <script type="text/javascript">
@@ -623,7 +628,6 @@ fn graph_template(
                 }});
             </script>
         </div>"#,
-        title = title,
         html_id = html_id,
         values = json!(data),
         starting_area = starting_area,
@@ -641,18 +645,6 @@ pub fn build_report(
 ) -> String {
     let pkg_name = env!("CARGO_PKG_NAME");
     let pkg_version = env!("CARGO_PKG_VERSION");
-
-    let echarts_include;
-    if !templates.graph_rps_template.is_empty()
-        || !templates.graph_eps_template.is_empty()
-        || !templates.graph_average_response_time_template.is_empty()
-        || !templates.graph_users_per_second_template.is_empty()
-        || !templates.graph_tasks_per_second_template.is_empty()
-    {
-        echarts_include = "<script src=\"https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js\"></script>".to_string();
-    } else {
-        echarts_include = "".to_string();
-    }
 
     format!(
         r#"<!DOCTYPE html>
@@ -712,8 +704,12 @@ pub fn build_report(
         .download a {{
             color: #00ca5a;
         }}
+
+        .graph {{
+            margin-bottom: 1em;
+        }}
     </style>
-    {echarts}
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -728,6 +724,9 @@ pub fn build_report(
 
         <div class="requests">
             <h2>Request Metrics</h2>
+
+            {graph_rps_template}
+
             <table>
                 <thead>
                     <tr>
@@ -752,6 +751,9 @@ pub fn build_report(
 
         <div class="responses">
             <h2>Response Time Metrics</h2>
+
+            {graph_average_response_time_template}
+
             <table>
                 <thead>
                     <tr>
@@ -781,16 +783,6 @@ pub fn build_report(
 
         {errors_template}
 
-        {graph_rps_template}
-
-        {graph_eps_template}
-
-        {graph_average_response_time_template}
-
-        {graph_users_per_second_template}
-
-        {graph_tasks_per_second_template}
-
     </div>
 </body>
 </html>"#,
@@ -806,12 +798,8 @@ pub fn build_report(
         tasks_template = templates.tasks_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
-        echarts = echarts_include,
         graph_rps_template = templates.graph_rps_template,
-        graph_eps_template = templates.graph_eps_template,
         graph_average_response_time_template = templates.graph_average_response_time_template,
-        graph_users_per_second_template = templates.graph_users_per_second_template,
-        graph_tasks_per_second_template = templates.graph_tasks_per_second_template,
     )
 }
 
@@ -819,10 +807,9 @@ pub fn build_report(
 mod test {
     use super::*;
 
-    fn expected_graph_html_prefix(title: &str, html_id: &str, y_axis_label: &str) -> String {
+    fn expected_graph_html_prefix(html_id: &str, y_axis_label: &str) -> String {
         format!(
-            r#"<div class="{html_id}">
-        <h2>{title}</h2>
+            r#"<div class="graph">
             <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
 
             <script type="text/javascript">
@@ -878,7 +865,6 @@ mod test {
                             markArea: {{
                                 itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
 "#,
-            title = title,
             html_id = html_id,
             y_axis_label = y_axis_label
         )
@@ -886,8 +872,7 @@ mod test {
 
     #[test]
     fn test_graph_rps_template() {
-        let expected_prefix =
-            expected_graph_html_prefix("Requests per second", "graph-rps", "Requests #");
+        let expected_prefix = expected_graph_html_prefix("graph-rps", "Requests #");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
@@ -1018,8 +1003,7 @@ mod test {
 
     #[test]
     fn test_graph_eps_template() {
-        let expected_prefix =
-            expected_graph_html_prefix("Errors per second", "graph-eps", "Errors #");
+        let expected_prefix = expected_graph_html_prefix("graph-eps", "Errors #");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
@@ -1150,11 +1134,8 @@ mod test {
 
     #[test]
     fn test_graph_average_response_time_template() {
-        let expected_prefix = expected_graph_html_prefix(
-            "Average response time",
-            "graph-avg-response-time",
-            "Response time [ms]",
-        );
+        let expected_prefix =
+            expected_graph_html_prefix("graph-avg-response-time", "Response time [ms]");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
@@ -1288,8 +1269,7 @@ mod test {
 
     #[test]
     fn test_graph_users_per_second_template() {
-        let expected_prefix =
-            expected_graph_html_prefix("Active users", "graph-active-users", "Active users #");
+        let expected_prefix = expected_graph_html_prefix("graph-active-users", "Active users #");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
@@ -1423,8 +1403,7 @@ mod test {
 
     #[test]
     fn test_graph_tasks_per_second_template() {
-        let expected_prefix =
-            expected_graph_html_prefix("Active tasks", "graph-active-tasks", "Active tasks #");
+        let expected_prefix = expected_graph_html_prefix("graph-active-tasks", "Active tasks #");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),

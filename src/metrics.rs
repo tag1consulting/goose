@@ -2802,6 +2802,89 @@ impl GooseAttack {
                     merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
             }
 
+            // Generate graphs
+
+            // If the metrics were reset when the load test was started we don't display
+            // the starting period on the graph.
+            let (graph_starting, graph_started) = if self.configuration.no_reset_metrics
+                && Some(starting) == self.metrics.starting
+                && Some(started) == self.metrics.started
+            {
+                (Some(starting), Some(started))
+            } else {
+                (None, None)
+            };
+
+            // If stopping was done in less than a second do not display it as it won't be visible
+            // on the graph.
+            let (graph_stopping, graph_stopped) = if Some(stopping) == self.metrics.stopping
+                && Some(stopped) == self.metrics.stopped
+                && stopped == stopping
+            {
+                (Some(stopping), Some(stopped))
+            } else {
+                (None, None)
+            };
+
+            let mut total_graph_seconds = 0;
+            for path_metric in self.metrics.requests.values() {
+                total_graph_seconds =
+                    max(total_graph_seconds, path_metric.requests_per_second.len());
+            }
+            for path_metric in self.metrics.requests.values() {
+                total_graph_seconds = max(total_graph_seconds, path_metric.errors_per_second.len());
+            }
+            for path_metric in self.metrics.requests.values() {
+                total_graph_seconds = max(
+                    total_graph_seconds,
+                    path_metric.average_response_time_per_second.len(),
+                );
+            }
+            total_graph_seconds = max(total_graph_seconds, self.metrics.users_per_second.len());
+
+            // Generate requests per second graph.
+            let mut rps = vec![0; total_graph_seconds];
+            for path_metric in self.metrics.requests.values() {
+                for (second, count) in path_metric.requests_per_second.iter().enumerate() {
+                    rps[second] += count;
+                }
+            }
+
+            let graph_rps_template = report::graph_rps_template(
+                &self.add_timestamp_to_html_graph_data(rps, &starting, &started),
+                graph_starting,
+                graph_started,
+                graph_stopping,
+                graph_stopped,
+            );
+
+            // Generate average response times per second graph.
+            let mut response_times = vec![(0, 0.0); total_graph_seconds];
+            for path_metric in self.metrics.requests.values() {
+                for (second, avg) in path_metric
+                    .average_response_time_per_second
+                    .iter()
+                    .enumerate()
+                {
+                    response_times[second].0 += 1;
+                    response_times[second].1 +=
+                        avg.1 - response_times[second].1 / response_times[second].0 as f32;
+                }
+            }
+
+            let response_times = response_times
+                .iter()
+                .map(|(_, average)| *average as u32)
+                .collect::<Vec<_>>();
+
+            let graph_average_response_time_template = report::graph_average_response_time_template(
+                &self.add_timestamp_to_html_graph_data(response_times, &starting, &started),
+                graph_starting,
+                graph_started,
+                graph_stopping,
+                graph_stopped,
+            );
+
             // Prepare aggregate per-request metrics.
             let (raw_aggregate_requests_per_second, raw_aggregate_failures_per_second) =
                 per_second_calculations(
@@ -3045,7 +3128,37 @@ impl GooseAttack {
                     tasks_rows.push(report::task_metrics_row(metric));
                 }
 
-                tasks_template = report::task_metrics_template(&tasks_rows.join("\n"));
+                // Generate active users graph.
+                let graph_users_per_second = report::graph_users_per_second_template(
+                    &self.add_timestamp_to_html_graph_data(
+                        self.metrics.users_per_second.clone(),
+                        &starting,
+                        &started,
+                    ),
+                    graph_starting,
+                    graph_started,
+                    graph_stopping,
+                    graph_stopped,
+                );
+
+                // Generate active tasks graph.
+                let graph_tasks_per_second = report::graph_tasks_per_second_template(
+                    &self.add_timestamp_to_html_graph_data(
+                        self.metrics.tasks_per_second.clone(),
+                        &starting,
+                        &started,
+                    ),
+                    graph_starting,
+                    graph_started,
+                    graph_stopping,
+                    graph_stopped,
+                );
+
+                tasks_template = report::task_metrics_template(
+                    &tasks_rows.join("\n"),
+                    &graph_tasks_per_second,
+                    &graph_users_per_second,
+                );
             } else {
                 tasks_template = "".to_string();
             }
@@ -3057,7 +3170,25 @@ impl GooseAttack {
                 for error in self.metrics.errors.values() {
                     error_rows.push(report::error_row(error));
                 }
-                errors_template = report::errors_template(&error_rows.join("\n"));
+
+                // Generate errors per second graph.
+                let mut eps = vec![0; total_graph_seconds];
+                for path_metric in self.metrics.requests.values() {
+                    for (second, count) in path_metric.errors_per_second.iter().enumerate() {
+                        eps[second] += count;
+                    }
+                }
+
+                let graph_eps_template = report::graph_eps_template(
+                    &self.add_timestamp_to_html_graph_data(eps, &starting, &started),
+                    graph_starting,
+                    graph_started,
+                    graph_stopping,
+                    graph_stopped,
+                );
+
+                errors_template =
+                    report::errors_template(&error_rows.join("\n"), &graph_eps_template);
             } else {
                 errors_template = "".to_string();
             }
@@ -3115,127 +3246,6 @@ impl GooseAttack {
                 status_code_template = "".to_string();
             }
 
-            // Generate graphs
-
-            // If the metrics were reset when the load test was started we don't display
-            // the starting period on the graph.
-            let (graph_starting, graph_started) = if self.configuration.no_reset_metrics
-                && Some(starting) == self.metrics.starting
-                && Some(started) == self.metrics.started
-            {
-                (Some(starting), Some(started))
-            } else {
-                (None, None)
-            };
-
-            // If stopping was done in less than a second do not display it as it won't be visible
-            // on the graph.
-            let (graph_stopping, graph_stopped) = if Some(stopping) == self.metrics.stopping
-                && Some(stopped) == self.metrics.stopped
-                && stopped == stopping
-            {
-                (Some(stopping), Some(stopped))
-            } else {
-                (None, None)
-            };
-
-            let mut count = 0;
-            for path_metric in self.metrics.requests.values() {
-                count = max(count, path_metric.requests_per_second.len());
-            }
-            for path_metric in self.metrics.requests.values() {
-                count = max(count, path_metric.errors_per_second.len());
-            }
-            for path_metric in self.metrics.requests.values() {
-                count = max(count, path_metric.average_response_time_per_second.len());
-            }
-            count = max(count, self.metrics.users_per_second.len());
-
-            // Generate requests per second graph.
-            let mut rps = vec![0; count];
-            for path_metric in self.metrics.requests.values() {
-                for (second, count) in path_metric.requests_per_second.iter().enumerate() {
-                    rps[second] += count;
-                }
-            }
-
-            let graph_rps_template = report::graph_rps_template(
-                &self.add_timestamp_to_html_graph_data(rps, &starting, &started),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
-
-            // Generate errors per second graph.
-            let mut eps = vec![0; count];
-            for path_metric in self.metrics.requests.values() {
-                for (second, count) in path_metric.errors_per_second.iter().enumerate() {
-                    eps[second] += count;
-                }
-            }
-
-            let graph_eps_template = report::graph_eps_template(
-                &self.add_timestamp_to_html_graph_data(eps, &starting, &started),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
-
-            // Generate average response times per second graph.
-            let mut response_times = vec![(0, 0.0); count];
-            for path_metric in self.metrics.requests.values() {
-                for (second, avg) in path_metric
-                    .average_response_time_per_second
-                    .iter()
-                    .enumerate()
-                {
-                    response_times[second].0 += 1;
-                    response_times[second].1 +=
-                        avg.1 - response_times[second].1 / response_times[second].0 as f32;
-                }
-            }
-
-            let response_times = response_times
-                .iter()
-                .map(|(_, average)| *average as u32)
-                .collect::<Vec<_>>();
-
-            let graph_average_response_time_template = report::graph_average_response_time_template(
-                &self.add_timestamp_to_html_graph_data(response_times, &starting, &started),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
-
-            // Generate active users graph.
-            let graph_users_per_second_template = report::graph_users_per_second_template(
-                &self.add_timestamp_to_html_graph_data(
-                    self.metrics.users_per_second.clone(),
-                    &starting,
-                    &started,
-                ),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
-
-            // Generate active tasks graph.
-            let graph_tasks_per_second_template = report::graph_tasks_per_second_template(
-                &self.add_timestamp_to_html_graph_data(
-                    self.metrics.tasks_per_second.clone(),
-                    &starting,
-                    &started,
-                ),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
-
             // Compile the report template.
             let report = report::build_report(
                 &users,
@@ -3250,10 +3260,7 @@ impl GooseAttack {
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
                     graph_rps_template: &graph_rps_template,
-                    graph_eps_template: &graph_eps_template,
                     graph_average_response_time_template: &graph_average_response_time_template,
-                    graph_users_per_second_template: &graph_users_per_second_template,
-                    graph_tasks_per_second_template: &graph_tasks_per_second_template,
                 },
             );
 
