@@ -396,11 +396,14 @@ pub struct GooseRequestMetricAggregate {
     /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
     /// that all Workers are running the same load test plan.
     pub load_test_hash: u64,
-    // Counts requests per second. Each element of the vector represents one second.
+    /// Counts requests per second. Each element of the vector represents one second.
     pub requests_per_second: Vec<u32>,
-    // Counts errors per second. Each element of the vector represents one second.
+    /// Counts errors per second. Each element of the vector represents one second.
     pub errors_per_second: Vec<u32>,
-    // Maintains average response time per second. Each element of the vector represents one second.
+    /// Maintains average response time per second. Each element of the vector represents one second.
+    ///
+    /// First element of the tuple is a number of data points that we used to calculate the average so
+    /// far and the second element of the tuple is the current average value.
     pub average_response_time_per_second: Vec<(u32, f32)>,
 }
 impl GooseRequestMetricAggregate {
@@ -494,6 +497,9 @@ impl GooseRequestMetricAggregate {
             second,
             (0, 0.0),
         );
+        // First element of the tuple is a number of data points that we used
+        // to calculate the average so far and the second element of the tuple
+        // is the current average value.
         self.average_response_time_per_second[second].0 += 1;
         self.average_response_time_per_second[second].1 += (response_time as f32
             - self.average_response_time_per_second[second].1)
@@ -506,6 +512,12 @@ impl GooseRequestMetricAggregate {
     }
 }
 
+/// Expands vectors that collect per-second data for HTML report graphs with a
+/// default value.
+///
+/// We need to do that since we don't know for how long the load test will run
+/// and we can't initialize these vectors at the beginning. It is also
+/// better to do it as we go to save memory.
 fn expand_per_second_metric_array<T: Clone>(data: &mut Vec<T>, second: usize, initial: T) {
     // Each element in per second metric vectors (self.requests_per_second,
     // self.errors_per_second, ...) is count for a given second since the start
@@ -520,6 +532,11 @@ fn expand_per_second_metric_array<T: Clone>(data: &mut Vec<T>, second: usize, in
 
 /// Implement equality for GooseRequestMetricAggregate. We can't simply derive since
 /// we have floats in the struct.
+///
+/// `Eq` trait has no functions on it - it is there only to inform the compiler
+/// that this is an equivalence rather than a partial equivalence.
+///
+/// See https://doc.rust-lang.org/std/cmp/trait.Eq.html for more information.
 impl Eq for GooseRequestMetricAggregate {}
 
 /// Implement ordering for GooseRequestMetricAggregate.
@@ -2214,6 +2231,10 @@ impl GooseMetrics {
         Ok(())
     }
 
+    /// Records number of tasks and users for a current second.
+    ///
+    /// This is called from [`GooseAttack::receive_metrics()`] and the data
+    /// collected is used to display users and tasks graphs on the HTML report.
     pub(crate) fn record_users_tasks_per_second(&mut self, tasks: u32) {
         if let Some(starting) = self.starting {
             let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
