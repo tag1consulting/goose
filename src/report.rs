@@ -478,7 +478,7 @@ pub fn graph_average_response_time_template(
 }
 
 pub fn graph_users_per_second_template(
-    users: &[(String, u32)],
+    users: &[(String, usize)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
     stopping: Option<DateTime<Local>>,
@@ -514,10 +514,10 @@ pub fn graph_tasks_per_second_template(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn graph_template(
+fn graph_template<T: Serialize>(
     html_id: &str,
     y_axis_label: &str,
-    data: &[(String, u32)],
+    data: &[(String, T)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
     stopping: Option<DateTime<Local>>,

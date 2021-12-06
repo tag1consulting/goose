@@ -917,7 +917,7 @@ pub struct GooseMetrics {
     pub users: usize,
     /// Number of users at the end of each second of the test. Each element of the vector
     /// represents one second.
-    pub users_per_second: Vec<u32>,
+    pub users_per_second: Vec<usize>,
     /// Tracks details about each request made during the load test.
     ///
     /// Can be disabled with the `--no-metrics` run-time option, or with
@@ -2219,7 +2219,7 @@ impl GooseMetrics {
             let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
 
             expand_per_second_metric_array(&mut self.users_per_second, second, 0);
-            self.users_per_second[second] = self.users as u32;
+            self.users_per_second[second] = self.users;
 
             expand_per_second_metric_array(&mut self.tasks_per_second, second, 0);
             self.tasks_per_second[second] = tasks;
@@ -3284,12 +3284,12 @@ impl GooseAttack {
         Ok(())
     }
 
-    fn add_timestamp_to_html_graph_data(
+    fn add_timestamp_to_html_graph_data<T: Copy>(
         &self,
-        data: Vec<u32>,
+        data: Vec<T>,
         starting: &DateTime<Local>,
         started: &DateTime<Local>,
-    ) -> Vec<(String, u32)> {
+    ) -> Vec<(String, T)> {
         data.iter()
             .enumerate()
             .filter(|(second, _)| {
