@@ -2395,6 +2395,15 @@ impl GooseAttack {
                 }
             }
 
+            // Record current users and tasks for users/tasks per second graph in HTML report.
+            if self.attack_mode != AttackMode::Worker {
+                let mut tasks = 0;
+                for set in self.task_sets.iter() {
+                    tasks += set.tasks.len();
+                }
+                self.metrics.record_users_tasks_per_second(tasks as u32);
+            }
+
             // Load messages from user threads until the receiver queue is empty.
             let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
 
@@ -2562,12 +2571,6 @@ impl GooseAttack {
     ) -> Result<bool, GooseError> {
         let mut received_message = false;
         let mut message = goose_attack_run_state.metrics_rx.try_recv();
-
-        let mut tasks = 0;
-        for set in self.task_sets.iter() {
-            tasks += set.tasks.len();
-        }
-        self.metrics.record_users_tasks_per_second(tasks as u32);
 
         // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
         let receive_timeout = 400;
