@@ -942,7 +942,7 @@ pub struct GooseMetrics {
     pub tasks: GooseTaskMetrics,
     /// Number of tasks at the end of each second of the test. Each element of the vector
     /// represents one second.
-    pub tasks_per_second: Vec<u32>,
+    pub tasks_per_second: Vec<usize>,
     /// Tracks and counts each time an error is detected during the load test.
     ///
     /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
@@ -2228,7 +2228,7 @@ impl GooseMetrics {
     ///
     /// This is called from [`GooseAttack::receive_metrics()`] and the data
     /// collected is used to display users and tasks graphs on the HTML report.
-    pub(crate) fn record_users_tasks_per_second(&mut self, tasks: u32) {
+    pub(crate) fn record_users_tasks_per_second(&mut self, tasks: usize) {
         if let Some(starting) = self.starting {
             let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
 
@@ -2394,7 +2394,7 @@ impl GooseAttack {
                 for set in self.task_sets.iter() {
                     tasks += set.tasks.len();
                 }
-                self.metrics.record_users_tasks_per_second(tasks as u32);
+                self.metrics.record_users_tasks_per_second(tasks);
             }
 
             // Load messages from user threads until the receiver queue is empty.

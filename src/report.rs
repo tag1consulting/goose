@@ -495,8 +495,8 @@ pub fn graph_users_per_second_template(
     )
 }
 
-pub fn graph_tasks_per_second_template(
-    tasks: &[(String, u32)],
+pub fn graph_tasks_per_second_template<T: Serialize>(
+    tasks: &[(String, T)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
     stopping: Option<DateTime<Local>>,
