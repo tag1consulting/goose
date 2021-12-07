@@ -2173,7 +2173,11 @@ impl GooseMetrics {
         let (running_seconds, running_minutes, running_hours) =
             self.get_seconds_minutes_hours(&started, &stopping);
         let stopping_time = stopping.format("%Y-%m-%d %H:%M:%S").to_string();
-        let stopped = self.stopped.unwrap();
+        let stopped = if self.stopped.is_some() {
+            self.stopped.unwrap()
+        } else {
+            Local::now()
+        };
         let stopped_time = stopped.format("%Y-%m-%d %H:%M:%S").to_string();
         let (stopping_seconds, stopping_minutes, stopping_hours) =
             self.get_seconds_minutes_hours(&stopping, &stopped);
