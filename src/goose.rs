@@ -287,6 +287,7 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
+use chrono::Utc;
 use downcast_rs::{impl_downcast, Downcast};
 use http::method::Method;
 use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
@@ -1510,6 +1511,7 @@ impl GooseUser {
 
         // Once past the throttle, the request is officially started.
         let started = Instant::now();
+        let request_time = Utc::now();
 
         // Create a Reqwest Request object from the RequestBuilder.
         let built_request = request_builder.build()?;
@@ -1558,6 +1560,7 @@ impl GooseUser {
             request_name,
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
+            request_time,
         );
 
         // Make the actual request.

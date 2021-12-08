@@ -293,6 +293,8 @@ impl GooseRawRequest {
 /// knows which request is being updated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseRequestMetric {
+    // Time when the request was started.
+    pub request_time: u64,
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
     /// The raw request that the GooseClient made.
@@ -324,8 +326,15 @@ pub struct GooseRequestMetric {
     pub user_cadence: u64,
 }
 impl GooseRequestMetric {
-    pub(crate) fn new(raw: GooseRawRequest, name: &str, elapsed: u128, user: usize) -> Self {
+    pub(crate) fn new(
+        raw: GooseRawRequest,
+        name: &str,
+        elapsed: u128,
+        user: usize,
+        request_time: DateTime<Utc>,
+    ) -> Self {
         GooseRequestMetric {
+            request_time: request_time.timestamp() as u64,
             elapsed: elapsed as u64,
             raw,
             name: name.to_string(),
@@ -2232,10 +2241,18 @@ impl GooseMetrics {
         if let Some(starting) = self.starting {
             let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
 
-            expand_per_second_metric_array(&mut self.users_per_second, second, 0);
+            let last_user_count = match self.users_per_second.last() {
+                Some(last) => *last,
+                None => 0,
+            };
+            expand_per_second_metric_array(&mut self.users_per_second, second, last_user_count);
             self.users_per_second[second] = self.users;
 
-            expand_per_second_metric_array(&mut self.tasks_per_second, second, 0);
+            let last_task_count = match self.tasks_per_second.last() {
+                Some(last) => *last,
+                None => 0,
+            };
+            expand_per_second_metric_array(&mut self.tasks_per_second, second, last_task_count);
             self.tasks_per_second[second] = tasks;
         }
     }
@@ -2530,7 +2547,7 @@ impl GooseAttack {
             if !self.configuration.report_file.is_empty() {
                 if let Some(starting) = self.metrics.starting {
                     let second_since_start =
-                        (Utc::now().timestamp() - starting.timestamp()) as usize;
+                        (request_metric.request_time - starting.timestamp() as u64) as usize;
 
                     merge_request.record_requests_per_second(second_since_start);
                     merge_request.record_average_response_time_per_second(
@@ -3558,7 +3575,9 @@ mod test {
     fn goose_raw_request() {
         const PATH: &str = "http://127.0.0.1/";
         let raw_request = GooseRawRequest::new(GooseMethod::Get, PATH, vec![], "");
-        let mut request_metric = GooseRequestMetric::new(raw_request, "/", 0, 0);
+        let now = Utc::now();
+        let mut request_metric = GooseRequestMetric::new(raw_request, "/", 0, 0, now);
+        assert_eq!(request_metric.request_time, now.timestamp() as u64);
         assert_eq!(request_metric.raw.method, GooseMethod::Get);
         assert_eq!(request_metric.raw.url, PATH.to_string());
         assert_eq!(request_metric.name, "/".to_string());
