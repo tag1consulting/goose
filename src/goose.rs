@@ -1511,7 +1511,6 @@ impl GooseUser {
 
         // Once past the throttle, the request is officially started.
         let started = Instant::now();
-        let request_time = Utc::now();
 
         // Create a Reqwest Request object from the RequestBuilder.
         let built_request = request_builder.build()?;
@@ -1560,7 +1559,6 @@ impl GooseUser {
             request_name,
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
-            request_time,
         );
 
         // Make the actual request.
