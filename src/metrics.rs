@@ -2716,7 +2716,11 @@ impl GooseAttack {
             let stopping = self.metrics.stopping.unwrap();
             let (running_seconds, running_minutes, running_hours) =
                 self.metrics.get_seconds_minutes_hours(&started, &stopping);
-            let stopped = self.metrics.stopped.unwrap();
+            let stopped = if self.metrics.stopped.is_some() {
+                self.metrics.stopped.unwrap()
+            } else {
+                Local::now()
+            };
             let (stopping_seconds, stopping_minutes, stopping_hours) =
                 self.metrics.get_seconds_minutes_hours(&stopping, &stopped);
 
