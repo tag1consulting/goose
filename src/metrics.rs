@@ -2229,18 +2229,10 @@ impl GooseMetrics {
     /// This is called from [`GooseAttack::receive_metrics()`] and the data
     /// collected is used to display users and tasks graphs on the HTML report.
     pub(crate) fn record_users_tasks_per_second(&mut self, tasks: usize, second: usize) {
-        let last_user_count = match self.users_per_second.last() {
-            Some(last) => *last,
-            None => 0,
-        };
-        expand_per_second_metric_array(&mut self.users_per_second, second, last_user_count);
+        expand_per_second_metric_array(&mut self.users_per_second, second, 0);
         self.users_per_second[second] = self.users;
 
-        let last_task_count = match self.tasks_per_second.last() {
-            Some(last) => *last,
-            None => 0,
-        };
-        expand_per_second_metric_array(&mut self.tasks_per_second, second, last_task_count);
+        expand_per_second_metric_array(&mut self.tasks_per_second, second, 0);
         self.tasks_per_second[second] = tasks;
     }
 }
