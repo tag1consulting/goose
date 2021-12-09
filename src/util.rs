@@ -474,6 +474,7 @@ impl MovingAverage {
 }
 
 impl Default for MovingAverage {
+    /// Creates an empty moving average.
     fn default() -> MovingAverage {
         MovingAverage::new()
     }

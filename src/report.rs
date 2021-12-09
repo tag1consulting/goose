@@ -423,6 +423,7 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
     )
 }
 
+/// Build a requests per second graph.
 pub fn graph_rps_template(
     rps: &[(String, u32)],
     starting: Option<DateTime<Local>>,
@@ -441,6 +442,7 @@ pub fn graph_rps_template(
     )
 }
 
+/// Build an errors per second graph.
 pub fn graph_eps_template(
     eps: &[(String, u32)],
     starting: Option<DateTime<Local>>,
@@ -459,6 +461,7 @@ pub fn graph_eps_template(
     )
 }
 
+/// Build an average response time graph.
 pub fn graph_average_response_time_template(
     response_times: &[(String, u32)],
     starting: Option<DateTime<Local>>,
@@ -477,6 +480,7 @@ pub fn graph_average_response_time_template(
     )
 }
 
+/// Build a users per second graph.
 pub fn graph_users_per_second_template(
     users: &[(String, usize)],
     starting: Option<DateTime<Local>>,
@@ -495,6 +499,7 @@ pub fn graph_users_per_second_template(
     )
 }
 
+/// Build a tasks per second graph.
 pub fn graph_tasks_per_second_template<T: Serialize>(
     tasks: &[(String, T)],
     starting: Option<DateTime<Local>>,
@@ -513,6 +518,8 @@ pub fn graph_tasks_per_second_template<T: Serialize>(
     )
 }
 
+/// Helper function to build HTML charts powered by the
+/// [ECharts](https://echarts.apache.org) library.
 #[allow(clippy::too_many_arguments)]
 fn graph_template<T: Serialize>(
     html_id: &str,

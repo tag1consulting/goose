@@ -529,7 +529,7 @@ fn expand_per_second_metric_array<T: Clone>(data: &mut Vec<T>, second: usize, in
 /// `Eq` trait has no functions on it - it is there only to inform the compiler
 /// that this is an equivalence rather than a partial equivalence.
 ///
-/// See https://doc.rust-lang.org/std/cmp/trait.Eq.html for more information.
+/// See <https://doc.rust-lang.org/std/cmp/trait.Eq.html> for more information.
 impl Eq for GooseRequestMetricAggregate {}
 
 /// Implement ordering for GooseRequestMetricAggregate.
@@ -3291,6 +3291,11 @@ impl GooseAttack {
         Ok(())
     }
 
+    /// Adds timestamps to the graph data series to ensure correct time display on x axis.
+    ///
+    /// Will take a vector of (generally numerical) values and convert them into tuples where
+    /// the second element will be the data point and the first element will be formatted time
+    /// it belongs to.
     fn add_timestamp_to_html_graph_data<T: Copy>(
         &self,
         data: Vec<T>,
