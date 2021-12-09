@@ -2579,7 +2579,7 @@ impl GooseAttack {
             match message.unwrap() {
                 GooseMetric::Request(request_metric) => {
                     // If there was an error, store it.
-                    if !request_metric.success && !request_metric.error.is_empty() {
+                    if !request_metric.error.is_empty() {
                         self.record_error(&request_metric, goose_attack_run_state);
                     }
 

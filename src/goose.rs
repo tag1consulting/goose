@@ -287,7 +287,6 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use chrono::Utc;
 use downcast_rs::{impl_downcast, Downcast};
 use http::method::Method;
 use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
