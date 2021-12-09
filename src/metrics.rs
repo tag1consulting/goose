@@ -2228,24 +2228,20 @@ impl GooseMetrics {
     ///
     /// This is called from [`GooseAttack::receive_metrics()`] and the data
     /// collected is used to display users and tasks graphs on the HTML report.
-    pub(crate) fn record_users_tasks_per_second(&mut self, tasks: usize) {
-        if let Some(starting) = self.starting {
-            let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
+    pub(crate) fn record_users_tasks_per_second(&mut self, tasks: usize, second: usize) {
+        let last_user_count = match self.users_per_second.last() {
+            Some(last) => *last,
+            None => 0,
+        };
+        expand_per_second_metric_array(&mut self.users_per_second, second, last_user_count);
+        self.users_per_second[second] = self.users;
 
-            let last_user_count = match self.users_per_second.last() {
-                Some(last) => *last,
-                None => 0,
-            };
-            expand_per_second_metric_array(&mut self.users_per_second, second, last_user_count);
-            self.users_per_second[second] = self.users;
-
-            let last_task_count = match self.tasks_per_second.last() {
-                Some(last) => *last,
-                None => 0,
-            };
-            expand_per_second_metric_array(&mut self.tasks_per_second, second, last_task_count);
-            self.tasks_per_second[second] = tasks;
-        }
+        let last_task_count = match self.tasks_per_second.last() {
+            Some(last) => *last,
+            None => 0,
+        };
+        expand_per_second_metric_array(&mut self.tasks_per_second, second, last_task_count);
+        self.tasks_per_second[second] = tasks;
     }
 }
 
@@ -2394,15 +2390,6 @@ impl GooseAttack {
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
                     goose_attack_run_state.display_running_metrics = true;
                 }
-            }
-
-            // Record current users and tasks for users/tasks per second graph in HTML report.
-            if self.attack_mode != AttackMode::Worker {
-                let mut tasks = 0;
-                for set in self.task_sets.iter() {
-                    tasks += set.tasks.len();
-                }
-                self.metrics.record_users_tasks_per_second(tasks);
             }
 
             // Load messages from user threads until the receiver queue is empty.
@@ -2619,6 +2606,14 @@ impl GooseAttack {
                     // Store a new metric.
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
+
+                    // Record current users and tasks for users/tasks per second graph in HTML report.
+                    let mut tasks = 0;
+                    for set in self.task_sets.iter() {
+                        tasks += set.tasks.len();
+                    }
+                    self.metrics
+                        .record_users_tasks_per_second(tasks, (raw_task.elapsed / 1000) as usize);
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
