@@ -2892,6 +2892,19 @@ impl GooseAttack {
                 graph_stopped,
             );
 
+            // Generate active users graph.
+            let graph_users_per_second = report::graph_users_per_second_template(
+                &self.add_timestamp_to_html_graph_data(
+                    self.metrics.users_per_second.clone(),
+                    &starting,
+                    &started,
+                ),
+                graph_starting,
+                graph_started,
+                graph_stopping,
+                graph_stopped,
+            );
+
             // Prepare aggregate per-request metrics.
             let (raw_aggregate_requests_per_second, raw_aggregate_failures_per_second) =
                 per_second_calculations(
@@ -3135,19 +3148,6 @@ impl GooseAttack {
                     tasks_rows.push(report::task_metrics_row(metric));
                 }
 
-                // Generate active users graph.
-                let graph_users_per_second = report::graph_users_per_second_template(
-                    &self.add_timestamp_to_html_graph_data(
-                        self.metrics.users_per_second.clone(),
-                        &starting,
-                        &started,
-                    ),
-                    graph_starting,
-                    graph_started,
-                    graph_stopping,
-                    graph_stopped,
-                );
-
                 // Generate active tasks graph.
                 let graph_tasks_per_second = report::graph_tasks_per_second_template(
                     &self.add_timestamp_to_html_graph_data(
@@ -3161,11 +3161,8 @@ impl GooseAttack {
                     graph_stopped,
                 );
 
-                tasks_template = report::task_metrics_template(
-                    &tasks_rows.join("\n"),
-                    &graph_tasks_per_second,
-                    &graph_users_per_second,
-                );
+                tasks_template =
+                    report::task_metrics_template(&tasks_rows.join("\n"), &graph_tasks_per_second);
             } else {
                 tasks_template = "".to_string();
             }
@@ -3268,6 +3265,7 @@ impl GooseAttack {
                     errors_template: &errors_template,
                     graph_rps_template: &graph_rps_template,
                     graph_average_response_time_template: &graph_average_response_time_template,
+                    graph_users_per_second: &graph_users_per_second,
                 },
             );
 

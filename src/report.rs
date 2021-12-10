@@ -21,6 +21,7 @@ pub struct GooseReportTemplates<'a> {
     pub errors_template: &'a str,
     pub graph_rps_template: &'a str,
     pub graph_average_response_time_template: &'a str,
+    pub graph_users_per_second: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -315,18 +316,12 @@ pub fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
 }
 
 /// If task metrics are enabled, add a task metrics table to the html report.
-pub fn task_metrics_template(
-    task_rows: &str,
-    graph_tasks_per_second: &str,
-    graph_users_per_second: &str,
-) -> String {
+pub fn task_metrics_template(task_rows: &str, graph_tasks_per_second: &str) -> String {
     format!(
         r#"<div class="tasks">
         <h2>Task Metrics</h2>
 
         {graph_tasks_per_second}
-
-        {graph_users_per_second}
 
         <table>
             <thead>
@@ -347,7 +342,6 @@ pub fn task_metrics_template(
         </table>
     </div>"#,
         task_rows = task_rows,
-        graph_users_per_second = graph_users_per_second,
         graph_tasks_per_second = graph_tasks_per_second,
     )
 }
@@ -788,6 +782,11 @@ pub fn build_report(
 
         {tasks_template}
 
+        <div class="users">
+        <h2>User Metrics</h2>
+            {graph_users_per_second}
+        </div>
+
         {errors_template}
 
     </div>
@@ -807,6 +806,7 @@ pub fn build_report(
         errors_template = templates.errors_template,
         graph_rps_template = templates.graph_rps_template,
         graph_average_response_time_template = templates.graph_average_response_time_template,
+        graph_users_per_second = templates.graph_users_per_second,
     )
 }
 
