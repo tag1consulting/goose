@@ -726,6 +726,9 @@ pub struct GooseTaskMetricAggregate {
     pub success_count: usize,
     /// Total number of times task has failed.
     pub fail_count: usize,
+    /// Number of tasks at the end of each second of the test. Each element of the vector
+    /// represents one second.
+    pub tasks_per_second: Vec<usize>,
 }
 impl GooseTaskMetricAggregate {
     /// Create a new GooseTaskMetricAggregate.
@@ -747,6 +750,7 @@ impl GooseTaskMetricAggregate {
             counter: 0,
             success_count: 0,
             fail_count: 0,
+            tasks_per_second: Vec::new(),
         }
     }
 
@@ -798,6 +802,17 @@ impl GooseTaskMetricAggregate {
         };
         self.times.insert(rounded_time, counter);
         debug!("incremented {} counter: {}", rounded_time, counter);
+    }
+
+    /// Record tasks per second metric.
+    pub(crate) fn record_tasks_per_second(&mut self, second: usize) {
+        expand_per_second_metric_array(&mut self.tasks_per_second, second, 0);
+        self.tasks_per_second[second] += 1;
+
+        debug!(
+            "incremented second {} for tasks per second counter: {}",
+            second, self.tasks_per_second[second]
+        );
     }
 }
 
@@ -940,9 +955,6 @@ pub struct GooseMetrics {
     /// [GooseDefault::NoTaskMetrics](../config/enum.GooseDefault.html#variant.NoTaskMetrics) or
     /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub tasks: GooseTaskMetrics,
-    /// Number of tasks at the end of each second of the test. Each element of the vector
-    /// represents one second.
-    pub tasks_per_second: Vec<usize>,
     /// Tracks and counts each time an error is detected during the load test.
     ///
     /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
@@ -2224,16 +2236,21 @@ impl GooseMetrics {
         Ok(())
     }
 
-    /// Records number of tasks and users for a current second.
+    /// Records number of users for a current second.
     ///
-    /// This is called from [`GooseAttack::receive_metrics()`] and the data
-    /// collected is used to display users and tasks graphs on the HTML report.
-    pub(crate) fn record_users_tasks_per_second(&mut self, tasks: usize, second: usize) {
-        expand_per_second_metric_array(&mut self.users_per_second, second, 0);
-        self.users_per_second[second] = self.users;
+    /// This is called from [`GooseAttack::sync_metrics()`] and the data
+    /// collected is used to display users graph on the HTML report.
+    pub(crate) fn record_users_per_second(&mut self) {
+        if let Some(starting) = self.starting {
+            let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
 
-        expand_per_second_metric_array(&mut self.tasks_per_second, second, 0);
-        self.tasks_per_second[second] = tasks;
+            let last_user_count = match self.users_per_second.last() {
+                Some(last) => *last,
+                None => 0,
+            };
+            expand_per_second_metric_array(&mut self.users_per_second, second, last_user_count);
+            self.users_per_second[second] = self.users;
+        }
     }
 }
 
@@ -2383,6 +2400,9 @@ impl GooseAttack {
                     goose_attack_run_state.display_running_metrics = true;
                 }
             }
+
+            // Record current users for users per second graph in HTML report.
+            self.metrics.record_users_per_second();
 
             // Load messages from user threads until the receiver queue is empty.
             let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
@@ -2599,13 +2619,8 @@ impl GooseAttack {
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
 
-                    // Record current users and tasks for users/tasks per second graph in HTML report.
-                    let mut tasks = 0;
-                    for set in self.task_sets.iter() {
-                        tasks += set.tasks.len();
-                    }
-                    self.metrics
-                        .record_users_tasks_per_second(tasks, (raw_task.elapsed / 1000) as usize);
+                    self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
+                        .record_tasks_per_second((raw_task.elapsed / 1000) as usize);
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
@@ -2848,6 +2863,12 @@ impl GooseAttack {
                     total_graph_seconds,
                     path_metric.average_response_time_per_second.len(),
                 );
+            }
+            for task_set in self.metrics.tasks.iter() {
+                for task_metric in task_set.iter() {
+                    total_graph_seconds =
+                        max(total_graph_seconds, task_metric.tasks_per_second.len());
+                }
             }
             total_graph_seconds = max(total_graph_seconds, self.metrics.users_per_second.len());
 
@@ -3149,12 +3170,17 @@ impl GooseAttack {
                 }
 
                 // Generate active tasks graph.
+                let mut tps = vec![0; total_graph_seconds];
+                for task_set in self.metrics.tasks.iter() {
+                    for task_metric in task_set.iter() {
+                        for (second, count) in task_metric.tasks_per_second.iter().enumerate() {
+                            tps[second] += *count;
+                        }
+                    }
+                }
+
                 let graph_tasks_per_second = report::graph_tasks_per_second_template(
-                    &self.add_timestamp_to_html_graph_data(
-                        self.metrics.tasks_per_second.clone(),
-                        &starting,
-                        &started,
-                    ),
+                    &self.add_timestamp_to_html_graph_data(tps, &starting, &started),
                     graph_starting,
                     graph_started,
                     graph_stopping,

@@ -502,8 +502,8 @@ pub fn graph_tasks_per_second_template<T: Serialize>(
     stopped: Option<DateTime<Local>>,
 ) -> String {
     graph_template(
-        "graph-active-tasks",
-        "Active tasks #",
+        "graph-tps",
+        "Tasks #",
         tasks,
         starting,
         started,
@@ -1410,7 +1410,7 @@ mod test {
 
     #[test]
     fn test_graph_tasks_per_second_template() {
-        let expected_prefix = expected_graph_html_prefix("graph-active-tasks", "Active tasks #");
+        let expected_prefix = expected_graph_html_prefix("graph-tps", "Tasks #");
 
         let data = vec![
             ("2021-11-21 21:20:32".to_string(), 123),
