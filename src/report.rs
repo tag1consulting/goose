@@ -85,6 +85,157 @@ pub struct StatusCodeMetric {
     pub status_codes: String,
 }
 
+/// Defines the HTML graph data.
+#[derive(Debug)]
+struct Graph<'a, T: Serialize> {
+    pub html_id: &'a str,
+    pub y_axis_label: &'a str,
+    pub data: &'a [(String, T)],
+    pub starting: Option<DateTime<Local>>,
+    pub started: Option<DateTime<Local>>,
+    pub stopping: Option<DateTime<Local>>,
+    pub stopped: Option<DateTime<Local>>,
+}
+
+impl<'a, T: Serialize> Graph<'a, T> {
+    /// Creates a new Graph object.
+    fn new(
+        html_id: &'a str,
+        y_axis_label: &'a str,
+        data: &'a [(String, T)],
+        starting: Option<DateTime<Local>>,
+        started: Option<DateTime<Local>>,
+        stopping: Option<DateTime<Local>>,
+        stopped: Option<DateTime<Local>>,
+    ) -> Graph<'a, T> {
+        Graph {
+            html_id,
+            y_axis_label,
+            data,
+            starting,
+            started,
+            stopping,
+            stopped,
+        }
+    }
+
+    /// Helper function to build HTML charts powered by the
+    /// [ECharts](https://echarts.apache.org) library.
+    fn generate_markup(self) -> String {
+        let datetime_format = "%Y-%m-%d %H:%M:%S";
+
+        let starting_area = if self.starting.is_some() && self.started.is_some() {
+            format!(
+                r#"[
+                    {{
+                        name: 'Starting',
+                        xAxis: '{starting}'
+                    }},
+                    {{
+                        xAxis: '{started}'
+                    }}
+                ],"#,
+                starting = self.starting.unwrap().format(datetime_format),
+                started = self.started.unwrap().format(datetime_format),
+            )
+        } else {
+            "".to_string()
+        };
+
+        let stopping_area = if self.stopping.is_some() && self.stopped.is_some() {
+            format!(
+                r#"[
+                    {{
+                        name: 'Stopping',
+                        xAxis: '{stopping}'
+                    }},
+                    {{
+                        xAxis: '{stopped}'
+                    }}
+                ],"#,
+                stopping = self.stopping.unwrap().format(datetime_format),
+                stopped = self.stopped.unwrap().format(datetime_format),
+            )
+        } else {
+            "".to_string()
+        };
+
+        format!(
+            r#"<div class="graph">
+                <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
+
+                <script type="text/javascript">
+                    var chartDom = document.getElementById('{html_id}');
+                    var myChart = echarts.init(chartDom);
+
+                    myChart.setOption({{
+                        color: ['#2c664f'],
+                        tooltip: {{ trigger: 'axis' }},
+                        toolbox: {{
+                            feature: {{
+                                dataZoom: {{ yAxisIndex: 'none' }},
+                                restore: {{}},
+                                saveAsImage: {{}}
+                            }}
+                        }},
+                        dataZoom: [
+                            {{
+                                type: 'inside',
+                                start: 0,
+                                end: 100,
+                                fillerColor: 'rgba(34, 80, 61, 0.25)',
+                                selectedDataBackground: {{
+                                    lineStyle: {{ color: '#2c664f' }},
+                                    areaStyle: {{ color: '#378063' }}
+                                }}
+                            }},
+                            {{
+                                start: 0,
+                                end: 100,
+                                fillerColor: 'rgba(34, 80, 61, 0.25)',
+                                selectedDataBackground: {{
+                                    lineStyle: {{ color: '#2c664f' }},
+                                    areaStyle: {{ color: '#378063' }}
+                                }}
+                            }},
+                        ],
+                        xAxis: {{ type: 'time' }},
+                        yAxis: {{
+                            name: '{y_axis_label}',
+                            nameLocation: 'center',
+                            nameRotate: 90,
+                            nameGap: 45,
+                            type: 'value'
+                        }},
+                        series: [
+                            {{
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }},
+                                markArea: {{
+                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
+                                    data: [
+                                        {starting_area}
+                                        {stopping_area}
+                                    ]
+                                }},
+                                data: {values},
+                            }}
+                        ]
+                    }});
+                </script>
+            </div>"#,
+            html_id = self.html_id,
+            values = json!(self.data),
+            starting_area = starting_area,
+            stopping_area = stopping_area,
+            y_axis_label = self.y_axis_label,
+        )
+    }
+}
+
 /// Helper to generate a single response metric.
 pub fn get_response_metric(
     method: &str,
@@ -425,7 +576,7 @@ pub fn graph_rps_template(
     stopping: Option<DateTime<Local>>,
     stopped: Option<DateTime<Local>>,
 ) -> String {
-    graph_template(
+    Graph::new(
         "graph-rps",
         "Requests #",
         rps,
@@ -434,6 +585,7 @@ pub fn graph_rps_template(
         stopping,
         stopped,
     )
+    .generate_markup()
 }
 
 /// Build an errors per second graph.
@@ -444,7 +596,7 @@ pub fn graph_eps_template(
     stopping: Option<DateTime<Local>>,
     stopped: Option<DateTime<Local>>,
 ) -> String {
-    graph_template(
+    Graph::new(
         "graph-eps",
         "Errors #",
         eps,
@@ -453,6 +605,7 @@ pub fn graph_eps_template(
         stopping,
         stopped,
     )
+    .generate_markup()
 }
 
 /// Build an average response time graph.
@@ -463,7 +616,7 @@ pub fn graph_average_response_time_template(
     stopping: Option<DateTime<Local>>,
     stopped: Option<DateTime<Local>>,
 ) -> String {
-    graph_template(
+    Graph::new(
         "graph-avg-response-time",
         "Response time [ms]",
         response_times,
@@ -472,169 +625,47 @@ pub fn graph_average_response_time_template(
         stopping,
         stopped,
     )
+    .generate_markup()
 }
 
 /// Build a users per second graph.
 pub fn graph_users_per_second_template(
-    users: &[(String, usize)],
+    active_users: &[(String, usize)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
     stopping: Option<DateTime<Local>>,
     stopped: Option<DateTime<Local>>,
 ) -> String {
-    graph_template(
+    Graph::new(
         "graph-active-users",
         "Active users #",
-        users,
+        active_users,
         starting,
         started,
         stopping,
         stopped,
     )
+    .generate_markup()
 }
 
 /// Build a tasks per second graph.
 pub fn graph_tasks_per_second_template<T: Serialize>(
-    tasks: &[(String, T)],
+    tps: &[(String, T)],
     starting: Option<DateTime<Local>>,
     started: Option<DateTime<Local>>,
     stopping: Option<DateTime<Local>>,
     stopped: Option<DateTime<Local>>,
 ) -> String {
-    graph_template(
+    Graph::new(
         "graph-tps",
         "Tasks #",
-        tasks,
+        tps,
         starting,
         started,
         stopping,
         stopped,
     )
-}
-
-/// Helper function to build HTML charts powered by the
-/// [ECharts](https://echarts.apache.org) library.
-#[allow(clippy::too_many_arguments)]
-fn graph_template<T: Serialize>(
-    html_id: &str,
-    y_axis_label: &str,
-    data: &[(String, T)],
-    starting: Option<DateTime<Local>>,
-    started: Option<DateTime<Local>>,
-    stopping: Option<DateTime<Local>>,
-    stopped: Option<DateTime<Local>>,
-) -> String {
-    let datetime_format = "%Y-%m-%d %H:%M:%S";
-
-    let starting_area = if starting.is_some() && started.is_some() {
-        format!(
-            r#"[
-                {{
-                    name: 'Starting',
-                    xAxis: '{starting}'
-                }},
-                {{
-                    xAxis: '{started}'
-                }}
-            ],"#,
-            starting = starting.unwrap().format(datetime_format),
-            started = started.unwrap().format(datetime_format),
-        )
-    } else {
-        "".to_string()
-    };
-
-    let stopping_area = if stopping.is_some() && stopped.is_some() {
-        format!(
-            r#"[
-                {{
-                    name: 'Stopping',
-                    xAxis: '{stopping}'
-                }},
-                {{
-                    xAxis: '{stopped}'
-                }}
-            ],"#,
-            stopping = stopping.unwrap().format(datetime_format),
-            stopped = stopped.unwrap().format(datetime_format),
-        )
-    } else {
-        "".to_string()
-    };
-
-    format!(
-        r#"<div class="graph">
-            <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
-
-            <script type="text/javascript">
-                var chartDom = document.getElementById('{html_id}');
-                var myChart = echarts.init(chartDom);
-
-                myChart.setOption({{
-                    color: ['#2c664f'],
-                    tooltip: {{ trigger: 'axis' }},
-                    toolbox: {{
-                        feature: {{
-                            dataZoom: {{ yAxisIndex: 'none' }},
-                            restore: {{}},
-                            saveAsImage: {{}}
-                        }}
-                    }},
-                    dataZoom: [
-                        {{
-                            type: 'inside',
-                            start: 0,
-                            end: 100,
-                            fillerColor: 'rgba(34, 80, 61, 0.25)',
-                            selectedDataBackground: {{
-                                lineStyle: {{ color: '#2c664f' }},
-                                areaStyle: {{ color: '#378063' }}
-                            }}
-                        }},
-                        {{
-                            start: 0,
-                            end: 100,
-                            fillerColor: 'rgba(34, 80, 61, 0.25)',
-                            selectedDataBackground: {{
-                                lineStyle: {{ color: '#2c664f' }},
-                                areaStyle: {{ color: '#378063' }}
-                            }}
-                        }},
-                    ],
-                    xAxis: {{ type: 'time' }},
-                    yAxis: {{
-                        name: '{y_axis_label}',
-                        nameLocation: 'center',
-                        nameRotate: 90,
-                        nameGap: 45,
-                        type: 'value'
-                    }},
-                    series: [
-                        {{
-                            type: 'line',
-                            symbol: 'none',
-                            sampling: 'lttb',
-                            lineStyle: {{ color: '#2c664f' }},
-                            areaStyle: {{ color: '#378063' }},
-                            markArea: {{
-                                itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
-                                data: [
-                                    {starting_area}
-                                    {stopping_area}
-                                ]
-                            }},
-                            data: {values},
-                        }}
-                    ]
-                }});
-            </script>
-        </div>"#,
-        html_id = html_id,
-        values = json!(data),
-        starting_area = starting_area,
-        stopping_area = stopping_area,
-        y_axis_label = y_axis_label,
-    )
+    .generate_markup()
 }
 
 /// Build the html report.
@@ -817,60 +848,60 @@ mod test {
     fn expected_graph_html_prefix(html_id: &str, y_axis_label: &str) -> String {
         format!(
             r#"<div class="graph">
-            <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
+                <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
 
-            <script type="text/javascript">
-                var chartDom = document.getElementById('{html_id}');
-                var myChart = echarts.init(chartDom);
+                <script type="text/javascript">
+                    var chartDom = document.getElementById('{html_id}');
+                    var myChart = echarts.init(chartDom);
 
-                myChart.setOption({{
-                    color: ['#2c664f'],
-                    tooltip: {{ trigger: 'axis' }},
-                    toolbox: {{
-                        feature: {{
-                            dataZoom: {{ yAxisIndex: 'none' }},
-                            restore: {{}},
-                            saveAsImage: {{}}
-                        }}
-                    }},
-                    dataZoom: [
-                        {{
-                            type: 'inside',
-                            start: 0,
-                            end: 100,
-                            fillerColor: 'rgba(34, 80, 61, 0.25)',
-                            selectedDataBackground: {{
-                                lineStyle: {{ color: '#2c664f' }},
-                                areaStyle: {{ color: '#378063' }}
+                    myChart.setOption({{
+                        color: ['#2c664f'],
+                        tooltip: {{ trigger: 'axis' }},
+                        toolbox: {{
+                            feature: {{
+                                dataZoom: {{ yAxisIndex: 'none' }},
+                                restore: {{}},
+                                saveAsImage: {{}}
                             }}
                         }},
-                        {{
-                            start: 0,
-                            end: 100,
-                            fillerColor: 'rgba(34, 80, 61, 0.25)',
-                            selectedDataBackground: {{
-                                lineStyle: {{ color: '#2c664f' }},
-                                areaStyle: {{ color: '#378063' }}
-                            }}
+                        dataZoom: [
+                            {{
+                                type: 'inside',
+                                start: 0,
+                                end: 100,
+                                fillerColor: 'rgba(34, 80, 61, 0.25)',
+                                selectedDataBackground: {{
+                                    lineStyle: {{ color: '#2c664f' }},
+                                    areaStyle: {{ color: '#378063' }}
+                                }}
+                            }},
+                            {{
+                                start: 0,
+                                end: 100,
+                                fillerColor: 'rgba(34, 80, 61, 0.25)',
+                                selectedDataBackground: {{
+                                    lineStyle: {{ color: '#2c664f' }},
+                                    areaStyle: {{ color: '#378063' }}
+                                }}
+                            }},
+                        ],
+                        xAxis: {{ type: 'time' }},
+                        yAxis: {{
+                            name: '{y_axis_label}',
+                            nameLocation: 'center',
+                            nameRotate: 90,
+                            nameGap: 45,
+                            type: 'value'
                         }},
-                    ],
-                    xAxis: {{ type: 'time' }},
-                    yAxis: {{
-                        name: '{y_axis_label}',
-                        nameLocation: 'center',
-                        nameRotate: 90,
-                        nameGap: 45,
-                        type: 'value'
-                    }},
-                    series: [
-                        {{
-                            type: 'line',
-                            symbol: 'none',
-                            sampling: 'lttb',
-                            lineStyle: {{ color: '#2c664f' }},
-                            areaStyle: {{ color: '#378063' }},
-                            markArea: {{
-                                itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
+                        series: [
+                            {{
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }},
+                                markArea: {{
+                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
 "#,
             html_id = html_id,
             y_axis_label = y_axis_label
@@ -889,40 +920,40 @@ mod test {
         ];
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(graph_rps_template(&data, None, None, None, None), expected);
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_rps_template(
@@ -936,25 +967,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_rps_template(
@@ -968,33 +999,33 @@ mod test {
         );
 
         let mut expected = expected_prefix;
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:36'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:38'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:36'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:38'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_rps_template(
@@ -1020,40 +1051,40 @@ mod test {
         ];
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(graph_eps_template(&data, None, None, None, None), expected);
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_eps_template(
@@ -1067,25 +1098,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_eps_template(
@@ -1099,33 +1130,33 @@ mod test {
         );
 
         let mut expected = expected_prefix;
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:36'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:38'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:36'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:38'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_eps_template(
@@ -1152,17 +1183,17 @@ mod test {
         ];
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_average_response_time_template(&data, None, None, None, None),
@@ -1170,25 +1201,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_average_response_time_template(
@@ -1202,25 +1233,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_average_response_time_template(
@@ -1234,33 +1265,33 @@ mod test {
         );
 
         let mut expected = expected_prefix;
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:36'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:38'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:36'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:38'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_average_response_time_template(
@@ -1286,17 +1317,17 @@ mod test {
         ];
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_users_per_second_template(&data, None, None, None, None),
@@ -1304,25 +1335,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_users_per_second_template(
@@ -1336,25 +1367,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_users_per_second_template(
@@ -1368,33 +1399,33 @@ mod test {
         );
 
         let mut expected = expected_prefix;
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:36'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:38'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:36'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:38'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_users_per_second_template(
@@ -1420,17 +1451,17 @@ mod test {
         ];
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_tasks_per_second_template(&data, None, None, None, None),
@@ -1438,25 +1469,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_tasks_per_second_template(
@@ -1470,25 +1501,25 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                data: [
-                                    
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_tasks_per_second_template(
@@ -1502,33 +1533,33 @@ mod test {
         );
 
         let mut expected = expected_prefix;
-        expected.push_str(r#"                                data: [
-                                    [
-                {
-                    name: 'Starting',
-                    xAxis: '2021-11-21 21:20:32'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:34'
-                }
-            ],
-                                    [
-                {
-                    name: 'Stopping',
-                    xAxis: '2021-11-21 21:20:36'
-                },
-                {
-                    xAxis: '2021-11-21 21:20:38'
-                }
-            ],
-                                ]
-                            },
-                            data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                        }
-                    ]
-                });
-            </script>
-        </div>"#
+        expected.push_str(r#"                                    data: [
+                                        [
+                    {
+                        name: 'Starting',
+                        xAxis: '2021-11-21 21:20:32'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:34'
+                    }
+                ],
+                                        [
+                    {
+                        name: 'Stopping',
+                        xAxis: '2021-11-21 21:20:36'
+                    },
+                    {
+                        xAxis: '2021-11-21 21:20:38'
+                    }
+                ],
+                                    ]
+                                },
+                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                            }
+                        ]
+                    });
+                </script>
+            </div>"#
         );
         assert_eq!(
             graph_tasks_per_second_template(
