@@ -511,7 +511,7 @@ impl GooseRequestMetricAggregate {
 /// better to do it as we go to save memory.
 fn expand_per_second_metric_array<T: Clone>(data: &mut Vec<T>, second: usize, initial: T) {
     // Each element in per second metric vectors (self.requests_per_second,
-    // self.errors_per_second, ...) is count for a given second since the start
+    // self.errors_per_second, ...) is counted for a given second since the start
     // of the test. Since we don't know how long the test will at the beginning
     // we need to push new elements (second counters) as the test is running.
     if data.len() <= second {
