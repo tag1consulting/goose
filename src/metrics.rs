@@ -25,9 +25,7 @@ use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
 use crate::logger::GooseLog;
 use crate::report;
-use crate::util::{
-    median, ms_timer_expired, standard_deviation, timer_expired, truncate_string, MovingAverage,
-};
+use crate::util;
 #[cfg(feature = "gaggle")]
 use crate::worker::{self, GaggleMetrics};
 use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
@@ -403,7 +401,7 @@ pub struct GooseRequestMetricAggregate {
     /// Counts errors per second. Each element of the vector represents one second.
     pub errors_per_second: Vec<u32>,
     /// Maintains average response time per second. Each element of the vector represents one second.
-    pub average_response_time_per_second: Vec<MovingAverage>,
+    pub average_response_time_per_second: Vec<util::MovingAverage>,
 }
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
@@ -494,7 +492,7 @@ impl GooseRequestMetricAggregate {
         expand_per_second_metric_array(
             &mut self.average_response_time_per_second,
             second,
-            MovingAverage::new(),
+            util::MovingAverage::new(),
         );
         self.average_response_time_per_second[second].add_item(response_time as f32);
 
@@ -1122,7 +1120,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    truncate_string(request_key, 24),
+                    util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
                     format!(
                         "{} ({}%)",
@@ -1138,7 +1136,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    truncate_string(request_key, 24),
+                    util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
                     format!(
                         "{} ({:.1}%)",
@@ -1254,7 +1252,7 @@ impl GooseMetrics {
                     writeln!(
                         fmt,
                         " {:24 } |",
-                        truncate_string(
+                        util::truncate_string(
                             &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
                             60
                         ),
@@ -1266,7 +1264,7 @@ impl GooseMetrics {
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                        truncate_string(
+                        util::truncate_string(
                             &format!("  {}: {}", task.task_index + 1, task.task_name),
                             24
                         ),
@@ -1285,7 +1283,7 @@ impl GooseMetrics {
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                        truncate_string(
+                        util::truncate_string(
                             &format!("  {}: {}", task.task_index + 1, task.task_name),
                             24
                         ),
@@ -1397,7 +1395,7 @@ impl GooseMetrics {
                     writeln!(
                         fmt,
                         " {:24 } |",
-                        truncate_string(
+                        util::truncate_string(
                             &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
                             60
                         ),
@@ -1429,14 +1427,14 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
-                    truncate_string(
+                    util::truncate_string(
                         &format!("  {}: {}", task.task_index + 1, task.task_name),
                         24
                     ),
                     average,
                     format_number(task.min_time),
                     format_number(task.max_time),
-                    format_number(median(
+                    format_number(util::median(
                         &task.times,
                         task.counter,
                         task.min_time,
@@ -1464,7 +1462,7 @@ impl GooseMetrics {
                 average,
                 format_number(aggregate_min_task_time),
                 format_number(aggregate_max_task_time),
-                format_number(median(
+                format_number(util::median(
                     &aggregate_task_times,
                     aggregate_task_time_counter,
                     aggregate_min_task_time,
@@ -1535,11 +1533,11 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:<24} | {:>11.raw_avg_precision$} | {:>10} | {:>11} | {:>10}",
-                truncate_string(request_key, 24),
+                util::truncate_string(request_key, 24),
                 raw_average,
                 format_number(request.raw_data.minimum_time),
                 format_number(request.raw_data.maximum_time),
-                format_number(median(
+                format_number(util::median(
                     &request.raw_data.times,
                     request.raw_data.counter,
                     request.raw_data.minimum_time,
@@ -1568,7 +1566,7 @@ impl GooseMetrics {
                 raw_average,
                 format_number(aggregate_raw_min_time),
                 format_number(aggregate_raw_max_time),
-                format_number(median(
+                format_number(util::median(
                     &aggregate_raw_times,
                     aggregate_raw_counter,
                     aggregate_raw_min_time,
@@ -1611,7 +1609,7 @@ impl GooseMetrics {
         // Now display Coordinated Omission data.
         for (request_key, request) in self.requests.iter().sorted() {
             let co_average;
-            let std_deviation;
+            let standard_deviation;
             let co_minimum;
             let co_maximum;
             if let Some(co_data) = request.coordinated_omission_data.as_ref() {
@@ -1623,7 +1621,7 @@ impl GooseMetrics {
                     0 => 0.0,
                     _ => co_data.total_time as f32 / co_data.counter as f32,
                 };
-                std_deviation = standard_deviation(raw_average, co_average);
+                standard_deviation = util::standard_deviation(raw_average, co_average);
                 aggregate_co_times = merge_times(aggregate_co_times, co_data.times.clone());
                 aggregate_co_counter += co_data.counter;
                 // If user had new fastest response time, update global fastest response time.
@@ -1637,23 +1635,23 @@ impl GooseMetrics {
                 co_maximum = co_data.maximum_time;
             } else {
                 co_average = 0.0;
-                std_deviation = 0.0;
+                standard_deviation = 0.0;
                 co_minimum = 0;
                 co_maximum = 0;
             }
             let co_average_precision = determine_precision(co_average);
-            let standard_deviation_precision = determine_precision(std_deviation);
+            let standard_deviation_precision = determine_precision(standard_deviation);
 
             // Coordinated Omission Mitigation was enabled for this request, display the extra data:
             if let Some(co_data) = request.coordinated_omission_data.as_ref() {
                 writeln!(
                     fmt,
                     " {:<24} | {:>11.co_avg_precision$} | {:>10.sd_precision$} | {:>11} | {:>10}",
-                    truncate_string(request_key, 24),
+                    util::truncate_string(request_key, 24),
                     co_average,
-                    std_deviation,
+                    standard_deviation,
                     format_number(co_maximum),
-                    format_number(median(
+                    format_number(util::median(
                         &co_data.times,
                         co_data.counter,
                         co_minimum,
@@ -1666,7 +1664,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
-                    truncate_string(request_key, 24),
+                    util::truncate_string(request_key, 24),
                     "-",
                     "-",
                     "-",
@@ -1682,7 +1680,7 @@ impl GooseMetrics {
                 _ => aggregate_co_total_time as f32 / aggregate_co_counter as f32,
             };
             let co_average_precision = determine_precision(co_average);
-            let standard_deviation = standard_deviation(raw_average, co_average);
+            let standard_deviation = util::standard_deviation(raw_average, co_average);
             let standard_deviation_precision = determine_precision(standard_deviation);
 
             writeln!(
@@ -1697,7 +1695,7 @@ impl GooseMetrics {
                 co_average,
                 standard_deviation,
                 format_number(aggregate_co_max_time),
-                format_number(median(
+                format_number(util::median(
                     &aggregate_co_times,
                     aggregate_co_counter,
                     aggregate_co_min_time,
@@ -1779,7 +1777,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                truncate_string(request_key, 24),
+                util::truncate_string(request_key, 24),
                 calculate_response_time_percentile(
                     &request.raw_data.times,
                     request.raw_data.counter,
@@ -1937,7 +1935,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                    truncate_string(request_key, 24),
+                    util::truncate_string(request_key, 24),
                     calculate_response_time_percentile(
                         &coordinated_omission_data.times,
                         coordinated_omission_data.counter,
@@ -1985,7 +1983,7 @@ impl GooseMetrics {
                 writeln!(
                     fmt,
                     " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                    truncate_string(request_key, 24),
+                    util::truncate_string(request_key, 24),
                     "-",
                     "-",
                     "-",
@@ -2081,7 +2079,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:<24} | {:>51}",
-                truncate_string(request_key, 24),
+                util::truncate_string(request_key, 24),
                 codes,
             )?;
         }
@@ -2391,7 +2389,7 @@ impl GooseAttack {
             // Check if we're displaying running metrics.
             if let Some(running_metrics) = self.configuration.running_metrics {
                 if self.attack_mode != AttackMode::Worker
-                    && timer_expired(
+                    && util::timer_expired(
                         goose_attack_run_state.running_metrics_timer,
                         running_metrics,
                     )
@@ -2624,7 +2622,7 @@ impl GooseAttack {
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
-            if !flush && ms_timer_expired(receive_started, receive_timeout) {
+            if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
                 break;
             }
             message = goose_attack_run_state.metrics_rx.try_recv();
@@ -2889,7 +2887,7 @@ impl GooseAttack {
             );
 
             // Generate average response times per second graph.
-            let mut response_times = vec![MovingAverage::new(); total_graph_seconds];
+            let mut response_times = vec![util::MovingAverage::new(); total_graph_seconds];
             for path_metric in self.metrics.requests.values() {
                 for (second, avg) in path_metric
                     .average_response_time_per_second
@@ -2995,7 +2993,7 @@ impl GooseAttack {
                             response_time_average: format!("{:.2}", co_average),
                             response_time_standard_deviation: format!(
                                 "{:.2}",
-                                standard_deviation(raw_average, co_average)
+                                util::standard_deviation(raw_average, co_average)
                             ),
                             response_time_maximum: coordinated_omission_data.maximum_time,
                         });
@@ -3037,7 +3035,7 @@ impl GooseAttack {
                     ),
                     response_time_standard_deviation: format!(
                         "{:.2}",
-                        standard_deviation(raw_average, co_average),
+                        util::standard_deviation(raw_average, co_average),
                     ),
                     response_time_maximum: co_aggregate_response_time_maximum,
                 });
