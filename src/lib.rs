@@ -1396,17 +1396,10 @@ impl GooseAttack {
                 }
             }
         } else {
-            // If displaying running metrics, be sure we wake up often enough to
-            // display them at the configured rate.
-            let running_metrics = self.configuration.running_metrics.unwrap_or(0);
-
-            // Otherwise, sleep until the next time something needs to happen.
-            let sleep_duration = if running_metrics > 0
-                && running_metrics * 1_000 < goose_attack_run_state.spawn_user_in_ms
-            {
-                let sleep_delay = self.configuration.running_metrics.unwrap() * 1_000;
-                goose_attack_run_state.spawn_user_in_ms -= sleep_delay;
-                Duration::from_millis(sleep_delay as u64)
+            // Wake up twice a second to handle messages and allow for a quick shutdown if the
+            // load test is canceled during startup.
+            let sleep_duration = if goose_attack_run_state.spawn_user_in_ms > 500 {
+                Duration::from_millis(500)
             } else {
                 Duration::from_millis(goose_attack_run_state.spawn_user_in_ms as u64)
             };
