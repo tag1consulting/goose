@@ -2039,7 +2039,7 @@ impl GooseUser {
     /// [`reqwest::Client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html):
     ///  - reports itself as the
     ///    [`user_agent`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.user_agent)
-    ///    requesting web pages (ie `goose/0.15.1`);
+    ///    requesting web pages (ie `goose/0.15.2`);
     ///  - [stores cookies](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html#method.cookie_store),
     ///    generally necessary if you aim to simulate logged in users;
     ///  - enables
