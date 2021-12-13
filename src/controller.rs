@@ -220,7 +220,7 @@ pub(crate) struct GooseControllerRequest {
 #[derive(Debug)]
 pub(crate) struct GooseControllerResponse {
     /// An integer identifying which controller the parent is responding to.
-    pub client_id: u32,
+    pub _client_id: u32,
     /// The actual response message.
     pub response: GooseControllerResponseMessage,
 }
@@ -1102,7 +1102,7 @@ impl GooseAttack {
         if let Some(oneshot_tx) = request.response_channel {
             if oneshot_tx
                 .send(GooseControllerResponse {
-                    client_id: request.client_id,
+                    _client_id: request.client_id,
                     response,
                 })
                 .is_err()
