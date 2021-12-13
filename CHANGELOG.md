@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.15.3-dev
+
 ## 0.15.2 December 13, 2021
  - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends
  - [#394](https://github.com/tag1consulting/goose/pull/394) add additional graphs to the HTML report: errors per second, average response time, active users, active tasks
