@@ -2399,9 +2399,6 @@ impl GooseAttack {
                 }
             }
 
-            // Record current users for users per second graph in HTML report.
-            self.metrics.record_users_per_second();
-
             // Load messages from user threads until the receiver queue is empty.
             let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
 
