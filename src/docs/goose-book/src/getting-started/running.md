@@ -9,7 +9,7 @@ $ cargo run --release
 Error: InvalidOption { option: "--host", value: "", detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for LoadtestTasks)." }
 ```
 
-The load test fails with an error as it hasn't been told the host you want to load test. So, let's try again, this time passing in the `--host` flag. We will also add `--report-file` flag, which will generate a a HTML report. Same information will also be printed to the command line (without graphs). After running for a few seconds, press `ctrl-c` to stop the load test:
+The load test fails with an error as it hasn't been told the host you want to load test. So, let's try again, this time passing in the `--host` flag. We will also add `--report-file` flag, which will generate a HTML report. Same information will also [be printed to the command line](metrics.md) (without graphs). After running for a few seconds, press `ctrl-c` to stop the load test:
 
 ```bash
 $ cargo run --release -- --host https://drupal-memcache.ddev.site --report-file=report.html
