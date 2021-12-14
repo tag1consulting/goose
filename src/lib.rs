@@ -1705,6 +1705,10 @@ impl GooseAttack {
                 // By reaching the Shutdown phase, break out of the GooseAttack loop.
                 AttackPhase::Shutdown => break,
             }
+
+            // Record current users for users per second graph in HTML report.
+            self.metrics.record_users_per_second();
+
             // Regularly synchronize metrics.
             self.sync_metrics(&mut goose_attack_run_state, false)
                 .await?;
