@@ -3327,7 +3327,9 @@ impl GooseAttack {
         data.iter()
             .enumerate()
             .filter(|(second, _)| {
-                if self.configuration.no_reset_metrics {
+                // If --no-reset-metrics is used or if the load test was stopped during the
+                // starting phase we display the data also for the staring phase.
+                if self.configuration.no_reset_metrics || self.metrics.started.is_none() {
                     true
                 } else {
                     *second as i64 + starting.timestamp() >= started.timestamp()
@@ -3965,5 +3967,65 @@ mod test {
                 0.
             );
         }
+    }
+
+    #[test]
+    fn test_add_timestamp_to_html_graph_data() {
+        use gumdrop::Options;
+
+        let initial_config: Vec<&str> = Vec::new();
+        let mut attack = GooseAttack::initialize_with_config(
+            GooseConfiguration::parse_args_default(&initial_config).unwrap(),
+        )
+        .unwrap();
+        let data = vec![123, 234, 345, 456, 567];
+
+        attack.metrics.started = Some(Local.ymd(2021, 12, 14).and_hms(15, 12, 25));
+        attack.configuration.no_reset_metrics = false;
+        assert_eq!(
+            attack.add_timestamp_to_html_graph_data(
+                data.clone(),
+                &Local.ymd(2021, 12, 14).and_hms(15, 12, 23),
+                &Local.ymd(2021, 12, 14).and_hms(15, 12, 25),
+            ),
+            vec![
+                ("2021-12-14 15:12:25".to_string(), 345),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
+
+        attack.configuration.no_reset_metrics = true;
+        assert_eq!(
+            attack.add_timestamp_to_html_graph_data(
+                data.clone(),
+                &Local.ymd(2021, 12, 14).and_hms(15, 12, 23),
+                &Local.ymd(2021, 12, 14).and_hms(15, 12, 25),
+            ),
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 123),
+                ("2021-12-14 15:12:24".to_string(), 234),
+                ("2021-12-14 15:12:25".to_string(), 345),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
+
+        attack.metrics.started = None;
+        attack.configuration.no_reset_metrics = false;
+        assert_eq!(
+            attack.add_timestamp_to_html_graph_data(
+                data,
+                &Local.ymd(2021, 12, 14).and_hms(15, 12, 23),
+                &Local.ymd(2021, 12, 14).and_hms(15, 12, 25),
+            ),
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 123),
+                ("2021-12-14 15:12:24".to_string(), 234),
+                ("2021-12-14 15:12:25".to_string(), 345),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
     }
 }
