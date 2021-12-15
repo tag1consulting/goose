@@ -145,77 +145,28 @@
                         <h1 id="running-a-load-test"><a class="header" href="#running-a-load-test">Running A Load Test</a></h1>
 <p>We will use Cargo to run our example load test application. It's best to get in the habit of setting the <code>--release</code> option whenever compiling or running load tests.</p>
 <pre><code class="language-bash">$ cargo run --release
-   Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
-    Finished dev [optimized] target(s) in 3.56s
+    Finished release [optimized] target(s) in 0.23s
      Running `target/release/loadtest`
 Error: InvalidOption { option: &quot;--host&quot;, value: &quot;&quot;, detail: &quot;A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for LoadtestTasks).&quot; }
 </code></pre>
-<p>The load test fails with an error as it hasn't been told the host you want to load test. So, let's try again, this time passing in the <code>--host</code> flag. After running for a few seconds, press <code>ctrl-c</code> to stop the load test:</p>
-<pre><code class="language-bash">$ cargo run -- --host http://local.dev/
-    Finished dev [optimized] target(s) in 0.07s
-     Running `target/release/loadtest --host 'http://local.dev/'`
+<p>The load test fails with an error as it hasn't been told the host you want to load test. So, let's try again, this time passing in the <code>--host</code> flag. We will also add the <code>--report-file</code> flag, <a href="common.html#writing-an-html-formatted-report">which will generate a HTML report</a>. The same information will also <a href="metrics.html">be printed to the command line</a> (without graphs). After running for a few seconds, press <code>ctrl-c</code> to stop the load test:</p>
+<pre><code class="language-bash">$ cargo run --release -- --host https://drupal-memcache.ddev.site --report-file=report.html
+    Finished release [optimized] target(s) in 0.17s
+     Running `target/release/goose_attack --host 'https://drupal-memcache.ddev.site' --report-file=report.html`
 
-=== PER TASK METRICS ===
-------------------------------------------------------------------------------
- Name                    | # times run    | # fails        | task/s | fail/s
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 2,240          | 0 (0%)         | 280.0  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 15.54      | 6          | 136        | 14
-
-=== PER REQUEST METRICS ===
-------------------------------------------------------------------------------
- Name                    | # reqs         | # fails        | req/s  | fail/s
- -----------------------------------------------------------------------------
- GET /                   | 2,240          | 0 (0%)         | 280.0  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- GET /                   | 15.30      | 6          | 135        | 14
-
-All 8 users hatched, resetting metrics (disable with --no-reset-metrics).
-
-^C06:03:25 [ WARN] caught ctrl-c, stopping...
-
-=== PER TASK METRICS ===
-------------------------------------------------------------------------------
- Name                    | # times run    | # fails        | task/s | fail/s
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 2,054          | 0 (0%)         | 410.8  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 20.86      | 7          | 254        | 19
-
-=== PER REQUEST METRICS ===
-------------------------------------------------------------------------------
- Name                    | # reqs         | # fails        | req/s  | fail/s
- -----------------------------------------------------------------------------
- GET /                   | 2,054          | 0 (0%)         | 410.8  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- GET /                   | 20.68      | 7          | 254        | 19
--------------------------------------------------------------------------------
- Slowest page load within specified percentile of requests (in ms):
- ------------------------------------------------------------------------------
- Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
- -----------------------------------------------------------------------------
- GET /                   | 19     | 21     | 53     | 69     | 250    | 250
+^C16:33:18 [WARN] caught ctrl-c, stopping...
 </code></pre>
-<p>By default, Goose will hatch 1 <code>GooseUser</code> per second, up to the number of CPU cores available on the server used for load testing. In the above example, the server has 8 CPU cores, so it took 8 seconds to hatch all users. After all users are hatched, Goose flushes all metrics collected during the hatching process so all subsequent metrics are taken with all users running. Before flushing the metrics, they are displayed to the console so the data is not lost.</p>
-<p>The same metrics are displayed per-task and per-request. In our simple example, our single task only makes one request, so in this case both metrics show the same results.</p>
-<p>The per-task metrics are displayed first, starting with the name of our Task Set, <code>LoadtestTasks</code>. Individual tasks in the Task Set are then listed in the order they are defined in our load test. We did not name our task, so it simply shows up as &quot;1: &quot;. All defined tasks will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected.</p>
-<p>Next comes the per-request metrics. Our single task makes a <code>GET</code> request for the <code>/</code> path, so it shows up in the metrics as <code>GET /</code>. Comparing the per-task metrics collected for <code>1: </code> to the per-request metrics collected for <code>GET /</code>, you can see that they are the same.</p>
-<p>There are two common tables found in each type of metrics. The first shows the total number of requests made (2,054), how many of those failed (0), the average number of requests per second (410.8), and the average number of failed requests per second (0).</p>
-<p>The second table shows the average time required to load a page (20.68 milliseconds), the minimum time to load a page (7 ms), the maximum time to load a page (254 ms) and the median time to load a page (19 ms).</p>
-<p>The per-request metrics include a third table, showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 19 ms. In the 75% fastest page loads, the slowest page loaded in 21 ms, etc.</p>
+<p>When the load tests finishes shutting down, the HTML report will be created in the local directory and named <code>report.html</code> as configured above. The report includes the following sections:</p>
+<p><img src="report_header.png" alt="HTML report header section" /></p>
+<p>By default, Goose will hatch 1 <code>GooseUser</code> per second, up to the number of CPU cores available on the server used for load testing. In the above example, the server has 8 CPU cores, so it took 7 seconds to hatch all users. After all users are hatched, Goose flushes all metrics collected during the hatching process (use the <code>--no-reset-metrics</code> flag to disable this behavior) so all subsequent metrics are taken with all users running. Before flushing the metrics, they are displayed to the console so the data is not lost.</p>
+<p><img src="report_request_metrics.png" alt="HTML report request metrics section" /></p>
+<p>The per-request metrics are displayed first. Our single task makes a <code>GET</code> request for the <code>/</code> path, so it shows up in the metrics as <code>GET /</code>. The table in this section displays shows the total number of requests made (2,499), the average number of requests per second (208.25), and the average number of failed requests per second (0). </p>
+<p>Additionally it shows the average time required to load a page (39.68 milliseconds), the minimum time to load a page (19 ms) and the maximum time to load a page (180 ms).</p>
+<p>If our load test made multiple requests, the Aggregated line at the bottom of this section would show totals and averages of all requests together. Because we only make a single request, this row is identical to the per-request metrics.</p>
+<p><img src="report_response_metrics.png" alt="HTML report response times metrics section" /></p>
+<p>The second section displays the average time required to load a page. The table in this section is showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 36 ms. In the 70% fastest page loads, the slowest page loaded in 41 ms, etc. The graph, on the other hand, is displaying the average response time aggregated across all requests. </p>
+<p><img src="report_task_metrics.png" alt="HTML report tasks metrics section" /></p>
+<p>Next comes per-task metrics, starting with the name of our Task Set, <code>LoadtestTasks</code>. Individual tasks in the Task Set are then listed in the order they are defined in our load test. We did not name our task, so it simply shows up as <code>0.0</code>. All defined tasks will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected. Comparing the tasks metrics metrics collected for <code>0.0</code> to the per-request metrics collected for <code>GET /</code>, you can see that they are the same. This is because in our simple example, our single task only makes one request.</p>
 <p>In real load tests, you'll most likely have multiple task sets each with multiple tasks, and Goose will show you metrics for each along with an aggregate of them all together.</p>
 <p>Refer to the <a href="../example/overview.html">examples</a> included with Goose for more complicated and useful load test examples.</p>
 

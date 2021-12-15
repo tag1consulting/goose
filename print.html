@@ -147,6 +147,7 @@
 <p>Have you ever been attacked by a goose?</p>
 <h2 id="what-is-goose"><a class="header" href="#what-is-goose">What Is Goose?</a></h2>
 <p><a href="https://docs.rs/goose">Goose</a> is a <a href="https://www.rust-lang.org/">Rust</a> load testing tool inspired by <a href="https://locust.io/">Locust</a>. User behavior is defined with standard Rust code. Load tests are applications that have a dependency on the <a href="https://crates.io/crates/goose">Goose library</a>. Web requests are made with the <a href="https://docs.rs/reqwest">Reqwest</a> HTTP Client.</p>
+<p><img src="what_is_goose_graph.png" alt="Request statistics report" /></p>
 <h2 id="advantages"><a class="header" href="#advantages">Advantages</a></h2>
 <p>Goose generates at least 11x as much traffic as Locust per-CPU-core, with even larger gains for more complex load tests (such as those using third-party libraries to scrape form content). While Locust requires you to manage a distributed load test simply to use multiple CPU cores on a single server, Goose leverages all available CPU cores with a single process, drastically simplifying the process for running larger load tests. Ongoing improvements to the codebase continue to bring new features and faster performance. Goose scales far better than Locust, efficiently using available resources to accomplish its goal. It also supports asynchronous processes enabling many more simultaneous processes to ramp up thousands of users from a single server, easily and consistently.</p>
 <p>Goose’s distributed testing design is similar to Locust’s, in that it uses a one Manager to many Workers model. However, unlike Locust, you do not need to spin up a distributed load test to leverage all available cores on a single server, as a single Goose process will fully leverage all available cores. Goose distributed load tests scale near-perfectly as once started each Worker performs its load test without any direction from the Manager, and the Manager simply collects statistics from all the Workers for final reporting. In other words, one Manager controlling eight Workers on a single 8-CPU-core server generates the same amount of load as a single standalone Goose process independently leveraging all eight cores.</p>
@@ -197,9 +198,9 @@ tokio = &quot;^1.12&quot;
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.15.1
+  Downloaded goose v0.15.2
       ...
-   Compiling goose v0.15.1
+   Compiling goose v0.15.2
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -256,77 +257,28 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <div style="break-before: page; page-break-before: always;"></div><h1 id="running-a-load-test"><a class="header" href="#running-a-load-test">Running A Load Test</a></h1>
 <p>We will use Cargo to run our example load test application. It's best to get in the habit of setting the <code>--release</code> option whenever compiling or running load tests.</p>
 <pre><code class="language-bash">$ cargo run --release
-   Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
-    Finished dev [optimized] target(s) in 3.56s
+    Finished release [optimized] target(s) in 0.23s
      Running `target/release/loadtest`
 Error: InvalidOption { option: &quot;--host&quot;, value: &quot;&quot;, detail: &quot;A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for LoadtestTasks).&quot; }
 </code></pre>
-<p>The load test fails with an error as it hasn't been told the host you want to load test. So, let's try again, this time passing in the <code>--host</code> flag. After running for a few seconds, press <code>ctrl-c</code> to stop the load test:</p>
-<pre><code class="language-bash">$ cargo run -- --host http://local.dev/
-    Finished dev [optimized] target(s) in 0.07s
-     Running `target/release/loadtest --host 'http://local.dev/'`
+<p>The load test fails with an error as it hasn't been told the host you want to load test. So, let's try again, this time passing in the <code>--host</code> flag. We will also add the <code>--report-file</code> flag, <a href="getting-started/common.html#writing-an-html-formatted-report">which will generate a HTML report</a>. The same information will also <a href="getting-started/metrics.html">be printed to the command line</a> (without graphs). After running for a few seconds, press <code>ctrl-c</code> to stop the load test:</p>
+<pre><code class="language-bash">$ cargo run --release -- --host https://drupal-memcache.ddev.site --report-file=report.html
+    Finished release [optimized] target(s) in 0.17s
+     Running `target/release/goose_attack --host 'https://drupal-memcache.ddev.site' --report-file=report.html`
 
-=== PER TASK METRICS ===
-------------------------------------------------------------------------------
- Name                    | # times run    | # fails        | task/s | fail/s
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 2,240          | 0 (0%)         | 280.0  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 15.54      | 6          | 136        | 14
-
-=== PER REQUEST METRICS ===
-------------------------------------------------------------------------------
- Name                    | # reqs         | # fails        | req/s  | fail/s
- -----------------------------------------------------------------------------
- GET /                   | 2,240          | 0 (0%)         | 280.0  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- GET /                   | 15.30      | 6          | 135        | 14
-
-All 8 users hatched, resetting metrics (disable with --no-reset-metrics).
-
-^C06:03:25 [ WARN] caught ctrl-c, stopping...
-
-=== PER TASK METRICS ===
-------------------------------------------------------------------------------
- Name                    | # times run    | # fails        | task/s | fail/s
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 2,054          | 0 (0%)         | 410.8  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- 1: LoadtestTasks        |
-   1:                    | 20.86      | 7          | 254        | 19
-
-=== PER REQUEST METRICS ===
-------------------------------------------------------------------------------
- Name                    | # reqs         | # fails        | req/s  | fail/s
- -----------------------------------------------------------------------------
- GET /                   | 2,054          | 0 (0%)         | 410.8  | 0.000
--------------------------------------------------------------------------------
- Name                    | Avg (ms)   | Min        | Max        | Median
- -----------------------------------------------------------------------------
- GET /                   | 20.68      | 7          | 254        | 19
--------------------------------------------------------------------------------
- Slowest page load within specified percentile of requests (in ms):
- ------------------------------------------------------------------------------
- Name                    | 50%    | 75%    | 98%    | 99%    | 99.9%  | 99.99%
- -----------------------------------------------------------------------------
- GET /                   | 19     | 21     | 53     | 69     | 250    | 250
+^C16:33:18 [WARN] caught ctrl-c, stopping...
 </code></pre>
-<p>By default, Goose will hatch 1 <code>GooseUser</code> per second, up to the number of CPU cores available on the server used for load testing. In the above example, the server has 8 CPU cores, so it took 8 seconds to hatch all users. After all users are hatched, Goose flushes all metrics collected during the hatching process so all subsequent metrics are taken with all users running. Before flushing the metrics, they are displayed to the console so the data is not lost.</p>
-<p>The same metrics are displayed per-task and per-request. In our simple example, our single task only makes one request, so in this case both metrics show the same results.</p>
-<p>The per-task metrics are displayed first, starting with the name of our Task Set, <code>LoadtestTasks</code>. Individual tasks in the Task Set are then listed in the order they are defined in our load test. We did not name our task, so it simply shows up as &quot;1: &quot;. All defined tasks will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected.</p>
-<p>Next comes the per-request metrics. Our single task makes a <code>GET</code> request for the <code>/</code> path, so it shows up in the metrics as <code>GET /</code>. Comparing the per-task metrics collected for <code>1: </code> to the per-request metrics collected for <code>GET /</code>, you can see that they are the same.</p>
-<p>There are two common tables found in each type of metrics. The first shows the total number of requests made (2,054), how many of those failed (0), the average number of requests per second (410.8), and the average number of failed requests per second (0).</p>
-<p>The second table shows the average time required to load a page (20.68 milliseconds), the minimum time to load a page (7 ms), the maximum time to load a page (254 ms) and the median time to load a page (19 ms).</p>
-<p>The per-request metrics include a third table, showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 19 ms. In the 75% fastest page loads, the slowest page loaded in 21 ms, etc.</p>
+<p>When the load tests finishes shutting down, the HTML report will be created in the local directory and named <code>report.html</code> as configured above. The report includes the following sections:</p>
+<p><img src="getting-started/report_header.png" alt="HTML report header section" /></p>
+<p>By default, Goose will hatch 1 <code>GooseUser</code> per second, up to the number of CPU cores available on the server used for load testing. In the above example, the server has 8 CPU cores, so it took 7 seconds to hatch all users. After all users are hatched, Goose flushes all metrics collected during the hatching process (use the <code>--no-reset-metrics</code> flag to disable this behavior) so all subsequent metrics are taken with all users running. Before flushing the metrics, they are displayed to the console so the data is not lost.</p>
+<p><img src="getting-started/report_request_metrics.png" alt="HTML report request metrics section" /></p>
+<p>The per-request metrics are displayed first. Our single task makes a <code>GET</code> request for the <code>/</code> path, so it shows up in the metrics as <code>GET /</code>. The table in this section displays shows the total number of requests made (2,499), the average number of requests per second (208.25), and the average number of failed requests per second (0). </p>
+<p>Additionally it shows the average time required to load a page (39.68 milliseconds), the minimum time to load a page (19 ms) and the maximum time to load a page (180 ms).</p>
+<p>If our load test made multiple requests, the Aggregated line at the bottom of this section would show totals and averages of all requests together. Because we only make a single request, this row is identical to the per-request metrics.</p>
+<p><img src="getting-started/report_response_metrics.png" alt="HTML report response times metrics section" /></p>
+<p>The second section displays the average time required to load a page. The table in this section is showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 36 ms. In the 70% fastest page loads, the slowest page loaded in 41 ms, etc. The graph, on the other hand, is displaying the average response time aggregated across all requests. </p>
+<p><img src="getting-started/report_task_metrics.png" alt="HTML report tasks metrics section" /></p>
+<p>Next comes per-task metrics, starting with the name of our Task Set, <code>LoadtestTasks</code>. Individual tasks in the Task Set are then listed in the order they are defined in our load test. We did not name our task, so it simply shows up as <code>0.0</code>. All defined tasks will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected. Comparing the tasks metrics metrics collected for <code>0.0</code> to the per-request metrics collected for <code>GET /</code>, you can see that they are the same. This is because in our simple example, our single task only makes one request.</p>
 <p>In real load tests, you'll most likely have multiple task sets each with multiple tasks, and Goose will show you metrics for each along with an aggregate of them all together.</p>
 <p>Refer to the <a href="getting-started/../example/overview.html">examples</a> included with Goose for more complicated and useful load test examples.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="run-time-options"><a class="header" href="#run-time-options">Run-Time Options</a></h1>
@@ -546,7 +498,7 @@ All 1024 users hatched.
  Running:  2021-08-12 10:55:42 - 2021-08-12 11:05:09 (duration: 00:10:00)
  Stopping: 2021-08-12 11:05:09 - 2021-08-12 11:05:11 (duration: 00:00:02)
 
- goose v0.15.1
+ goose v0.15.2
  ------------------------------------------------------------------------------
 </code></pre>
 <p>Additional details about how metrics are collected, stored, and displayed can be found <a href="https://docs.rs/goose/*/goose/metrics/index.html">in the developer documentation</a>.</p>
@@ -649,7 +601,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.15.1 controller commands:
+goose 0.15.2 controller commands:
  help (?)           this help
  exit (quit)        exit controller
  start              start an idle load test
