@@ -6,6 +6,8 @@ Have you ever been attacked by a goose?
 
 [Goose](https://docs.rs/goose) is a [Rust](https://www.rust-lang.org/) load testing tool inspired by [Locust](https://locust.io/). User behavior is defined with standard Rust code. Load tests are applications that have a dependency on the [Goose library](https://crates.io/crates/goose). Web requests are made with the [Reqwest](https://docs.rs/reqwest) HTTP Client.
 
+![Request statistics report](what_is_goose_graph.png)
+
 ## Advantages
 
 Goose generates at least 11x as much traffic as Locust per-CPU-core, with even larger gains for more complex load tests (such as those using third-party libraries to scrape form content). While Locust requires you to manage a distributed load test simply to use multiple CPU cores on a single server, Goose leverages all available CPU cores with a single process, drastically simplifying the process for running larger load tests. Ongoing improvements to the codebase continue to bring new features and faster performance. Goose scales far better than Locust, efficiently using available resources to accomplish its goal. It also supports asynchronous processes enabling many more simultaneous processes to ramp up thousands of users from a single server, easily and consistently.
