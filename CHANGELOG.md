@@ -2,7 +2,7 @@
 
 ## 0.15.3-dev
 - [#406](https://github.com/tag1consulting/goose/pull/406) make sure that the graphs are built correctly if the load test is interrupted during the starting phase
- - [#408](https://github.com/tag1consulting/goose/pull/408) update 'Running the load test' page in the Goose book to show HTML report
+- [#408](https://github.com/tag1consulting/goose/pull/408) update 'Running the load test' page in the Goose book to show HTML report
 
 ## 0.15.2 December 13, 2021
  - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends
