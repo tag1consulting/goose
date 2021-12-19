@@ -447,6 +447,69 @@ mod test {
     use super::*;
 
     #[test]
+    fn test_time_setters() {
+        let mut graph = GraphData::new(false);
+        assert_eq!(graph.starting, None);
+        assert_eq!(graph.started, None);
+        assert_eq!(graph.stopping, None);
+        assert_eq!(graph.stopped, None);
+
+        graph.set_starting(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
+        assert_eq!(
+            graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(graph.started, None);
+        assert_eq!(graph.stopping, None);
+        assert_eq!(graph.stopped, None);
+
+        graph.set_started(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24));
+        assert_eq!(
+            graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24))
+        );
+        assert_eq!(graph.stopping, None);
+        assert_eq!(graph.stopped, None);
+
+        graph.set_stopping(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
+        assert_eq!(
+            graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24))
+        );
+        assert_eq!(
+            graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
+        );
+        assert_eq!(graph.stopped, None);
+
+        graph.set_stopped(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26));
+        assert_eq!(
+            graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24))
+        );
+        assert_eq!(
+            graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
+        );
+        assert_eq!(
+            graph.stopped,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+    }
+
+    #[test]
     fn test_record_requests_per_second() {
         // Should be initialized with empty requests per second vector.
         let mut graph = GraphData::new(false);
@@ -622,7 +685,6 @@ mod test {
 
         graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
         graph.started = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
-        graph.include_startup = false;
         assert_eq!(
             graph.add_timestamp_to_html_graph_data(&data),
             vec![
