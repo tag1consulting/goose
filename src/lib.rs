@@ -1707,6 +1707,9 @@ impl GooseAttack {
                     self.stop_attack().await?;
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
+                    // Record last users for users per second graph in HTML report.
+                    self.graph_data
+                        .record_users_per_second(self.metrics.users, Utc::now());
                     // The load test is fully stopped at this point.
                     self.metrics.stopped = Some(Local::now());
                     self.graph_data.set_stopped(Utc::now());
