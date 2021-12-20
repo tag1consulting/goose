@@ -1718,7 +1718,8 @@ impl GooseAttack {
             }
 
             // Record current users for users per second graph in HTML report.
-            self.graph_data.record_users_per_second(self.metrics.users);
+            self.graph_data
+                .record_users_per_second(self.metrics.users, Utc::now());
 
             // Regularly synchronize metrics.
             self.sync_metrics(&mut goose_attack_run_state, false)

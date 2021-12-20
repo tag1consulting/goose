@@ -1,7 +1,15 @@
+//! Optional graph data collected during the load tests.
+//!
+//! If the HTML report is enabled the graph data will be collected and stored in
+//! the [`GraphData`] structure during the load test. When the report is written
+//! this data is converted into [`Graph`] structures and HTML markup is generated
+//! based on them.
+
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+/// Used to collect graph data during a load test.
 pub(crate) struct GraphData {
     /// Whether to include startup data into the generated graphs.
     include_startup: bool,
@@ -66,6 +74,11 @@ impl GraphData {
         self.stopped = Some(stopped);
     }
 
+    /// Sets include startup flag.
+    pub(crate) fn set_include_startup(&mut self, include_startup: bool) {
+        self.include_startup = include_startup;
+    }
+
     /// Record requests per second metric.
     pub(crate) fn record_requests_per_second(&mut self, second: usize) {
         expand_per_second_metric_array(&mut self.requests_per_second, second, 0);
@@ -119,12 +132,9 @@ impl GraphData {
     }
 
     /// Records number of users for a current second.
-    ///
-    /// This is called from [`GooseAttack::sync_metrics()`] and the data
-    /// collected is used to display users graph on the HTML report.
-    pub(crate) fn record_users_per_second(&mut self, users: usize) {
+    pub(crate) fn record_users_per_second(&mut self, users: usize, now: DateTime<Utc>) {
         if let Some(starting) = self.starting {
-            let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
+            let second = (now.timestamp() - starting.timestamp()) as usize;
 
             let last_user_count = match self.users_per_second.last() {
                 Some(last) => *last,
@@ -137,28 +147,16 @@ impl GraphData {
 
     /// Generate active users graph.
     pub(crate) fn get_active_users_graph(&self) -> Graph<usize> {
-        Graph::new(
+        self.create_graph_from_data(
             "graph-active-users",
             "Active users #",
-            self.add_timestamp_to_html_graph_data(&self.users_per_second),
-            self.starting,
-            self.started,
-            self.stopping,
-            self.stopped,
+            &self.users_per_second,
         )
     }
 
     /// Generate requests per second graph.
     pub(crate) fn get_requests_per_second_graph(&self) -> Graph<u32> {
-        Graph::new(
-            "graph-rps",
-            "Requests #",
-            self.add_timestamp_to_html_graph_data(&self.requests_per_second),
-            self.starting,
-            self.started,
-            self.stopping,
-            self.stopped,
-        )
+        self.create_graph_from_data("graph-rps", "Requests #", &self.requests_per_second)
     }
 
     /// Generate average response time graph.
@@ -169,41 +167,51 @@ impl GraphData {
             .map(|moving_average| moving_average.average as u32)
             .collect::<Vec<_>>();
 
-        Graph::new(
+        self.create_graph_from_data(
             "graph-avg-response-time",
             "Response time [ms]",
-            self.add_timestamp_to_html_graph_data(&response_times),
-            self.starting,
-            self.started,
-            self.stopping,
-            self.stopped,
+            &response_times,
         )
     }
 
     /// Generate active tasks graph.
     pub(crate) fn get_tasks_per_second_graph(&self) -> Graph<usize> {
-        Graph::new(
-            "graph-tps",
-            "Tasks #",
-            self.add_timestamp_to_html_graph_data(&self.tasks_per_second),
-            self.starting,
-            self.started,
-            self.stopping,
-            self.stopped,
-        )
+        self.create_graph_from_data("graph-tps", "Tasks #", &self.tasks_per_second)
     }
 
     /// Generate errors per second graph.
     pub(crate) fn get_errors_per_second_graph(&self) -> Graph<u32> {
-        Graph::new(
-            "graph-eps",
-            "Errors #",
-            self.add_timestamp_to_html_graph_data(&self.errors_per_second),
-            self.starting,
-            self.started,
-            self.stopping,
-            self.stopped,
-        )
+        self.create_graph_from_data("graph-eps", "Errors #", &self.errors_per_second)
+    }
+
+    /// Creates a Graph from data.
+    fn create_graph_from_data<'a, T: Copy + Serialize>(
+        &self,
+        html_id: &'a str,
+        y_axis_label: &'a str,
+        data: &[T],
+    ) -> Graph<'a, T> {
+        if self.include_startup {
+            Graph::new(
+                html_id,
+                y_axis_label,
+                self.add_timestamp_to_html_graph_data(data),
+                self.starting,
+                self.started,
+                self.stopping,
+                self.stopped,
+            )
+        } else {
+            Graph::new(
+                html_id,
+                y_axis_label,
+                self.add_timestamp_to_html_graph_data(data),
+                None,
+                None,
+                None,
+                None,
+            )
+        }
     }
 
     /// Adds timestamps to the graph data series to ensure correct time display on x axis.
@@ -212,7 +220,6 @@ impl GraphData {
     /// the second element will be the data point and the first element will be formatted time
     /// it belongs to.
     fn add_timestamp_to_html_graph_data<T: Copy>(&self, data: &[T]) -> Vec<(String, T)> {
-        // TODO properly handle the date Option timestamps.
         data.iter()
             .enumerate()
             .filter(|(second, _)| {
@@ -258,7 +265,7 @@ fn expand_per_second_metric_array<T: Clone>(data: &mut Vec<T>, second: usize, in
 #[derive(Debug)]
 // TODO why does this need to be pub (instead pub(crate)) in order for stuff on
 // report.rs to not complain?
-pub struct Graph<'a, T: Serialize> {
+pub(crate) struct Graph<'a, T: Serialize> {
     html_id: &'a str,
     y_axis_label: &'a str,
     data: Vec<(String, T)>,
@@ -510,6 +517,284 @@ mod test {
     }
 
     #[test]
+    fn test_set_include_startup() {
+        let mut graph = GraphData::new(false);
+        assert!(!graph.include_startup);
+        graph.set_include_startup(true);
+        assert!(graph.include_startup);
+
+        let mut graph = GraphData::new(true);
+        assert!(graph.include_startup);
+        graph.set_include_startup(false);
+        assert!(!graph.include_startup);
+    }
+
+    #[test]
+    fn test_graph_setters() {
+        let mut graph = GraphData::new(false);
+        graph.requests_per_second = vec![123, 234, 345, 456, 567];
+        graph.users_per_second = vec![345, 456, 567, 123, 234];
+        graph.average_response_time_per_second = vec![
+            MovingAverage {
+                count: 123,
+                average: 1.23,
+            },
+            MovingAverage {
+                count: 234,
+                average: 2.34,
+            },
+            MovingAverage {
+                count: 345,
+                average: 3.45,
+            },
+            MovingAverage {
+                count: 456,
+                average: 4.56,
+            },
+            MovingAverage {
+                count: 567,
+                average: 5.67,
+            },
+        ];
+        graph.tasks_per_second = vec![345, 123, 234, 456, 567];
+        graph.errors_per_second = vec![567, 123, 234, 345, 456];
+        graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
+        graph.started = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
+        graph.stopping = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26));
+        graph.stopped = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27));
+        let rps_graph = graph.get_requests_per_second_graph();
+        assert_eq!(
+            rps_graph.data,
+            vec![
+                ("2021-12-14 15:12:25".to_string(), 345),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
+        assert_eq!(rps_graph.html_id, "graph-rps");
+        assert_eq!(rps_graph.y_axis_label, "Requests #");
+        assert_eq!(rps_graph.starting, None);
+        assert_eq!(rps_graph.started, None);
+        assert_eq!(rps_graph.stopping, None);
+        assert_eq!(rps_graph.stopped, None);
+
+        let users_graph = graph.get_active_users_graph();
+        assert_eq!(
+            users_graph.data,
+            vec![
+                ("2021-12-14 15:12:25".to_string(), 567),
+                ("2021-12-14 15:12:26".to_string(), 123),
+                ("2021-12-14 15:12:27".to_string(), 234)
+            ]
+        );
+        assert_eq!(users_graph.html_id, "graph-active-users");
+        assert_eq!(users_graph.y_axis_label, "Active users #");
+        assert_eq!(users_graph.starting, None);
+        assert_eq!(users_graph.started, None);
+        assert_eq!(users_graph.stopping, None);
+        assert_eq!(users_graph.stopped, None);
+
+        let avg_rt_graph = graph.get_average_response_time_graph();
+        assert_eq!(
+            avg_rt_graph.data,
+            vec![
+                ("2021-12-14 15:12:25".to_string(), 3),
+                ("2021-12-14 15:12:26".to_string(), 4),
+                ("2021-12-14 15:12:27".to_string(), 5)
+            ]
+        );
+        assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
+        assert_eq!(avg_rt_graph.y_axis_label, "Response time [ms]");
+        assert_eq!(avg_rt_graph.starting, None);
+        assert_eq!(avg_rt_graph.started, None);
+        assert_eq!(avg_rt_graph.stopping, None);
+        assert_eq!(avg_rt_graph.stopped, None);
+
+        let tasks_graph = graph.get_tasks_per_second_graph();
+        assert_eq!(
+            tasks_graph.data,
+            vec![
+                ("2021-12-14 15:12:25".to_string(), 234),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
+        assert_eq!(tasks_graph.html_id, "graph-tps");
+        assert_eq!(tasks_graph.y_axis_label, "Tasks #");
+        assert_eq!(tasks_graph.starting, None);
+        assert_eq!(tasks_graph.started, None);
+        assert_eq!(tasks_graph.stopping, None);
+        assert_eq!(tasks_graph.stopped, None);
+
+        let errors_graph = graph.get_errors_per_second_graph();
+        assert_eq!(
+            errors_graph.data,
+            vec![
+                ("2021-12-14 15:12:25".to_string(), 234),
+                ("2021-12-14 15:12:26".to_string(), 345),
+                ("2021-12-14 15:12:27".to_string(), 456)
+            ]
+        );
+        assert_eq!(errors_graph.html_id, "graph-eps");
+        assert_eq!(errors_graph.y_axis_label, "Errors #");
+        assert_eq!(errors_graph.starting, None);
+        assert_eq!(errors_graph.started, None);
+        assert_eq!(errors_graph.stopping, None);
+        assert_eq!(errors_graph.stopped, None);
+
+        graph.set_include_startup(true);
+        let rps_graph = graph.get_requests_per_second_graph();
+        assert_eq!(
+            rps_graph.data,
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 123),
+                ("2021-12-14 15:12:24".to_string(), 234),
+                ("2021-12-14 15:12:25".to_string(), 345),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
+        assert_eq!(rps_graph.html_id, "graph-rps");
+        assert_eq!(rps_graph.y_axis_label, "Requests #");
+        assert_eq!(
+            rps_graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            rps_graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
+        );
+        assert_eq!(
+            rps_graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+        assert_eq!(
+            rps_graph.stopped,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
+        );
+
+        let users_graph = graph.get_active_users_graph();
+        assert_eq!(
+            users_graph.data,
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 345),
+                ("2021-12-14 15:12:24".to_string(), 456),
+                ("2021-12-14 15:12:25".to_string(), 567),
+                ("2021-12-14 15:12:26".to_string(), 123),
+                ("2021-12-14 15:12:27".to_string(), 234)
+            ]
+        );
+        assert_eq!(users_graph.html_id, "graph-active-users");
+        assert_eq!(users_graph.y_axis_label, "Active users #");
+        assert_eq!(
+            users_graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            users_graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
+        );
+        assert_eq!(
+            users_graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+        assert_eq!(
+            users_graph.stopped,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
+        );
+
+        let avg_rt_graph = graph.get_average_response_time_graph();
+        assert_eq!(
+            avg_rt_graph.data,
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 1),
+                ("2021-12-14 15:12:24".to_string(), 2),
+                ("2021-12-14 15:12:25".to_string(), 3),
+                ("2021-12-14 15:12:26".to_string(), 4),
+                ("2021-12-14 15:12:27".to_string(), 5)
+            ]
+        );
+        assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
+        assert_eq!(avg_rt_graph.y_axis_label, "Response time [ms]");
+        assert_eq!(
+            avg_rt_graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            avg_rt_graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
+        );
+        assert_eq!(
+            avg_rt_graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+        assert_eq!(
+            avg_rt_graph.stopped,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
+        );
+
+        let tasks_graph = graph.get_tasks_per_second_graph();
+        assert_eq!(
+            tasks_graph.data,
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 345),
+                ("2021-12-14 15:12:24".to_string(), 123),
+                ("2021-12-14 15:12:25".to_string(), 234),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
+        assert_eq!(tasks_graph.html_id, "graph-tps");
+        assert_eq!(tasks_graph.y_axis_label, "Tasks #");
+        assert_eq!(
+            tasks_graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            tasks_graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
+        );
+        assert_eq!(
+            tasks_graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+        assert_eq!(
+            tasks_graph.stopped,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
+        );
+
+        let errors_graph = graph.get_errors_per_second_graph();
+        assert_eq!(
+            errors_graph.data,
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 567),
+                ("2021-12-14 15:12:24".to_string(), 123),
+                ("2021-12-14 15:12:25".to_string(), 234),
+                ("2021-12-14 15:12:26".to_string(), 345),
+                ("2021-12-14 15:12:27".to_string(), 456)
+            ]
+        );
+        assert_eq!(errors_graph.html_id, "graph-eps");
+        assert_eq!(errors_graph.y_axis_label, "Errors #");
+        assert_eq!(
+            errors_graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            errors_graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
+        );
+        assert_eq!(
+            errors_graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+        assert_eq!(
+            errors_graph.stopped,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
+        );
+    }
+
+    #[test]
     fn test_record_requests_per_second() {
         // Should be initialized with empty requests per second vector.
         let mut graph = GraphData::new(false);
@@ -592,7 +877,7 @@ mod test {
     #[test]
     #[allow(clippy::float_cmp)]
     fn test_record_average_response_time_per_second() {
-        // Should be initialized with empty errors per second vector.
+        // Should be initialized with empty average response time per second vector.
         let mut graph = GraphData::new(false);
         assert_eq!(graph.average_response_time_per_second.len(), 0);
 
@@ -627,6 +912,76 @@ mod test {
         assert_eq!(graph.average_response_time_per_second[100].average, 7.);
         for second in 6..100 {
             assert_eq!(graph.average_response_time_per_second[second].average, 0.);
+        }
+    }
+
+    #[test]
+    fn test_record_tasks_per_second() {
+        // Should be initialized with empty tasks per second vector.
+        let mut graph = GraphData::new(false);
+        assert_eq!(graph.tasks_per_second.len(), 0);
+
+        graph.record_tasks_per_second(0);
+        graph.record_tasks_per_second(0);
+        graph.record_tasks_per_second(0);
+        graph.record_tasks_per_second(1);
+        graph.record_tasks_per_second(2);
+        graph.record_tasks_per_second(2);
+        graph.record_tasks_per_second(2);
+        graph.record_tasks_per_second(2);
+        graph.record_tasks_per_second(2);
+        assert_eq!(graph.tasks_per_second.len(), 3);
+        assert_eq!(graph.tasks_per_second[0], 3);
+        assert_eq!(graph.tasks_per_second[1], 1);
+        assert_eq!(graph.tasks_per_second[2], 5);
+
+        graph.record_tasks_per_second(100);
+        graph.record_tasks_per_second(100);
+        graph.record_tasks_per_second(100);
+        graph.record_tasks_per_second(0);
+        graph.record_tasks_per_second(1);
+        graph.record_tasks_per_second(2);
+        graph.record_tasks_per_second(5);
+        assert_eq!(graph.tasks_per_second.len(), 101);
+        assert_eq!(graph.tasks_per_second[0], 4);
+        assert_eq!(graph.tasks_per_second[1], 2);
+        assert_eq!(graph.tasks_per_second[2], 6);
+        assert_eq!(graph.tasks_per_second[3], 0);
+        assert_eq!(graph.tasks_per_second[4], 0);
+        assert_eq!(graph.tasks_per_second[5], 1);
+        assert_eq!(graph.tasks_per_second[100], 3);
+        for second in 6..100 {
+            assert_eq!(graph.tasks_per_second[second], 0);
+        }
+    }
+
+    #[test]
+    fn test_record_users_per_second() {
+        // Should be initialized with empty tasks per second vector.
+        let mut graph = GraphData::new(false);
+        graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
+        assert_eq!(graph.users_per_second.len(), 0);
+
+        graph.record_users_per_second(1, Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
+        graph.record_users_per_second(1, Utc.ymd(2021, 12, 14).and_hms(15, 12, 24));
+        graph.record_users_per_second(2, Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
+        assert_eq!(graph.users_per_second.len(), 3);
+        assert_eq!(graph.users_per_second[0], 1);
+        assert_eq!(graph.users_per_second[1], 1);
+        assert_eq!(graph.users_per_second[2], 2);
+
+        graph.record_users_per_second(5, Utc.ymd(2021, 12, 14).and_hms(15, 12, 28));
+        graph.record_users_per_second(10, Utc.ymd(2021, 12, 14).and_hms(15, 13, 00));
+        assert_eq!(graph.users_per_second.len(), 38);
+        assert_eq!(graph.users_per_second[0], 1);
+        assert_eq!(graph.users_per_second[1], 1);
+        assert_eq!(graph.users_per_second[2], 2);
+        assert_eq!(graph.users_per_second[3], 2);
+        assert_eq!(graph.users_per_second[4], 2);
+        assert_eq!(graph.users_per_second[5], 5);
+        assert_eq!(graph.users_per_second[37], 10);
+        for second in 6..36 {
+            assert_eq!(graph.users_per_second[second], 5);
         }
     }
 
@@ -694,7 +1049,7 @@ mod test {
             ]
         );
 
-        graph.include_startup = true;
+        graph.set_include_startup(true);
         assert_eq!(
             graph.add_timestamp_to_html_graph_data(&data),
             vec![
