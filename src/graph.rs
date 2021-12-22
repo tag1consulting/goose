@@ -317,8 +317,12 @@ impl<'a, T: Serialize> Graph<'a, T> {
                         xAxis: '{started}'
                     }}
                 ],"#,
-                starting = self.starting.unwrap().format(datetime_format),
-                started = self.started.unwrap().format(datetime_format),
+                starting = Local
+                    .timestamp(self.starting.unwrap().timestamp(), 0)
+                    .format(datetime_format),
+                started = Local
+                    .timestamp(self.started.unwrap().timestamp(), 0)
+                    .format(datetime_format),
             )
         } else {
             "".to_string()
@@ -335,8 +339,12 @@ impl<'a, T: Serialize> Graph<'a, T> {
                         xAxis: '{stopped}'
                     }}
                 ],"#,
-                stopping = self.stopping.unwrap().format(datetime_format),
-                stopped = self.stopped.unwrap().format(datetime_format),
+                stopping = Local
+                    .timestamp(self.stopping.unwrap().timestamp(), 0)
+                    .format(datetime_format),
+                stopped = Local
+                    .timestamp(self.stopped.unwrap().timestamp(), 0)
+                    .format(datetime_format),
             )
         } else {
             "".to_string()
@@ -570,9 +578,27 @@ mod test {
         assert_eq!(
             rps_graph.data,
             vec![
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                )
             ]
         );
         assert_eq!(rps_graph.html_id, "graph-rps");
@@ -586,9 +612,27 @@ mod test {
         assert_eq!(
             users_graph.data,
             vec![
-                ("2021-12-14 15:12:25".to_string(), 567),
-                ("2021-12-14 15:12:26".to_string(), 123),
-                ("2021-12-14 15:12:27".to_string(), 234)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    123
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                )
             ]
         );
         assert_eq!(users_graph.html_id, "graph-active-users");
@@ -602,9 +646,27 @@ mod test {
         assert_eq!(
             avg_rt_graph.data,
             vec![
-                ("2021-12-14 15:12:25".to_string(), 3),
-                ("2021-12-14 15:12:26".to_string(), 4),
-                ("2021-12-14 15:12:27".to_string(), 5)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    3
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    4
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    5
+                )
             ]
         );
         assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
@@ -618,9 +680,27 @@ mod test {
         assert_eq!(
             tasks_graph.data,
             vec![
-                ("2021-12-14 15:12:25".to_string(), 234),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                )
             ]
         );
         assert_eq!(tasks_graph.html_id, "graph-tps");
@@ -634,9 +714,27 @@ mod test {
         assert_eq!(
             errors_graph.data,
             vec![
-                ("2021-12-14 15:12:25".to_string(), 234),
-                ("2021-12-14 15:12:26".to_string(), 345),
-                ("2021-12-14 15:12:27".to_string(), 456)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                )
             ]
         );
         assert_eq!(errors_graph.html_id, "graph-eps");
@@ -651,11 +749,41 @@ mod test {
         assert_eq!(
             rps_graph.data,
             vec![
-                ("2021-12-14 15:12:23".to_string(), 123),
-                ("2021-12-14 15:12:24".to_string(), 234),
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    123
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                )
             ]
         );
         assert_eq!(rps_graph.html_id, "graph-rps");
@@ -681,11 +809,41 @@ mod test {
         assert_eq!(
             users_graph.data,
             vec![
-                ("2021-12-14 15:12:23".to_string(), 345),
-                ("2021-12-14 15:12:24".to_string(), 456),
-                ("2021-12-14 15:12:25".to_string(), 567),
-                ("2021-12-14 15:12:26".to_string(), 123),
-                ("2021-12-14 15:12:27".to_string(), 234)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    123
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                )
             ]
         );
         assert_eq!(users_graph.html_id, "graph-active-users");
@@ -711,11 +869,41 @@ mod test {
         assert_eq!(
             avg_rt_graph.data,
             vec![
-                ("2021-12-14 15:12:23".to_string(), 1),
-                ("2021-12-14 15:12:24".to_string(), 2),
-                ("2021-12-14 15:12:25".to_string(), 3),
-                ("2021-12-14 15:12:26".to_string(), 4),
-                ("2021-12-14 15:12:27".to_string(), 5)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    1
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    2
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    3
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    4
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    5
+                )
             ]
         );
         assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
@@ -741,11 +929,41 @@ mod test {
         assert_eq!(
             tasks_graph.data,
             vec![
-                ("2021-12-14 15:12:23".to_string(), 345),
-                ("2021-12-14 15:12:24".to_string(), 123),
-                ("2021-12-14 15:12:25".to_string(), 234),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    123
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                )
             ]
         );
         assert_eq!(tasks_graph.html_id, "graph-tps");
@@ -771,11 +989,41 @@ mod test {
         assert_eq!(
             errors_graph.data,
             vec![
-                ("2021-12-14 15:12:23".to_string(), 567),
-                ("2021-12-14 15:12:24".to_string(), 123),
-                ("2021-12-14 15:12:25".to_string(), 234),
-                ("2021-12-14 15:12:26".to_string(), 345),
-                ("2021-12-14 15:12:27".to_string(), 456)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    123
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                )
             ]
         );
         assert_eq!(errors_graph.html_id, "graph-eps");
@@ -808,11 +1056,41 @@ mod test {
         assert_eq!(
             rps_graph.data,
             vec![
-                ("2021-12-14 15:12:23".to_string(), 123),
-                ("2021-12-14 15:12:24".to_string(), 234),
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    123
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                )
             ]
         );
         assert_eq!(rps_graph.html_id, "graph-rps");
@@ -1084,9 +1362,27 @@ mod test {
         assert_eq!(
             graph.add_timestamp_to_html_graph_data(&data),
             vec![
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                )
             ]
         );
 
@@ -1094,11 +1390,41 @@ mod test {
         assert_eq!(
             graph.add_timestamp_to_html_graph_data(&data),
             vec![
-                ("2021-12-14 15:12:23".to_string(), 123),
-                ("2021-12-14 15:12:24".to_string(), 234),
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    123
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    234
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    345
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    456
+                ),
+                (
+                    Local
+                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
+                    567
+                )
             ]
         );
     }
@@ -1205,26 +1531,34 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                    data: [
+        let suffix = format!(
+            r#"                                    data: [
                                         [
-                    {
+                    {{
                         name: 'Starting',
-                        xAxis: '2021-11-21 21:20:32'
-                    },
-                    {
-                        xAxis: '2021-11-21 21:20:34'
-                    }
+                        xAxis: '{starting}'
+                    }},
+                    {{
+                        xAxis: '{started}'
+                    }}
                 ],
                                         
                                     ]
-                                },
+                                }},
                                 data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                            }
+                            }}
                         ]
-                    });
+                    }});
                 </script>
-            </div>"#
+            </div>"#,
+            starting = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
+            started = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
         );
+        expected.push_str(&suffix[..]);
         assert_eq!(
             Graph::new(
                 "graph-rps",
@@ -1240,26 +1574,34 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                    data: [
+        let suffix = format!(
+            r#"                                    data: [
                                         
                                         [
-                    {
+                    {{
                         name: 'Stopping',
-                        xAxis: '2021-11-21 21:20:32'
-                    },
-                    {
-                        xAxis: '2021-11-21 21:20:34'
-                    }
+                        xAxis: '{stopping}'
+                    }},
+                    {{
+                        xAxis: '{stopped}'
+                    }}
                 ],
                                     ]
-                                },
+                                }},
                                 data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                            }
+                            }}
                         ]
-                    });
+                    }});
                 </script>
-            </div>"#
+            </div>"#,
+            stopping = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
+            stopped = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
         );
+        expected.push_str(&suffix[..]);
         assert_eq!(
             Graph::new(
                 "graph-rps",
@@ -1275,34 +1617,48 @@ mod test {
         );
 
         let mut expected = expected_prefix;
-        expected.push_str(r#"                                    data: [
+        let suffix = format!(
+            r#"                                    data: [
                                         [
-                    {
+                    {{
                         name: 'Starting',
-                        xAxis: '2021-11-21 21:20:32'
-                    },
-                    {
-                        xAxis: '2021-11-21 21:20:34'
-                    }
+                        xAxis: '{starting}'
+                    }},
+                    {{
+                        xAxis: '{started}'
+                    }}
                 ],
                                         [
-                    {
+                    {{
                         name: 'Stopping',
-                        xAxis: '2021-11-21 21:20:36'
-                    },
-                    {
-                        xAxis: '2021-11-21 21:20:38'
-                    }
+                        xAxis: '{stopping}'
+                    }},
+                    {{
+                        xAxis: '{stopped}'
+                    }}
                 ],
                                     ]
-                                },
+                                }},
                                 data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                            }
+                            }}
                         ]
-                    });
+                    }});
                 </script>
-            </div>"#
+            </div>"#,
+            starting = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
+            started = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
+            stopping = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 36).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
+            stopped = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 38).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
         );
+        expected.push_str(&suffix[..]);
         assert_eq!(
             Graph::new(
                 "graph-rps",
