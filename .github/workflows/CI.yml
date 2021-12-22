@@ -33,3 +33,5 @@ jobs:
       run: cargo rustdoc --lib --all-features --examples
     - name: Run tests
       run: cargo test --verbose --all-features
+    - name: Run timezone-sensitive tests in non UTC (GMT-5)
+      run: TZ="std +5" cargo test --verbose --all-features graph
