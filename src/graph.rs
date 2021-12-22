@@ -197,7 +197,11 @@ impl GraphData {
                 y_axis_label,
                 self.add_timestamp_to_html_graph_data(data),
                 self.starting,
-                self.started,
+                if self.started.is_none() && self.stopping.is_some() {
+                    self.stopping
+                } else {
+                    self.started
+                },
                 self.stopping,
                 self.stopped,
             )
@@ -790,6 +794,43 @@ mod test {
         );
         assert_eq!(
             errors_graph.stopped,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
+        );
+
+        // Stopping time should be used for started if the test is interrupted before
+        // it is fully started.
+        let mut graph = GraphData::new(true);
+        graph.requests_per_second = vec![123, 234, 345, 456, 567];
+        graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
+        graph.stopping = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26));
+        graph.stopped = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27));
+        let rps_graph = graph.get_requests_per_second_graph();
+        assert_eq!(
+            rps_graph.data,
+            vec![
+                ("2021-12-14 15:12:23".to_string(), 123),
+                ("2021-12-14 15:12:24".to_string(), 234),
+                ("2021-12-14 15:12:25".to_string(), 345),
+                ("2021-12-14 15:12:26".to_string(), 456),
+                ("2021-12-14 15:12:27".to_string(), 567)
+            ]
+        );
+        assert_eq!(rps_graph.html_id, "graph-rps");
+        assert_eq!(rps_graph.y_axis_label, "Requests #");
+        assert_eq!(
+            rps_graph.starting,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
+        );
+        assert_eq!(
+            rps_graph.started,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+        assert_eq!(
+            rps_graph.stopping,
+            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
+        );
+        assert_eq!(
+            rps_graph.stopped,
             Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
         );
     }
