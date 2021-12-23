@@ -2604,9 +2604,6 @@ impl GooseAttack {
             let started = if self.metrics.started.is_some() {
                 self.metrics.started.unwrap()
             } else {
-                // If the test was stopped before it started we always include
-                // startup data in graphs.
-                self.graph_data.set_include_startup(true);
                 self.metrics.stopping.unwrap()
             };
             let (starting_seconds, starting_minutes, starting_hours) =

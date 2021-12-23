@@ -74,11 +74,6 @@ impl GraphData {
         self.stopped = Some(stopped);
     }
 
-    /// Sets include startup flag.
-    pub(crate) fn set_include_startup(&mut self, include_startup: bool) {
-        self.include_startup = include_startup;
-    }
-
     /// Record requests per second metric.
     pub(crate) fn record_requests_per_second(&mut self, second: usize) {
         expand_per_second_metric_array(&mut self.requests_per_second, second, 0);
@@ -529,19 +524,6 @@ mod test {
     }
 
     #[test]
-    fn test_set_include_startup() {
-        let mut graph = GraphData::new(false);
-        assert!(!graph.include_startup);
-        graph.set_include_startup(true);
-        assert!(graph.include_startup);
-
-        let mut graph = GraphData::new(true);
-        assert!(graph.include_startup);
-        graph.set_include_startup(false);
-        assert!(!graph.include_startup);
-    }
-
-    #[test]
     fn test_graph_setters() {
         let mut graph = GraphData::new(false);
         graph.requests_per_second = vec![123, 234, 345, 456, 567];
@@ -744,7 +726,7 @@ mod test {
         assert_eq!(errors_graph.stopping, None);
         assert_eq!(errors_graph.stopped, None);
 
-        graph.set_include_startup(true);
+        graph.include_startup = true;
         let rps_graph = graph.get_requests_per_second_graph();
         assert_eq!(
             rps_graph.data,
@@ -1386,7 +1368,7 @@ mod test {
             ]
         );
 
-        graph.set_include_startup(true);
+        graph.include_startup = true;
         assert_eq!(
             graph.add_timestamp_to_html_graph_data(&data),
             vec![
