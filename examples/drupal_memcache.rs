@@ -79,8 +79,7 @@ async fn main() -> Result<(), GooseError> {
                 ),
         )
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 }

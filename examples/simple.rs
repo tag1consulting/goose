@@ -35,8 +35,7 @@ async fn main() -> Result<(), GooseError> {
                 .register_task(task!(website_about)),
         )
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 }

@@ -58,6 +58,9 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
         }
     }
 
+    // Disable verbose output when running tests.
+    configuration.extend_from_slice(&["--quiet"]);
+
     // Parse these options to generate a GooseConfiguration.
     GooseConfiguration::parse_args_default(&configuration)
         .expect("failed to parse options and generate a configuration")

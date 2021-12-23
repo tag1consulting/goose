@@ -84,8 +84,7 @@ async fn main() -> Result<(), GooseError> {
         )
         .set_default(GooseDefault::Host, "https://drupal-9.ddev.site/")?
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 }

@@ -45,8 +45,7 @@ async fn main() -> Result<(), GooseError> {
                 .register_task(task!(authenticated_index)),
         )
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 }

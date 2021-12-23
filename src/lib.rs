@@ -961,6 +961,14 @@ impl GooseAttack {
             self = self.start_attack(None).await?;
         }
 
+        if self.metrics.display_metrics {
+            info!(
+                "printing final metrics after {} seconds...",
+                self.metrics.duration
+            );
+            print!("{}", self.metrics);
+        }
+
         Ok(self.metrics)
     }
 
@@ -1022,7 +1030,7 @@ impl GooseAttack {
 
         if self.attack_mode != AttackMode::Worker {
             // Stand-alone and Manager processes can display metrics.
-            if !self.configuration.no_metrics {
+            if !self.configuration.no_metrics && !self.configuration.no_print_metrics {
                 self.metrics.display_metrics = true;
             }
 
@@ -1583,7 +1591,9 @@ impl GooseAttack {
                 &self.configuration,
                 &self.defaults,
             )?;
-            self.metrics.display_metrics = true;
+            if !self.configuration.no_print_metrics {
+                self.metrics.display_metrics = true;
+            }
             // Only display status codes if enabled.
             self.metrics.display_status_codes = self.configuration.status_codes;
         }

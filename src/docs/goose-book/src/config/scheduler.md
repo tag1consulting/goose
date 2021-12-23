@@ -45,8 +45,7 @@ async fn main() -> Result<(), GooseError> {
             .register_task(task!(task2).set_weight(2)?)
         )
         .execute()
-        .await?
-        .print();
+        .await?;
 
     Ok(())
 }
