@@ -43,6 +43,7 @@ extern crate log;
 pub mod config;
 pub mod controller;
 pub mod goose;
+mod graph;
 pub mod logger;
 #[cfg(feature = "gaggle")]
 mod manager;
@@ -76,6 +77,7 @@ use tokio::fs::File;
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseMetric, GooseMetrics};
 #[cfg(feature = "gaggle")]
@@ -384,6 +386,8 @@ pub struct GooseAttack {
     started: Option<time::Instant>,
     /// All metrics merged together.
     metrics: GooseMetrics,
+    /// All data for report graphs.
+    graph_data: GraphData,
 }
 /// Goose's internal global state.
 impl GooseAttack {
@@ -396,6 +400,7 @@ impl GooseAttack {
     /// let mut goose_attack = GooseAttack::initialize();
     /// ```
     pub fn initialize() -> Result<GooseAttack, GooseError> {
+        let configuration = GooseConfiguration::parse_args_default_or_exit();
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
@@ -403,7 +408,8 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
-            configuration: GooseConfiguration::parse_args_default_or_exit(),
+            graph_data: GraphData::new(),
+            configuration,
             run_time: 0,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Idle,
@@ -437,6 +443,7 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
+            graph_data: GraphData::new(),
             configuration,
             run_time: 0,
             attack_mode: AttackMode::Undefined,
@@ -1425,6 +1432,7 @@ impl GooseAttack {
 
             self.reset_metrics(goose_attack_run_state).await?;
             self.set_attack_phase(goose_attack_run_state, AttackPhase::Running);
+            self.graph_data.set_started(Utc::now());
             // Also record a formattable timestamp, for human readable reports.
             self.metrics.started = Some(Local::now());
         }
@@ -1442,6 +1450,7 @@ impl GooseAttack {
         if util::timer_expired(self.started.unwrap(), self.run_time) {
             self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
             self.metrics.stopping = Some(Local::now());
+            self.graph_data.set_stopping(Utc::now());
         } else {
             // Subtract the time spent doing other things, running the main parent loop twice
             // per second.
@@ -1661,6 +1670,7 @@ impl GooseAttack {
                         self.reset_run_state(&mut goose_attack_run_state).await?;
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Starting);
                         self.metrics.starting = Some(Local::now());
+                        self.graph_data.set_starting(Utc::now());
                     }
                 }
                 // In the Start phase, Goose launches GooseUser threads and starts a GooseAttack.
@@ -1689,6 +1699,7 @@ impl GooseAttack {
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
                     // The load test is fully stopped at this point.
                     self.metrics.stopped = Some(Local::now());
+                    self.graph_data.set_stopped(Utc::now());
                     // Write an html report, if enabled.
                     self.write_html_report(&mut goose_attack_run_state).await?;
                     // Shutdown Goose or go into an idle waiting state.
@@ -1707,7 +1718,8 @@ impl GooseAttack {
             }
 
             // Record current users for users per second graph in HTML report.
-            self.metrics.record_users_per_second();
+            self.graph_data
+                .record_users_per_second(self.metrics.users, Utc::now());
 
             // Regularly synchronize metrics.
             self.sync_metrics(&mut goose_attack_run_state, false)
@@ -1732,6 +1744,7 @@ impl GooseAttack {
                 // Cleanly stop the load test.
                 self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Stopping);
                 self.metrics.stopping = Some(Local::now());
+                self.graph_data.set_stopping(Utc::now());
             }
         }
 

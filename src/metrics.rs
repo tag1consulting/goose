@@ -15,7 +15,7 @@ use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
-use std::cmp::{max, Ordering};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
@@ -396,12 +396,6 @@ pub struct GooseRequestMetricAggregate {
     /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
     /// that all Workers are running the same load test plan.
     pub load_test_hash: u64,
-    /// Counts requests per second. Each element of the vector represents one second.
-    pub requests_per_second: Vec<u32>,
-    /// Counts errors per second. Each element of the vector represents one second.
-    pub errors_per_second: Vec<u32>,
-    /// Maintains average response time per second. Each element of the vector represents one second.
-    pub average_response_time_per_second: Vec<util::MovingAverage>,
 }
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
@@ -416,9 +410,6 @@ impl GooseRequestMetricAggregate {
             success_count: 0,
             fail_count: 0,
             load_test_hash,
-            requests_per_second: Vec::new(),
-            errors_per_second: Vec::new(),
-            average_response_time_per_second: Vec::new(),
         }
     }
 
@@ -460,65 +451,6 @@ impl GooseRequestMetricAggregate {
         self.status_code_counts.insert(status_code, counter);
         debug!("incremented {} counter: {}", status_code, counter);
     }
-
-    /// Record requests per second metric.
-    pub(crate) fn record_requests_per_second(&mut self, second: usize) {
-        expand_per_second_metric_array(&mut self.requests_per_second, second, 0);
-        self.requests_per_second[second] += 1;
-
-        debug!(
-            "incremented second {} for requests per second counter: {}",
-            second, self.requests_per_second[second]
-        );
-    }
-
-    /// Record errors per second metric.
-    pub(crate) fn record_errors_per_second(&mut self, second: usize) {
-        expand_per_second_metric_array(&mut self.errors_per_second, second, 0);
-        self.errors_per_second[second] += 1;
-
-        debug!(
-            "incremented second {} for errors per second counter: {}",
-            second, self.errors_per_second[second]
-        );
-    }
-
-    /// Record average response time per second metric.
-    pub(crate) fn record_average_response_time_per_second(
-        &mut self,
-        second: usize,
-        response_time: u64,
-    ) {
-        expand_per_second_metric_array(
-            &mut self.average_response_time_per_second,
-            second,
-            util::MovingAverage::new(),
-        );
-        self.average_response_time_per_second[second].add_item(response_time as f32);
-
-        debug!(
-            "updated second {} for average response time per second: {}",
-            second, self.average_response_time_per_second[second].average
-        );
-    }
-}
-
-/// Expands vectors that collect per-second data for HTML report graphs with a
-/// default value.
-///
-/// We need to do that since we don't know for how long the load test will run
-/// and we can't initialize these vectors at the beginning. It is also
-/// better to do it as we go to save memory.
-fn expand_per_second_metric_array<T: Clone>(data: &mut Vec<T>, second: usize, initial: T) {
-    // Each element in per second metric vectors (self.requests_per_second,
-    // self.errors_per_second, ...) is counted for a given second since the start
-    // of the test. Since we don't know how long the test will at the beginning
-    // we need to push new elements (second counters) as the test is running.
-    if data.len() <= second {
-        for _ in 0..(second - data.len() + 1) {
-            data.push(initial.clone());
-        }
-    };
 }
 
 /// Implement equality for GooseRequestMetricAggregate. We can't simply derive since
@@ -724,9 +656,6 @@ pub struct GooseTaskMetricAggregate {
     pub success_count: usize,
     /// Total number of times task has failed.
     pub fail_count: usize,
-    /// Number of tasks at the end of each second of the test. Each element of the vector
-    /// represents one second.
-    pub tasks_per_second: Vec<usize>,
 }
 impl GooseTaskMetricAggregate {
     /// Create a new GooseTaskMetricAggregate.
@@ -748,7 +677,6 @@ impl GooseTaskMetricAggregate {
             counter: 0,
             success_count: 0,
             fail_count: 0,
-            tasks_per_second: Vec::new(),
         }
     }
 
@@ -800,17 +728,6 @@ impl GooseTaskMetricAggregate {
         };
         self.times.insert(rounded_time, counter);
         debug!("incremented {} counter: {}", rounded_time, counter);
-    }
-
-    /// Record tasks per second metric.
-    pub(crate) fn record_tasks_per_second(&mut self, second: usize) {
-        expand_per_second_metric_array(&mut self.tasks_per_second, second, 0);
-        self.tasks_per_second[second] += 1;
-
-        debug!(
-            "incremented second {} for tasks per second counter: {}",
-            second, self.tasks_per_second[second]
-        );
     }
 }
 
@@ -938,9 +855,6 @@ pub struct GooseMetrics {
     /// This value may be smaller than what was configured at start time if the test
     /// didn't run long enough for all configured users to start.
     pub users: usize,
-    /// Number of users at the end of each second of the test. Each element of the vector
-    /// represents one second.
-    pub users_per_second: Vec<usize>,
     /// Tracks details about each request made during the load test.
     ///
     /// Can be disabled with the `--no-metrics` run-time option, or with
@@ -2233,23 +2147,6 @@ impl GooseMetrics {
 
         Ok(())
     }
-
-    /// Records number of users for a current second.
-    ///
-    /// This is called from [`GooseAttack::sync_metrics()`] and the data
-    /// collected is used to display users graph on the HTML report.
-    pub(crate) fn record_users_per_second(&mut self) {
-        if let Some(starting) = self.starting {
-            let second = (Utc::now().timestamp() - starting.timestamp()) as usize;
-
-            let last_user_count = match self.users_per_second.last() {
-                Some(last) => *last,
-                None => 0,
-            };
-            expand_per_second_metric_array(&mut self.users_per_second, second, last_user_count);
-            self.users_per_second[second] = self.users;
-        }
-    }
 }
 
 impl Serialize for GooseMetrics {
@@ -2529,19 +2426,6 @@ impl GooseAttack {
             if self.configuration.status_codes {
                 merge_request.set_status_code(request_metric.status_code);
             }
-            if !self.configuration.report_file.is_empty() {
-                let seconds_since_start = (request_metric.elapsed / 1000) as usize;
-
-                merge_request.record_requests_per_second(seconds_since_start);
-                merge_request.record_average_response_time_per_second(
-                    seconds_since_start,
-                    request_metric.response_time,
-                );
-
-                if !request_metric.success {
-                    merge_request.record_errors_per_second(seconds_since_start);
-                }
-            }
             if request_metric.success {
                 merge_request.success_count += 1;
             } else {
@@ -2607,6 +2491,22 @@ impl GooseAttack {
                         // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
                         // `GooseMetrics.requests`, and write to the requests log if enabled.
                         self.record_request_metric(&request_metric).await;
+
+                        if !self.configuration.report_file.is_empty() {
+                            let seconds_since_start = (request_metric.elapsed / 1000) as usize;
+
+                            self.graph_data
+                                .record_requests_per_second(seconds_since_start);
+                            self.graph_data.record_average_response_time_per_second(
+                                seconds_since_start,
+                                request_metric.response_time,
+                            );
+
+                            if !request_metric.success {
+                                self.graph_data
+                                    .record_errors_per_second(seconds_since_start);
+                            }
+                        }
                     }
                 }
                 GooseMetric::Task(raw_task) => {
@@ -2614,8 +2514,10 @@ impl GooseAttack {
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
 
-                    self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
-                        .record_tasks_per_second((raw_task.elapsed / 1000) as usize);
+                    if !self.configuration.report_file.is_empty() {
+                        self.graph_data
+                            .record_tasks_per_second((raw_task.elapsed / 1000) as usize);
+                    }
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
@@ -2820,106 +2722,6 @@ impl GooseAttack {
                 raw_aggregate_response_times =
                     merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
             }
-
-            // Generate graphs
-
-            // If the metrics were reset when the load test was started we don't display
-            // the starting period on the graph.
-            let (graph_starting, graph_started) = if self.configuration.no_reset_metrics
-                && Some(starting) == self.metrics.starting
-                && Some(started) == self.metrics.started
-            {
-                (Some(starting), Some(started))
-            } else {
-                (None, None)
-            };
-
-            // If stopping was done in less than a second do not display it as it won't be visible
-            // on the graph.
-            let (graph_stopping, graph_stopped) = if Some(stopping) == self.metrics.stopping
-                && Some(stopped) == self.metrics.stopped
-                && stopped == stopping
-            {
-                (Some(stopping), Some(stopped))
-            } else {
-                (None, None)
-            };
-
-            let mut total_graph_seconds = 0;
-            for path_metric in self.metrics.requests.values() {
-                total_graph_seconds =
-                    max(total_graph_seconds, path_metric.requests_per_second.len());
-            }
-            for path_metric in self.metrics.requests.values() {
-                total_graph_seconds = max(total_graph_seconds, path_metric.errors_per_second.len());
-            }
-            for path_metric in self.metrics.requests.values() {
-                total_graph_seconds = max(
-                    total_graph_seconds,
-                    path_metric.average_response_time_per_second.len(),
-                );
-            }
-            for task_set in self.metrics.tasks.iter() {
-                for task_metric in task_set.iter() {
-                    total_graph_seconds =
-                        max(total_graph_seconds, task_metric.tasks_per_second.len());
-                }
-            }
-            total_graph_seconds = max(total_graph_seconds, self.metrics.users_per_second.len());
-
-            // Generate requests per second graph.
-            let mut rps = vec![0; total_graph_seconds];
-            for path_metric in self.metrics.requests.values() {
-                for (second, count) in path_metric.requests_per_second.iter().enumerate() {
-                    rps[second] += count;
-                }
-            }
-
-            let graph_rps_template = report::graph_rps_template(
-                &self.add_timestamp_to_html_graph_data(rps, &starting, &started),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
-
-            // Generate average response times per second graph.
-            let mut response_times = vec![util::MovingAverage::new(); total_graph_seconds];
-            for path_metric in self.metrics.requests.values() {
-                for (second, avg) in path_metric
-                    .average_response_time_per_second
-                    .iter()
-                    .enumerate()
-                {
-                    response_times[second].add_item(avg.average);
-                }
-            }
-
-            let response_times = response_times
-                .iter()
-                .map(|moving_average| moving_average.average as u32)
-                .collect::<Vec<_>>();
-
-            let graph_average_response_time_template = report::graph_average_response_time_template(
-                &self.add_timestamp_to_html_graph_data(response_times, &starting, &started),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
-
-            // Generate active users graph.
-            let graph_users_per_second = report::graph_users_per_second_template(
-                &self.add_timestamp_to_html_graph_data(
-                    self.metrics.users_per_second.clone(),
-                    &starting,
-                    &started,
-                ),
-                graph_starting,
-                graph_started,
-                graph_stopping,
-                graph_stopped,
-            );
 
             // Prepare aggregate per-request metrics.
             let (raw_aggregate_requests_per_second, raw_aggregate_failures_per_second) =
@@ -3164,26 +2966,10 @@ impl GooseAttack {
                     tasks_rows.push(report::task_metrics_row(metric));
                 }
 
-                // Generate active tasks graph.
-                let mut tps = vec![0; total_graph_seconds];
-                for task_set in self.metrics.tasks.iter() {
-                    for task_metric in task_set.iter() {
-                        for (second, count) in task_metric.tasks_per_second.iter().enumerate() {
-                            tps[second] += *count;
-                        }
-                    }
-                }
-
-                let graph_tasks_per_second = report::graph_tasks_per_second_template(
-                    &self.add_timestamp_to_html_graph_data(tps, &starting, &started),
-                    graph_starting,
-                    graph_started,
-                    graph_stopping,
-                    graph_stopped,
+                tasks_template = report::task_metrics_template(
+                    &tasks_rows.join("\n"),
+                    self.graph_data.get_tasks_per_second_graph(),
                 );
-
-                tasks_template =
-                    report::task_metrics_template(&tasks_rows.join("\n"), &graph_tasks_per_second);
             } else {
                 tasks_template = "".to_string();
             }
@@ -3196,24 +2982,10 @@ impl GooseAttack {
                     error_rows.push(report::error_row(error));
                 }
 
-                // Generate errors per second graph.
-                let mut eps = vec![0; total_graph_seconds];
-                for path_metric in self.metrics.requests.values() {
-                    for (second, count) in path_metric.errors_per_second.iter().enumerate() {
-                        eps[second] += count;
-                    }
-                }
-
-                let graph_eps_template = report::graph_eps_template(
-                    &self.add_timestamp_to_html_graph_data(eps, &starting, &started),
-                    graph_starting,
-                    graph_started,
-                    graph_stopping,
-                    graph_stopped,
+                errors_template = report::errors_template(
+                    &error_rows.join("\n"),
+                    self.graph_data.get_errors_per_second_graph(),
                 );
-
-                errors_template =
-                    report::errors_template(&error_rows.join("\n"), &graph_eps_template);
             } else {
                 errors_template = "".to_string();
             }
@@ -3284,9 +3056,15 @@ impl GooseAttack {
                     tasks_template: &tasks_template,
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
-                    graph_rps_template: &graph_rps_template,
-                    graph_average_response_time_template: &graph_average_response_time_template,
-                    graph_users_per_second: &graph_users_per_second,
+                    graph_rps_template: &self
+                        .graph_data
+                        .get_requests_per_second_graph()
+                        .get_markup(),
+                    graph_average_response_time_template: &self
+                        .graph_data
+                        .get_average_response_time_graph()
+                        .get_markup(),
+                    graph_users_per_second: &self.graph_data.get_active_users_graph().get_markup(),
                 },
             );
 
@@ -3308,40 +3086,6 @@ impl GooseAttack {
         }
 
         Ok(())
-    }
-
-    /// Adds timestamps to the graph data series to ensure correct time display on x axis.
-    ///
-    /// Will take a vector of (generally numerical) values and convert them into tuples where
-    /// the second element will be the data point and the first element will be formatted time
-    /// it belongs to.
-    fn add_timestamp_to_html_graph_data<T: Copy>(
-        &self,
-        data: Vec<T>,
-        starting: &DateTime<Local>,
-        started: &DateTime<Local>,
-    ) -> Vec<(String, T)> {
-        data.iter()
-            .enumerate()
-            .filter(|(second, _)| {
-                // If --no-reset-metrics is used or if the load test was stopped during the
-                // starting phase we display the data also for the staring phase.
-                if self.configuration.no_reset_metrics || self.metrics.started.is_none() {
-                    true
-                } else {
-                    *second as i64 + starting.timestamp() >= started.timestamp()
-                }
-            })
-            .map(|(second, &count)| {
-                (
-                    Local
-                        .timestamp(second as i64 + starting.timestamp(), 0)
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string(),
-                    count,
-                )
-            })
-            .collect::<Vec<_>>()
     }
 }
 
@@ -3810,219 +3554,5 @@ mod test {
         assert_eq!(request.raw_data.maximum_time, 987654321);
         assert_eq!(request.raw_data.total_time, 987657045);
         assert_eq!(request.raw_data.counter, 8);
-    }
-
-    #[test]
-    fn goose_record_requests_per_second() {
-        // Should be initialized with empty requests per second vector.
-        let mut metric_aggregate = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
-        assert_eq!(metric_aggregate.requests_per_second.len(), 0);
-
-        metric_aggregate.record_requests_per_second(0);
-        metric_aggregate.record_requests_per_second(0);
-        metric_aggregate.record_requests_per_second(0);
-        metric_aggregate.record_requests_per_second(1);
-        metric_aggregate.record_requests_per_second(2);
-        metric_aggregate.record_requests_per_second(2);
-        metric_aggregate.record_requests_per_second(2);
-        metric_aggregate.record_requests_per_second(2);
-        metric_aggregate.record_requests_per_second(2);
-        assert_eq!(metric_aggregate.requests_per_second.len(), 3);
-        assert_eq!(metric_aggregate.requests_per_second[0], 3);
-        assert_eq!(metric_aggregate.requests_per_second[1], 1);
-        assert_eq!(metric_aggregate.requests_per_second[2], 5);
-
-        metric_aggregate.record_requests_per_second(100);
-        metric_aggregate.record_requests_per_second(100);
-        metric_aggregate.record_requests_per_second(100);
-        metric_aggregate.record_requests_per_second(0);
-        metric_aggregate.record_requests_per_second(1);
-        metric_aggregate.record_requests_per_second(2);
-        metric_aggregate.record_requests_per_second(5);
-        assert_eq!(metric_aggregate.requests_per_second.len(), 101);
-        assert_eq!(metric_aggregate.requests_per_second[0], 4);
-        assert_eq!(metric_aggregate.requests_per_second[1], 2);
-        assert_eq!(metric_aggregate.requests_per_second[2], 6);
-        assert_eq!(metric_aggregate.requests_per_second[3], 0);
-        assert_eq!(metric_aggregate.requests_per_second[4], 0);
-        assert_eq!(metric_aggregate.requests_per_second[5], 1);
-        assert_eq!(metric_aggregate.requests_per_second[100], 3);
-        for second in 6..100 {
-            assert_eq!(metric_aggregate.requests_per_second[second], 0);
-        }
-    }
-
-    #[test]
-    fn goose_record_errors_per_second() {
-        // Should be initialized with empty errors per second vector.
-        let mut metric_aggregate = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
-        assert_eq!(metric_aggregate.errors_per_second.len(), 0);
-
-        metric_aggregate.record_errors_per_second(0);
-        metric_aggregate.record_errors_per_second(0);
-        metric_aggregate.record_errors_per_second(0);
-        metric_aggregate.record_errors_per_second(1);
-        metric_aggregate.record_errors_per_second(2);
-        metric_aggregate.record_errors_per_second(2);
-        metric_aggregate.record_errors_per_second(2);
-        metric_aggregate.record_errors_per_second(2);
-        metric_aggregate.record_errors_per_second(2);
-        assert_eq!(metric_aggregate.errors_per_second.len(), 3);
-        assert_eq!(metric_aggregate.errors_per_second[0], 3);
-        assert_eq!(metric_aggregate.errors_per_second[1], 1);
-        assert_eq!(metric_aggregate.errors_per_second[2], 5);
-
-        metric_aggregate.record_errors_per_second(100);
-        metric_aggregate.record_errors_per_second(100);
-        metric_aggregate.record_errors_per_second(100);
-        metric_aggregate.record_errors_per_second(0);
-        metric_aggregate.record_errors_per_second(1);
-        metric_aggregate.record_errors_per_second(2);
-        metric_aggregate.record_errors_per_second(5);
-        assert_eq!(metric_aggregate.errors_per_second.len(), 101);
-        assert_eq!(metric_aggregate.errors_per_second[0], 4);
-        assert_eq!(metric_aggregate.errors_per_second[1], 2);
-        assert_eq!(metric_aggregate.errors_per_second[2], 6);
-        assert_eq!(metric_aggregate.errors_per_second[3], 0);
-        assert_eq!(metric_aggregate.errors_per_second[4], 0);
-        assert_eq!(metric_aggregate.errors_per_second[5], 1);
-        assert_eq!(metric_aggregate.errors_per_second[100], 3);
-        for second in 6..100 {
-            assert_eq!(metric_aggregate.errors_per_second[second], 0);
-        }
-    }
-
-    #[test]
-    #[allow(clippy::float_cmp)]
-    fn goose_record_average_response_time_per_second() {
-        // Should be initialized with empty errors per second vector.
-        let mut metric_aggregate = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
-        assert_eq!(metric_aggregate.average_response_time_per_second.len(), 0);
-
-        metric_aggregate.record_average_response_time_per_second(0, 5);
-        metric_aggregate.record_average_response_time_per_second(0, 4);
-        metric_aggregate.record_average_response_time_per_second(0, 3);
-        metric_aggregate.record_average_response_time_per_second(1, 1);
-        metric_aggregate.record_average_response_time_per_second(2, 4);
-        metric_aggregate.record_average_response_time_per_second(2, 8);
-        metric_aggregate.record_average_response_time_per_second(2, 12);
-        metric_aggregate.record_average_response_time_per_second(2, 4);
-        metric_aggregate.record_average_response_time_per_second(2, 4);
-        assert_eq!(metric_aggregate.average_response_time_per_second.len(), 3);
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[0].average,
-            4.
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[1].average,
-            1.
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[2].average,
-            6.4
-        );
-
-        metric_aggregate.record_average_response_time_per_second(100, 5);
-        metric_aggregate.record_average_response_time_per_second(100, 9);
-        metric_aggregate.record_average_response_time_per_second(100, 7);
-        metric_aggregate.record_average_response_time_per_second(0, 2);
-        metric_aggregate.record_average_response_time_per_second(1, 2);
-        metric_aggregate.record_average_response_time_per_second(2, 5);
-        metric_aggregate.record_average_response_time_per_second(5, 2);
-        assert_eq!(metric_aggregate.average_response_time_per_second.len(), 101);
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[0].average,
-            3.5
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[1].average,
-            1.5
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[2].average,
-            6.166667
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[3].average,
-            0.
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[4].average,
-            0.
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[5].average,
-            2.
-        );
-        assert_eq!(
-            metric_aggregate.average_response_time_per_second[100].average,
-            7.
-        );
-        for second in 6..100 {
-            assert_eq!(
-                metric_aggregate.average_response_time_per_second[second].average,
-                0.
-            );
-        }
-    }
-
-    #[test]
-    fn test_add_timestamp_to_html_graph_data() {
-        use gumdrop::Options;
-
-        let initial_config: Vec<&str> = Vec::new();
-        let mut attack = GooseAttack::initialize_with_config(
-            GooseConfiguration::parse_args_default(&initial_config).unwrap(),
-        )
-        .unwrap();
-        let data = vec![123, 234, 345, 456, 567];
-
-        attack.metrics.started = Some(Local.ymd(2021, 12, 14).and_hms(15, 12, 25));
-        attack.configuration.no_reset_metrics = false;
-        assert_eq!(
-            attack.add_timestamp_to_html_graph_data(
-                data.clone(),
-                &Local.ymd(2021, 12, 14).and_hms(15, 12, 23),
-                &Local.ymd(2021, 12, 14).and_hms(15, 12, 25),
-            ),
-            vec![
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
-            ]
-        );
-
-        attack.configuration.no_reset_metrics = true;
-        assert_eq!(
-            attack.add_timestamp_to_html_graph_data(
-                data.clone(),
-                &Local.ymd(2021, 12, 14).and_hms(15, 12, 23),
-                &Local.ymd(2021, 12, 14).and_hms(15, 12, 25),
-            ),
-            vec![
-                ("2021-12-14 15:12:23".to_string(), 123),
-                ("2021-12-14 15:12:24".to_string(), 234),
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
-            ]
-        );
-
-        attack.metrics.started = None;
-        attack.configuration.no_reset_metrics = false;
-        assert_eq!(
-            attack.add_timestamp_to_html_graph_data(
-                data,
-                &Local.ymd(2021, 12, 14).and_hms(15, 12, 23),
-                &Local.ymd(2021, 12, 14).and_hms(15, 12, 25),
-            ),
-            vec![
-                ("2021-12-14 15:12:23".to_string(), 123),
-                ("2021-12-14 15:12:24".to_string(), 234),
-                ("2021-12-14 15:12:25".to_string(), 345),
-                ("2021-12-14 15:12:26".to_string(), 456),
-                ("2021-12-14 15:12:27".to_string(), 567)
-            ]
-        );
     }
 }

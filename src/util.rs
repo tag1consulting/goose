@@ -1,7 +1,6 @@
 //! Utility functions used by Goose, and available when writing load tests.
 
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -445,41 +444,6 @@ pub(crate) fn setup_ctrlc_handler(canceled: &Arc<AtomicBool>) {
     }
 }
 
-/// Data structure to maintain moving averages.
-///
-/// It will maintain the current average and the number of data items that
-/// were used to compute it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MovingAverage {
-    /// Number of data items that were used to compute the current average.
-    count: u32,
-    /// Current average.
-    pub average: f32,
-}
-
-impl MovingAverage {
-    /// Create a new MovingAverage object.
-    pub fn new() -> Self {
-        MovingAverage {
-            count: 0,
-            average: 0.,
-        }
-    }
-
-    /// Adds a new data item and calculates the new average.
-    pub fn add_item(&mut self, item: f32) {
-        self.count += 1;
-        self.average += (item as f32 - self.average) / self.count as f32;
-    }
-}
-
-impl Default for MovingAverage {
-    /// Creates an empty moving average.
-    fn default() -> MovingAverage {
-        MovingAverage::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,53 +610,5 @@ mod tests {
         assert!(is_valid_host("http://foo").is_ok());
         assert!(is_valid_host("http:///example.com").is_ok());
         assert!(!is_valid_host("http:// example.com").is_ok());
-    }
-
-    #[test]
-    fn moving_average() {
-        let mut moving_average = MovingAverage::new();
-        assert_eq!(
-            moving_average,
-            MovingAverage {
-                count: 0,
-                average: 0.
-            }
-        );
-
-        moving_average.add_item(1.23);
-        assert_eq!(
-            moving_average,
-            MovingAverage {
-                count: 1,
-                average: 1.23
-            }
-        );
-
-        moving_average.add_item(2.34);
-        assert_eq!(
-            moving_average,
-            MovingAverage {
-                count: 2,
-                average: 1.785
-            }
-        );
-
-        moving_average.add_item(89.23);
-        assert_eq!(
-            moving_average,
-            MovingAverage {
-                count: 3,
-                average: 30.933332
-            }
-        );
-
-        moving_average.add_item(12.34);
-        assert_eq!(
-            moving_average,
-            MovingAverage {
-                count: 4,
-                average: 26.285
-            }
-        );
     }
 }
