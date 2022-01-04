@@ -10,7 +10,7 @@ use serde::Serialize;
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
-pub struct GooseReportTemplates<'a> {
+pub(crate) struct GooseReportTemplates<'a> {
     pub raw_requests_template: &'a str,
     pub raw_responses_template: &'a str,
     pub co_requests_template: &'a str,
@@ -25,7 +25,7 @@ pub struct GooseReportTemplates<'a> {
 
 /// Defines the metrics reported about requests.
 #[derive(Debug, Clone, Serialize)]
-pub struct RequestMetric {
+pub(crate) struct RequestMetric {
     pub method: String,
     pub name: String,
     pub number_of_requests: usize,
@@ -39,7 +39,7 @@ pub struct RequestMetric {
 
 /// Defines the metrics reported about Coordinated Omission requests.
 #[derive(Debug, Clone, Serialize)]
-pub struct CORequestMetric {
+pub(crate) struct CORequestMetric {
     pub method: String,
     pub name: String,
     pub response_time_average: String,
@@ -49,7 +49,7 @@ pub struct CORequestMetric {
 
 /// Defines the metrics reported about responses.
 #[derive(Debug, Clone, Serialize)]
-pub struct ResponseMetric {
+pub(crate) struct ResponseMetric {
     pub method: String,
     pub name: String,
     pub percentile_50: String,
@@ -64,7 +64,7 @@ pub struct ResponseMetric {
 
 /// Defines the metrics reported about tasks.
 #[derive(Debug, Clone, Serialize)]
-pub struct TaskMetric {
+pub(crate) struct TaskMetric {
     pub is_task_set: bool,
     pub task: String,
     pub name: String,
@@ -78,14 +78,14 @@ pub struct TaskMetric {
 }
 
 /// Defines the metrics reported about status codes.
-pub struct StatusCodeMetric {
+pub(crate) struct StatusCodeMetric {
     pub method: String,
     pub name: String,
     pub status_codes: String,
 }
 
 /// Helper to generate a single response metric.
-pub fn get_response_metric(
+pub(crate) fn get_response_metric(
     method: &str,
     name: &str,
     response_times: &BTreeMap<usize, usize>,
@@ -121,7 +121,7 @@ pub fn get_response_metric(
 }
 
 /// Build an individual row of raw request metrics in the html report.
-pub fn raw_request_metrics_row(metric: RequestMetric) -> String {
+pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
     format!(
         r#"<tr>
         <td>{method}</td>
@@ -147,7 +147,7 @@ pub fn raw_request_metrics_row(metric: RequestMetric) -> String {
 }
 
 /// Build an individual row of response metrics in the html report.
-pub fn response_metrics_row(metric: ResponseMetric) -> String {
+pub(crate) fn response_metrics_row(metric: ResponseMetric) -> String {
     format!(
         r#"<tr>
             <td>{method}</td>
@@ -176,7 +176,7 @@ pub fn response_metrics_row(metric: ResponseMetric) -> String {
 
 /// If Coordinated Omission Mitigation is triggered, add a relevant request table to the
 /// html report.
-pub fn coordinated_omission_request_metrics_template(co_requests_rows: &str) -> String {
+pub(crate) fn coordinated_omission_request_metrics_template(co_requests_rows: &str) -> String {
     format!(
         r#"<div class="CO requests">
         <h2>Request Metrics With Coordinated Omission Mitigation</h2>
@@ -201,7 +201,7 @@ pub fn coordinated_omission_request_metrics_template(co_requests_rows: &str) -> 
 
 /// Build an individual row of Coordinated Omission Mitigation request metrics in
 /// the html report.
-pub fn coordinated_omission_request_metrics_row(metric: CORequestMetric) -> String {
+pub(crate) fn coordinated_omission_request_metrics_row(metric: CORequestMetric) -> String {
     format!(
         r#"<tr>
             <td>{method}</td>
@@ -220,7 +220,7 @@ pub fn coordinated_omission_request_metrics_row(metric: CORequestMetric) -> Stri
 
 /// If Coordinated Omission Mitigation is triggered, add a relevant response table to the
 /// html report.
-pub fn coordinated_omission_response_metrics_template(co_responses_rows: &str) -> String {
+pub(crate) fn coordinated_omission_response_metrics_template(co_responses_rows: &str) -> String {
     format!(
         r#"<div class="responses">
         <h2>Response Time Metrics With Coordinated Omission Mitigation</h2>
@@ -250,7 +250,7 @@ pub fn coordinated_omission_response_metrics_template(co_responses_rows: &str) -
 
 /// Build an individual row of Coordinated Omission Mitigation request metrics in
 /// the html report.
-pub fn coordinated_omission_response_metrics_row(metric: ResponseMetric) -> String {
+pub(crate) fn coordinated_omission_response_metrics_row(metric: ResponseMetric) -> String {
     format!(
         r#"<tr>
             <td>{method}</td>
@@ -279,7 +279,7 @@ pub fn coordinated_omission_response_metrics_row(metric: ResponseMetric) -> Stri
 
 /// If status code metrics are enabled, add a status code metrics table to the
 /// html report.
-pub fn status_code_metrics_template(status_code_rows: &str) -> String {
+pub(crate) fn status_code_metrics_template(status_code_rows: &str) -> String {
     format!(
         r#"<div class="status_codes">
         <h2>Status Code Metrics</h2>
@@ -301,7 +301,7 @@ pub fn status_code_metrics_template(status_code_rows: &str) -> String {
 }
 
 /// Build an individual row of status code metrics in the html report.
-pub fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
+pub(crate) fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
     format!(
         r#"<tr>
         <td>{method}</td>
@@ -346,7 +346,7 @@ pub(crate) fn task_metrics_template<T: Serialize>(task_rows: &str, graph: Graph<
 }
 
 /// Build an individual row of task metrics in the html report.
-pub fn task_metrics_row(metric: TaskMetric) -> String {
+pub(crate) fn task_metrics_row(metric: TaskMetric) -> String {
     if metric.is_task_set {
         format!(
             r#"<tr>
@@ -417,7 +417,7 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
 }
 
 /// Build the html report.
-pub fn build_report(
+pub(crate) fn build_report(
     users: &str,
     report_range: &str,
     hosts: &str,
