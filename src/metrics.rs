@@ -2458,8 +2458,10 @@ impl GooseAttack {
                         if !self.configuration.report_file.is_empty() {
                             let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
+                            let key =
+                                format!("{} {}", request_metric.raw.method, request_metric.name);
                             self.graph_data
-                                .record_requests_per_second(seconds_since_start);
+                                .record_requests_per_second(key, seconds_since_start);
                             self.graph_data.record_average_response_time_per_second(
                                 seconds_since_start,
                                 request_metric.response_time,
