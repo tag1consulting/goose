@@ -22,17 +22,15 @@ pub(crate) struct GraphData {
     stopping: Option<DateTime<Utc>>,
     /// Tracks when the load test stopped with an optional system timestamp.
     stopped: Option<DateTime<Utc>>,
-    /// Counts requests per second. Each element of the vector represents one second.
+    /// Counts requests per second for each request type.
     requests_per_second: HashMap<String, TimeSeries<u32, u32>>,
-    /// Counts errors per second. Each element of the vector represents one second.
+    /// Counts errors per second.
     errors_per_second: TimeSeries<u32, u32>,
-    /// Maintains average response time per second. Each element of the vector represents one second.
+    /// Maintains average response time per second.
     average_response_time_per_second: TimeSeries<MovingAverage, f32>,
-    /// Number of tasks at the end of each second of the test. Each element of the vector
-    /// represents one second.
+    /// Number of tasks at the end of each second of the test.
     tasks_per_second: TimeSeries<usize, usize>,
-    /// Number of users at the end of each second of the test. Each element of the vector
-    /// represents one second.
+    /// Number of users at the end of each second of the test.
     users_per_second: TimeSeries<usize, usize>,
 }
 
@@ -168,7 +166,7 @@ impl GraphData {
         self.create_graph_from_single_data("graph-eps", "Errors #", self.errors_per_second.clone())
     }
 
-    /// Creates a Graph from data.
+    /// Creates a Graph from granular data.
     fn create_graph_from_data<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy>(
         &self,
         html_id: &'a str,
@@ -190,6 +188,7 @@ impl GraphData {
         )
     }
 
+    /// Creates a Graph from single (just total numbers, not granular) data.
     fn create_graph_from_single_data<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy>(
         &self,
         html_id: &'a str,
@@ -218,12 +217,19 @@ impl GraphData {
 /// Defines the HTML graph data.
 #[derive(Debug)]
 pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> {
+    /// HTML ID of the graph's main wrapper.
     html_id: &'a str,
+    /// Label of the y axis.
     y_axis_label: &'a str,
+    /// Graph data.
     data: HashMap<String, TimeSeries<T, U>>,
+    /// Time when the test startup phase began.
     starting: DateTime<Utc>,
+    /// Time when the test was started (startup phase completed).
     started: Option<DateTime<Utc>>,
+    /// Time when the test stopping phase began.
     stopping: Option<DateTime<Utc>>,
+    /// Time when the test was completely stopped.
     stopped: Option<DateTime<Utc>>,
 }
 
@@ -407,10 +413,12 @@ struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
     ///
     /// Each element of the vector represents value for one second in the time series.
     data: Vec<T>,
+    /// Phantom data indicates to the compiler that the "U" generic data type has zero size.
     phantom: PhantomData<U>,
 }
 
 impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
+    /// Creates a new TimeSeries object.
     fn new() -> TimeSeries<T, U> {
         TimeSeries {
             data: Vec::new(),
@@ -418,11 +426,13 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         }
     }
 
+    /// Increases the the value for a given second.
     fn increase(&mut self, second: usize, value: U) {
         self.expand(second, T::initial_value());
         self.data[second].add(value);
     }
 
+    /// Adds another time series.
     fn add(&mut self, other: &TimeSeries<T, U>) {
         for (second, other_item) in other.data.iter().enumerate() {
             self.expand(second, T::initial_value());
@@ -430,11 +440,14 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         }
     }
 
+    /// Sets a value for a given second and maintains last recorded value if
+    /// there is a gap in the time series.
     fn set_and_maintain_last(&mut self, second: usize, value: U) {
         self.expand(second, self.last());
         self.data[second].set(value);
     }
 
+    /// Returns a value for a given second.
     fn get(&self, second: usize) -> T {
         match self.data.get(second) {
             Some(value) => value.clone(),
@@ -442,6 +455,8 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         }
     }
 
+    /// Returns the last value in the time series or initial value if the time
+    /// series is empty.
     fn last(&self) -> T {
         match self.data.last() {
             Some(last) => last.clone(),
@@ -449,6 +464,8 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         }
     }
 
+    /// Gets time series suitable for usage in HTML graphs (generally each value
+    /// becomes some kind of a scalar).
     fn get_graph_data(&self) -> Vec<U> {
         self.data
             .iter()
@@ -463,10 +480,6 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// and we can't initialize these vectors at the beginning. It is also
     /// better to do it as we go to save memory.
     fn expand(&mut self, second: usize, initial: T) {
-        // Each element in per second metric vectors (self.requests_per_second,
-        // self.errors_per_second, ...) is counted for a given second since the start
-        // of the test. Since we don't know how long the test will at the beginning
-        // we need to push new elements (second counters) as the test is running.
         if self.data.len() <= second {
             for _ in 0..(second - self.data.len() + 1) {
                 self.data.push(initial.clone());
@@ -475,11 +488,17 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     }
 }
 
+/// Defines a single value in a TimeSeries.
 pub trait TimeSeriesValue<T, U> {
+    /// Initial ("zero") value.
     fn initial_value() -> T;
+    /// Adds the given value to the current value.
     fn add(&mut self, value: U);
+    /// Sets the value (and drops existing one if present).
     fn set(&mut self, value: U);
+    /// Merges (adds) another TimeSeriesValue.
     fn merge(&mut self, other: &T);
+    /// Gets representation of the value suitable for HTML graphs (generally a scalar).
     fn get_graph_value(&self) -> U;
 }
 
