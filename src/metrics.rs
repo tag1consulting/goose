@@ -2500,7 +2500,7 @@ impl GooseAttack {
         raw_request: &GooseRequestMetric,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) {
-        // If error-file is enabled, convert the raw request to a GooseErrorMetric and send it
+        // If error-log is enabled, convert the raw request to a GooseErrorMetric and send it
         // to the logger thread.
         if !self.configuration.error_log.is_empty() {
             if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
