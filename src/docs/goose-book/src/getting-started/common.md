@@ -41,7 +41,7 @@ cargo run --release -- -r .5
 
 ### Specifying the total startup time
 
-Alternatively, you can tell Goose how long you'd like it to take to start all GooseUsers. So, if you configure `--users` to 10 and set `--startup-time 10` it will launch 1 user every second. If you set `--start-time 1m` it will start 1 user every 6 seconds, starting all users over one minute. And if you set `--start-time 2s` it will launch five users per second, launching all users in two seconds.
+Alternatively, you can tell Goose how long you'd like it to take to start all GooseUsers. So, if you configure `--users` to 10 and set `--startup-time 10` it will launch 1 user every second. If you set `--startup-time 1m` it will start 1 user every 6 seconds, starting all users over one minute. And if you set `--startup-time 2s` it will launch five users per second, launching all users in two seconds.
 
 ### Example
 _Launch all users in 5 seconds._
@@ -52,7 +52,7 @@ cargo run --release -- -s 5
 
 ## Specifying how long the load test will run
 
-The `--run-time` option is not affected by how long Goose takes to start up. Thus, if you configure a load test with `--users 100 --start-time 30m --run-time 5m` Goose will run for a total of 35 minutes, first ramping up for 30 minutes and then running at full load for 5 minutes. If you want Goose to exit immediately after all users start, you can set a very small run time, for example `--users 100 --hatch-rate .25 --run-time 1s`.
+The `--run-time` option is not affected by how long Goose takes to start up. Thus, if you configure a load test with `--users 100 --startup-time 30m --run-time 5m` Goose will run for a total of 35 minutes, first ramping up for 30 minutes and then running at full load for 5 minutes. If you want Goose to exit immediately after all users start, you can set a very small run time, for example `--users 100 --hatch-rate .25 --run-time 1s`.
 
 If you do not configure a run time, Goose will run until it's canceled with `ctrl-c`.
 
