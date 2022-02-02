@@ -2064,7 +2064,7 @@ impl GooseMetrics {
         match self.hosts.len() {
             0 => {
                 // A host is required to run a load test.
-                unreachable!();
+                writeln!(fmt, " Target host: undefined")?;
             }
             1 => {
                 for host in &self.hosts {
