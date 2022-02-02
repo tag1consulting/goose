@@ -1,6 +1,6 @@
 # Error Log
 
-Goose can optionally log details about all load test errors to a file. To enable, add the `--error-file=<error.log>` command line option, where `<error.log>` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
+Goose can optionally log details about all load test errors to a file. To enable, add the `--error-log=<error.log>` command line option, where `<error.log>` is either a relative or absolute path of the log file to create. Any existing file that may already exist will be overwritten.
 
 Logs include the entire [`GooseErrorMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseErrorMetric.html) object, created any time a request results in an error.
 
@@ -17,4 +17,4 @@ The `--errors-format` option can be used to change the log format to `csv`, `jso
 
 ## Gaggle Mode
 
-When operating in Gaggle-mode, the `--error-file` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+When operating in Gaggle-mode, the `--error-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
