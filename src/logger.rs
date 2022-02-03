@@ -249,13 +249,7 @@ fn tasks_csv_header() -> String {
     format!(
         // No quotes needed in header.
         "{},{},{},{},{},{},{}",
-        "elapsed",
-        "taskset_index",
-        "task_index",
-        "name",
-        "run_time",
-        "success",
-        "user",
+        "elapsed", "taskset_index", "task_index", "name", "run_time", "success", "user",
     )
 }
 

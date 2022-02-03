@@ -2064,7 +2064,7 @@ impl GooseMetrics {
         match self.hosts.len() {
             0 => {
                 // A host is required to run a load test.
-                unreachable!();
+                writeln!(fmt, " Target host: undefined")?;
             }
             1 => {
                 for host in &self.hosts {
@@ -2581,8 +2581,8 @@ impl GooseAttack {
 
             let mut report_range = format!(
                 "<p>Starting: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
-                starting.format("%Y-%m-%d %H:%M:%S").to_string(),
-                started.format("%Y-%m-%d %H:%M:%S").to_string(),
+                starting.format("%Y-%m-%d %H:%M:%S"),
+                started.format("%Y-%m-%d %H:%M:%S"),
                 starting_hours,
                 starting_minutes,
                 starting_seconds,
@@ -2591,8 +2591,8 @@ impl GooseAttack {
             if self.metrics.started.is_some() {
                 report_range.push_str(&format!(
                     "<p>Running: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
-                    started.format("%Y-%m-%d %H:%M:%S").to_string(),
-                    stopping.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    started.format("%Y-%m-%d %H:%M:%S"),
+                    stopping.format("%Y-%m-%d %H:%M:%S"),
                     running_hours,
                     running_minutes,
                     running_seconds,
@@ -2601,8 +2601,8 @@ impl GooseAttack {
 
             report_range.push_str(&format!(
                 "<p>Stopping: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
-                stopping.format("%Y-%m-%d %H:%M:%S").to_string(),
-                stopped.format("%Y-%m-%d %H:%M:%S").to_string(),
+                stopping.format("%Y-%m-%d %H:%M:%S"),
+                stopped.format("%Y-%m-%d %H:%M:%S"),
                 stopping_hours,
                 stopping_minutes,
                 stopping_seconds,
