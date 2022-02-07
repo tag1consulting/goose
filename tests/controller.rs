@@ -1,8 +1,8 @@
 use gumdrop::Options;
 use httpmock::{Method::GET, Mock, MockServer};
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::{str, time};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 
 use goose::config::GooseConfiguration;
@@ -180,13 +180,13 @@ async fn run_standalone_test(test_type: TestType) {
         tokio::time::sleep(time::Duration::from_millis(500)).await;
 
         // Initiailize the state engine.
-        let mut test_state = update_state(None, &test_type);
+        let mut test_state = update_state(None, &test_type).await;
         loop {
             // Process data received from the client in a loop.
             let response;
             let websocket_response: GooseControllerWebSocketResponse;
             if let Some(stream) = test_state.telnet_stream.as_mut() {
-                let _ = match stream.read(&mut test_state.buf) {
+                let _ = match stream.read(&mut test_state.buf).await {
                     Ok(data) => data,
                     Err(_) => {
                         panic!("ERROR: server disconnected!");
@@ -228,17 +228,17 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Exit the Controller.
                         0 => {
-                            make_request(&mut test_state, "exit\r\n");
+                            make_request(&mut test_state, "exit\r\n").await;
                         }
                         // Confirm that the Controller exited.
                         _ => {
                             assert!(response.starts_with("goodbye!"));
 
                             // Re-connect to the Controller.
-                            test_state = update_state(None, &test_type);
+                            test_state = update_state(None, &test_type).await;
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -246,21 +246,21 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         0 => {
                             // Request the help text.
-                            make_request(&mut test_state, "help\r\n");
+                            make_request(&mut test_state, "help\r\n").await;
                         }
                         1 => {
                             // Be sure we actually received the help text.
                             assert!(response.contains("controller commands:"));
 
                             // Request the help text, using the short form.
-                            make_request(&mut test_state, "?\r\n");
+                            make_request(&mut test_state, "?\r\n").await;
                         }
                         _ => {
                             // Be sure we actually received the help text.
                             assert!(response.contains("controller commands:"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -268,14 +268,15 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Set the host to be load tested.
                         0 => {
-                            make_request(&mut test_state, &["host ", &server_url, "\r\n"].concat());
+                            make_request(&mut test_state, &["host ", &server_url, "\r\n"].concat())
+                                .await;
                         }
                         // Confirm the host was configured.
                         1 => {
                             assert!(response.starts_with("host configured"));
 
                             // Then try and set an invalid host.
-                            make_request(&mut test_state, "host foobar\r\n");
+                            make_request(&mut test_state, "host foobar\r\n").await;
                         }
                         // Confirm that we can't configure an invalid host that doesn't
                         // match the regex.
@@ -283,7 +284,7 @@ async fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("unrecognized command"));
 
                             // Try again to set an invalid host.
-                            make_request(&mut test_state, "host http://$[foo\r\n");
+                            make_request(&mut test_state, "host http://$[foo\r\n").await;
                         }
                         // Confirm that we can't configure an invalid host that does
                         // match the regex.
@@ -291,7 +292,7 @@ async fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("unrecognized command"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -302,14 +303,15 @@ async fn run_standalone_test(test_type: TestType) {
                             make_request(
                                 &mut test_state,
                                 &["users ", &USERS.to_string(), "\r\n"].concat(),
-                            );
+                            )
+                            .await;
                         }
                         // Confirm that the users are reconfigured.
                         1 => {
                             assert!(response.starts_with("users configured"));
 
                             // Attempt to reconfigure users with bad data.
-                            make_request(&mut test_state, "users 1.1\r\n");
+                            make_request(&mut test_state, "users 1.1\r\n").await;
                         }
                         // Confirm we can't configure users with a float.
                         _ => {
@@ -318,7 +320,7 @@ async fn run_standalone_test(test_type: TestType) {
                             assert!(response.starts_with("unrecognized command"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -326,21 +328,21 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Configure a decimal hatch_rate.
                         0 => {
-                            make_request(&mut test_state, "hatchrate .1\r\n");
+                            make_request(&mut test_state, "hatchrate .1\r\n").await;
                         }
                         // Confirm hatch_rate is configured.
                         1 => {
                             assert!(response.starts_with("hatch_rate configured"));
 
                             // Configure with leading and trailing zeros.
-                            make_request(&mut test_state, "hatchrate 0.90\r\n");
+                            make_request(&mut test_state, "hatchrate 0.90\r\n").await;
                         }
                         // Confirm hatch_rate is configured.
                         2 => {
                             assert!(response.starts_with("hatch_rate configured"));
 
                             // Try to configure with an invalid decimal.
-                            make_request(&mut test_state, "hatchrate 1.2.3\r\n");
+                            make_request(&mut test_state, "hatchrate 1.2.3\r\n").await;
                         }
                         // Confirm hatch_rate is not configured.
                         3 => {
@@ -350,7 +352,8 @@ async fn run_standalone_test(test_type: TestType) {
                             make_request(
                                 &mut test_state,
                                 &["hatchrate ", &HATCH_RATE.to_string(), "\r\n"].concat(),
-                            );
+                            )
+                            .await;
                         }
                         // Confirm the final hatch_rate is configured.
                         _ => {
@@ -360,7 +363,7 @@ async fn run_standalone_test(test_type: TestType) {
                             // further validation required here.
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -369,35 +372,35 @@ async fn run_standalone_test(test_type: TestType) {
                         // Configure run_time using h:m:s format.
                         0 => {
                             // Set run_time with hours and minutes and seconds.
-                            make_request(&mut test_state, "runtime 1h2m3s\r\n");
+                            make_request(&mut test_state, "runtime 1h2m3s\r\n").await;
                         }
                         // Confirm the run_time is configured.
                         1 => {
                             assert!(response.starts_with("run_time configured"));
 
                             // Set run_time with hours and seconds.
-                            make_request(&mut test_state, "run_time 1h2s\r\n");
+                            make_request(&mut test_state, "run_time 1h2s\r\n").await;
                         }
                         // Confirm the run_time is configured.
                         2 => {
                             assert!(response.starts_with("run_time configured"));
 
                             // Set run_time with hours alone.
-                            make_request(&mut test_state, "run-time 1h\r\n");
+                            make_request(&mut test_state, "run-time 1h\r\n").await;
                         }
                         // Confirm the run_time is configured.
                         3 => {
                             assert!(response.starts_with("run_time configured"));
 
                             // Set run_time with seconds alone.
-                            make_request(&mut test_state, "runtime 10s\r\n");
+                            make_request(&mut test_state, "runtime 10s\r\n").await;
                         }
                         // Confirm the run_time is configured.
                         4 => {
                             assert!(response.starts_with("run_time configured"));
 
                             // Try to set run_time with unsupported value.
-                            make_request(&mut test_state, "runtime 10d\r\n");
+                            make_request(&mut test_state, "runtime 10d\r\n").await;
                         }
                         // Confirm the run_time is not configured.
                         5 => {
@@ -407,7 +410,8 @@ async fn run_standalone_test(test_type: TestType) {
                             make_request(
                                 &mut test_state,
                                 &["runtime ", &RUN_TIME.to_string(), "\r\n"].concat(),
-                            );
+                            )
+                            .await;
                         }
                         // Confirm the run_time is configured.
                         _ => {
@@ -418,7 +422,7 @@ async fn run_standalone_test(test_type: TestType) {
                             // the load test could run forever.
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -426,7 +430,7 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Request the configuration.
                         0 => {
-                            make_request(&mut test_state, "config\r\n");
+                            make_request(&mut test_state, "config\r\n").await;
                         }
                         _ => {
                             // Confirm the configuration is returned in jsonformat.
@@ -439,7 +443,7 @@ async fn run_standalone_test(test_type: TestType) {
                             }
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -447,7 +451,7 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Request the configuration in json format.
                         0 => {
-                            make_request(&mut test_state, "config-json\r\n");
+                            make_request(&mut test_state, "config-json\r\n").await;
                         }
                         // Confirm the configuration is returned in jsonformat.
                         _ => {
@@ -455,7 +459,7 @@ async fn run_standalone_test(test_type: TestType) {
                                 .starts_with(r#"{"help":false,"version":false,"list":false,"#));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -463,7 +467,7 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Request the running metrics.
                         0 => {
-                            make_request(&mut test_state, "metrics\r\n");
+                            make_request(&mut test_state, "metrics\r\n").await;
                         }
                         _ => {
                             // Confirm the metrics are returned in json format.
@@ -476,7 +480,7 @@ async fn run_standalone_test(test_type: TestType) {
                             }
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -484,14 +488,14 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Request the running metrics in json format.
                         0 => {
-                            make_request(&mut test_state, "metrics-json\r\n");
+                            make_request(&mut test_state, "metrics-json\r\n").await;
                         }
                         // Confirm the metrics are returned in json format.
                         _ => {
                             assert!(response.starts_with(r#"{"hash":0,"#));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -499,28 +503,28 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Try to stop an idle load test.
                         0 => {
-                            make_request(&mut test_state, "stop\r\n");
+                            make_request(&mut test_state, "stop\r\n").await;
                         }
                         // Confirm an idle load test can not be stopped.
                         1 => {
                             assert!(response.starts_with("load test not running"));
 
                             // Send the start request.
-                            make_request(&mut test_state, "start\r\n");
+                            make_request(&mut test_state, "start\r\n").await;
                         }
                         // Confirm an idle load test can be started.
                         2 => {
                             assert!(response.starts_with("load test started"));
 
                             // Send the start request again.
-                            make_request(&mut test_state, "start\r\n");
+                            make_request(&mut test_state, "start\r\n").await;
                         }
                         // Confirm a running load test can not be started.
                         _ => {
                             assert!(response.starts_with("unable to start load test"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -528,21 +532,21 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Try to configure users on a running load test.
                         0 => {
-                            make_request(&mut test_state, "users 1\r\n");
+                            make_request(&mut test_state, "users 1\r\n").await;
                         }
                         // Confirm users can not be configured on a running load test.
                         1 => {
                             assert!(response.starts_with("load test not idle"));
 
                             // Try to configure host on a running load test.
-                            make_request(&mut test_state, "host http://localhost/\r\n");
+                            make_request(&mut test_state, "host http://localhost/\r\n").await;
                         }
                         // Confirm host can not be configured on a running load test.
                         2 => {
                             assert!(response.starts_with("failed to reconfigure host"));
 
                             // Try to stop a running load test.
-                            make_request(&mut test_state, "stop\r\n");
+                            make_request(&mut test_state, "stop\r\n").await;
                         }
                         // Confirm a running load test can be stopped.
                         _ => {
@@ -552,7 +556,7 @@ async fn run_standalone_test(test_type: TestType) {
                             tokio::time::sleep(time::Duration::from_millis(500)).await;
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -560,14 +564,14 @@ async fn run_standalone_test(test_type: TestType) {
                     match test_state.step {
                         // Shut down the load test.
                         0 => {
-                            make_request(&mut test_state, "shutdown\r\n");
+                            make_request(&mut test_state, "shutdown\r\n").await;
                         }
                         // Confirm that the load test shut down.
                         _ => {
                             assert!(response.starts_with("load test shut down"));
 
                             // Move onto the next command.
-                            test_state = update_state(Some(test_state), &test_type);
+                            test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
@@ -602,7 +606,7 @@ async fn run_standalone_test(test_type: TestType) {
 
 // Update (or create) the current testing state. A simple state maching for
 // navigating through all supported Controller commands and test states.
-fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestState {
+async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestState {
     // The commands being tested, and the order they are tested.
     let commands_to_test = [
         GooseControllerCommand::Exit,
@@ -628,7 +632,7 @@ fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestStat
         }
         // Generate a new prompt.
         if let Some(stream) = state.telnet_stream.as_mut() {
-            stream.write_all("\r\n".as_bytes()).unwrap();
+            stream.write_all("\r\n".as_bytes()).await.unwrap();
         } else {
             state.websocket_expect_reply = false;
         }
@@ -636,7 +640,7 @@ fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestStat
     } else {
         // Connect to telnet controller.
         let telnet_stream = match test_type {
-            TestType::Telnet => Some(TcpStream::connect("127.0.0.1:5116").unwrap()),
+            TestType::Telnet => Some(TcpStream::connect("127.0.0.1:5116").await.unwrap()),
             _ => None,
         };
 
@@ -672,10 +676,10 @@ fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestStat
     }
 }
 
-fn make_request(test_state: &mut TestState, command: &str) {
+async fn make_request(test_state: &mut TestState, command: &str) {
     //println!("making request: {}", command);
     if let Some(stream) = test_state.telnet_stream.as_mut() {
-        stream.write_all(command.as_bytes()).unwrap()
+        stream.write_all(command.as_bytes()).await.unwrap()
     } else if let Some(stream) = test_state.websocket_stream.as_mut() {
         stream
             .write_message(Message::Text(
