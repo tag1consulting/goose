@@ -403,7 +403,7 @@ impl GooseControllerState {
                         None => {
                             // Returning with no data means the client disconnected.
                             info!(
-                                "Telnet client [{}] disconnected from {}",
+                                "WebSocket client [{}] disconnected from {}",
                                 self.thread_id, self.peer_address
                             );
                             break;
@@ -417,7 +417,7 @@ impl GooseControllerState {
                             if self.execute_command(&mut ws_sender, request_message).await {
                                 // If execute_command() returns true, it's time to exit.
                                 info!(
-                                    "Telnet client [{}] disconnected from {}",
+                                    "WebSocket client [{}] disconnected from {}",
                                     self.thread_id, self.peer_address
                                 );
                                 break;

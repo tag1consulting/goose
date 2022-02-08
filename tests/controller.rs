@@ -1,9 +1,12 @@
+use futures::stream::{SplitSink, SplitStream};
+use futures::{SinkExt, StreamExt};
 use gumdrop::Options;
 use httpmock::{Method::GET, Mock, MockServer};
 use std::{str, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use goose::config::GooseConfiguration;
 use goose::controller::{
@@ -46,18 +49,10 @@ struct TestState {
     command: GooseControllerCommand,
     // A TCP socket if testing the telnet Controller.
     telnet_stream: Option<TcpStream>,
-    // A TCP socket if testing the WebSocket Controller.
-    #[cfg(not(feature = "rustls-tls"))]
-    websocket_stream: Option<tokio_tungstenite::tungstenite::WebSocket<std::net::TcpStream>>,
-    #[cfg(feature = "rustls-tls")]
-    websocket_stream: Option<
-        tokio_tungstenite::tungstenite::WebSocket<
-            tokio_tungstenite::tungstenite::stream::Stream<
-                std::net::TcpStream,
-                rustls::StreamOwned<rustls::ClientSession, TcpStream>,
-            >,
-        >,
-    >,
+    // The receiver side of a split TCP socket if testing the WebSocket Controller.
+    websocket_receiver: Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
+    // The sender side of a split TCP socket if testing the WebSocket Controller.
+    websocket_sender: Option<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
     // A flag indicating whether or not to wait for a reply.
     websocket_expect_reply: bool,
     // A flag indicating whether or not the WebSocket controller is being tested.
@@ -194,29 +189,22 @@ async fn run_standalone_test(test_type: TestType) {
                 };
                 response = str::from_utf8(&test_state.buf).unwrap();
             // Process data received from the client in a loop.
-            } else if let Some(stream) = test_state.websocket_stream.as_mut() {
+            } else if let Some(ws_receiver) = test_state.websocket_receiver.as_mut() {
                 if !test_state.websocket_expect_reply {
                     response = "";
                     test_state.websocket_expect_reply = true;
                 } else {
-                    match stream.read_message() {
-                        Ok(message) => {
-                            if let Ok(r) = message.into_text() {
-                                // Keep response around for the entire loop.
-                                websocket_response = match serde_json::from_str(&r) {
-                                    Ok(c) => c,
-                                    Err(e) => panic!("invalid response from server: {}", e),
-                                };
-                                response = &websocket_response.response;
-                            } else {
-                                // @TODO: support non-text too
-                                panic!("ERROR: invalid message type!");
-                            }
-                        }
-                        Err(e) => {
-                            panic!("error reading from server: {}", e);
-                        }
-                    }
+                    let message = ws_receiver.next().await.expect("error reading from server");
+                    let r = message
+                        .expect("error unwrapping message from server")
+                        .into_text()
+                        .expect("invalid message type");
+                    // Keep response around for the entire loop.
+                    websocket_response = match serde_json::from_str(&r) {
+                        Ok(c) => c,
+                        Err(e) => panic!("invalid response from server: {}", e),
+                    };
+                    response = &websocket_response.response;
                 }
             } else {
                 unreachable!();
@@ -646,20 +634,23 @@ async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> Te
 
         // Connect to WebSocket controller.
         let websocket_controller: bool;
-        let websocket_stream = match test_type {
+        let (websocket_sender, websocket_receiver) = match test_type {
             TestType::WebSocket => {
-                let (mut stream, _) =
-                    tokio_tungstenite::tungstenite::client::connect("ws://127.0.0.1:5117").unwrap();
+                let (stream, _item) = tokio_tungstenite::connect_async("ws://127.0.0.1:5117")
+                    .await
+                    .unwrap();
+                let (mut ws_sender, mut ws_receiver) = stream.split();
+
                 // Send an empty message so the client performs a handshake.
-                stream.write_message(Message::Text("".into())).unwrap();
+                ws_sender.send(Message::Text("".into())).await.unwrap();
                 // Ignore the error that comes back.
-                let _ = stream.read_message().unwrap();
+                let _ = ws_receiver.next().await.unwrap();
                 websocket_controller = true;
-                Some(stream)
+                (Some(ws_sender), Some(ws_receiver))
             }
             TestType::Telnet => {
                 websocket_controller = false;
-                None
+                (None, None)
             }
         };
 
@@ -669,7 +660,8 @@ async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> Te
             step: 0,
             command: commands_to_test.first().unwrap().clone(),
             telnet_stream,
-            websocket_stream,
+            websocket_sender,
+            websocket_receiver,
             websocket_expect_reply: false,
             websocket_controller,
         }
@@ -680,14 +672,15 @@ async fn make_request(test_state: &mut TestState, command: &str) {
     //println!("making request: {}", command);
     if let Some(stream) = test_state.telnet_stream.as_mut() {
         stream.write_all(command.as_bytes()).await.unwrap()
-    } else if let Some(stream) = test_state.websocket_stream.as_mut() {
-        stream
-            .write_message(Message::Text(
+    } else if let Some(ws_sender) = test_state.websocket_sender.as_mut() {
+        ws_sender
+            .send(Message::Text(
                 serde_json::to_string(&GooseControllerWebSocketRequest {
                     request: command.to_string(),
                 })
                 .unwrap(),
             ))
+            .await
             .unwrap()
     }
     test_state.step += 1;
