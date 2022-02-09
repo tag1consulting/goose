@@ -25,7 +25,7 @@ pub(crate) struct GraphData {
     /// Counts requests per second for each request type.
     requests_per_second: HashMap<String, TimeSeries<u32, u32>>,
     /// Counts errors per second.
-    errors_per_second: TimeSeries<u32, u32>,
+    errors_per_second: HashMap<String, TimeSeries<u32, u32>>,
     /// Maintains average response time per second.
     average_response_time_per_second: TimeSeries<MovingAverage, f32>,
     /// Number of tasks at the end of each second of the test.
@@ -44,7 +44,7 @@ impl GraphData {
             stopping: None,
             stopped: None,
             requests_per_second: HashMap::new(),
-            errors_per_second: TimeSeries::new(),
+            errors_per_second: HashMap::new(),
             average_response_time_per_second: TimeSeries::new(),
             tasks_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
@@ -88,13 +88,18 @@ impl GraphData {
     }
 
     /// Record errors per second metric.
-    pub(crate) fn record_errors_per_second(&mut self, second: usize) {
-        self.errors_per_second.increase(second, 1);
+    pub(crate) fn record_errors_per_second(&mut self, key: String, second: usize) {
+        if !self.errors_per_second.contains_key(&key) {
+            self.errors_per_second
+                .insert(key.clone(), TimeSeries::new());
+        }
+        let data = self.errors_per_second.get_mut(&key).unwrap();
+        data.increase(second, 1);
 
         debug!(
             "incremented second {} for errors per second counter: {}",
             second,
-            self.errors_per_second.get(second)
+            data.get(second)
         );
     }
 
@@ -163,7 +168,7 @@ impl GraphData {
 
     /// Generate errors per second graph.
     pub(crate) fn get_errors_per_second_graph(&self) -> Graph<u32, u32> {
-        self.create_graph_from_single_data("graph-eps", "Errors #", self.errors_per_second.clone())
+        self.create_graph_from_data("graph-eps", "Errors #", self.errors_per_second.clone())
     }
 
     /// Creates a Graph from granular data.
@@ -704,10 +709,14 @@ mod test {
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
         };
-        graph.errors_per_second = TimeSeries {
-            data: vec![567, 123, 234, 345, 456],
-            phantom: PhantomData,
-        };
+
+        graph.errors_per_second.insert(
+            "GET /".to_string(),
+            TimeSeries {
+                data: vec![567, 123, 234, 345, 456],
+                phantom: PhantomData,
+            },
+        );
         graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
         graph.started = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
         graph.stopping = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26));
@@ -853,7 +862,7 @@ mod test {
         };
 
         assert_eq!(
-            errors_graph.data.get("Total").unwrap().clone(),
+            errors_graph.data.get("GET /").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(errors_graph.html_id, "graph-eps");
@@ -1021,39 +1030,45 @@ mod test {
     fn test_record_errors_per_second() {
         // Should be initialized with empty errors per second vector.
         let mut graph = GraphData::new();
-        assert_eq!(graph.errors_per_second.data.len(), 0);
+        assert_eq!(graph.errors_per_second.len(), 0);
 
-        graph.record_errors_per_second(0);
-        graph.record_errors_per_second(0);
-        graph.record_errors_per_second(0);
-        graph.record_errors_per_second(1);
-        graph.record_errors_per_second(2);
-        graph.record_errors_per_second(2);
-        graph.record_errors_per_second(2);
-        graph.record_errors_per_second(2);
-        graph.record_errors_per_second(2);
-        assert_eq!(graph.errors_per_second.data.len(), 3);
-        assert_eq!(graph.errors_per_second.data[0], 3);
-        assert_eq!(graph.errors_per_second.data[1], 1);
-        assert_eq!(graph.errors_per_second.data[2], 5);
+        graph.record_errors_per_second("GET /".to_string(), 0);
+        graph.record_errors_per_second("GET /".to_string(), 0);
+        graph.record_errors_per_second("GET /".to_string(), 0);
+        graph.record_errors_per_second("GET /".to_string(), 1);
+        graph.record_errors_per_second("GET /".to_string(), 2);
+        graph.record_errors_per_second("GET /".to_string(), 2);
+        graph.record_errors_per_second("GET /".to_string(), 2);
+        graph.record_errors_per_second("GET /".to_string(), 2);
+        graph.record_errors_per_second("GET /".to_string(), 2);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data.len(), 3);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[0], 3);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[1], 1);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[2], 5);
 
-        graph.record_errors_per_second(100);
-        graph.record_errors_per_second(100);
-        graph.record_errors_per_second(100);
-        graph.record_errors_per_second(0);
-        graph.record_errors_per_second(1);
-        graph.record_errors_per_second(2);
-        graph.record_errors_per_second(5);
-        assert_eq!(graph.errors_per_second.data.len(), 101);
-        assert_eq!(graph.errors_per_second.data[0], 4);
-        assert_eq!(graph.errors_per_second.data[1], 2);
-        assert_eq!(graph.errors_per_second.data[2], 6);
-        assert_eq!(graph.errors_per_second.data[3], 0);
-        assert_eq!(graph.errors_per_second.data[4], 0);
-        assert_eq!(graph.errors_per_second.data[5], 1);
-        assert_eq!(graph.errors_per_second.data[100], 3);
+        graph.record_errors_per_second("GET /".to_string(), 100);
+        graph.record_errors_per_second("GET /".to_string(), 100);
+        graph.record_errors_per_second("GET /".to_string(), 100);
+        graph.record_errors_per_second("GET /".to_string(), 0);
+        graph.record_errors_per_second("GET /".to_string(), 1);
+        graph.record_errors_per_second("GET /".to_string(), 2);
+        graph.record_errors_per_second("GET /".to_string(), 5);
+        assert_eq!(
+            graph.errors_per_second.get("GET /").unwrap().data.len(),
+            101
+        );
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[0], 4);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[1], 2);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[2], 6);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[3], 0);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[4], 0);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[5], 1);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[100], 3);
         for second in 6..100 {
-            assert_eq!(graph.errors_per_second.data[second], 0);
+            assert_eq!(
+                graph.errors_per_second.get("GET /").unwrap().data[second],
+                0
+            );
         }
     }
 
@@ -1354,18 +1369,23 @@ mod test {
         graph.insert("GET /".to_string(), data);
 
         let mut expected = expected_prefix.to_owned();
-        expected.push_str(r#"                                    data: [
+        let suffix = format!(
+            r#"                                    data: [
                                         
                                         
                                     ]
-                                },
-                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
-                            }
+                                }},
+                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
+                            }}
                         ]
-                    });
+                    }});
                 </script>
-            </div>"#
+            </div>"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M")
         );
+        expected.push_str(&suffix[..]);
         assert_eq!(
             Graph::new(
                 "graph-rps",
@@ -1395,12 +1415,15 @@ mod test {
                                         
                                     ]
                                 }},
-                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }}
                         ]
                     }});
                 </script>
             </div>"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
             starting = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
@@ -1438,12 +1461,15 @@ mod test {
                 ],
                                     ]
                                 }},
-                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }}
                         ]
                     }});
                 </script>
             </div>"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
             stopping = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
@@ -1489,12 +1515,15 @@ mod test {
                 ],
                                     ]
                                 }},
-                                data: [["2021-11-21 21:20:32",123],["2021-11-21 21:20:33",111],["2021-11-21 21:20:34",99],["2021-11-21 21:20:35",134]],
+                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }}
                         ]
                     }});
                 </script>
             </div>"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
             starting = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
