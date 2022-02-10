@@ -273,14 +273,14 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
         let starting_area = if self.started.is_some() {
             format!(
                 r#"[
-                    {{
-                        name: 'Starting',
-                        xAxis: '{starting}'
-                    }},
-                    {{
-                        xAxis: '{started}'
-                    }}
-                ],"#,
+                                            {{
+                                                name: 'Starting',
+                                                xAxis: '{starting}'
+                                            }},
+                                            {{
+                                                xAxis: '{started}'
+                                            }}
+                                        ],"#,
                 starting = Local
                     .timestamp(self.starting.timestamp(), 0)
                     .format(datetime_format),
@@ -295,14 +295,14 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
         let stopping_area = if self.stopping.is_some() && self.stopped.is_some() {
             format!(
                 r#"[
-                    {{
-                        name: 'Stopping',
-                        xAxis: '{stopping}'
-                    }},
-                    {{
-                        xAxis: '{stopped}'
-                    }}
-                ],"#,
+                                            {{
+                                                name: 'Stopping',
+                                                xAxis: '{stopping}'
+                                            }},
+                                            {{
+                                                xAxis: '{stopped}'
+                                            }}
+                                        ],"#,
                 stopping = Local
                     .timestamp(self.stopping.unwrap().timestamp(), 0)
                     .format(datetime_format),
@@ -314,10 +314,64 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
             "".to_string()
         };
 
-        let mut total: TimeSeries<T, U> = TimeSeries::new();
-        for (_, single_data) in self.data.iter() {
-            total.add(single_data);
-        }
+        let mut total_values: TimeSeries<T, U> = TimeSeries::new();
+        let (legend, main_title, main_values, other_values) = if self.data.len() > 1 {
+            // If we are dealing with a metric with granular data we need to calculate totals.
+            for (_, single_data) in self.data.iter() {
+                total_values.add(single_data);
+            }
+
+            // We will have multiple lines. We need to prepare the legend section on the graph
+            // and create data series for all of them.
+            let mut legend = vec!["Total"];
+
+            let mut other_values = String::new();
+            for (title, sub_data) in self.data.iter() {
+                legend.push(title);
+
+                let formatted_line = format!(
+                    r#"{{
+                                name: '{title}',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: {values},
+                            }},
+                            "#,
+                    title = title,
+                    values =
+                        json!(self.add_timestamp_to_html_graph_data(&sub_data.get_graph_data()))
+                );
+                other_values += formatted_line.as_str();
+            }
+
+            (
+                format!(
+                    r#"legend: {{
+                            type: '{legend_type}',
+                            width: '75%',
+                            data: {data},
+                        }},"#,
+                    legend_type = if self.data.len() > 4 {
+                        "scroll"
+                    } else {
+                        "plain"
+                    },
+                    data = json!(legend)
+                ),
+                "Total",
+                &total_values,
+                other_values,
+            )
+        } else {
+            // If there is only one data series in the metric we simply display it.
+            (
+                "".to_string(),
+                self.data.keys().next().unwrap().as_str(),
+                self.data.values().next().unwrap(),
+                "".to_string(),
+            )
+        };
 
         format!(
             r#"<div class="graph">
@@ -328,7 +382,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
                     var myChart = echarts.init(chartDom);
 
                     myChart.setOption({{
-                        color: ['#2c664f'],
+                        color: ['#2c664f', '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc'],
                         tooltip: {{ trigger: 'axis' }},
                         toolbox: {{
                             feature: {{
@@ -366,9 +420,10 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
                             nameGap: 45,
                             type: 'value'
                         }},
+                        {legend}
                         series: [
                             {{
-                                name: 'Total',
+                                name: '{main_title}',
                                 type: 'line',
                                 symbol: 'none',
                                 sampling: 'lttb',
@@ -381,17 +436,22 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
                                         {stopping_area}
                                     ]
                                 }},
-                                data: {values},
-                            }}
+                                data: {main_values},
+                            }},
+                            {other_values}
                         ]
                     }});
                 </script>
             </div>"#,
             html_id = self.html_id,
-            values = json!(self.add_timestamp_to_html_graph_data(&total.get_graph_data())),
+            main_values =
+                json!(self.add_timestamp_to_html_graph_data(&main_values.get_graph_data())),
             starting_area = starting_area,
             stopping_area = stopping_area,
             y_axis_label = self.y_axis_label,
+            main_title = main_title,
+            legend = legend,
+            other_values = other_values
         )
     }
 
@@ -1408,7 +1468,7 @@ mod test {
                     var myChart = echarts.init(chartDom);
 
                     myChart.setOption({{
-                        color: ['#2c664f'],
+                        color: ['#2c664f', '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc'],
                         tooltip: {{ trigger: 'axis' }},
                         toolbox: {{
                             feature: {{
@@ -1446,9 +1506,10 @@ mod test {
                             nameGap: 45,
                             type: 'value'
                         }},
+                        
                         series: [
                             {{
-                                name: 'Total',
+                                name: 'GET /',
                                 type: 'line',
                                 symbol: 'none',
                                 sampling: 'lttb',
@@ -1475,14 +1536,15 @@ mod test {
         graph.insert("GET /".to_string(), data);
 
         let mut expected = expected_prefix.to_owned();
-        let suffix = format!(
+        expected += format!(
             r#"                                    data: [
                                         
                                         
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
-                            }}
+                            }},
+                            
                         ]
                     }});
                 </script>
@@ -1490,8 +1552,8 @@ mod test {
             data_series_prefix = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M")
-        );
-        expected.push_str(&suffix[..]);
+        ).as_str();
+
         assert_eq!(
             Graph::new(
                 "graph-rps",
@@ -1507,22 +1569,23 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        let suffix = format!(
+        expected += format!(
             r#"                                    data: [
                                         [
-                    {{
-                        name: 'Starting',
-                        xAxis: '{starting}'
-                    }},
-                    {{
-                        xAxis: '{started}'
-                    }}
-                ],
+                                            {{
+                                                name: 'Starting',
+                                                xAxis: '{starting}'
+                                            }},
+                                            {{
+                                                xAxis: '{started}'
+                                            }}
+                                        ],
                                         
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
-                            }}
+                            }},
+                            
                         ]
                     }});
                 </script>
@@ -1536,8 +1599,8 @@ mod test {
             started = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
-        );
-        expected.push_str(&suffix[..]);
+        ).as_str();
+
         assert_eq!(
             Graph::new(
                 "graph-rps",
@@ -1553,22 +1616,23 @@ mod test {
         );
 
         let mut expected = expected_prefix.to_owned();
-        let suffix = format!(
+        expected += format!(
             r#"                                    data: [
                                         
                                         [
-                    {{
-                        name: 'Stopping',
-                        xAxis: '{stopping}'
-                    }},
-                    {{
-                        xAxis: '{stopped}'
-                    }}
-                ],
+                                            {{
+                                                name: 'Stopping',
+                                                xAxis: '{stopping}'
+                                            }},
+                                            {{
+                                                xAxis: '{stopped}'
+                                            }}
+                                        ],
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
-                            }}
+                            }},
+                            
                         ]
                     }});
                 </script>
@@ -1582,8 +1646,8 @@ mod test {
             stopped = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
-        );
-        expected.push_str(&suffix[..]);
+        ).as_str();
+
         assert_eq!(
             Graph::new(
                 "graph-rps",
@@ -1599,30 +1663,31 @@ mod test {
         );
 
         let mut expected = expected_prefix;
-        let suffix = format!(
+        expected += format!(
             r#"                                    data: [
                                         [
-                    {{
-                        name: 'Starting',
-                        xAxis: '{starting}'
-                    }},
-                    {{
-                        xAxis: '{started}'
-                    }}
-                ],
+                                            {{
+                                                name: 'Starting',
+                                                xAxis: '{starting}'
+                                            }},
+                                            {{
+                                                xAxis: '{started}'
+                                            }}
+                                        ],
                                         [
-                    {{
-                        name: 'Stopping',
-                        xAxis: '{stopping}'
-                    }},
-                    {{
-                        xAxis: '{stopped}'
-                    }}
-                ],
+                                            {{
+                                                name: 'Stopping',
+                                                xAxis: '{stopping}'
+                                            }},
+                                            {{
+                                                xAxis: '{stopped}'
+                                            }}
+                                        ],
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
-                            }}
+                            }},
+                            
                         ]
                     }});
                 </script>
@@ -1642,13 +1707,13 @@ mod test {
             stopped = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 38).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
-        );
-        expected.push_str(&suffix[..]);
+        ).as_str();
+
         assert_eq!(
             Graph::new(
                 "graph-rps",
                 "Requests #",
-                graph,
+                graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
                 Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 36)),
@@ -1656,6 +1721,253 @@ mod test {
             )
             .get_markup(),
             expected
+        );
+
+        let user_data: TimeSeries<usize, usize> = TimeSeries {
+            data: vec![23, 12, 44, 22],
+            phantom: PhantomData,
+        };
+        graph.insert("GET /user".to_string(), user_data);
+
+        let markup = Graph::new(
+            "graph-rps",
+            "Requests #",
+            graph.clone(),
+            Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+            None,
+            None,
+            None,
+        )
+        .get_markup();
+        let expected_legend = r#"
+                        legend: {
+                            type: 'plain',
+                            width: '75%',
+                            data: ["Total","GET /"#;
+        assert!(
+            markup.contains(expected_legend),
+            "legend {} not found in {}",
+            expected_legend,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'Total',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }},
+                                markArea: {{
+                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
+                                    data: [
+                                        
+                                        
+                                    ]
+                                }},
+                                data: [["{data_series_prefix}:32",146],["{data_series_prefix}:33",123],["{data_series_prefix}:34",143],["{data_series_prefix}:35",156]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'GET /',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'GET /user',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: [["{data_series_prefix}:32",23],["{data_series_prefix}:33",12],["{data_series_prefix}:34",44],["{data_series_prefix}:35",22]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let more_data: TimeSeries<usize, usize> = TimeSeries {
+            data: vec![1, 1, 1, 1],
+            phantom: PhantomData,
+        };
+        graph.insert("GET /one".to_string(), more_data.clone());
+        graph.insert("GET /two".to_string(), more_data.clone());
+        graph.insert("GET /three".to_string(), more_data);
+
+        let markup = Graph::new(
+            "graph-rps",
+            "Requests #",
+            graph.clone(),
+            Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+            None,
+            None,
+            None,
+        )
+        .get_markup();
+        let expected_legend = r#"
+                        legend: {
+                            type: 'scroll',
+                            width: '75%',
+                            data: ["Total","GET /"#;
+        assert!(
+            markup.contains(expected_legend),
+            "legend {} not found in {}",
+            expected_legend,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'Total',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                lineStyle: {{ color: '#2c664f' }},
+                                areaStyle: {{ color: '#378063' }},
+                                markArea: {{
+                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
+                                    data: [
+                                        
+                                        
+                                    ]
+                                }},
+                                data: [["{data_series_prefix}:32",149],["{data_series_prefix}:33",126],["{data_series_prefix}:34",146],["{data_series_prefix}:35",159]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'GET /',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'GET /user',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: [["{data_series_prefix}:32",23],["{data_series_prefix}:33",12],["{data_series_prefix}:34",44],["{data_series_prefix}:35",22]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'GET /one',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'GET /two',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
+        );
+
+        let expected_line = format!(
+            r#"{{
+                                name: 'GET /three',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
+                            }},"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M"),
+        );
+        assert!(
+            markup.contains(expected_line.as_str()),
+            "line {} not found in {}",
+            expected_line,
+            markup
         );
     }
 }
