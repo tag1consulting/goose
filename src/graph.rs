@@ -27,7 +27,7 @@ pub(crate) struct GraphData {
     /// Counts errors per second.
     errors_per_second: HashMap<String, TimeSeries<u32, u32>>,
     /// Maintains average response time per second.
-    average_response_time_per_second: TimeSeries<MovingAverage, f32>,
+    average_response_time_per_second: HashMap<String, TimeSeries<MovingAverage, f32>>,
     /// Number of tasks at the end of each second of the test.
     tasks_per_second: TimeSeries<usize, usize>,
     /// Number of users at the end of each second of the test.
@@ -45,7 +45,7 @@ impl GraphData {
             stopped: None,
             requests_per_second: HashMap::new(),
             errors_per_second: HashMap::new(),
-            average_response_time_per_second: TimeSeries::new(),
+            average_response_time_per_second: HashMap::new(),
             tasks_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
         }
@@ -106,16 +106,21 @@ impl GraphData {
     /// Record average response time per second metric.
     pub(crate) fn record_average_response_time_per_second(
         &mut self,
+        key: String,
         second: usize,
         response_time: u64,
     ) {
-        self.average_response_time_per_second
-            .increase(second, response_time as f32);
+        if !self.average_response_time_per_second.contains_key(&key) {
+            self.average_response_time_per_second
+                .insert(key.clone(), TimeSeries::new());
+        }
+        let data = self.average_response_time_per_second.get_mut(&key).unwrap();
+        data.increase(second, response_time as f32);
 
         debug!(
             "updated second {} for average response time per second: {}",
             second,
-            self.average_response_time_per_second.get(second).average
+            data.get(second).average
         );
     }
 
@@ -154,7 +159,7 @@ impl GraphData {
 
     /// Generate average response time graph.
     pub(crate) fn get_average_response_time_graph(&self) -> Graph<MovingAverage, f32> {
-        self.create_graph_from_single_data(
+        self.create_graph_from_data(
             "graph-avg-response-time",
             "Response time [ms]",
             self.average_response_time_per_second.clone(),
@@ -680,31 +685,34 @@ mod test {
             data: vec![345, 456, 567, 123, 234],
             phantom: PhantomData,
         };
-        graph.average_response_time_per_second = TimeSeries {
-            data: vec![
-                MovingAverage {
-                    count: 123,
-                    average: 1.23,
-                },
-                MovingAverage {
-                    count: 234,
-                    average: 2.34,
-                },
-                MovingAverage {
-                    count: 345,
-                    average: 3.45,
-                },
-                MovingAverage {
-                    count: 456,
-                    average: 4.56,
-                },
-                MovingAverage {
-                    count: 567,
-                    average: 5.67,
-                },
-            ],
-            phantom: PhantomData,
-        };
+        graph.average_response_time_per_second.insert(
+            "GET /".to_string(),
+            TimeSeries {
+                data: vec![
+                    MovingAverage {
+                        count: 123,
+                        average: 1.23,
+                    },
+                    MovingAverage {
+                        count: 234,
+                        average: 2.34,
+                    },
+                    MovingAverage {
+                        count: 345,
+                        average: 3.45,
+                    },
+                    MovingAverage {
+                        count: 456,
+                        average: 4.56,
+                    },
+                    MovingAverage {
+                        count: 567,
+                        average: 5.67,
+                    },
+                ],
+                phantom: PhantomData,
+            },
+        );
         graph.tasks_per_second = TimeSeries {
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
@@ -805,7 +813,7 @@ mod test {
             phantom: PhantomData,
         };
         assert_eq!(
-            avg_rt_graph.data.get("Total").unwrap().clone(),
+            avg_rt_graph.data.get("GET /").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
@@ -1077,43 +1085,141 @@ mod test {
     fn test_record_average_response_time_per_second() {
         // Should be initialized with empty average response time per second vector.
         let mut graph = GraphData::new();
-        assert_eq!(graph.average_response_time_per_second.data.len(), 0);
+        assert_eq!(graph.average_response_time_per_second.len(), 0);
 
-        graph.record_average_response_time_per_second(0, 5);
-        graph.record_average_response_time_per_second(0, 4);
-        graph.record_average_response_time_per_second(0, 3);
-        graph.record_average_response_time_per_second(1, 1);
-        graph.record_average_response_time_per_second(2, 4);
-        graph.record_average_response_time_per_second(2, 8);
-        graph.record_average_response_time_per_second(2, 12);
-        graph.record_average_response_time_per_second(2, 4);
-        graph.record_average_response_time_per_second(2, 4);
-        assert_eq!(graph.average_response_time_per_second.data.len(), 3);
-        assert_eq!(graph.average_response_time_per_second.data[0].average, 4.);
-        assert_eq!(graph.average_response_time_per_second.data[1].average, 1.);
-        assert_eq!(graph.average_response_time_per_second.data[2].average, 6.4);
-
-        graph.record_average_response_time_per_second(100, 5);
-        graph.record_average_response_time_per_second(100, 9);
-        graph.record_average_response_time_per_second(100, 7);
-        graph.record_average_response_time_per_second(0, 2);
-        graph.record_average_response_time_per_second(1, 2);
-        graph.record_average_response_time_per_second(2, 5);
-        graph.record_average_response_time_per_second(5, 2);
-        assert_eq!(graph.average_response_time_per_second.data.len(), 101);
-        assert_eq!(graph.average_response_time_per_second.data[0].average, 3.5);
-        assert_eq!(graph.average_response_time_per_second.data[1].average, 1.5);
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 5);
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 4);
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 3);
+        graph.record_average_response_time_per_second("GET /".to_string(), 1, 1);
+        graph.record_average_response_time_per_second("GET /".to_string(), 2, 4);
+        graph.record_average_response_time_per_second("GET /".to_string(), 2, 8);
+        graph.record_average_response_time_per_second("GET /".to_string(), 2, 12);
+        graph.record_average_response_time_per_second("GET /".to_string(), 2, 4);
+        graph.record_average_response_time_per_second("GET /".to_string(), 2, 4);
         assert_eq!(
-            graph.average_response_time_per_second.data[2].average,
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data
+                .len(),
+            3
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[0]
+                .average,
+            4.
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[1]
+                .average,
+            1.
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[2]
+                .average,
+            6.4
+        );
+
+        graph.record_average_response_time_per_second("GET /".to_string(), 100, 5);
+        graph.record_average_response_time_per_second("GET /".to_string(), 100, 9);
+        graph.record_average_response_time_per_second("GET /".to_string(), 100, 7);
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 2);
+        graph.record_average_response_time_per_second("GET /".to_string(), 1, 2);
+        graph.record_average_response_time_per_second("GET /".to_string(), 2, 5);
+        graph.record_average_response_time_per_second("GET /".to_string(), 5, 2);
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data
+                .len(),
+            101
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[0]
+                .average,
+            3.5
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[1]
+                .average,
+            1.5
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[2]
+                .average,
             6.166667
         );
-        assert_eq!(graph.average_response_time_per_second.data[3].average, 0.);
-        assert_eq!(graph.average_response_time_per_second.data[4].average, 0.);
-        assert_eq!(graph.average_response_time_per_second.data[5].average, 2.);
-        assert_eq!(graph.average_response_time_per_second.data[100].average, 7.);
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[3]
+                .average,
+            0.
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[4]
+                .average,
+            0.
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[5]
+                .average,
+            2.
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .data[100]
+                .average,
+            7.
+        );
         for second in 6..100 {
             assert_eq!(
-                graph.average_response_time_per_second.data[second].average,
+                graph
+                    .average_response_time_per_second
+                    .get("GET /")
+                    .unwrap()
+                    .data[second]
+                    .average,
                 0.
             );
         }

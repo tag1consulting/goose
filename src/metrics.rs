@@ -2463,6 +2463,7 @@ impl GooseAttack {
                             self.graph_data
                                 .record_requests_per_second(key.clone(), seconds_since_start);
                             self.graph_data.record_average_response_time_per_second(
+                                key.clone(),
                                 seconds_since_start,
                                 request_metric.response_time,
                             );
