@@ -72,12 +72,12 @@ impl GraphData {
     }
 
     /// Record requests per second metric.
-    pub(crate) fn record_requests_per_second(&mut self, key: String, second: usize) {
-        if !self.requests_per_second.contains_key(&key) {
+    pub(crate) fn record_requests_per_second(&mut self, key: &str, second: usize) {
+        if !self.requests_per_second.contains_key(key) {
             self.requests_per_second
-                .insert(key.clone(), TimeSeries::new());
+                .insert(key.to_string(), TimeSeries::new());
         }
-        let data = self.requests_per_second.get_mut(&key).unwrap();
+        let data = self.requests_per_second.get_mut(key).unwrap();
         data.increase(second, 1);
 
         debug!(
@@ -88,12 +88,12 @@ impl GraphData {
     }
 
     /// Record errors per second metric.
-    pub(crate) fn record_errors_per_second(&mut self, key: String, second: usize) {
-        if !self.errors_per_second.contains_key(&key) {
+    pub(crate) fn record_errors_per_second(&mut self, key: &str, second: usize) {
+        if !self.errors_per_second.contains_key(key) {
             self.errors_per_second
-                .insert(key.clone(), TimeSeries::new());
+                .insert(key.to_string(), TimeSeries::new());
         }
-        let data = self.errors_per_second.get_mut(&key).unwrap();
+        let data = self.errors_per_second.get_mut(key).unwrap();
         data.increase(second, 1);
 
         debug!(
@@ -959,15 +959,15 @@ mod test {
         let mut graph = GraphData::new();
         assert_eq!(graph.requests_per_second.len(), 0);
 
-        graph.record_requests_per_second("GET /".to_string(), 0);
-        graph.record_requests_per_second("GET /".to_string(), 0);
-        graph.record_requests_per_second("GET /".to_string(), 0);
-        graph.record_requests_per_second("GET /".to_string(), 1);
-        graph.record_requests_per_second("GET /".to_string(), 2);
-        graph.record_requests_per_second("GET /".to_string(), 2);
-        graph.record_requests_per_second("GET /".to_string(), 2);
-        graph.record_requests_per_second("GET /".to_string(), 2);
-        graph.record_requests_per_second("GET /".to_string(), 2);
+        graph.record_requests_per_second("GET /", 0);
+        graph.record_requests_per_second("GET /", 0);
+        graph.record_requests_per_second("GET /", 0);
+        graph.record_requests_per_second("GET /", 1);
+        graph.record_requests_per_second("GET /", 2);
+        graph.record_requests_per_second("GET /", 2);
+        graph.record_requests_per_second("GET /", 2);
+        graph.record_requests_per_second("GET /", 2);
+        graph.record_requests_per_second("GET /", 2);
         assert_eq!(
             graph.requests_per_second.get("GET /").unwrap().data.len(),
             3
@@ -976,13 +976,13 @@ mod test {
         assert_eq!(graph.requests_per_second.get("GET /").unwrap().data[1], 1);
         assert_eq!(graph.requests_per_second.get("GET /").unwrap().data[2], 5);
 
-        graph.record_requests_per_second("GET /".to_string(), 100);
-        graph.record_requests_per_second("GET /".to_string(), 100);
-        graph.record_requests_per_second("GET /".to_string(), 100);
-        graph.record_requests_per_second("GET /".to_string(), 0);
-        graph.record_requests_per_second("GET /".to_string(), 1);
-        graph.record_requests_per_second("GET /".to_string(), 2);
-        graph.record_requests_per_second("GET /".to_string(), 5);
+        graph.record_requests_per_second("GET /", 100);
+        graph.record_requests_per_second("GET /", 100);
+        graph.record_requests_per_second("GET /", 100);
+        graph.record_requests_per_second("GET /", 0);
+        graph.record_requests_per_second("GET /", 1);
+        graph.record_requests_per_second("GET /", 2);
+        graph.record_requests_per_second("GET /", 5);
         assert_eq!(
             graph.requests_per_second.get("GET /").unwrap().data.len(),
             101
@@ -1001,11 +1001,11 @@ mod test {
             );
         }
 
-        graph.record_requests_per_second("GET /user".to_string(), 0);
-        graph.record_requests_per_second("GET /user".to_string(), 1);
-        graph.record_requests_per_second("GET /user".to_string(), 1);
-        graph.record_requests_per_second("GET /".to_string(), 2);
-        graph.record_requests_per_second("GET /".to_string(), 5);
+        graph.record_requests_per_second("GET /user", 0);
+        graph.record_requests_per_second("GET /user", 1);
+        graph.record_requests_per_second("GET /user", 1);
+        graph.record_requests_per_second("GET /", 2);
+        graph.record_requests_per_second("GET /", 5);
         assert_eq!(
             graph
                 .requests_per_second
@@ -1042,11 +1042,11 @@ mod test {
             );
         }
 
-        graph.record_requests_per_second("GET /user".to_string(), 100);
-        graph.record_requests_per_second("GET /user".to_string(), 0);
-        graph.record_requests_per_second("GET /user".to_string(), 1);
-        graph.record_requests_per_second("GET /".to_string(), 0);
-        graph.record_requests_per_second("GET /".to_string(), 1);
+        graph.record_requests_per_second("GET /user", 100);
+        graph.record_requests_per_second("GET /user", 0);
+        graph.record_requests_per_second("GET /user", 1);
+        graph.record_requests_per_second("GET /", 0);
+        graph.record_requests_per_second("GET /", 1);
         assert_eq!(
             graph
                 .requests_per_second
@@ -1100,27 +1100,27 @@ mod test {
         let mut graph = GraphData::new();
         assert_eq!(graph.errors_per_second.len(), 0);
 
-        graph.record_errors_per_second("GET /".to_string(), 0);
-        graph.record_errors_per_second("GET /".to_string(), 0);
-        graph.record_errors_per_second("GET /".to_string(), 0);
-        graph.record_errors_per_second("GET /".to_string(), 1);
-        graph.record_errors_per_second("GET /".to_string(), 2);
-        graph.record_errors_per_second("GET /".to_string(), 2);
-        graph.record_errors_per_second("GET /".to_string(), 2);
-        graph.record_errors_per_second("GET /".to_string(), 2);
-        graph.record_errors_per_second("GET /".to_string(), 2);
+        graph.record_errors_per_second("GET /", 0);
+        graph.record_errors_per_second("GET /", 0);
+        graph.record_errors_per_second("GET /", 0);
+        graph.record_errors_per_second("GET /", 1);
+        graph.record_errors_per_second("GET /", 2);
+        graph.record_errors_per_second("GET /", 2);
+        graph.record_errors_per_second("GET /", 2);
+        graph.record_errors_per_second("GET /", 2);
+        graph.record_errors_per_second("GET /", 2);
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().data.len(), 3);
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[0], 3);
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[1], 1);
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[2], 5);
 
-        graph.record_errors_per_second("GET /".to_string(), 100);
-        graph.record_errors_per_second("GET /".to_string(), 100);
-        graph.record_errors_per_second("GET /".to_string(), 100);
-        graph.record_errors_per_second("GET /".to_string(), 0);
-        graph.record_errors_per_second("GET /".to_string(), 1);
-        graph.record_errors_per_second("GET /".to_string(), 2);
-        graph.record_errors_per_second("GET /".to_string(), 5);
+        graph.record_errors_per_second("GET /", 100);
+        graph.record_errors_per_second("GET /", 100);
+        graph.record_errors_per_second("GET /", 100);
+        graph.record_errors_per_second("GET /", 0);
+        graph.record_errors_per_second("GET /", 1);
+        graph.record_errors_per_second("GET /", 2);
+        graph.record_errors_per_second("GET /", 5);
         assert_eq!(
             graph.errors_per_second.get("GET /").unwrap().data.len(),
             101
