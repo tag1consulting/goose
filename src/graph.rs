@@ -6,9 +6,12 @@
 //! based on them.
 
 use chrono::prelude::*;
+use itertools::Itertools;
 use serde::Serialize;
 use serde_json::json;
+use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::iter::Sum;
 use std::marker::PhantomData;
 
 /// Used to collect graph data during a load test.
@@ -177,7 +180,7 @@ impl GraphData {
     }
 
     /// Creates a Graph from granular data.
-    fn create_graph_from_data<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy>(
+    fn create_graph_from_data<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy>(
         &self,
         html_id: &'a str,
         y_axis_label: &'a str,
@@ -199,7 +202,11 @@ impl GraphData {
     }
 
     /// Creates a Graph from single (just total numbers, not granular) data.
-    fn create_graph_from_single_data<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy>(
+    fn create_graph_from_single_data<
+        'a,
+        T: Clone + TimeSeriesValue<T, U> + Ord,
+        U: Serialize + Copy,
+    >(
         &self,
         html_id: &'a str,
         y_axis_label: &'a str,
@@ -226,7 +233,7 @@ impl GraphData {
 
 /// Defines the HTML graph data.
 #[derive(Debug)]
-pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> {
+pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> {
     /// HTML ID of the graph's main wrapper.
     html_id: &'a str,
     /// Label of the y axis.
@@ -243,7 +250,7 @@ pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Cop
     stopped: Option<DateTime<Utc>>,
 }
 
-impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> {
+impl<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> Graph<'a, T, U> {
     /// Creates a new Graph object.
     fn new(
         html_id: &'a str,
@@ -326,7 +333,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
             let mut legend = vec!["Total"];
 
             let mut other_values = String::new();
-            for (title, sub_data) in self.data.iter() {
+            for (title, sub_data) in self.data.iter().sorted() {
                 legend.push(title);
 
                 let formatted_line = format!(
@@ -477,8 +484,8 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> Graph<'a, T, U> 
 }
 
 /// Data structure to represent time series data.
-#[derive(Debug, Clone, PartialEq)]
-struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
+#[derive(Debug, Clone)]
+struct TimeSeries<T: TimeSeriesValue<T, U> + Ord, U> {
     /// Time series data.
     ///
     /// Each element of the vector represents value for one second in the time series.
@@ -487,7 +494,27 @@ struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
     phantom: PhantomData<U>,
 }
 
-impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
+impl<T: TimeSeriesValue<T, U> + Ord, U> Ord for TimeSeries<T, U> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.data.cmp(&other.data)
+    }
+}
+
+impl<T: TimeSeriesValue<T, U> + Ord, U> PartialOrd for TimeSeries<T, U> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: TimeSeriesValue<T, U> + Ord, U> Eq for TimeSeries<T, U> {}
+
+impl<T: TimeSeriesValue<T, U> + Ord, U> PartialEq for TimeSeries<T, U> {
+    fn eq(&self, other: &Self) -> bool {
+        self.data.len() == other.data.len()
+    }
+}
+
+impl<T: Clone + TimeSeriesValue<T, U> + Ord, U> TimeSeries<T, U> {
     /// Creates a new TimeSeries object.
     fn new() -> TimeSeries<T, U> {
         TimeSeries {
@@ -559,7 +586,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
 }
 
 /// Defines a single value in a TimeSeries.
-pub trait TimeSeriesValue<T, U> {
+pub trait TimeSeriesValue<T: Ord, U> {
     /// Initial ("zero") value.
     fn initial_value() -> T;
     /// Adds the given value to the current value.
@@ -633,7 +660,7 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
 ///
 /// It will maintain the current average and the number of data items that
 /// were used to compute it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct MovingAverage {
     /// Number of data items that were used to compute the current average.
     count: u32,
@@ -661,6 +688,53 @@ impl Default for MovingAverage {
     /// Creates an empty moving average.
     fn default() -> MovingAverage {
         MovingAverage::new()
+    }
+}
+
+impl Ord for MovingAverage {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.average > other.average {
+            Ordering::Greater
+        } else if self.average < other.average {
+            Ordering::Less
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
+impl PartialOrd for MovingAverage {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for MovingAverage {}
+
+impl PartialEq for MovingAverage {
+    fn eq(&self, other: &Self) -> bool {
+        self.average == other.average
+    }
+}
+
+// TODO: By-value sum might not be needed. Re-evaluate....
+impl Sum for MovingAverage {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut sum = MovingAverage::new();
+        for item in iter {
+            sum.merge(&item);
+        }
+        sum
+    }
+}
+
+impl<'a> Sum<&'a MovingAverage> for MovingAverage {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        let mut sum = MovingAverage::new();
+        for item in iter {
+            sum.merge(item);
+        }
+        sum
     }
 }
 
@@ -1400,6 +1474,40 @@ mod test {
                 count: 4,
                 average: 26.285
             }
+        );
+    }
+
+    #[test]
+    fn test_moving_average_sum() {
+        let vector = vec![
+            MovingAverage {
+                count: 123,
+                average: 1.23,
+            },
+            MovingAverage {
+                count: 234,
+                average: 2.34,
+            },
+            MovingAverage {
+                count: 345,
+                average: 3.45,
+            },
+            MovingAverage {
+                count: 456,
+                average: 4.56,
+            },
+            MovingAverage {
+                count: 567,
+                average: 5.67,
+            },
+        ];
+
+        assert_eq!(
+            vector.iter().sum::<MovingAverage>(),
+            MovingAverage {
+                count: 1725,
+                average: 4.164261,
+            },
         );
     }
 
