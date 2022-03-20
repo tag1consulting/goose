@@ -6,9 +6,11 @@
 //! Goose can be configured programmatically with [`GooseDefaultType::set_default`].
 
 use gumdrop::Options;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use crate::logger::GooseLogFormat;
 use crate::metrics::GooseCoordinatedOmissionMitigation;
@@ -72,6 +74,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --status-codes             Tracks additional status code metrics
 ///
 /// Advanced:
+/// --test-plan "TESTPLAN"     Defines a more complex test plan ("10,60;0,30")
 /// --no-telnet                Doesn't enable telnet Controller
 /// --telnet-host HOST         Sets telnet Controller host (default: 0.0.0.0)
 /// --telnet-port PORT         Sets telnet Controller TCP port (default: 5116)
@@ -200,6 +203,9 @@ pub struct GooseConfiguration {
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
 
+    /// Defines a more complex test plan ("10,60;0,30")
+    #[options(no_short, meta = "\"TESTPLAN\"")]
+    pub(crate) test_plan: Option<GooseTestPlan>,
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
@@ -281,6 +287,8 @@ pub(crate) struct GooseDefaults {
     pub startup_time: Option<usize>,
     /// An optional default number of seconds for the test to run.
     pub run_time: Option<usize>,
+    /// An optional default test plan.
+    pub test_plan: Option<GooseTestPlan>,
     /// An optional default log level.
     pub log_level: Option<u8>,
     /// An optional default for the goose log file name.
@@ -367,6 +375,49 @@ pub(crate) struct GooseDefaults {
     pub manager_port: Option<u16>,
 }
 
+/// Internal data structure representing a test plan.
+#[derive(Options, Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct GooseTestPlan {
+    pub(crate) test_plan: Vec<(usize, usize)>,
+}
+
+/// Implement [`FromStr`] to convert `"#,#;#,#"` string formatted test plans to Goose's
+/// internal representation of Vec<(usize, usize)>.
+impl FromStr for GooseTestPlan {
+    type Err = GooseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Convert string into a Vec<(usize, usize>)>.
+        let mut test_plan = Vec::new();
+        // Each line of the test plan must be in the format "#,#", white space is ignored
+        let re = Regex::new(r"^\s*(\d+)\s*,\s*(\d+)\s*$").unwrap();
+        // A test plan can have multiple lines split by the semicolon ";".
+        let lines = s.split(';');
+        for line in lines {
+            if let Some(cap) = re.captures(line) {
+                let left = cap[1]
+                    .parse::<usize>()
+                    .expect("failed to convert \\d to usize");
+                let right = cap[2]
+                    .parse::<usize>()
+                    .expect("failed to convert \\d to usize");
+                test_plan.push((left, right));
+            } else {
+                // Logger isn't initialized yet, provide useful debug output.
+                eprintln!("ERROR: invalid `configuration.test_plan` value: '{}'", line);
+                eprintln!("ERROR: required test plan format: \"#,#;#,#\"");
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.test_plan".to_string(),
+                    value: line.to_string(),
+                    detail: "invalid `configuration.test_plan` value.".to_string(),
+                });
+            }
+        }
+        // The test_plan is valid if the lgoci gets this far.
+        Ok(GooseTestPlan { test_plan })
+    }
+}
+
 /// Defines all [`GooseConfiguration`] options that can be programmatically configured with
 /// a custom default.
 ///
@@ -383,6 +434,8 @@ pub enum GooseDefault {
     StartupTime,
     /// An optional default number of seconds for the test to run.
     RunTime,
+    /// An optional default test plan.
+    TestPlan,
     /// An optional default log level.
     LogLevel,
     /// An optional default for the log file name.
@@ -510,6 +563,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::WebSocketHost`]
 ///  - [`GooseDefault::ManagerBindHost`]
 ///  - [`GooseDefault::ManagerHost`]
+///  - [`GooseDefault::TestPlan`]
 ///
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
@@ -599,6 +653,9 @@ impl GooseDefaultType<&str> for GooseAttack {
                 self.defaults.manager_bind_host = Some(value.to_string())
             }
             GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
+            GooseDefault::TestPlan => {
+                self.defaults.test_plan = Some(value.parse::<GooseTestPlan>().unwrap())
+            }
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
             | GooseDefault::StartupTime
@@ -693,6 +750,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::HatchRate
             | GooseDefault::Timeout
             | GooseDefault::GooseLog
@@ -788,6 +846,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::Worker => self.defaults.worker = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
@@ -894,6 +953,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                 })
             }
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
@@ -993,6 +1053,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                 })
             }
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
@@ -1132,6 +1193,24 @@ impl GooseConfigure<f32> for GooseConfiguration {
                 } else {
                     if !value.message.is_empty() {
                         info!("{} = {}", value.message, v)
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+}
+impl GooseConfigure<GooseTestPlan> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a vec<(usize, usize)> value.
+    fn get_value(&self, values: Vec<GooseValue<GooseTestPlan>>) -> Option<GooseTestPlan> {
+        for value in values {
+            if let Some(v) = value.value {
+                if value.filter {
+                    continue;
+                } else {
+                    if !value.message.is_empty() {
+                        info!("{} = {:?}", value.message, v)
                     }
                     return Some(v);
                 }
@@ -1352,8 +1431,24 @@ impl GooseConfiguration {
             // Otherwise use detected number of CPUs if not on Worker.
             GooseValue {
                 value: Some(num_cpus::get()),
-                filter: self.worker,
+                filter: self.worker || self.test_plan.is_some(),
                 message: "users defaulted to number of CPUs",
+            },
+        ]);
+
+        // Configure `test_plan`.
+        self.test_plan = self.get_value(vec![
+            // Use --test-plan if set.
+            GooseValue {
+                value: self.test_plan.clone(),
+                filter: self.test_plan.is_none(),
+                message: "test_plan",
+            },
+            // Otherwise use GooseDefault if set and not on Worker.
+            GooseValue {
+                value: defaults.test_plan.clone(),
+                filter: defaults.test_plan.is_none() || self.worker,
+                message: "test_plan",
             },
         ]);
 
@@ -2211,6 +2306,47 @@ impl GooseConfiguration {
                         detail: "`configuration.users` must be set to at least 2 when `configuration.startup_time` is set.".to_string(),
                     });
                 }
+            }
+        }
+
+        // Validate `test_plan`.
+        if self.test_plan.is_some() {
+            // The --users option isn't compatible with --test-plan.
+            if let Some(users) = self.users.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.users`".to_string(),
+                    value: users.to_string(),
+                    detail: "`configuration.users` can not be set with `configuration.test_plan`."
+                        .to_string(),
+                });
+            }
+            // the --startup-time option isn't compatible with --test-plan.
+            if self.startup_time != "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.startup_time`".to_string(),
+                    value: self.startup_time.to_string(),
+                    detail: "`configuration.startup_time` can not be set with `configuration.test_plan`.".to_string(),
+                });
+            }
+            // the --hatch-rate option isn't compatible with --test-plan.
+            if let Some(hatch_rate) = self.hatch_rate.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.hatch_rate`".to_string(),
+                    value: hatch_rate.to_string(),
+                    detail:
+                        "`configuration.hatch_rate` can not be set with `configuration.test_plan`."
+                            .to_string(),
+                });
+            }
+            // the --run-time option isn't compatible with --test-plan.
+            if self.run_time != "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.run_time`".to_string(),
+                    value: self.run_time.to_string(),
+                    detail:
+                        "`configuration.run_time` can not be set with `configuration.test_plan`."
+                            .to_string(),
+                });
             }
         }
 

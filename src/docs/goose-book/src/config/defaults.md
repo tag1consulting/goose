@@ -22,6 +22,7 @@ The following defaults can be configured with a `&str`:
  - requests log file format: `GooseDefault::RequestsFormat`
  - debug log file name: `GooseDefault::DebugFile`
  - debug log file format: `GooseDefault::DebugFormat`
+ - test plan: `GooseDefault::TestPlan`
  - host to bind telnet Controller to: `GooseDefault::TelnetHost`
  - host to bind WebSocket Controller to: `GooseDefault::WebSocketHost`
  - host to bind Manager to: `GooseDefault::ManagerBindHost`

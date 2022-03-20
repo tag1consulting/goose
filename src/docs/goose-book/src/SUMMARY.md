@@ -8,6 +8,7 @@
     - [Running A Load Test](getting-started/running.md)
     - [Run-Time Options](getting-started/runtime-options.md)
         - [Common Options](getting-started/common.md)
+        - [Test Plan](getting-started/test-plan.md)
         - [Throttle](getting-started/throttle.md)
     - [Metrics](getting-started/metrics.md)
     - [Tips](getting-started/tips.md)

@@ -44,6 +44,7 @@ Metrics:
   --status-codes             Tracks additional status code metrics
 
 Advanced:
+  --test-plan "TESTPLAN"     Defines a more complex test plan ("10,60;0,30")
   --no-telnet                Doesn't enable telnet Controller
   --telnet-host HOST         Sets telnet Controller host (default: 0.0.0.0)
   --telnet-port PORT         Sets telnet Controller TCP port (default: 5116)
