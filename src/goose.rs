@@ -1515,7 +1515,7 @@ impl GooseUser {
         let built_request = request_builder.build()?;
 
         // Get a string version of request path for logging.
-        let path = match Url::parse(&built_request.url().to_string()) {
+        let path = match Url::parse(built_request.url().as_ref()) {
             Ok(u) => u.path().to_string(),
             Err(e) => {
                 error!("failed to parse url: {}", e);
