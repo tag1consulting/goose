@@ -2122,12 +2122,11 @@ impl Serialize for GooseMetrics {
         let mut s = serializer.serialize_struct("GooseMetrics", 10)?;
         s.serialize_field("hash", &self.hash)?;
         // Convert started field to a unix timestamp.
-        let timestamp;
-        if let Some(started) = self.started {
-            timestamp = started.timestamp();
+        let timestamp = if let Some(started) = self.started {
+            started.timestamp()
         } else {
-            timestamp = 0;
-        }
+            0
+        };
         s.serialize_field("started", &timestamp)?;
         s.serialize_field("duration", &self.duration)?;
         s.serialize_field("users", &self.users)?;
@@ -2939,24 +2938,22 @@ impl GooseAttack {
             }
 
             // Only build the tasks template if --no-task-metrics isn't enabled.
-            let errors_template: String;
-            if !self.metrics.errors.is_empty() {
+            let errors_template: String = if !self.metrics.errors.is_empty() {
                 let mut error_rows = Vec::new();
                 for error in self.metrics.errors.values() {
                     error_rows.push(report::error_row(error));
                 }
 
-                errors_template = report::errors_template(
+                report::errors_template(
                     &error_rows.join("\n"),
                     self.graph_data.get_errors_per_second_graph(),
-                );
+                )
             } else {
-                errors_template = "".to_string();
-            }
+                "".to_string()
+            };
 
             // Only build the status_code template if --status-codes is enabled.
-            let status_code_template: String;
-            if self.configuration.status_codes {
+            let status_code_template: String = if self.configuration.status_codes {
                 let mut status_code_metrics = Vec::new();
                 let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
                 for (request_key, request) in self.metrics.requests.iter().sorted() {
@@ -3000,12 +2997,11 @@ impl GooseAttack {
                 }
 
                 // Compile the status_code metrics template.
-                status_code_template =
-                    report::status_code_metrics_template(&status_code_rows.join("\n"));
+                report::status_code_metrics_template(&status_code_rows.join("\n"))
             } else {
                 // If --status-codes is not enabled, return an empty template.
-                status_code_template = "".to_string();
-            }
+                "".to_string()
+            };
 
             // Compile the report template.
             let report = report::build_report(
@@ -3170,13 +3166,13 @@ pub(crate) fn prepare_status_codes(
             );
         }
         if let Some(aggregate_status_code_counts) = aggregate_counts.as_mut() {
-            let new_count;
-            if let Some(existing_status_code_count) = aggregate_status_code_counts.get(status_code)
+            let new_count = if let Some(existing_status_code_count) =
+                aggregate_status_code_counts.get(status_code)
             {
-                new_count = *existing_status_code_count + *count;
+                *existing_status_code_count + *count
             } else {
-                new_count = *count;
-            }
+                *count
+            };
             aggregate_status_code_counts.insert(*status_code, new_count);
         }
     }

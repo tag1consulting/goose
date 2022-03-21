@@ -240,11 +240,10 @@ async fn run_standalone_test(test_type: TestType) {
     // Get the taskset, start and stop tasks to build a load test.
     let (taskset, start_task, stop_task) = get_tasks(&test_type);
 
-    let goose_attack;
-    match test_type {
+    let goose_attack = match test_type {
         TestType::NotSequenced | TestType::SequencedRoundRobin => {
             // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(configuration)
+            crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
                 .register_taskset(taskset)
                 .test_start(start_task)
@@ -253,14 +252,14 @@ async fn run_standalone_test(test_type: TestType) {
         }
         TestType::SequencedSerial => {
             // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(configuration)
+            crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
                 .register_taskset(taskset)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(GooseScheduler::Serial)
         }
-    }
+    };
 
     // Run the Goose Attack.
     common::run_load_test(goose_attack, None).await;
@@ -310,30 +309,27 @@ async fn run_gaggle_test(test_type: TestType) {
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
-    let manager_goose_attack;
-    match test_type {
+    let manager_goose_attack = match test_type {
         TestType::NotSequenced | TestType::SequencedRoundRobin => {
             // Set up the common base configuration.
-            manager_goose_attack =
-                crate::GooseAttack::initialize_with_config(manager_configuration)
-                    .unwrap()
-                    .register_taskset(taskset)
-                    .test_start(start_task)
-                    .test_stop(stop_task)
-                    // Unnecessary as this is the default.
-                    .set_scheduler(GooseScheduler::RoundRobin);
+            crate::GooseAttack::initialize_with_config(manager_configuration)
+                .unwrap()
+                .register_taskset(taskset)
+                .test_start(start_task)
+                .test_stop(stop_task)
+                // Unnecessary as this is the default.
+                .set_scheduler(GooseScheduler::RoundRobin)
         }
         TestType::SequencedSerial => {
             // Set up the common base configuration.
-            manager_goose_attack =
-                crate::GooseAttack::initialize_with_config(manager_configuration)
-                    .unwrap()
-                    .register_taskset(taskset)
-                    .test_start(start_task)
-                    .test_stop(stop_task)
-                    .set_scheduler(GooseScheduler::Serial);
+            crate::GooseAttack::initialize_with_config(manager_configuration)
+                .unwrap()
+                .register_taskset(taskset)
+                .test_start(start_task)
+                .test_stop(stop_task)
+                .set_scheduler(GooseScheduler::Serial)
         }
-    }
+    };
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;

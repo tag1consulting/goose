@@ -262,32 +262,31 @@ async fn run_standalone_test(test_type: &TestType, scheduler: &GooseScheduler) {
     // Build common configuration.
     let configuration = common_build_configuration(&server, None, None);
 
-    let goose_attack;
-    match test_type {
+    let goose_attack = match test_type {
         TestType::TaskSets => {
             // Get the tasksets, start and stop tasks to build a load test.
             let (taskset1, taskset2, start_task, stop_task) = get_tasksets();
             // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(configuration)
+            crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
                 .register_taskset(taskset1)
                 .register_taskset(taskset2)
                 .test_start(start_task)
                 .test_stop(stop_task)
-                .set_scheduler(scheduler.clone());
+                .set_scheduler(scheduler.clone())
         }
         TestType::Tasks => {
             // Get the taskset, start and stop tasks to build a load test.
             let (taskset1, start_task, stop_task) = get_tasks();
             // Set up the common base configuration.
-            goose_attack = crate::GooseAttack::initialize_with_config(configuration)
+            crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
                 .register_taskset(taskset1)
                 .test_start(start_task)
                 .test_stop(stop_task)
-                .set_scheduler(scheduler.clone());
+                .set_scheduler(scheduler.clone())
         }
-    }
+    };
 
     // Run the Goose Attack.
     common::run_load_test(goose_attack, None).await;
@@ -339,34 +338,31 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
     // Build Manager configuration.
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
-    let manager_goose_attack;
-    match test_type {
+    let manager_goose_attack = match test_type {
         TestType::TaskSets => {
             // Get the tasksets, start and stop tasks to build a load test.
             let (taskset1, taskset2, start_task, stop_task) = get_tasksets();
             // Build the load test for the Manager.
-            manager_goose_attack =
-                crate::GooseAttack::initialize_with_config(manager_configuration)
-                    .unwrap()
-                    .register_taskset(taskset1)
-                    .register_taskset(taskset2)
-                    .test_start(start_task)
-                    .test_stop(stop_task)
-                    .set_scheduler(scheduler.clone());
+            crate::GooseAttack::initialize_with_config(manager_configuration)
+                .unwrap()
+                .register_taskset(taskset1)
+                .register_taskset(taskset2)
+                .test_start(start_task)
+                .test_stop(stop_task)
+                .set_scheduler(scheduler.clone())
         }
         TestType::Tasks => {
             // Get the taskset, start and stop tasks to build a load test.
             let (taskset1, start_task, stop_task) = get_tasks();
             // Build the load test for the Manager.
-            manager_goose_attack =
-                crate::GooseAttack::initialize_with_config(manager_configuration)
-                    .unwrap()
-                    .register_taskset(taskset1)
-                    .test_start(start_task)
-                    .test_stop(stop_task)
-                    .set_scheduler(scheduler.clone());
+            crate::GooseAttack::initialize_with_config(manager_configuration)
+                .unwrap()
+                .register_taskset(taskset1)
+                .test_start(start_task)
+                .test_stop(stop_task)
+                .set_scheduler(scheduler.clone())
         }
-    }
+    };
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;

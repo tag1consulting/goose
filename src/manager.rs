@@ -127,17 +127,16 @@ fn merge_requests_from_worker(
     // Only accrue overhead of merging status_code_counts if we're going to display the results
     if status_codes {
         for (status_code, count) in &user_request.status_code_counts {
-            let new_count;
             // Add user count into global count
-            if let Some(existing_status_code_count) =
+            let new_count = if let Some(existing_status_code_count) =
                 merged_request.status_code_counts.get(status_code)
             {
-                new_count = *existing_status_code_count + *count;
+                *existing_status_code_count + *count
             }
             // No global count exists yet, so start with user count
             else {
-                new_count = *count;
-            }
+                *count
+            };
             merged_request
                 .status_code_counts
                 .insert(*status_code, new_count);
@@ -193,17 +192,17 @@ fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestM
         debug!("requests metrics received: {:?}", requests.len());
         for (request_key, request) in requests {
             trace!("request_key: {}", request_key);
-            let merged_request;
-            if let Some(parent_request) = goose_attack.metrics.requests.get(&request_key) {
-                merged_request = merge_requests_from_worker(
-                    parent_request,
-                    &request,
-                    goose_attack.configuration.status_codes,
-                );
-            } else {
-                // First time seeing this request, simply insert it.
-                merged_request = request.clone();
-            }
+            let merged_request =
+                if let Some(parent_request) = goose_attack.metrics.requests.get(&request_key) {
+                    merge_requests_from_worker(
+                        parent_request,
+                        &request,
+                        goose_attack.configuration.status_codes,
+                    )
+                } else {
+                    // First time seeing this request, simply insert it.
+                    request.clone()
+                };
             goose_attack
                 .metrics
                 .requests
@@ -231,13 +230,13 @@ fn merge_error_metrics(goose_attack: &mut GooseAttack, errors: GooseErrorMetrics
         debug!("errors received: {:?}", errors.len());
         for (error_key, error) in errors {
             trace!("error_key: {}", error_key);
-            let merged_error;
-            if let Some(parent_error) = goose_attack.metrics.errors.get(&error_key) {
-                merged_error = merge_errors_from_worker(parent_error, &error);
-            } else {
-                // First time seeing this error, simply insert it.
-                merged_error = error.clone();
-            }
+            let merged_error =
+                if let Some(parent_error) = goose_attack.metrics.errors.get(&error_key) {
+                    merge_errors_from_worker(parent_error, &error)
+                } else {
+                    // First time seeing this error, simply insert it.
+                    error.clone()
+                };
             goose_attack
                 .metrics
                 .errors

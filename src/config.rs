@@ -1742,7 +1742,7 @@ impl GooseConfiguration {
             // Use GooseDefault if not already set and not Worker.
             GooseValue {
                 value: defaults.expect_workers,
-                filter: !self.expect_workers.is_some() && self.worker,
+                filter: self.expect_workers.is_none() && self.worker,
                 message: "expect_workers",
             },
         ]);
