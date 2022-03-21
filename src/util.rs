@@ -598,17 +598,17 @@ mod tests {
     #[test]
     fn valid_host() {
         assert!(is_valid_host("http://example.com").is_ok());
-        assert!(!is_valid_host("example.com").is_ok());
+        assert!(is_valid_host("example.com").is_err());
         assert!(is_valid_host("http://example.com/").is_ok());
-        assert!(!is_valid_host("example.com/").is_ok());
+        assert!(is_valid_host("example.com/").is_err());
         assert!(is_valid_host("https://www.example.com/and/with/path").is_ok());
-        assert!(!is_valid_host("www.example.com/and/with/path").is_ok());
+        assert!(is_valid_host("www.example.com/and/with/path").is_err());
         assert!(is_valid_host("foo://example.com").is_ok());
         assert!(is_valid_host("file:///path/to/file").is_ok());
-        assert!(!is_valid_host("/path/to/file").is_ok());
-        assert!(!is_valid_host("http://").is_ok());
+        assert!(is_valid_host("/path/to/file").is_err());
+        assert!(is_valid_host("http://").is_err());
         assert!(is_valid_host("http://foo").is_ok());
         assert!(is_valid_host("http:///example.com").is_ok());
-        assert!(!is_valid_host("http:// example.com").is_ok());
+        assert!(is_valid_host("http:// example.com").is_err());
     }
 }
