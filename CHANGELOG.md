@@ -14,6 +14,7 @@
    o **note**: `-v` now sets Goose to `DEBUG` level verbosity which when enabled will negatively impact load test performance; set `-q` to restore previous level of verbosity
  - [#379](https://github.com/tag1consulting/goose/pull/379) **API change**: remove `.print()` which is no longer required to display metrics after a load test, disable with `--no-print-metrics` or `GooseDefault::NoPrintMetrics`
  - @TODO: introduce `--test-plan` and `GooseDefault::TestPlan`
+    o internally represent all load tests as `Vec<(usize, usize)>`l test plan
     
 ## 0.15.2 December 13, 2021
  - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends

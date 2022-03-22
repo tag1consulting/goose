@@ -74,7 +74,7 @@ use std::time::{self, Duration};
 use std::{fmt, io};
 use tokio::fs::File;
 
-use crate::config::{GooseConfiguration, GooseDefaults};
+use crate::config::{GooseConfiguration, GooseDefaults, GooseTestPlan};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
 use crate::graph::GraphData;
@@ -371,6 +371,8 @@ pub struct GooseAttack {
     weighted_gaggle_users: Vec<GaggleUser>,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
+    /// Internal Goose test plan representation.
+    _test_plan: GooseTestPlan,
     /// Configuration object holding options set when launching the load test.
     configuration: GooseConfiguration,
     /// How long (in seconds) the load test should run.
@@ -409,6 +411,7 @@ impl GooseAttack {
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             graph_data: GraphData::new(),
+            _test_plan: GooseTestPlan::from_configuration(&configuration),
             configuration,
             run_time: 0,
             attack_mode: AttackMode::Undefined,
@@ -444,6 +447,7 @@ impl GooseAttack {
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             graph_data: GraphData::new(),
+            _test_plan: GooseTestPlan::from_configuration(&configuration),
             configuration,
             run_time: 0,
             attack_mode: AttackMode::Undefined,

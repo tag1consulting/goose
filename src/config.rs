@@ -378,19 +378,71 @@ pub(crate) struct GooseDefaults {
 /// Internal data structure representing a test plan.
 #[derive(Options, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GooseTestPlan {
+    // A test plan is a vector of tuples each indicating a # of users and milliseconds.
     pub(crate) test_plan: Vec<(usize, usize)>,
 }
 
-/// Implement [`FromStr`] to convert `"#,#;#,#"` string formatted test plans to Goose's
+/// Automatically represent all load tests internally as a test plan.
+///
+/// Load tests launched using `--users`, `--startup-time`, `--hatch-rate`, and/or `--run-time` are
+/// automatically converted to a `Vec<(usize, usize)>` test plan.
+impl GooseTestPlan {
+    pub(crate) fn from_configuration(configuration: &GooseConfiguration) -> GooseTestPlan {
+        if let Some(test_plan) = configuration.test_plan.as_ref() {
+            // Test plan was manually defined, clone and return as is.
+            test_plan.clone()
+        } else {
+            let mut test_plan: Vec<(usize, usize)> = Vec::new();
+
+            // Build a simple test plan from configured options if possible.
+            if let Some(users) = configuration.users {
+                if !configuration.startup_time.is_empty() {
+                    // Load test is configured with --startup-time.
+                    test_plan.push((
+                        users,
+                        util::parse_timespan(&configuration.startup_time) * 1_000,
+                    ));
+                } else {
+                    // Load test is configured with --hatch-rate.
+                    let hatch_rate = if let Some(hatch_rate) = configuration.hatch_rate.as_ref() {
+                        util::get_hatch_rate(Some(hatch_rate.to_string()))
+                    } else {
+                        util::get_hatch_rate(None)
+                    };
+                    test_plan.push((users, ((hatch_rate * users as f32) * 1_000.0) as usize));
+                }
+
+                // A run-time is set, configure the load plan to run for the specified time then shut down.
+                if configuration.run_time != "0" {
+                    // Maintain the configured number of users for the configured run-time.
+                    test_plan.push((users, util::parse_timespan(&configuration.run_time) * 1_000));
+                    // Then shut down the load test as quickly as possible.
+                    test_plan.push((0, 0));
+                }
+            }
+
+            // Define test plan from options.
+            GooseTestPlan { test_plan }
+        }
+    }
+}
+
+/// Implement [`FromStr`] to convert `"users,timespan"` string formatted test plans to Goose's
 /// internal representation of Vec<(usize, usize)>.
+///
+/// Users are represented simply as an integer.
+///
+/// Time span can be specified as an integer, indicating seconds. Or can use integers together
+/// with one or more of "h", "m", and "s", in that order, indicating "hours", "minutes", and
+/// "seconds". Valid formats include: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
 impl FromStr for GooseTestPlan {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Convert string into a Vec<(usize, usize>)>.
-        let mut test_plan = Vec::new();
-        // Each line of the test plan must be in the format "#,#", white space is ignored
-        let re = Regex::new(r"^\s*(\d+)\s*,\s*(\d+)\s*$").unwrap();
+        // Convert string into a TestPlan.
+        let mut test_plan: Vec<(usize, usize)> = Vec::new();
+        // Each line of the test plan must be in the format "{users},{timespan}", white space is ignored
+        let re = Regex::new(r"^\s*(\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)\s*$").unwrap();
         // A test plan can have multiple lines split by the semicolon ";".
         let lines = s.split(';');
         for line in lines {
@@ -398,14 +450,14 @@ impl FromStr for GooseTestPlan {
                 let left = cap[1]
                     .parse::<usize>()
                     .expect("failed to convert \\d to usize");
-                let right = cap[2]
-                    .parse::<usize>()
-                    .expect("failed to convert \\d to usize");
+                let right = util::parse_timespan(&cap[2]) * 1_000;
                 test_plan.push((left, right));
             } else {
-                // Logger isn't initialized yet, provide useful debug output.
+                // Logger isn't initialized yet, provide helpful debug output.
                 eprintln!("ERROR: invalid `configuration.test_plan` value: '{}'", line);
-                eprintln!("ERROR: required test plan format: \"#,#;#,#\"");
+                eprintln!("  Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"");
+                eprintln!("    {{users}} must be an integer, ie \"100\"");
+                eprintln!("    {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc");
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.test_plan".to_string(),
                     value: line.to_string(),
