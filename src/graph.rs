@@ -503,6 +503,8 @@ struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
     ///
     /// Each element of the vector represents value for one second in the time series.
     data: Vec<T>,
+    /// Total value of the time series (sum of all elements).
+    total: T,
     /// Phantom data indicates to the compiler that the "U" generic data type has zero size.
     phantom: PhantomData<U>,
 }
@@ -551,13 +553,15 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         TimeSeries {
             data: Vec::new(),
             phantom: PhantomData,
+            total: T::initial_value(),
         }
     }
 
     /// Increases the the value for a given second.
     fn increase(&mut self, second: usize, value: U) {
         self.expand(second, T::initial_value());
-        self.data[second].add(value);
+        self.data[second].add(&value);
+        self.total.add(&value);
     }
 
     /// Adds another time series.
@@ -565,6 +569,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         for (second, other_item) in other.data.iter().enumerate() {
             self.expand(second, T::initial_value());
             self.data.get_mut(second).unwrap().merge(other_item);
+            self.total.merge(other_item);
         }
     }
 
@@ -572,6 +577,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// there is a gap in the time series.
     fn set_and_maintain_last(&mut self, second: usize, value: U) {
         self.expand(second, self.last());
+        self.total.add(&value);
         self.data[second].set(value);
     }
 
@@ -611,18 +617,14 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         if self.data.len() <= second {
             for _ in 0..(second - self.data.len() + 1) {
                 self.data.push(initial.clone());
+                self.total.merge(&initial);
             }
         };
     }
 
-    /// Calculates time series total value (sum of all values).
+    /// Gets time series total value (sum of all values).
     fn total(&self) -> U {
-        // TODO prevent this from being calculated multiple times?
-        let mut sum = T::initial_value();
-        for value in self.data.iter() {
-            sum.merge(value);
-        }
-        sum.get_graph_value()
+        self.total.get_graph_value()
     }
 }
 
@@ -631,7 +633,7 @@ pub trait TimeSeriesValue<T, U> {
     /// Initial ("zero") value.
     fn initial_value() -> T;
     /// Adds the given value to the current value.
-    fn add(&mut self, value: U);
+    fn add(&mut self, value: &U);
     /// Sets the value (and drops existing one if present).
     fn set(&mut self, value: U);
     /// Merges (adds) another TimeSeriesValue.
@@ -644,8 +646,8 @@ impl TimeSeriesValue<usize, usize> for usize {
     fn initial_value() -> usize {
         0
     }
-    fn add(&mut self, value: usize) {
-        *self += value;
+    fn add(&mut self, value: &usize) {
+        *self += *value;
     }
     fn set(&mut self, value: usize) {
         *self = value;
@@ -662,8 +664,8 @@ impl TimeSeriesValue<u32, u32> for u32 {
     fn initial_value() -> u32 {
         0
     }
-    fn add(&mut self, value: u32) {
-        *self += value;
+    fn add(&mut self, value: &u32) {
+        *self += *value;
     }
     fn set(&mut self, value: u32) {
         *self = value;
@@ -680,7 +682,7 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
     fn initial_value() -> MovingAverage {
         MovingAverage::new()
     }
-    fn add(&mut self, value: f32) {
+    fn add(&mut self, value: &f32) {
         self.add_item(value);
     }
     fn set(&mut self, _: f32) {
@@ -688,8 +690,12 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
     }
     fn merge(&mut self, other: &MovingAverage) {
         let total_count = self.count + other.count;
-        self.average = self.average * (self.count as f32 / total_count as f32)
-            + other.average * (other.count as f32 / total_count as f32);
+        if total_count == 0 {
+            self.average = 0.;
+        } else {
+            self.average = self.average * (self.count as f32 / total_count as f32)
+                + other.average * (other.count as f32 / total_count as f32);
+        };
         self.count = total_count;
     }
     fn get_graph_value(&self) -> f32 {
@@ -719,9 +725,9 @@ impl MovingAverage {
     }
 
     /// Adds a new data item and calculates the new average.
-    fn add_item(&mut self, item: f32) {
+    fn add_item(&mut self, item: &f32) {
         self.count += 1;
-        self.average += (item as f32 - self.average) / self.count as f32;
+        self.average += (*item - self.average) / self.count as f32;
     }
 }
 
@@ -833,11 +839,13 @@ mod test {
             TimeSeries {
                 data: vec![123, 234, 345, 456, 567],
                 phantom: PhantomData,
+                total: 0,
             },
         );
         graph.users_per_second = TimeSeries {
             data: vec![345, 456, 567, 123, 234],
             phantom: PhantomData,
+            total: 0,
         };
         graph.average_response_time_per_second.insert(
             "GET /".to_string(),
@@ -865,11 +873,16 @@ mod test {
                     },
                 ],
                 phantom: PhantomData,
+                total: MovingAverage {
+                    count: 0,
+                    average: 0.,
+                },
             },
         );
         graph.tasks_per_second = TimeSeries {
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
+            total: 0,
         };
 
         graph.errors_per_second.insert(
@@ -877,6 +890,7 @@ mod test {
             TimeSeries {
                 data: vec![567, 123, 234, 345, 456],
                 phantom: PhantomData,
+                total: 0,
             },
         );
         graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
@@ -888,6 +902,7 @@ mod test {
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
             data: vec![123, 234, 345, 456, 567],
             phantom: PhantomData,
+            total: 0,
         };
         assert_eq!(
             rps_graph.data.get("GET /").unwrap().clone(),
@@ -916,6 +931,7 @@ mod test {
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             data: vec![345, 456, 567, 123, 234],
             phantom: PhantomData,
+            total: 0,
         };
         assert_eq!(
             users_graph.data.get("Total").unwrap().clone(),
@@ -965,6 +981,10 @@ mod test {
                 },
             ],
             phantom: PhantomData,
+            total: MovingAverage {
+                count: 0,
+                average: 0.,
+            },
         };
         assert_eq!(
             avg_rt_graph.data.get("GET /").unwrap().clone(),
@@ -993,6 +1013,7 @@ mod test {
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
+            total: 0,
         };
         assert_eq!(
             tasks_graph.data.get("Total").unwrap().clone(),
@@ -1021,6 +1042,7 @@ mod test {
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
             data: vec![567, 123, 234, 345, 456],
             phantom: PhantomData,
+            total: 0,
         };
 
         assert_eq!(
@@ -1069,6 +1091,7 @@ mod test {
         assert_eq!(graph.requests_per_second.get("GET /").unwrap().data[0], 3);
         assert_eq!(graph.requests_per_second.get("GET /").unwrap().data[1], 1);
         assert_eq!(graph.requests_per_second.get("GET /").unwrap().data[2], 5);
+        assert_eq!(graph.requests_per_second.get("GET /").unwrap().total(), 9);
 
         graph.record_requests_per_second("GET /", 100);
         graph.record_requests_per_second("GET /", 100);
@@ -1094,6 +1117,7 @@ mod test {
                 0
             );
         }
+        assert_eq!(graph.requests_per_second.get("GET /").unwrap().total(), 16);
 
         graph.record_requests_per_second("GET /user", 0);
         graph.record_requests_per_second("GET /user", 1);
@@ -1135,6 +1159,11 @@ mod test {
                 0
             );
         }
+        assert_eq!(graph.requests_per_second.get("GET /").unwrap().total(), 18);
+        assert_eq!(
+            graph.requests_per_second.get("GET /user").unwrap().total(),
+            3
+        );
 
         graph.record_requests_per_second("GET /user", 100);
         graph.record_requests_per_second("GET /user", 0);
@@ -1186,6 +1215,11 @@ mod test {
                 0
             );
         }
+        assert_eq!(graph.requests_per_second.get("GET /").unwrap().total(), 20);
+        assert_eq!(
+            graph.requests_per_second.get("GET /user").unwrap().total(),
+            6
+        );
     }
 
     #[test]
@@ -1207,6 +1241,7 @@ mod test {
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[0], 3);
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[1], 1);
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[2], 5);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().total(), 9);
 
         graph.record_errors_per_second("GET /", 100);
         graph.record_errors_per_second("GET /", 100);
@@ -1232,6 +1267,7 @@ mod test {
                 0
             );
         }
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().total(), 16);
     }
 
     #[test]
@@ -1285,6 +1321,14 @@ mod test {
                 .data[2]
                 .average,
             6.4
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .total(),
+            5.0000005
         );
 
         graph.record_average_response_time_per_second("GET /".to_string(), 100, 5);
@@ -1377,6 +1421,14 @@ mod test {
                 0.
             );
         }
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /")
+                .unwrap()
+                .total(),
+            4.8125005
+        );
     }
 
     #[test]
@@ -1398,6 +1450,7 @@ mod test {
         assert_eq!(graph.tasks_per_second.data[0], 3);
         assert_eq!(graph.tasks_per_second.data[1], 1);
         assert_eq!(graph.tasks_per_second.data[2], 5);
+        assert_eq!(graph.tasks_per_second.total(), 9);
 
         graph.record_tasks_per_second(100);
         graph.record_tasks_per_second(100);
@@ -1417,6 +1470,7 @@ mod test {
         for second in 6..100 {
             assert_eq!(graph.tasks_per_second.data[second], 0);
         }
+        assert_eq!(graph.tasks_per_second.total(), 16);
     }
 
     #[test]
@@ -1433,6 +1487,7 @@ mod test {
         assert_eq!(graph.users_per_second.data[0], 1);
         assert_eq!(graph.users_per_second.data[1], 1);
         assert_eq!(graph.users_per_second.data[2], 2);
+        assert_eq!(graph.users_per_second.total(), 6);
 
         graph.record_users_per_second(5, Utc.ymd(2021, 12, 14).and_hms(15, 12, 28));
         graph.record_users_per_second(10, Utc.ymd(2021, 12, 14).and_hms(15, 13, 00));
@@ -1447,6 +1502,7 @@ mod test {
         for second in 6..36 {
             assert_eq!(graph.users_per_second.data[second], 5);
         }
+        assert_eq!(graph.users_per_second.total(), 187);
     }
 
     #[test]
@@ -1460,7 +1516,7 @@ mod test {
             }
         );
 
-        moving_average.add_item(1.23);
+        moving_average.add_item(&1.23);
         assert_eq!(
             moving_average,
             MovingAverage {
@@ -1469,7 +1525,7 @@ mod test {
             }
         );
 
-        moving_average.add_item(2.34);
+        moving_average.add_item(&2.34);
         assert_eq!(
             moving_average,
             MovingAverage {
@@ -1478,7 +1534,7 @@ mod test {
             }
         );
 
-        moving_average.add_item(89.23);
+        moving_average.add_item(&89.23);
         assert_eq!(
             moving_average,
             MovingAverage {
@@ -1487,7 +1543,7 @@ mod test {
             }
         );
 
-        moving_average.add_item(12.34);
+        moving_average.add_item(&12.34);
         assert_eq!(
             moving_average,
             MovingAverage {
@@ -1668,6 +1724,7 @@ mod test {
         let data: TimeSeries<usize, usize> = TimeSeries {
             data: vec![123, 111, 99, 134],
             phantom: PhantomData,
+            total: 0,
         };
 
         let mut graph = HashMap::new();
@@ -1864,6 +1921,7 @@ mod test {
         let user_data: TimeSeries<usize, usize> = TimeSeries {
             data: vec![23, 12, 44, 22],
             phantom: PhantomData,
+            total: 0,
         };
         graph.insert("GET /user".to_string(), user_data);
 
@@ -1958,6 +2016,7 @@ mod test {
         let more_data: TimeSeries<usize, usize> = TimeSeries {
             data: vec![1, 1, 1, 1],
             phantom: PhantomData,
+            total: 0,
         };
         graph.insert("GET /one".to_string(), more_data.clone());
         graph.insert("GET /two".to_string(), more_data.clone());
