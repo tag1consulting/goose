@@ -11,7 +11,6 @@ use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::iter::Sum;
 use std::marker::PhantomData;
 
 /// Used to collect graph data during a load test.
@@ -180,7 +179,11 @@ impl GraphData {
     }
 
     /// Creates a Graph from granular data.
-    fn create_graph_from_data<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy>(
+    fn create_graph_from_data<
+        'a,
+        T: Clone + TimeSeriesValue<T, U>,
+        U: Serialize + Copy + PartialEq + PartialOrd,
+    >(
         &self,
         html_id: &'a str,
         y_axis_label: &'a str,
@@ -204,8 +207,8 @@ impl GraphData {
     /// Creates a Graph from single (just total numbers, not granular) data.
     fn create_graph_from_single_data<
         'a,
-        T: Clone + TimeSeriesValue<T, U> + Ord,
-        U: Serialize + Copy,
+        T: Clone + TimeSeriesValue<T, U>,
+        U: Serialize + Copy + PartialEq + PartialOrd,
     >(
         &self,
         html_id: &'a str,
@@ -233,7 +236,7 @@ impl GraphData {
 
 /// Defines the HTML graph data.
 #[derive(Debug)]
-pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> {
+pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy> {
     /// HTML ID of the graph's main wrapper.
     html_id: &'a str,
     /// Label of the y axis.
@@ -250,7 +253,9 @@ pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize
     stopped: Option<DateTime<Utc>>,
 }
 
-impl<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> Graph<'a, T, U> {
+impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + PartialOrd>
+    Graph<'a, T, U>
+{
     /// Creates a new Graph object.
     fn new(
         html_id: &'a str,
@@ -322,7 +327,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> Graph<'a, 
         };
 
         let mut total_values: TimeSeries<T, U> = TimeSeries::new();
-        let (legend, main_title, main_values, other_values) = if self.data.len() > 1 {
+        let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
             // If we are dealing with a metric with granular data we need to calculate totals.
             for (_, single_data) in self.data.iter() {
                 total_values.add(single_data);
@@ -333,19 +338,27 @@ impl<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> Graph<'a, 
             let mut legend = vec!["Total"];
 
             let mut other_values = String::new();
-            for (title, sub_data) in self.data.iter().sorted() {
-                legend.push(title);
+            // In order for this to sort correctly we need to flip label and time series since tuples
+            // are sorted lexicographically so we want time series to be the first element of the tuple.
+            for (sub_data, label) in self
+                .data
+                .iter()
+                .map(|(label, sub_data)| (sub_data, label))
+                .sorted()
+                .rev()
+            {
+                legend.push(label);
 
                 let formatted_line = format!(
                     r#"{{
-                                name: '{title}',
+                                name: '{label}',
                                 type: 'line',
                                 symbol: 'none',
                                 sampling: 'lttb',
                                 data: {values},
                             }},
                             "#,
-                    title = title,
+                    label = label,
                     values =
                         json!(self.add_timestamp_to_html_graph_data(&sub_data.get_graph_data()))
                 );
@@ -430,7 +443,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> Graph<'a, 
                         {legend}
                         series: [
                             {{
-                                name: '{main_title}',
+                                name: '{main_label}',
                                 type: 'line',
                                 symbol: 'none',
                                 sampling: 'lttb',
@@ -456,7 +469,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> Graph<'a, 
             starting_area = starting_area,
             stopping_area = stopping_area,
             y_axis_label = self.y_axis_label,
-            main_title = main_title,
+            main_label = main_label,
             legend = legend,
             other_values = other_values
         )
@@ -485,7 +498,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U> + Ord, U: Serialize + Copy> Graph<'a, 
 
 /// Data structure to represent time series data.
 #[derive(Debug, Clone)]
-struct TimeSeries<T: TimeSeriesValue<T, U> + Ord, U> {
+struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
     /// Time series data.
     ///
     /// Each element of the vector represents value for one second in the time series.
@@ -494,27 +507,45 @@ struct TimeSeries<T: TimeSeriesValue<T, U> + Ord, U> {
     phantom: PhantomData<U>,
 }
 
-impl<T: TimeSeriesValue<T, U> + Ord, U> Ord for TimeSeries<T, U> {
+impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq + PartialOrd> Ord for TimeSeries<T, U> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.data.cmp(&other.data)
+        let self_total = self.total();
+        let other_total = other.total();
+
+        if self_total > other_total {
+            Ordering::Greater
+        } else if self_total < other_total {
+            Ordering::Less
+        } else {
+            Ordering::Equal
+        }
     }
 }
 
-impl<T: TimeSeriesValue<T, U> + Ord, U> PartialOrd for TimeSeries<T, U> {
+impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq + PartialOrd> PartialOrd for TimeSeries<T, U> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+        let self_total = self.total();
+        let other_total = other.total();
+
+        if self_total > other_total {
+            Some(Ordering::Greater)
+        } else if self_total < other_total {
+            Some(Ordering::Less)
+        } else {
+            Some(Ordering::Equal)
+        }
     }
 }
 
-impl<T: TimeSeriesValue<T, U> + Ord, U> Eq for TimeSeries<T, U> {}
+impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq> Eq for TimeSeries<T, U> {}
 
-impl<T: TimeSeriesValue<T, U> + Ord, U> PartialEq for TimeSeries<T, U> {
+impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq> PartialEq for TimeSeries<T, U> {
     fn eq(&self, other: &Self) -> bool {
-        self.data.len() == other.data.len()
+        self.total() == other.total()
     }
 }
 
-impl<T: Clone + TimeSeriesValue<T, U> + Ord, U> TimeSeries<T, U> {
+impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// Creates a new TimeSeries object.
     fn new() -> TimeSeries<T, U> {
         TimeSeries {
@@ -583,10 +614,20 @@ impl<T: Clone + TimeSeriesValue<T, U> + Ord, U> TimeSeries<T, U> {
             }
         };
     }
+
+    /// Calculates time series total value (sum of all values).
+    fn total(&self) -> U {
+        // TODO prevent this from being calculated multiple times?
+        let mut sum = T::initial_value();
+        for value in self.data.iter() {
+            sum.merge(value);
+        }
+        sum.get_graph_value()
+    }
 }
 
 /// Defines a single value in a TimeSeries.
-pub trait TimeSeriesValue<T: Ord, U> {
+pub trait TimeSeriesValue<T, U> {
     /// Initial ("zero") value.
     fn initial_value() -> T;
     /// Adds the given value to the current value.
@@ -709,34 +750,13 @@ impl PartialOrd for MovingAverage {
     }
 }
 
-impl Eq for MovingAverage {}
-
 impl PartialEq for MovingAverage {
     fn eq(&self, other: &Self) -> bool {
         self.average == other.average
     }
 }
 
-// TODO: By-value sum might not be needed. Re-evaluate....
-impl Sum for MovingAverage {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let mut sum = MovingAverage::new();
-        for item in iter {
-            sum.merge(&item);
-        }
-        sum
-    }
-}
-
-impl<'a> Sum<&'a MovingAverage> for MovingAverage {
-    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        let mut sum = MovingAverage::new();
-        for item in iter {
-            sum.merge(item);
-        }
-        sum
-    }
-}
+impl Eq for MovingAverage {}
 
 #[cfg(test)]
 mod test {
@@ -1478,36 +1498,46 @@ mod test {
     }
 
     #[test]
-    fn test_moving_average_sum() {
-        let vector = vec![
+    fn test_moving_average_cmp() {
+        assert!(
             MovingAverage {
-                count: 123,
-                average: 1.23,
-            },
+                count: 0,
+                average: 0.
+            } < MovingAverage {
+                count: 0,
+                average: 0.1,
+            }
+        );
+
+        assert!(
             MovingAverage {
-                count: 234,
-                average: 2.34,
-            },
-            MovingAverage {
-                count: 345,
-                average: 3.45,
-            },
-            MovingAverage {
-                count: 456,
-                average: 4.56,
-            },
-            MovingAverage {
-                count: 567,
-                average: 5.67,
-            },
-        ];
+                count: 0,
+                average: 1.1,
+            } > MovingAverage {
+                count: 0,
+                average: 0.1,
+            }
+        );
 
         assert_eq!(
-            vector.iter().sum::<MovingAverage>(),
             MovingAverage {
-                count: 1725,
-                average: 4.164261,
+                count: 1,
+                average: 1.1,
             },
+            MovingAverage {
+                count: 2,
+                average: 1.1,
+            }
+        );
+
+        assert!(
+            MovingAverage {
+                count: 0,
+                average: 1.1,
+            } != MovingAverage {
+                count: 0,
+                average: 1.0,
+            }
         );
     }
 
