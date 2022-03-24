@@ -59,6 +59,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --no-error-summary         Doesn't display an error summary
 /// --no-print-metrics         Doesn't display metrics at end of load test
 /// --report-file NAME         Create an html-formatted report
+/// --no-granular-data         Disables granular data in HTML report graphs
 /// -R, --request-log NAME     Sets request log file name
 /// --request-format FORMAT    Sets request log format (csv, json, raw, pretty)
 /// --request-body             Include the request body in the request log
@@ -165,6 +166,9 @@ pub struct GooseConfiguration {
     /// Create an html-formatted report
     #[options(no_short, meta = "NAME")]
     pub report_file: String,
+    /// Disable granular graphs in report file
+    #[options(no_short)]
+    pub no_granular_data: bool,
     /// Sets request log file name
     #[options(short = "R", meta = "NAME")]
     pub request_log: String,
@@ -303,6 +307,8 @@ pub(crate) struct GooseDefaults {
     pub no_error_summary: Option<bool>,
     /// An optional default for the html-formatted report file name.
     pub report_file: Option<String>,
+    /// An optional default for the flag that disables granular data in HTML report graphs.
+    pub no_granular_data: Option<bool>,
     /// An optional default for the requests log file name.
     pub request_log: Option<String>,
     /// An optional default for the requests log file format.
@@ -405,6 +411,8 @@ pub enum GooseDefault {
     NoErrorSummary,
     /// An optional default for the report file name.
     ReportFile,
+    /// An optional default for the flag that disables granular data in HTML report graphs.
+    NoGranularData,
     /// An optional default for the request log file name.
     RequestLog,
     /// An optional default for the request log file format.
@@ -637,6 +645,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
+            | GooseDefault::NoGranularData
             | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -729,6 +738,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
+            | GooseDefault::NoGranularData
             | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -785,6 +795,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
             GooseDefault::NoHashCheck => self.defaults.no_hash_check = Some(value),
+            GooseDefault::NoGranularData => self.defaults.no_granular_data = Some(value),
             GooseDefault::Worker => self.defaults.worker = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
@@ -883,6 +894,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
+            | GooseDefault::NoGranularData
             | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -982,6 +994,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
+            | GooseDefault::NoGranularData
             | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -1554,6 +1567,24 @@ impl GooseConfiguration {
             None => "".to_string(),
         };
 
+        // Configure `no_granular_data`.
+        self.no_debug_body = self
+            .get_value(vec![
+                // Use --no-granular-data if set.
+                GooseValue {
+                    value: Some(self.no_granular_data),
+                    filter: !self.no_granular_data,
+                    message: "no_granular_data",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.no_debug_body,
+                    filter: defaults.no_debug_body.is_none() || self.manager,
+                    message: "no_granular_data",
+                },
+            ])
+            .unwrap_or(false);
+
         // Configure `no_debug_body`.
         self.no_debug_body = self
             .get_value(vec![
@@ -1912,6 +1943,13 @@ impl GooseConfiguration {
                     detail: "`configuration.report_file` can not be set on the Manager."
                         .to_string(),
                 });
+            } else if self.no_granular_data {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_granular_data`".to_string(),
+                    value: true.to_string(),
+                    detail: "`configuration.no_granular_data` can not be set on the Manager."
+                        .to_string(),
+                });
             } else if self.no_debug_body {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.no_debug_body`".to_string(),
@@ -2268,6 +2306,16 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
+        }
+
+        if self.report_file.is_empty() && self.no_granular_data {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.no_granular_data`".to_string(),
+                value: true.to_string(),
+                detail:
+                    "`configuration.no_granular_data` can not be set without `configuration.report_file`."
+                        .to_string(),
+            });
         }
 
         // Can't disable autostart if there's no Controller enabled.

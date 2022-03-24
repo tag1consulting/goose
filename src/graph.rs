@@ -146,36 +146,56 @@ impl GraphData {
     }
 
     /// Generate active users graph.
-    pub(crate) fn get_active_users_graph(&self) -> Graph<usize, usize> {
+    pub(crate) fn get_active_users_graph(&self, granular_data: bool) -> Graph<usize, usize> {
         self.create_graph_from_single_data(
             "graph-active-users",
             "Active users #",
+            granular_data,
             self.users_per_second.clone(),
         )
     }
 
     /// Generate requests per second graph.
-    pub(crate) fn get_requests_per_second_graph(&self) -> Graph<u32, u32> {
-        self.create_graph_from_data("graph-rps", "Requests #", self.requests_per_second.clone())
+    pub(crate) fn get_requests_per_second_graph(&self, granular_data: bool) -> Graph<u32, u32> {
+        self.create_graph_from_data(
+            "graph-rps",
+            "Requests #",
+            granular_data,
+            self.requests_per_second.clone(),
+        )
     }
 
     /// Generate average response time graph.
-    pub(crate) fn get_average_response_time_graph(&self) -> Graph<MovingAverage, f32> {
+    pub(crate) fn get_average_response_time_graph(
+        &self,
+        granular_data: bool,
+    ) -> Graph<MovingAverage, f32> {
         self.create_graph_from_data(
             "graph-avg-response-time",
             "Response time [ms]",
+            granular_data,
             self.average_response_time_per_second.clone(),
         )
     }
 
     /// Generate active tasks graph.
-    pub(crate) fn get_tasks_per_second_graph(&self) -> Graph<usize, usize> {
-        self.create_graph_from_single_data("graph-tps", "Tasks #", self.tasks_per_second.clone())
+    pub(crate) fn get_tasks_per_second_graph(&self, granular_data: bool) -> Graph<usize, usize> {
+        self.create_graph_from_single_data(
+            "graph-tps",
+            "Tasks #",
+            granular_data,
+            self.tasks_per_second.clone(),
+        )
     }
 
     /// Generate errors per second graph.
-    pub(crate) fn get_errors_per_second_graph(&self) -> Graph<u32, u32> {
-        self.create_graph_from_data("graph-eps", "Errors #", self.errors_per_second.clone())
+    pub(crate) fn get_errors_per_second_graph(&self, granular_data: bool) -> Graph<u32, u32> {
+        self.create_graph_from_data(
+            "graph-eps",
+            "Errors #",
+            granular_data,
+            self.errors_per_second.clone(),
+        )
     }
 
     /// Creates a Graph from granular data.
@@ -187,11 +207,13 @@ impl GraphData {
         &self,
         html_id: &'a str,
         y_axis_label: &'a str,
+        granular_data: bool,
         data: HashMap<String, TimeSeries<T, U>>,
     ) -> Graph<'a, T, U> {
         Graph::new(
             html_id,
             y_axis_label,
+            granular_data,
             data,
             self.starting.unwrap(),
             if self.started.is_none() && self.stopping.is_some() {
@@ -213,6 +235,7 @@ impl GraphData {
         &self,
         html_id: &'a str,
         y_axis_label: &'a str,
+        granular_data: bool,
         data: TimeSeries<T, U>,
     ) -> Graph<'a, T, U> {
         let mut hash_map_data = HashMap::new();
@@ -221,6 +244,7 @@ impl GraphData {
         Graph::new(
             html_id,
             y_axis_label,
+            granular_data,
             hash_map_data,
             self.starting.unwrap(),
             if self.started.is_none() && self.stopping.is_some() {
@@ -241,6 +265,8 @@ pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Cop
     html_id: &'a str,
     /// Label of the y axis.
     y_axis_label: &'a str,
+    /// Indicates whether the granular data should be displayed on graphs.
+    granular_data: bool,
     /// Graph data.
     data: HashMap<String, TimeSeries<T, U>>,
     /// Time when the test startup phase began.
@@ -257,9 +283,11 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
     Graph<'a, T, U>
 {
     /// Creates a new Graph object.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         html_id: &'a str,
         y_axis_label: &'a str,
+        granular_data: bool,
         data: HashMap<String, TimeSeries<T, U>>,
         starting: DateTime<Utc>,
         started: Option<DateTime<Utc>>,
@@ -269,6 +297,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         Graph {
             html_id,
             y_axis_label,
+            granular_data,
             data,
             starting,
             started,
@@ -338,19 +367,20 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             let mut legend = vec!["Total"];
 
             let mut other_values = String::new();
-            // In order for this to sort correctly we need to flip label and time series since tuples
-            // are sorted lexicographically so we want time series to be the first element of the tuple.
-            for (sub_data, label) in self
-                .data
-                .iter()
-                .map(|(label, sub_data)| (sub_data, label))
-                .sorted()
-                .rev()
-            {
-                legend.push(label);
+            if self.granular_data {
+                // In order for this to sort correctly we need to flip label and time series since tuples
+                // are sorted lexicographically so we want time series to be the first element of the tuple.
+                for (sub_data, label) in self
+                    .data
+                    .iter()
+                    .map(|(label, sub_data)| (sub_data, label))
+                    .sorted()
+                    .rev()
+                {
+                    legend.push(label);
 
-                let formatted_line = format!(
-                    r#"{{
+                    let formatted_line = format!(
+                        r#"{{
                                 name: '{label}',
                                 type: 'line',
                                 symbol: 'none',
@@ -358,11 +388,13 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 data: {values},
                             }},
                             "#,
-                    label = label,
-                    values =
-                        json!(self.add_timestamp_to_html_graph_data(&sub_data.get_graph_data()))
-                );
-                other_values += formatted_line.as_str();
+                        label = label,
+                        values = json!(
+                            self.add_timestamp_to_html_graph_data(&sub_data.get_graph_data())
+                        )
+                    );
+                    other_values += formatted_line.as_str();
+                }
             }
 
             (
@@ -898,7 +930,7 @@ mod test {
         graph.stopping = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26));
         graph.stopped = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27));
 
-        let rps_graph = graph.get_requests_per_second_graph();
+        let rps_graph = graph.get_requests_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
             data: vec![123, 234, 345, 456, 567],
             phantom: PhantomData,
@@ -927,7 +959,7 @@ mod test {
             Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
         );
 
-        let users_graph = graph.get_active_users_graph();
+        let users_graph = graph.get_active_users_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             data: vec![345, 456, 567, 123, 234],
             phantom: PhantomData,
@@ -956,7 +988,7 @@ mod test {
             Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
         );
 
-        let avg_rt_graph = graph.get_average_response_time_graph();
+        let avg_rt_graph = graph.get_average_response_time_graph(true);
         let expected_time_series: TimeSeries<MovingAverage, f32> = TimeSeries {
             data: vec![
                 MovingAverage {
@@ -1009,7 +1041,7 @@ mod test {
             Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
         );
 
-        let tasks_graph = graph.get_tasks_per_second_graph();
+        let tasks_graph = graph.get_tasks_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
@@ -1038,7 +1070,7 @@ mod test {
             Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
         );
 
-        let errors_graph = graph.get_errors_per_second_graph();
+        let errors_graph = graph.get_errors_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
             data: vec![567, 123, 234, 345, 456],
             phantom: PhantomData,
@@ -1603,6 +1635,7 @@ mod test {
         let graph: Graph<usize, usize> = Graph::new(
             "html_id",
             "Label",
+            true,
             HashMap::new(),
             Utc.ymd(2021, 12, 14).and_hms(15, 12, 23),
             None,
@@ -1753,6 +1786,7 @@ mod test {
             Graph::new(
                 "graph-rps",
                 "Requests #",
+                true,
                 graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 None,
@@ -1800,6 +1834,7 @@ mod test {
             Graph::new(
                 "graph-rps",
                 "Requests #",
+                true,
                 graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
@@ -1847,6 +1882,7 @@ mod test {
             Graph::new(
                 "graph-rps",
                 "Requests #",
+                true,
                 graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 None,
@@ -1908,6 +1944,7 @@ mod test {
             Graph::new(
                 "graph-rps",
                 "Requests #",
+                true,
                 graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
@@ -1928,6 +1965,7 @@ mod test {
         let markup = Graph::new(
             "graph-rps",
             "Requests #",
+            true,
             graph.clone(),
             Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
             None,
@@ -2025,6 +2063,7 @@ mod test {
         let markup = Graph::new(
             "graph-rps",
             "Requests #",
+            true,
             graph.clone(),
             Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
             None,
