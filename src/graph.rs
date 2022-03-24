@@ -80,7 +80,7 @@ impl GraphData {
                 .insert(key.to_string(), TimeSeries::new());
         }
         let data = self.requests_per_second.get_mut(key).unwrap();
-        data.increase(second, 1);
+        data.increase_value(second, 1);
 
         debug!(
             "incremented second {} for requests per second counter: {}",
@@ -96,7 +96,7 @@ impl GraphData {
                 .insert(key.to_string(), TimeSeries::new());
         }
         let data = self.errors_per_second.get_mut(key).unwrap();
-        data.increase(second, 1);
+        data.increase_value(second, 1);
 
         debug!(
             "incremented second {} for errors per second counter: {}",
@@ -117,7 +117,7 @@ impl GraphData {
                 .insert(key.clone(), TimeSeries::new());
         }
         let data = self.average_response_time_per_second.get_mut(&key).unwrap();
-        data.increase(second, response_time as f32);
+        data.increase_value(second, response_time as f32);
 
         debug!(
             "updated second {} for average response time per second: {}",
@@ -128,7 +128,7 @@ impl GraphData {
 
     /// Record tasks per second metric.
     pub(crate) fn record_tasks_per_second(&mut self, second: usize) {
-        self.tasks_per_second.increase(second, 1);
+        self.tasks_per_second.increase_value(second, 1);
 
         debug!(
             "incremented second {} for tasks per second counter: {}",
@@ -330,7 +330,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
             // If we are dealing with a metric with granular data we need to calculate totals.
             for (_, single_data) in self.data.iter() {
-                total_values.add(single_data);
+                total_values.add_time_series(single_data);
             }
 
             // We will have multiple lines. We need to prepare the legend section on the graph
@@ -558,14 +558,14 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     }
 
     /// Increases the the value for a given second.
-    fn increase(&mut self, second: usize, value: U) {
+    fn increase_value(&mut self, second: usize, value: U) {
         self.expand(second, T::initial_value());
-        self.data[second].add(&value);
-        self.total.add(&value);
+        self.data[second].increase_value(&value);
+        self.total.increase_value(&value);
     }
 
     /// Adds another time series.
-    fn add(&mut self, other: &TimeSeries<T, U>) {
+    fn add_time_series(&mut self, other: &TimeSeries<T, U>) {
         for (second, other_item) in other.data.iter().enumerate() {
             self.expand(second, T::initial_value());
             self.data.get_mut(second).unwrap().merge(other_item);
@@ -577,8 +577,8 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// there is a gap in the time series.
     fn set_and_maintain_last(&mut self, second: usize, value: U) {
         self.expand(second, self.last());
-        self.total.add(&value);
-        self.data[second].set(value);
+        self.total.increase_value(&value);
+        self.data[second].set_value(value);
     }
 
     /// Returns a value for a given second.
@@ -633,9 +633,9 @@ pub trait TimeSeriesValue<T, U> {
     /// Initial ("zero") value.
     fn initial_value() -> T;
     /// Adds the given value to the current value.
-    fn add(&mut self, value: &U);
+    fn increase_value(&mut self, value: &U);
     /// Sets the value (and drops existing one if present).
-    fn set(&mut self, value: U);
+    fn set_value(&mut self, value: U);
     /// Merges (adds) another TimeSeriesValue.
     fn merge(&mut self, other: &T);
     /// Gets representation of the value suitable for HTML graphs (generally a scalar).
@@ -646,10 +646,10 @@ impl TimeSeriesValue<usize, usize> for usize {
     fn initial_value() -> usize {
         0
     }
-    fn add(&mut self, value: &usize) {
+    fn increase_value(&mut self, value: &usize) {
         *self += *value;
     }
-    fn set(&mut self, value: usize) {
+    fn set_value(&mut self, value: usize) {
         *self = value;
     }
     fn merge(&mut self, other: &usize) {
@@ -664,10 +664,10 @@ impl TimeSeriesValue<u32, u32> for u32 {
     fn initial_value() -> u32 {
         0
     }
-    fn add(&mut self, value: &u32) {
+    fn increase_value(&mut self, value: &u32) {
         *self += *value;
     }
-    fn set(&mut self, value: u32) {
+    fn set_value(&mut self, value: u32) {
         *self = value;
     }
     fn merge(&mut self, other: &u32) {
@@ -682,10 +682,10 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
     fn initial_value() -> MovingAverage {
         MovingAverage::new()
     }
-    fn add(&mut self, value: &f32) {
+    fn increase_value(&mut self, value: &f32) {
         self.add_item(value);
     }
-    fn set(&mut self, _: f32) {
+    fn set_value(&mut self, _: f32) {
         panic!("TimeSeriesValue::set() is not supported for MovingAverage");
     }
     fn merge(&mut self, other: &MovingAverage) {
