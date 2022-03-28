@@ -395,26 +395,27 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     );
                     other_values += formatted_line.as_str();
                 }
-            }
-
-            (
-                format!(
-                    r#"legend: {{
+                (
+                    format!(
+                        r#"legend: {{
                             type: '{legend_type}',
                             width: '75%',
                             data: {data},
                         }},"#,
-                    legend_type = if self.data.len() > 4 {
-                        "scroll"
-                    } else {
-                        "plain"
-                    },
-                    data = json!(legend)
-                ),
-                "Total",
-                &total_values,
-                other_values,
-            )
+                        legend_type = if self.data.len() > 4 {
+                            "scroll"
+                        } else {
+                            "plain"
+                        },
+                        data = json!(legend)
+                    ),
+                    "Total",
+                    &total_values,
+                    other_values,
+                )
+            } else {
+                ("".to_string(), "Total", &total_values, "".to_string())
+            }
         } else {
             // If there is only one data series in the metric we simply display it.
             (
@@ -1685,7 +1686,11 @@ mod test {
         );
     }
 
-    fn expected_graph_html_prefix(html_id: &str, y_axis_label: &str) -> String {
+    fn expected_graph_html_prefix(
+        html_id: &str,
+        y_axis_label: &str,
+        main_series_label: &str,
+    ) -> String {
         format!(
             r#"<div class="graph">
                 <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
@@ -1736,7 +1741,7 @@ mod test {
                         
                         series: [
                             {{
-                                name: 'GET /',
+                                name: '{main_series_label}',
                                 type: 'line',
                                 symbol: 'none',
                                 sampling: 'lttb',
@@ -1746,13 +1751,14 @@ mod test {
                                     itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
 "#,
             html_id = html_id,
-            y_axis_label = y_axis_label
+            y_axis_label = y_axis_label,
+            main_series_label = main_series_label
         )
     }
 
     #[test]
     fn test_graph_markup() {
-        let expected_prefix = expected_graph_html_prefix("graph-rps", "Requests #");
+        let expected_prefix = expected_graph_html_prefix("graph-rps", "Requests #", "GET /");
 
         let data: TimeSeries<usize, usize> = TimeSeries {
             data: vec![123, 111, 99, 134],
@@ -1787,6 +1793,23 @@ mod test {
                 "graph-rps",
                 "Requests #",
                 true,
+                graph.clone(),
+                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                None,
+                None,
+                None
+            )
+            .get_markup(),
+            expected
+        );
+
+        // It should make no difference if we disable granular graphs, since we only have one
+        // request.
+        assert_eq!(
+            Graph::new(
+                "graph-rps",
+                "Requests #",
+                false,
                 graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 None,
@@ -1845,6 +1868,23 @@ mod test {
             expected
         );
 
+        // It should make no difference if we disable granular graphs, since we only have one
+        // request.
+        assert_eq!(
+            Graph::new(
+                "graph-rps",
+                "Requests #",
+                false,
+                graph.clone(),
+                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                None,
+                None
+            )
+            .get_markup(),
+            expected
+        );
+
         let mut expected = expected_prefix.to_owned();
         expected += format!(
             r#"                                    data: [
@@ -1883,6 +1923,23 @@ mod test {
                 "graph-rps",
                 "Requests #",
                 true,
+                graph.clone(),
+                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                None,
+                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34))
+            )
+            .get_markup(),
+            expected
+        );
+
+        // It should make no difference if we disable granular graphs, since we only have one
+        // request.
+        assert_eq!(
+            Graph::new(
+                "graph-rps",
+                "Requests #",
+                false,
                 graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 None,
@@ -1945,6 +2002,23 @@ mod test {
                 "graph-rps",
                 "Requests #",
                 true,
+                graph.clone(),
+                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
+                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 36)),
+                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 38))
+            )
+            .get_markup(),
+            expected
+        );
+
+        // It should make no difference if we disable granular graphs, since we only have one
+        // request.
+        assert_eq!(
+            Graph::new(
+                "graph-rps",
+                "Requests #",
+                false,
                 graph.clone(),
                 Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
                 Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
@@ -2049,6 +2123,43 @@ mod test {
             "line {} not found in {}",
             expected_line,
             markup
+        );
+
+        // Now same graph with granular data disabled.
+        let expected_nongranular_prefix =
+            expected_graph_html_prefix("graph-rps", "Requests #", "Total");
+        let mut expected = expected_nongranular_prefix.to_owned();
+        expected += format!(
+            r#"                                    data: [
+                                        
+                                        
+                                    ]
+                                }},
+                                data: [["{data_series_prefix}:32",146],["{data_series_prefix}:33",123],["{data_series_prefix}:34",143],["{data_series_prefix}:35",156]],
+                            }},
+                            
+                        ]
+                    }});
+                </script>
+            </div>"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M")
+        ).as_str();
+
+        assert_eq!(
+            Graph::new(
+                "graph-rps",
+                "Requests #",
+                false,
+                graph.clone(),
+                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                None,
+                None,
+                None,
+            )
+            .get_markup(),
+            expected
         );
 
         let more_data: TimeSeries<usize, usize> = TimeSeries {
@@ -2204,6 +2315,41 @@ mod test {
             "line {} not found in {}",
             expected_line,
             markup
+        );
+
+        // Now same graph with granular data disabled.
+        let mut expected = expected_nongranular_prefix;
+        expected += format!(
+            r#"                                    data: [
+                                        
+                                        
+                                    ]
+                                }},
+                                data: [["{data_series_prefix}:32",149],["{data_series_prefix}:33",126],["{data_series_prefix}:34",146],["{data_series_prefix}:35",159]],
+                            }},
+                            
+                        ]
+                    }});
+                </script>
+            </div>"#,
+            data_series_prefix = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M")
+        ).as_str();
+
+        assert_eq!(
+            Graph::new(
+                "graph-rps",
+                "Requests #",
+                false,
+                graph.clone(),
+                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                None,
+                None,
+                None,
+            )
+            .get_markup(),
+            expected
         );
     }
 }
