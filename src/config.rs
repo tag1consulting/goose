@@ -1905,13 +1905,6 @@ impl GooseConfiguration {
                     detail: "`configuration.no_autostart` can not be set on the Manager."
                         .to_string(),
                 });
-            } else if !self.report_file.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.report_file`".to_string(),
-                    value: self.report_file.to_string(),
-                    detail: "`configuration.report_file` can not be set on the Manager."
-                        .to_string(),
-                });
             } else if self.no_debug_body {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.no_debug_body`".to_string(),
@@ -2081,6 +2074,13 @@ impl GooseConfiguration {
                     option: "`configuration.no_gzip`".to_string(),
                     value: true.to_string(),
                     detail: "`configuration.no_gzip` can not be set in Worker mode.".to_string(),
+                });
+            } else if !self.report_file.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.report_file`".to_string(),
+                    value: self.report_file.to_string(),
+                    detail: "`configuration.report_file` can not be set in Worker mode."
+                        .to_string(),
                 });
             } else if self
                 .co_mitigation
