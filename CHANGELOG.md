@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.16.0-dev
+ - [#415](https://github.com/tag1consulting/goose/pull/415) display granular data in HTML graphs, introduce `--no-granular-data` to disable it and display graphs as they were until this change
  - [#406](https://github.com/tag1consulting/goose/pull/406) make sure that the graphs are built correctly if the load test is interrupted during the starting phase
  - [#408](https://github.com/tag1consulting/goose/pull/408) update 'Running the load test' page in the Goose book to show HTML report
  - [#411](https://github.com/tag1consulting/goose/pull/411) **API change**: some public APIs have been made private or removed

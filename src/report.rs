@@ -315,7 +315,7 @@ pub(crate) fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
 }
 
 /// If task metrics are enabled, add a task metrics table to the html report.
-pub(crate) fn task_metrics_template<T: Serialize>(task_rows: &str, graph: Graph<T>) -> String {
+pub(crate) fn task_metrics_template(task_rows: &str, graph: Graph<usize, usize>) -> String {
     format!(
         r#"<div class="tasks">
         <h2>Task Metrics</h2>
@@ -380,7 +380,7 @@ pub(crate) fn task_metrics_row(metric: TaskMetric) -> String {
 }
 
 /// If there are errors, add an errors table to the html report.
-pub(crate) fn errors_template(error_rows: &str, graph: Graph<u32>) -> String {
+pub(crate) fn errors_template(error_rows: &str, graph: Graph<u32, u32>) -> String {
     format!(
         r#"<div class="errors">
         <h2>Errors</h2>

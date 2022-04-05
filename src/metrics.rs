@@ -2458,16 +2458,19 @@ impl GooseAttack {
                         if !self.configuration.report_file.is_empty() {
                             let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
+                            let key =
+                                format!("{} {}", request_metric.raw.method, request_metric.name);
                             self.graph_data
-                                .record_requests_per_second(seconds_since_start);
+                                .record_requests_per_second(&key, seconds_since_start);
                             self.graph_data.record_average_response_time_per_second(
+                                key.clone(),
                                 seconds_since_start,
                                 request_metric.response_time,
                             );
 
                             if !request_metric.success {
                                 self.graph_data
-                                    .record_errors_per_second(seconds_since_start);
+                                    .record_errors_per_second(&key, seconds_since_start);
                             }
                         }
                     }
@@ -2931,7 +2934,8 @@ impl GooseAttack {
 
                 tasks_template = report::task_metrics_template(
                     &tasks_rows.join("\n"),
-                    self.graph_data.get_tasks_per_second_graph(),
+                    self.graph_data
+                        .get_tasks_per_second_graph(!self.configuration.no_granular_data),
                 );
             } else {
                 tasks_template = "".to_string();
@@ -2946,7 +2950,8 @@ impl GooseAttack {
 
                 report::errors_template(
                     &error_rows.join("\n"),
-                    self.graph_data.get_errors_per_second_graph(),
+                    self.graph_data
+                        .get_errors_per_second_graph(!self.configuration.no_granular_data),
                 )
             } else {
                 "".to_string()
@@ -3018,13 +3023,16 @@ impl GooseAttack {
                     errors_template: &errors_template,
                     graph_rps_template: &self
                         .graph_data
-                        .get_requests_per_second_graph()
+                        .get_requests_per_second_graph(!self.configuration.no_granular_data)
                         .get_markup(),
                     graph_average_response_time_template: &self
                         .graph_data
-                        .get_average_response_time_graph()
+                        .get_average_response_time_graph(!self.configuration.no_granular_data)
                         .get_markup(),
-                    graph_users_per_second: &self.graph_data.get_active_users_graph().get_markup(),
+                    graph_users_per_second: &self
+                        .graph_data
+                        .get_active_users_graph(!self.configuration.no_granular_data)
+                        .get_markup(),
                 },
             );
 
