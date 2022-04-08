@@ -30,7 +30,7 @@ jobs:
     - name: Build
       run: cargo build --verbose --all-features
     - name: Docs
-      run: cargo rustdoc --lib --all-features --examples
+      run: cargo rustdoc --lib --all-features
     - name: Run tests
       run: cargo test --verbose --all-features
     - name: Run timezone-sensitive tests in non UTC (GMT-5)
