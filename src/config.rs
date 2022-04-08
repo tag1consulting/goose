@@ -59,7 +59,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --no-error-summary         Doesn't display an error summary
 /// --no-print-metrics         Doesn't display metrics at end of load test
 /// --report-file NAME         Create an html-formatted report
-/// --no-granular-data         Disables granular data in HTML report graphs
+/// --no-granular-report       Disables granular data in HTML report graphs
 /// -R, --request-log NAME     Sets request log file name
 /// --request-format FORMAT    Sets request log format (csv, json, raw, pretty)
 /// --request-body             Include the request body in the request log
@@ -168,7 +168,7 @@ pub struct GooseConfiguration {
     pub report_file: String,
     /// Disable granular graphs in report file
     #[options(no_short)]
-    pub no_granular_data: bool,
+    pub no_granular_report: bool,
     /// Sets request log file name
     #[options(short = "R", meta = "NAME")]
     pub request_log: String,
@@ -308,7 +308,7 @@ pub(crate) struct GooseDefaults {
     /// An optional default for the html-formatted report file name.
     pub report_file: Option<String>,
     /// An optional default for the flag that disables granular data in HTML report graphs.
-    pub no_granular_data: Option<bool>,
+    pub no_granular_report: Option<bool>,
     /// An optional default for the requests log file name.
     pub request_log: Option<String>,
     /// An optional default for the requests log file format.
@@ -795,7 +795,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
             GooseDefault::NoHashCheck => self.defaults.no_hash_check = Some(value),
-            GooseDefault::NoGranularData => self.defaults.no_granular_data = Some(value),
+            GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
             GooseDefault::Worker => self.defaults.worker = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
@@ -1567,20 +1567,20 @@ impl GooseConfiguration {
             None => "".to_string(),
         };
 
-        // Configure `no_granular_data`.
+        // Configure `no_granular_report`.
         self.no_debug_body = self
             .get_value(vec![
-                // Use --no-granular-data if set.
+                // Use --no-granular-report if set.
                 GooseValue {
-                    value: Some(self.no_granular_data),
-                    filter: !self.no_granular_data,
-                    message: "no_granular_data",
+                    value: Some(self.no_granular_report),
+                    filter: !self.no_granular_report,
+                    message: "no_granular_report",
                 },
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_debug_body,
                     filter: defaults.no_debug_body.is_none() || self.manager,
-                    message: "no_granular_data",
+                    message: "no_granular_report",
                 },
             ])
             .unwrap_or(false);
@@ -1943,11 +1943,11 @@ impl GooseConfiguration {
                     detail: "`configuration.report_file` can not be set on the Manager."
                         .to_string(),
                 });
-            } else if self.no_granular_data {
+            } else if self.no_granular_report {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_granular_data`".to_string(),
+                    option: "`configuration.no_granular_report`".to_string(),
                     value: true.to_string(),
-                    detail: "`configuration.no_granular_data` can not be set on the Manager."
+                    detail: "`configuration.no_granular_report` can not be set on the Manager."
                         .to_string(),
                 });
             } else if self.no_debug_body {
@@ -2308,12 +2308,12 @@ impl GooseConfiguration {
             }
         }
 
-        if self.report_file.is_empty() && self.no_granular_data {
+        if self.report_file.is_empty() && self.no_granular_report {
             return Err(GooseError::InvalidOption {
-                option: "`configuration.no_granular_data`".to_string(),
+                option: "`configuration.no_granular_report`".to_string(),
                 value: true.to_string(),
                 detail:
-                    "`configuration.no_granular_data` can not be set without `configuration.report_file`."
+                    "`configuration.no_granular_report` can not be set without `configuration.report_file`."
                         .to_string(),
             });
         }

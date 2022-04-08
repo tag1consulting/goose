@@ -2935,7 +2935,7 @@ impl GooseAttack {
                 tasks_template = report::task_metrics_template(
                     &tasks_rows.join("\n"),
                     self.graph_data
-                        .get_tasks_per_second_graph(!self.configuration.no_granular_data),
+                        .get_tasks_per_second_graph(!self.configuration.no_granular_report),
                 );
             } else {
                 tasks_template = "".to_string();
@@ -2951,7 +2951,7 @@ impl GooseAttack {
                 report::errors_template(
                     &error_rows.join("\n"),
                     self.graph_data
-                        .get_errors_per_second_graph(!self.configuration.no_granular_data),
+                        .get_errors_per_second_graph(!self.configuration.no_granular_report),
                 )
             } else {
                 "".to_string()
@@ -3023,15 +3023,15 @@ impl GooseAttack {
                     errors_template: &errors_template,
                     graph_rps_template: &self
                         .graph_data
-                        .get_requests_per_second_graph(!self.configuration.no_granular_data)
+                        .get_requests_per_second_graph(!self.configuration.no_granular_report)
                         .get_markup(),
                     graph_average_response_time_template: &self
                         .graph_data
-                        .get_average_response_time_graph(!self.configuration.no_granular_data)
+                        .get_average_response_time_graph(!self.configuration.no_granular_report)
                         .get_markup(),
                     graph_users_per_second: &self
                         .graph_data
-                        .get_active_users_graph(!self.configuration.no_granular_data)
+                        .get_active_users_graph(!self.configuration.no_granular_report)
                         .get_markup(),
                 },
             );
