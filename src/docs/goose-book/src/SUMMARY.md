@@ -1,8 +1,8 @@
 # The Goose Book
 
-[What Is Goose?](title-page.md)
-[Requirements](requirements.md)
-[Glossary](glossary.md)
+[What Is Goose?](title-page.md)  
+[Requirements](requirements.md)  
+[Glossary](glossary.md)  
 
 - [Getting Started](getting-started/overview.md)
     - [Creating A Load test](getting-started/creating.md)
