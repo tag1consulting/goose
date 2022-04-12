@@ -205,7 +205,7 @@ pub struct GooseConfiguration {
 
     /// Defines a more complex test plan ("10,60;0,30")
     #[options(no_short, meta = "\"TESTPLAN\"")]
-    pub(crate) test_plan: Option<GooseTestPlan>,
+    pub(crate) test_plan: Option<TestPlan>,
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
@@ -288,7 +288,7 @@ pub(crate) struct GooseDefaults {
     /// An optional default number of seconds for the test to run.
     pub run_time: Option<usize>,
     /// An optional default test plan.
-    pub test_plan: Option<GooseTestPlan>,
+    pub test_plan: Option<TestPlan>,
     /// An optional default log level.
     pub log_level: Option<u8>,
     /// An optional default for the goose log file name.
@@ -378,37 +378,37 @@ pub(crate) struct GooseDefaults {
 /// Internal data structure representing a test plan.
 //#[derive(Options, Debug, Clone, Serialize, Deserialize)]
 #[derive(Options, Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct GooseTestPlan {
+pub(crate) struct TestPlan {
     // A test plan is a vector of tuples each indicating a # of users and milliseconds.
-    pub(crate) test_plan: Vec<(usize, usize)>,
+    pub(crate) steps: Vec<(usize, usize)>,
     // Which step of the test_plan is currently running.
-    pub(crate) step: usize,
+    pub(crate) current: usize,
 }
 
 /// Automatically represent all load tests internally as a test plan.
 ///
 /// Load tests launched using `--users`, `--startup-time`, `--hatch-rate`, and/or `--run-time` are
 /// automatically converted to a `Vec<(usize, usize)>` test plan.
-impl GooseTestPlan {
-    pub(crate) fn new() -> GooseTestPlan {
-        GooseTestPlan {
-            test_plan: Vec::new(),
-            step: 0,
+impl TestPlan {
+    pub(crate) fn new() -> TestPlan {
+        TestPlan {
+            steps: Vec::new(),
+            current: 0,
         }
     }
 
-    pub(crate) fn build(configuration: &GooseConfiguration) -> GooseTestPlan {
+    pub(crate) fn build(configuration: &GooseConfiguration) -> TestPlan {
         if let Some(test_plan) = configuration.test_plan.as_ref() {
             // Test plan was manually defined, clone and return as is.
             test_plan.clone()
         } else {
-            let mut test_plan: Vec<(usize, usize)> = Vec::new();
+            let mut steps: Vec<(usize, usize)> = Vec::new();
 
             // Build a simple test plan from configured options if possible.
             if let Some(users) = configuration.users {
                 if !configuration.startup_time.is_empty() {
                     // Load test is configured with --startup-time.
-                    test_plan.push((
+                    steps.push((
                         users,
                         util::parse_timespan(&configuration.startup_time) * 1_000,
                     ));
@@ -419,27 +419,27 @@ impl GooseTestPlan {
                     } else {
                         util::get_hatch_rate(None)
                     };
-                    test_plan.push((users, ((hatch_rate * users as f32) * 1_000.0) as usize));
+                    steps.push((users, ((hatch_rate * users as f32) * 1_000.0) as usize));
                 }
 
                 // A run-time is set, configure the load plan to run for the specified time then shut down.
                 if configuration.run_time != "0" {
                     // Maintain the configured number of users for the configured run-time.
-                    test_plan.push((users, util::parse_timespan(&configuration.run_time) * 1_000));
+                    steps.push((users, util::parse_timespan(&configuration.run_time) * 1_000));
                     // Then shut down the load test as quickly as possible.
-                    test_plan.push((0, 0));
+                    steps.push((0, 0));
                 }
             }
 
             // Define test plan from options.
-            GooseTestPlan { test_plan, step: 0 }
+            TestPlan { steps, current: 0 }
         }
     }
 
     // Determine the maximum number of users configured during the test plan.
     pub(crate) fn max_users(&self) -> usize {
         let mut max_users = 0;
-        for step in &self.test_plan {
+        for step in &self.steps {
             if step.0 > max_users {
                 max_users = step.0;
             }
@@ -456,12 +456,12 @@ impl GooseTestPlan {
 /// Time span can be specified as an integer, indicating seconds. Or can use integers together
 /// with one or more of "h", "m", and "s", in that order, indicating "hours", "minutes", and
 /// "seconds". Valid formats include: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
-impl FromStr for GooseTestPlan {
+impl FromStr for TestPlan {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Convert string into a TestPlan.
-        let mut test_plan: Vec<(usize, usize)> = Vec::new();
+        let mut steps: Vec<(usize, usize)> = Vec::new();
         // Each line of the test plan must be in the format "{users},{timespan}", white space is ignored
         let re = Regex::new(r"^\s*(\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)\s*$").unwrap();
         // A test plan can have multiple lines split by the semicolon ";".
@@ -472,7 +472,7 @@ impl FromStr for GooseTestPlan {
                     .parse::<usize>()
                     .expect("failed to convert \\d to usize");
                 let right = util::parse_timespan(&cap[2]) * 1_000;
-                test_plan.push((left, right));
+                steps.push((left, right));
             } else {
                 // Logger isn't initialized yet, provide helpful debug output.
                 eprintln!("ERROR: invalid `configuration.test_plan` value: '{}'", line);
@@ -486,8 +486,8 @@ impl FromStr for GooseTestPlan {
                 });
             }
         }
-        // The test_plan is valid if the lgoci gets this far.
-        Ok(GooseTestPlan { test_plan, step: 0 })
+        // The steps are only valid if the logic gets this far.
+        Ok(TestPlan { steps, current: 0 })
     }
 }
 
@@ -727,7 +727,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             }
             GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
             GooseDefault::TestPlan => {
-                self.defaults.test_plan = Some(value.parse::<GooseTestPlan>().unwrap())
+                self.defaults.test_plan = Some(value.parse::<TestPlan>().unwrap())
             }
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
@@ -1274,9 +1274,9 @@ impl GooseConfigure<f32> for GooseConfiguration {
         None
     }
 }
-impl GooseConfigure<GooseTestPlan> for GooseConfiguration {
+impl GooseConfigure<TestPlan> for GooseConfiguration {
     /// Use [`GooseValue`] to set a vec<(usize, usize)> value.
-    fn get_value(&self, values: Vec<GooseValue<GooseTestPlan>>) -> Option<GooseTestPlan> {
+    fn get_value(&self, values: Vec<GooseValue<TestPlan>>) -> Option<TestPlan> {
         for value in values {
             if let Some(v) = value.value {
                 if value.filter {
@@ -2393,7 +2393,7 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
-            // the --startup-time option isn't compatible with --test-plan.
+            // The --startup-time option isn't compatible with --test-plan.
             if self.startup_time != "0" {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.startup_time`".to_string(),
@@ -2401,7 +2401,7 @@ impl GooseConfiguration {
                     detail: "`configuration.startup_time` can not be set with `configuration.test_plan`.".to_string(),
                 });
             }
-            // the --hatch-rate option isn't compatible with --test-plan.
+            // The --hatch-rate option isn't compatible with --test-plan.
             if let Some(hatch_rate) = self.hatch_rate.as_ref() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.hatch_rate`".to_string(),
@@ -2411,7 +2411,7 @@ impl GooseConfiguration {
                             .to_string(),
                 });
             }
-            // the --run-time option isn't compatible with --test-plan.
+            // The --run-time option isn't compatible with --test-plan.
             if self.run_time != "0" {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.run_time`".to_string(),
@@ -2419,6 +2419,15 @@ impl GooseConfiguration {
                     detail:
                         "`configuration.run_time` can not be set with `configuration.test_plan`."
                             .to_string(),
+                });
+            }
+            // The --no-reset-metrics option isn't compatible with --test-plan.
+            if self.no_reset_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_reset_metrics".to_string(),
+                    value: self.no_reset_metrics.to_string(),
+                    detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan`."
+                        .to_string(),
                 });
             }
         }

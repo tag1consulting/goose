@@ -74,7 +74,7 @@ use std::time::{self, Duration};
 use std::{fmt, io};
 use tokio::fs::File;
 
-use crate::config::{GooseConfiguration, GooseDefaults, GooseTestPlan};
+use crate::config::{GooseConfiguration, GooseDefaults, TestPlan};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
 use crate::graph::GraphData;
@@ -371,7 +371,7 @@ pub struct GooseAttack {
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
     /// Internal Goose test plan representation.
-    test_plan: GooseTestPlan,
+    test_plan: TestPlan,
     /// Configuration object holding options set when launching the load test.
     configuration: GooseConfiguration,
     /// The load test operates in only one of the following modes: StandAlone, Manager, or Worker.
@@ -409,7 +409,7 @@ impl GooseAttack {
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             graph_data: GraphData::new(),
-            test_plan: GooseTestPlan::new(),
+            test_plan: TestPlan::new(),
             configuration,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Idle,
@@ -444,7 +444,7 @@ impl GooseAttack {
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             graph_data: GraphData::new(),
-            test_plan: GooseTestPlan::new(),
+            test_plan: TestPlan::new(),
             configuration,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Idle,
@@ -889,8 +889,8 @@ impl GooseAttack {
         // Validate GooseConfiguration.
         self.configuration.validate()?;
 
-        // Build GooseTestPlan.
-        self.test_plan = GooseTestPlan::build(&self.configuration);
+        // Build TestPlan.
+        self.test_plan = TestPlan::build(&self.configuration);
 
         // With a validated GooseConfiguration, enter a run mode.
         self.attack_mode = if self.configuration.manager {
@@ -1296,6 +1296,51 @@ impl GooseAttack {
         Ok(goose_attack_run_state)
     }
 
+    // Advance the active [`GooseAttack`](./struct.GooseAttack.html) to the next TestPlan step.
+    fn advance_test_plan(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        // Record a formattable timestamp each time the GooseAttack advances to the next TestPlan step, used to generate
+        // reports.
+        self.metrics.history.push(Local::now());
+        // @TODO: Discuss Local::now() versus Utc::now().
+        //self.graph_data.set_started(Utc::now());
+
+        // Also record an Instant to know when the subsequent TestPlan step ends.
+        self.started = Some(time::Instant::now());
+
+        if self.test_plan.current == self.test_plan.steps.len() - 1 {
+            // If this is the last TestPlan step and there are 0 users, shut down.
+            if self.test_plan.steps[self.test_plan.current].0 == 0 {
+                // @TODO: don't shut down if stopped by a controller...
+                self.set_attack_phase(goose_attack_run_state, AttackPhase::Shutdown);
+            }
+            // Otherwise maintain the number of GooseUser threads until canceled.
+            else {
+                self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
+            }
+        // If this is not the last TestPlan step, determine what happens next.
+        } else if self.test_plan.current < self.test_plan.steps.len() {
+            // Increase the number of GooseUser threads.
+            if self.test_plan.steps[self.test_plan.current].0
+                < self.test_plan.steps[self.test_plan.current + 1].0
+            {
+                self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
+            // Decrease the number of GooseUser threads.
+            } else if self.test_plan.steps[self.test_plan.current].0
+                > self.test_plan.steps[self.test_plan.current + 1].0
+            {
+                self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
+            // Maintain the number of GooseUser threads.
+            } else {
+                self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
+            }
+        } else if self.test_plan.current > self.test_plan.steps.len() {
+            panic!("Advanced 2 steps beyond the end of the TestPlan.")
+        }
+
+        // Always advance the TestPlan step
+        self.test_plan.current += 1;
+    }
+
     // Increase the number of active [`GooseUser`](./goose/struct.GooseUser.html) threads in the
     // active [`GooseAttack`](./struct.GooseAttack.html).
     async fn increase_attack(
@@ -1303,21 +1348,21 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
         // If this is the first load plan step, then there were no previously started users.
-        let previous_users = if self.test_plan.step == 0 {
+        let previous_users = if self.test_plan.current == 0 {
             0
         // Otherwise retreive the number of users configured in the previous step.
         } else {
-            self.test_plan.test_plan[self.test_plan.step - 1].0
+            self.test_plan.steps[self.test_plan.current - 1].0
         };
 
         // Sanity check: increase_attack can only be called if the number of users is increasing
         // in the current step.
-        debug_assert!(self.test_plan.test_plan[self.test_plan.step].0 > previous_users);
+        debug_assert!(self.test_plan.steps[self.test_plan.current].0 > previous_users);
 
         // Divide the number of new users to launch by the time configured to launch them.
-        let hatch_rate: f32 = (self.test_plan.test_plan[self.test_plan.step].0 - previous_users)
+        let hatch_rate: f32 = (self.test_plan.steps[self.test_plan.current].0 - previous_users)
             as f32
-            / self.test_plan.test_plan[self.test_plan.step].1 as f32
+            / self.test_plan.steps[self.test_plan.current].1 as f32
             // Convert from milliseconds to seconds.
             * 1_000.0;
 
@@ -1419,73 +1464,48 @@ impl GooseAttack {
                 util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer).await;
         }
 
-        // If enough users have been spawned, move onto the next attack phase.
-        if self.weighted_users.is_empty() {
-            // Pause a tenth of a second waiting for the final user to fully start up.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
+        // Determine if the current TestPlan step is finished.
+        if util::ms_timer_expired(
+            self.started.unwrap(),
+            self.test_plan.steps[self.test_plan.current].1,
+        ) {
             if self.attack_mode == AttackMode::Worker {
                 info!(
                     "[{}] launched {} users...",
                     get_worker_id(),
-                    self.metrics.users
+                    self.test_plan.steps[self.test_plan.current].0
                 );
             } else {
-                info!("launched {} users...", self.metrics.users);
+                info!(
+                    "launched {} users...",
+                    self.test_plan.steps[self.test_plan.current].0
+                );
             }
 
+            // Automatically reset metrics if appropriate.
             self.reset_metrics(goose_attack_run_state).await?;
-            self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
-            self.graph_data.set_started(Utc::now());
-            // Update start-time of this AttackPhase.
-            self.started = Some(time::Instant::now());
-            self.test_plan.step += 1;
-            // Also record a formattable timestamp, for human readable reports.
-            self.metrics.history.push(Local::now());
+
+            // Advance to the next TestPlan step.
+            self.advance_test_plan(goose_attack_run_state);
         }
 
         Ok(())
     }
 
-    // Let the [`GooseAttack`](./struct.GooseAttack.html) run until the timer expires
-    // (or the test is canceled), and then trigger a shut down.
+    // Maintain the number of active [`GooseUser`](./goose/struct.GooseUser.html) threads in the
+    // active [`GooseAttack`](./struct.GooseAttack.html).
     async fn monitor_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
         // Determine if it's time to move to the next Test Plan Step
-        if util::ms_timer_expired(
-            self.started.unwrap(),
-            self.test_plan.test_plan[self.test_plan.step].1,
-        ) {
-            warn!("TIMER EXPIRED");
-            // @TODO: check if there's a next step, and what's changing
-
-            // Move on to the next step.
-            if self.test_plan.test_plan.len() > self.test_plan.step {
-                warn!("MOVE TO NEXT STEP");
-                println!("step: {}", self.test_plan.step);
-                println!(
-                    "next step: {:#?}",
-                    self.test_plan.test_plan[self.test_plan.step + 1]
-                );
-                std::process::exit(1);
-
-                // This was the last step.
-            } else {
-                panic!("STAY HERE FOREVER!");
-                // There is no shut down step, so move into AttackPhase::Maintain and run until canceled.
-                self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
-                // Move to a nonexistent Load Test Step, which leaves the load test running.
-                self.test_plan.step += 1;
-                // Store timestamp of when moved to this next step.
-                self.metrics.history.push(Local::now());
-            }
-            /*
-            self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
-            self.metrics.stopping = Some(Local::now());
-            self.graph_data.set_stopping(Utc::now());
-            */
+        if self.test_plan.current < self.test_plan.steps.len()
+            && util::ms_timer_expired(
+                self.started.unwrap(),
+                self.test_plan.steps[self.test_plan.current].1,
+            )
+        {
+            self.advance_test_plan(goose_attack_run_state);
         } else {
             // Subtract the time spent doing other things, running the main parent loop twice
             // per second.
@@ -1499,6 +1519,8 @@ impl GooseAttack {
         Ok(())
     }
 
+    // Decrease the number of active [`GooseUser`](./goose/struct.GooseUser.html) threads in the
+    // active [`GooseAttack`](./struct.GooseAttack.html).
     async fn decrease_attack(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,

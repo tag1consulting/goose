@@ -2314,7 +2314,7 @@ impl GooseAttack {
             self.sync_metrics(goose_attack_run_state, true).await?;
 
             goose_attack_run_state.all_users_spawned = true;
-            // @TODO: reset only makes sense if not using `--test-plan`
+            // Only reset metrics on startup if not using `--test-plan`.
             if self.configuration.test_plan.is_none() {
                 let users = self.configuration.users.unwrap();
                 if !self.configuration.no_reset_metrics {
