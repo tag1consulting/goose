@@ -18,7 +18,7 @@ The exact same behaviour can be defined with the following test plan:
 $ cargo run --release -- -H http://local.dev/ --test-plan "10,1m;10,5m;0,0"
 ```
 
-## Ramp Down
+## Ramp Down Example
 
 Goose will stop a load test as quickly as it can when the specified `--run-time` completes. To instead configure a load test to ramp down slowly you can use a test plan. In the following example, Goose starts 1000 users in 2 minutes and then slowly stops them over 500 seconds (stopping 2 users per second):
 
@@ -26,7 +26,7 @@ Goose will stop a load test as quickly as it can when the specified `--run-time`
 $ cargo run --release -- -H http://local.dev/ --test-plan "1000,2m;0,500"
 ```
 
-## Load Spikes
+## Load Spike Example
 
 Another possibility when specifying a test plan is to add load spikes into otherwise steady load. For example, in the following example Goose starts 500 users over 5 minutes and lets it run with a couple of traffic spikes to 2,500 users:
 

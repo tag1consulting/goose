@@ -839,15 +839,8 @@ pub struct GooseMetrics {
     /// A hash of the load test, primarily used to validate all Workers in a Gaggle
     /// are running the same load test.
     pub hash: u64,
-    /// Tracks when the load test first started with an optional system timestamp.
-    pub starting: Option<DateTime<Local>>,
-    /// Tracks when all [`GooseUser`](../goose/struct.GooseUser.html) threads fully
-    /// started with an optional system timestamp.
-    pub started: Option<DateTime<Local>>,
-    /// Tracks when the load test first began stopping with an optional system timestamp.
-    pub stopping: Option<DateTime<Local>>,
-    /// Tracks when the load test stopped with an optional system timestamp.
-    pub stopped: Option<DateTime<Local>>,
+    /// A vector of timestamps recording when the load test started each Load Test Step.
+    pub history: Vec<DateTime<Local>>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
@@ -2031,6 +2024,11 @@ impl GooseMetrics {
     ///
     /// This function is invoked by [`GooseMetrics::print()`].
     pub(crate) fn fmt_overview(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // @TODO: @FIXME! This function needs to be updated to work with Test Plan.
+        Ok(())
+
+        /*
+
         // Only display overview in the final metrics.
         if !self.final_metrics || self.starting.is_none() {
             return Ok(());
@@ -2110,6 +2108,7 @@ impl GooseMetrics {
         )?;
 
         Ok(())
+         */
     }
 }
 
@@ -2122,12 +2121,14 @@ impl Serialize for GooseMetrics {
         let mut s = serializer.serialize_struct("GooseMetrics", 10)?;
         s.serialize_field("hash", &self.hash)?;
         // Convert started field to a unix timestamp.
+        /* @TODO: Fixme
         let timestamp = if let Some(started) = self.started {
             started.timestamp()
         } else {
             0
         };
         s.serialize_field("started", &timestamp)?;
+        */
         s.serialize_field("duration", &self.duration)?;
         s.serialize_field("users", &self.users)?;
         s.serialize_field("requests", &self.requests)?;
@@ -2313,40 +2314,45 @@ impl GooseAttack {
             self.sync_metrics(goose_attack_run_state, true).await?;
 
             goose_attack_run_state.all_users_spawned = true;
-            let users = self.configuration.users.unwrap();
-            if !self.configuration.no_reset_metrics {
-                // Display the running metrics collected so far, before resetting them.
-                self.update_duration();
-                self.metrics.print_running();
-                // Reset running_metrics_timer.
-                goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+            // @TODO: reset only makes sense if not using `--test-plan`
+            if self.configuration.test_plan.is_none() {
+                let users = self.configuration.users.unwrap();
+                if !self.configuration.no_reset_metrics {
+                    // Display the running metrics collected so far, before resetting them.
+                    self.update_duration();
+                    self.metrics.print_running();
+                    // Reset running_metrics_timer.
+                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
 
-                if self.metrics.display_metrics {
-                    // Users is required here so unwrap() is safe.
-                    if self.metrics.users < users {
-                        println!(
-                            "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
-                        );
-                    } else {
-                        println!(
-                            "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
-                        );
+                    if self.metrics.display_metrics {
+                        // Users is required here so unwrap() is safe.
+                        if self.metrics.users < users {
+                            println!(
+                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
+                            );
+                        } else {
+                            println!(
+                                "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
+                            );
+                        }
                     }
-                }
 
-                self.metrics.requests = HashMap::new();
-                self.metrics.initialize_task_metrics(
-                    &self.task_sets,
-                    &self.configuration,
-                    &self.defaults,
-                )?;
-            } else if self.metrics.users < users {
-                println!(
-                    "{} of {} users hatched, timer expired.\n",
-                    self.metrics.users, users
-                );
+                    self.metrics.requests = HashMap::new();
+                    self.metrics.initialize_task_metrics(
+                        &self.task_sets,
+                        &self.configuration,
+                        &self.defaults,
+                    )?;
+                } else if self.metrics.users < users {
+                    println!(
+                        "{} of {} users hatched, timer expired.\n",
+                        self.metrics.users, users
+                    );
+                } else {
+                    println!("All {} users hatched.\n", self.metrics.users);
+                }
             } else {
-                println!("All {} users hatched.\n", self.metrics.users);
+                println!("{} users hatched.", self.metrics.users);
             }
 
             // Restart the timer now that all threads are launched.
@@ -2558,6 +2564,7 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        /* @FIXME:
         // Only write the report if enabled.
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
             // Prepare report summary variables.
@@ -3044,6 +3051,7 @@ impl GooseAttack {
                 self.get_report_file_path().unwrap()
             );
         }
+        */
 
         Ok(())
     }

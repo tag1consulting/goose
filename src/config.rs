@@ -376,10 +376,13 @@ pub(crate) struct GooseDefaults {
 }
 
 /// Internal data structure representing a test plan.
+//#[derive(Options, Debug, Clone, Serialize, Deserialize)]
 #[derive(Options, Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GooseTestPlan {
     // A test plan is a vector of tuples each indicating a # of users and milliseconds.
     pub(crate) test_plan: Vec<(usize, usize)>,
+    // Which step of the test_plan is currently running.
+    pub(crate) step: usize,
 }
 
 /// Automatically represent all load tests internally as a test plan.
@@ -387,7 +390,14 @@ pub(crate) struct GooseTestPlan {
 /// Load tests launched using `--users`, `--startup-time`, `--hatch-rate`, and/or `--run-time` are
 /// automatically converted to a `Vec<(usize, usize)>` test plan.
 impl GooseTestPlan {
-    pub(crate) fn from_configuration(configuration: &GooseConfiguration) -> GooseTestPlan {
+    pub(crate) fn new() -> GooseTestPlan {
+        GooseTestPlan {
+            test_plan: Vec::new(),
+            step: 0,
+        }
+    }
+
+    pub(crate) fn build(configuration: &GooseConfiguration) -> GooseTestPlan {
         if let Some(test_plan) = configuration.test_plan.as_ref() {
             // Test plan was manually defined, clone and return as is.
             test_plan.clone()
@@ -422,8 +432,19 @@ impl GooseTestPlan {
             }
 
             // Define test plan from options.
-            GooseTestPlan { test_plan }
+            GooseTestPlan { test_plan, step: 0 }
         }
+    }
+
+    // Determine the maximum number of users configured during the test plan.
+    pub(crate) fn max_users(&self) -> usize {
+        let mut max_users = 0;
+        for step in &self.test_plan {
+            if step.0 > max_users {
+                max_users = step.0;
+            }
+        }
+        max_users
     }
 }
 
@@ -466,7 +487,7 @@ impl FromStr for GooseTestPlan {
             }
         }
         // The test_plan is valid if the lgoci gets this far.
-        Ok(GooseTestPlan { test_plan })
+        Ok(GooseTestPlan { test_plan, step: 0 })
     }
 }
 
