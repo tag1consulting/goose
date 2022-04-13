@@ -2552,11 +2552,11 @@ impl GooseAttack {
 
     // Update metrics showing how long the load test has been running.
     pub(crate) fn update_duration(&mut self) {
-        if let Some(started) = self.started {
-            self.metrics.duration = started.elapsed().as_secs() as usize;
+        self.metrics.duration = if self.started.is_some() {
+            self.started.unwrap().elapsed().as_secs() as usize
         } else {
-            self.metrics.duration = 0;
-        }
+            0
+        };
     }
 
     // Write an HTML-formatted report, if enabled.

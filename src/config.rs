@@ -406,7 +406,7 @@ impl TestPlan {
 
             // Build a simple test plan from configured options if possible.
             if let Some(users) = configuration.users {
-                if !configuration.startup_time.is_empty() {
+                if configuration.startup_time != "0" {
                     // Load test is configured with --startup-time.
                     steps.push((
                         users,
@@ -419,7 +419,11 @@ impl TestPlan {
                     } else {
                         util::get_hatch_rate(None)
                     };
-                    steps.push((users, ((hatch_rate * users as f32) * 1_000.0) as usize));
+                    // Convert hatch_rate to milliseconds.
+                    let ms_hatch_rate = 1.0 / hatch_rate * 1_000.0;
+                    // Finally, multiply the hatch rate by the number of users to hatch.
+                    let total_time = ms_hatch_rate * users as f32;
+                    steps.push((users, total_time as usize));
                 }
 
                 // A run-time is set, configure the load plan to run for the specified time then shut down.
@@ -430,6 +434,8 @@ impl TestPlan {
                     steps.push((0, 0));
                 }
             }
+
+            println!("TEST_PLAN: {:#?}", steps);
 
             // Define test plan from options.
             TestPlan { steps, current: 0 }

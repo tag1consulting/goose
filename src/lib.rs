@@ -370,8 +370,6 @@ pub struct GooseAttack {
     weighted_gaggle_users: Vec<GaggleUser>,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
-    /// Internal Goose test plan representation.
-    test_plan: TestPlan,
     /// Configuration object holding options set when launching the load test.
     configuration: GooseConfiguration,
     /// The load test operates in only one of the following modes: StandAlone, Manager, or Worker.
@@ -383,6 +381,10 @@ pub struct GooseAttack {
     scheduler: GooseScheduler,
     /// When the load test started.
     started: Option<time::Instant>,
+    /// Internal Goose test plan representation.
+    test_plan: TestPlan,
+    /// When the current test plan step started.
+    step_started: Option<time::Instant>,
     /// All metrics merged together.
     metrics: GooseMetrics,
     /// All data for report graphs.
@@ -409,12 +411,13 @@ impl GooseAttack {
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             graph_data: GraphData::new(),
-            test_plan: TestPlan::new(),
             configuration,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
+            test_plan: TestPlan::new(),
+            step_started: None,
             metrics: GooseMetrics::default(),
         })
     }
@@ -444,12 +447,13 @@ impl GooseAttack {
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             graph_data: GraphData::new(),
-            test_plan: TestPlan::new(),
             configuration,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
+            test_plan: TestPlan::new(),
+            step_started: None,
             metrics: GooseMetrics::default(),
         })
     }
@@ -1305,7 +1309,7 @@ impl GooseAttack {
         //self.graph_data.set_started(Utc::now());
 
         // Also record an Instant to know when the subsequent TestPlan step ends.
-        self.started = Some(time::Instant::now());
+        self.step_started = Some(time::Instant::now());
 
         if self.test_plan.current == self.test_plan.steps.len() - 1 {
             // If this is the last TestPlan step and there are 0 users, shut down.
@@ -1464,11 +1468,11 @@ impl GooseAttack {
                 util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer).await;
         }
 
-        // Determine if the current TestPlan step is finished.
-        if util::ms_timer_expired(
-            self.started.unwrap(),
-            self.test_plan.steps[self.test_plan.current].1,
-        ) {
+        // Determine if enough users have been launched.
+        if self.metrics.users >= self.test_plan.steps[self.test_plan.current].0 {
+            // Pause a tenth of a second waiting for the final user to fully start up.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
             if self.attack_mode == AttackMode::Worker {
                 info!(
                     "[{}] launched {} users...",
@@ -1525,6 +1529,8 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        // @TODO: Reduce and recycle GooseUser threads: users ramp up and down multiple times.
+
         if self.attack_mode == AttackMode::Worker {
             info!(
                 "[{}] stopping after {} seconds...",
