@@ -1628,6 +1628,19 @@ impl GooseUser {
             self.send_request_metric_to_parent(request_metric.clone())?;
         }
 
+        if request.error_on_fail && !request_metric.success {
+            if let Ok(r) = response {
+                if let Ok(body) = r.text().await {
+                    if !body.is_empty() {
+                        error!("{:?} {}, {}", &path, &request_metric.error, &body);
+                        return Err(GooseTaskError::RequestFailed{raw_request: request_metric});
+                    }
+                }
+            }
+            error!("{:?} {}", &path, &request_metric.error);
+            return Err(GooseTaskError::RequestFailed{raw_request: request_metric});
+        }
+
         Ok(GooseResponse::new(request_metric, response))
     }
 
@@ -2278,6 +2291,8 @@ pub struct GooseRequest<'a> {
     name: Option<&'a str>,
     // Defaults to [`None`].
     expect_status_code: Option<u16>,
+    // Defaults to [`false`].
+    error_on_fail: bool,
     // Defaults to [`None`].
     request_builder: Option<RequestBuilder>,
 }
@@ -2322,6 +2337,7 @@ pub struct GooseRequestBuilder<'a> {
     method: GooseMethod,
     name: Option<&'a str>,
     expect_status_code: Option<u16>,
+    error_on_fail: bool,
     request_builder: Option<RequestBuilder>,
 }
 impl<'a> GooseRequestBuilder<'a> {
@@ -2332,6 +2348,7 @@ impl<'a> GooseRequestBuilder<'a> {
             method: GooseMethod::Get,
             name: None,
             expect_status_code: None,
+            error_on_fail: false,
             request_builder: None,
         }
     }
@@ -2470,6 +2487,43 @@ impl<'a> GooseRequestBuilder<'a> {
         self
     }
 
+    /// Configure whether the request should return on error when it 
+    /// fails
+    ///
+    /// Defaults to [`false`].
+    ///
+    /// # Example
+    /// Intentionally request a 404 page, and do not trigger an error.
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// let mut a_task = task!(task_function);
+    ///
+    /// // Make a named request.
+    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    ///     // Manually create a GooseRequestBuilder object.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Set a relative path to request.
+    ///         .path("no/such/path")
+    ///         // Tell Goose to expect a 404 HTTP response status code.
+    ///         .expect_status_code(404)
+    ///         // Tell Goose to return an error if the status code is 
+    ///         // not a 404
+    ///         .error_on_fail()
+    ///         // Build the GooseRequest object.
+    ///         .build();
+    ///
+    ///     // Make the configured request.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn error_on_fail(mut self) -> Self {
+        self.error_on_fail = true;
+        self
+    }
+
     /// Manually create the [`reqwest::RequestBuilder`] used to make a request.
     ///
     /// # Example
@@ -2520,6 +2574,7 @@ impl<'a> GooseRequestBuilder<'a> {
             method,
             name,
             expect_status_code,
+            error_on_fail,
             request_builder,
         } = self;
         GooseRequest {
@@ -2527,6 +2582,7 @@ impl<'a> GooseRequestBuilder<'a> {
             method,
             name,
             expect_status_code,
+            error_on_fail,
             request_builder,
         }
     }
