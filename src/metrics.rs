@@ -19,12 +19,12 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
-use tokio::io::AsyncWriteExt;
+//use tokio::io::AsyncWriteExt;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
 use crate::logger::GooseLog;
-use crate::report;
+//use crate::report;
 use crate::util;
 #[cfg(feature = "gaggle")]
 use crate::worker::{self, GaggleMetrics};
@@ -2518,6 +2518,7 @@ impl GooseAttack {
                         // `GooseMetrics.requests`, and write to the requests log if enabled.
                         self.record_request_metric(&request_metric).await;
 
+                        /* @FIXME
                         if !self.configuration.report_file.is_empty() {
                             let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
@@ -2533,6 +2534,7 @@ impl GooseAttack {
                                     .record_errors_per_second(seconds_since_start);
                             }
                         }
+                         */
                     }
                 }
                 GooseMetric::Task(raw_task) => {
@@ -2540,10 +2542,12 @@ impl GooseAttack {
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
 
+                    /* @FIXME
                     if !self.configuration.report_file.is_empty() {
                         self.graph_data
                             .record_tasks_per_second((raw_task.elapsed / 1000) as usize);
                     }
+                    */
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
@@ -2616,12 +2620,12 @@ impl GooseAttack {
         };
     }
 
+    /* @FIXME:
     // Write an HTML-formatted report, if enabled.
     pub(crate) async fn write_html_report(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        /* @FIXME:
         // Only write the report if enabled.
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
             // Prepare report summary variables.
@@ -3108,10 +3112,10 @@ impl GooseAttack {
                 self.get_report_file_path().unwrap()
             );
         }
-        */
 
         Ok(())
     }
+    */
 }
 
 /// Helper to calculate requests and fails per seconds.
