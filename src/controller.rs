@@ -3,8 +3,8 @@
 //! By default, Goose launches both a telnet Controller and a WebSocket Controller, allowing
 //! real-time control of the running load test.
 
-use crate::config::GooseConfiguration;
-use crate::metrics::GooseMetrics;
+use crate::config::{GooseConfiguration, TestPlan};
+use crate::metrics::{GooseMetrics, TestPlanHistory, TestPlanStepAction};
 use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
@@ -1150,9 +1150,11 @@ impl GooseAttack {
                             // We can only start an idle load test.
                             if self.attack_phase == AttackPhase::Idle {
                                 if self.prepare_load_test().is_ok() {
+                                    // Rebuild test plan in case any parameters have been changed.
+                                    self.test_plan = TestPlan::build(&self.configuration);
                                     self.set_attack_phase(
                                         goose_attack_run_state,
-                                        AttackPhase::Starting,
+                                        AttackPhase::Increase,
                                     );
                                     self.reply_to_controller(
                                         message,
@@ -1160,6 +1162,10 @@ impl GooseAttack {
                                     );
                                     // Reset the run state when starting a new load test.
                                     self.reset_run_state(goose_attack_run_state).await?;
+                                    self.metrics.history.push(TestPlanHistory::step(
+                                        TestPlanStepAction::Increasing,
+                                        0,
+                                    ));
                                 } else {
                                     // Do not move to Starting phase if unable to prepare load test.
                                     self.reply_to_controller(
@@ -1177,12 +1183,16 @@ impl GooseAttack {
                         // Stop the load test, and acknowledge command.
                         GooseControllerCommand::Stop => {
                             // We can only stop a starting or running load test.
-                            if [AttackPhase::Starting, AttackPhase::Running]
+                            if [AttackPhase::Increase, AttackPhase::Maintain]
                                 .contains(&self.attack_phase)
                             {
+                                self.metrics.history.push(TestPlanHistory::step(
+                                    TestPlanStepAction::Decreasing,
+                                    self.metrics.users,
+                                ));
                                 self.set_attack_phase(
                                     goose_attack_run_state,
-                                    AttackPhase::Stopping,
+                                    AttackPhase::Decrease,
                                 );
                                 // Don't shutdown when load test is stopped by controller, remain idle instead.
                                 goose_attack_run_state.shutdown_after_stop = false;
@@ -1208,7 +1218,7 @@ impl GooseAttack {
                             // Shutdown after stopping.
                             goose_attack_run_state.shutdown_after_stop = true;
                             // Properly stop any running GooseAttack first.
-                            self.set_attack_phase(goose_attack_run_state, AttackPhase::Stopping);
+                            self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
                             // Confirm shut down to Controller.
                             self.reply_to_controller(
                                 message,
@@ -1306,7 +1316,6 @@ impl GooseAttack {
                                     self.configuration.run_time, run_time
                                 );
                                 self.configuration.run_time = run_time.clone();
-                                self.set_run_time()?;
                                 self.reply_to_controller(
                                     message,
                                     GooseControllerResponseMessage::Bool(true),
