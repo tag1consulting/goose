@@ -435,8 +435,6 @@ impl TestPlan {
                 }
             }
 
-            println!("TEST_PLAN: {:#?}", steps);
-
             // Define test plan from options.
             TestPlan { steps, current: 0 }
         }

@@ -731,6 +731,40 @@ impl GooseTaskMetricAggregate {
     }
 }
 
+/// A test plan is a series of steps performing one of the following actions.
+#[derive(Clone, Debug)]
+pub enum TestPlanStepAction {
+    /// A test plan step that is increasing the number of GooseUser threads.
+    Increasing,
+    /// A test plan step that is maintaining the number of GooseUser threads.
+    Maintaining,
+    /// A test plan step that is increasing the number of GooseUser threads.
+    Decreasing,
+    /// The final step indicating that the load test is finished.
+    Finished,
+}
+
+/// A historical record of a single test plan step, used to generate reports from the metrics.
+#[derive(Clone, Debug)]
+pub struct TestPlanHistory {
+    /// What action happend in this step.
+    pub action: TestPlanStepAction,
+    /// A timestamp of when the step started.
+    pub timestamp: DateTime<Utc>,
+    /// The number of users when the step started.
+    pub users: usize,
+}
+impl TestPlanHistory {
+    /// A helper to record a new test plan step in the historical record.
+    pub(crate) fn step(action: TestPlanStepAction, users: usize) -> TestPlanHistory {
+        TestPlanHistory {
+            action,
+            timestamp: Utc::now(),
+            users,
+        }
+    }
+}
+
 /// All metrics optionally collected during a Goose load test.
 ///
 /// By default, Goose collects metrics during a load test in a `GooseMetrics` object
@@ -839,8 +873,8 @@ pub struct GooseMetrics {
     /// A hash of the load test, primarily used to validate all Workers in a Gaggle
     /// are running the same load test.
     pub hash: u64,
-    /// A vector of timestamps recording when the load test started each Load Test Step.
-    pub history: Vec<DateTime<Local>>,
+    /// A vector recording the history of each load test step.
+    pub history: Vec<TestPlanHistory>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
@@ -2010,8 +2044,8 @@ impl GooseMetrics {
     // Determine the seconds, minutes and hours between two chrono:DateTimes.
     fn get_seconds_minutes_hours(
         &self,
-        start: &chrono::DateTime<chrono::Local>,
-        end: &chrono::DateTime<chrono::Local>,
+        start: &chrono::DateTime<chrono::Utc>,
+        end: &chrono::DateTime<chrono::Utc>,
     ) -> (i64, i64, i64) {
         let duration = end.timestamp() - start.timestamp();
         let seconds = duration % 60;
@@ -2024,53 +2058,95 @@ impl GooseMetrics {
     ///
     /// This function is invoked by [`GooseMetrics::print()`].
     pub(crate) fn fmt_overview(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // @TODO: @FIXME! This function needs to be updated to work with Test Plan.
-        Ok(())
-
-        /*
-
         // Only display overview in the final metrics.
-        if !self.final_metrics || self.starting.is_none() {
+        if !self.final_metrics || self.history.is_empty() {
             return Ok(());
         }
 
-        // Calculations necessary for overview table.
-        let starting = self.starting.unwrap();
-        let starting_time = starting.format("%Y-%m-%d %H:%M:%S").to_string();
-        let started = if self.started.is_some() {
-            self.started.unwrap()
-        } else {
-            self.stopping.unwrap()
-        };
-        let (starting_seconds, starting_minutes, starting_hours) =
-            self.get_seconds_minutes_hours(&starting, &started);
-        let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
-        let stopping = self.stopping.unwrap();
-        let (running_seconds, running_minutes, running_hours) =
-            self.get_seconds_minutes_hours(&started, &stopping);
-        let stopping_time = stopping.format("%Y-%m-%d %H:%M:%S").to_string();
-        let stopped = self.stopped.unwrap();
-        let stopped_time = stopped.format("%Y-%m-%d %H:%M:%S").to_string();
-        let (stopping_seconds, stopping_minutes, stopping_hours) =
-            self.get_seconds_minutes_hours(&stopping, &stopped);
+        writeln!(
+            fmt,
+            "\n === OVERVIEW ===\n ------------------------------------------------------------------------------"
+        )?;
 
+        writeln!(
+            fmt,
+            " {:<12} {:<19} {:<17} {:<10} {}",
+            "Action", "Started", "Stopped", "Elapsed", "Users"
+        )?;
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
-        writeln!(fmt, " Users: {}", self.users)?;
+
+        // Step through history looking at current step and next step.
+        for step in self.history.windows(2) {
+            let (seconds, minutes, hours) =
+                self.get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
+            let started = step[0].timestamp.format("%y-%m-%d %H:%M:%S");
+            let stopped = step[1].timestamp.format("%y-%m-%d %H:%M:%S");
+            match &step[0].action {
+                // For maintaining just show the current number of users.
+                TestPlanStepAction::Maintaining => {
+                    writeln!(
+                        fmt,
+                        " {:<12} {} - {} ({:02}:{:02}:{:02}, {})",
+                        format!("{:?}:", step[0].action),
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[0].users,
+                    )?;
+                }
+                // For increasing show the current number of users to the new number of users.
+                TestPlanStepAction::Increasing => {
+                    writeln!(
+                        fmt,
+                        " {:<12} {} - {} ({:02}:{:02}:{:02}, {} -> {})",
+                        format!("{:?}:", step[0].action),
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[0].users,
+                        step[1].users,
+                    )?;
+                }
+                // For decreasing show the new number of users from the current number of users.
+                TestPlanStepAction::Decreasing => {
+                    writeln!(
+                        fmt,
+                        " {:<12} {} - {} ({:02}:{:02}:{:02}, {} <- {})",
+                        format!("{:?}:", step[0].action),
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[1].users,
+                        step[0].users,
+                    )?;
+                }
+                TestPlanStepAction::Finished => {
+                    unreachable!("there shouldn't be a step after finished");
+                }
+            }
+        }
+
         match self.hosts.len() {
             0 => {
                 // A host is required to run a load test.
-                writeln!(fmt, " Target host: undefined")?;
+                writeln!(fmt, "\n Target host: undefined")?;
             }
             1 => {
                 for host in &self.hosts {
-                    writeln!(fmt, " Target host: {}", host)?;
+                    writeln!(fmt, "\n Target host: {}", host)?;
                 }
             }
             _ => {
-                writeln!(fmt, " Target hosts: ")?;
+                writeln!(fmt, "\n Target hosts: ")?;
                 for host in &self.hosts {
                     writeln!(fmt, " - {}", host,)?;
                 }
@@ -2078,25 +2154,7 @@ impl GooseMetrics {
         }
         writeln!(
             fmt,
-            " Starting: {} - {} (duration: {:02}:{:02}:{:02})",
-            starting_time, start_time, starting_hours, starting_minutes, starting_seconds,
-        )?;
-        // Only display time running if the load test fully started.
-        if self.started.is_some() {
-            writeln!(
-                fmt,
-                " Running:  {} - {} (duration: {:02}:{:02}:{:02})",
-                start_time, stopping_time, running_hours, running_minutes, running_seconds,
-            )?;
-        }
-        writeln!(
-            fmt,
-            " Stopping: {} - {} (duration: {:02}:{:02}:{:02})",
-            stopping_time, stopped_time, stopping_hours, stopping_minutes, stopping_seconds,
-        )?;
-        writeln!(
-            fmt,
-            "\n {} v{}",
+            " {} v{}",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
         )?;
@@ -2108,7 +2166,6 @@ impl GooseMetrics {
         )?;
 
         Ok(())
-         */
     }
 }
 
