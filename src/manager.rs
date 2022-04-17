@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time;
 
-use crate::config::TestPlan;
 use crate::metrics::{
     self, GooseErrorMetricAggregate, GooseErrorMetrics, GooseRequestMetricAggregate,
     GooseRequestMetrics, GooseTaskMetricAggregate, GooseTaskMetrics,

@@ -63,6 +63,7 @@ use lazy_static::lazy_static;
 use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::cmp;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -1319,22 +1320,22 @@ impl GooseAttack {
             }
         // If this is not the last TestPlan step, determine what happens next.
         } else if self.test_plan.current < self.test_plan.steps.len() {
-            // Increase the number of GooseUser threads.
-            if self.test_plan.steps[self.test_plan.current].0
-                < self.test_plan.steps[self.test_plan.current + 1].0
+            match self.test_plan.steps[self.test_plan.current]
+                .0
+                .cmp(&self.test_plan.steps[self.test_plan.current + 1].0)
             {
-                self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
-                TestPlanStepAction::Increasing
-            // Decrease the number of GooseUser threads.
-            } else if self.test_plan.steps[self.test_plan.current].0
-                > self.test_plan.steps[self.test_plan.current + 1].0
-            {
-                self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
-                TestPlanStepAction::Decreasing
-            // Maintain the number of GooseUser threads.
-            } else {
-                self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
-                TestPlanStepAction::Maintaining
+                cmp::Ordering::Less => {
+                    self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
+                    TestPlanStepAction::Increasing
+                }
+                cmp::Ordering::Greater => {
+                    self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
+                    TestPlanStepAction::Decreasing
+                }
+                cmp::Ordering::Equal => {
+                    self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
+                    TestPlanStepAction::Maintaining
+                }
             }
         } else {
             unreachable!("Advanced 2 steps beyond the end of the TestPlan.")

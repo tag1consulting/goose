@@ -2070,8 +2070,8 @@ impl GooseMetrics {
 
         writeln!(
             fmt,
-            " {:<12} {:<19} {:<17} {:<10} {}",
-            "Action", "Started", "Stopped", "Elapsed", "Users"
+            " {:<12} {:<19} {:<17} {:<10} Users",
+            "Action", "Started", "Stopped", "Elapsed",
         )?;
         writeln!(
             fmt,
