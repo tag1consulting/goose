@@ -2434,6 +2434,20 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
+            if self.manager {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.test_plan".to_string(),
+                    value: format!("{:?}", self.test_plan),
+                    detail: "`configuration.test_plan` can not be set in Manager mode.".to_string(),
+                });
+            }
+            if self.worker {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.test_plan".to_string(),
+                    value: format!("{:?}", self.test_plan),
+                    detail: "`configuration.test_plan` can not be set in Worker mode.".to_string(),
+                });
+            }
         }
 
         // Validate `no_metrics`.
