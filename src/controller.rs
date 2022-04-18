@@ -1149,9 +1149,9 @@ impl GooseAttack {
                         GooseControllerCommand::Start => {
                             // We can only start an idle load test.
                             if self.attack_phase == AttackPhase::Idle {
+                                self.test_plan = TestPlan::build(&self.configuration);
                                 if self.prepare_load_test().is_ok() {
                                     // Rebuild test plan in case any parameters have been changed.
-                                    self.test_plan = TestPlan::build(&self.configuration);
                                     self.set_attack_phase(
                                         goose_attack_run_state,
                                         AttackPhase::Increase,

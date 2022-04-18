@@ -1451,7 +1451,7 @@ impl GooseAttack {
 
                 if let Some(running_metrics) = self.configuration.running_metrics {
                     if self.attack_mode != AttackMode::Worker
-                        && util::timer_expired(
+                        && util::ms_timer_expired(
                             goose_attack_run_state.running_metrics_timer,
                             running_metrics,
                         )
@@ -1475,7 +1475,19 @@ impl GooseAttack {
         }
 
         // Determine if enough users have been launched.
-        if self.metrics.users >= self.test_plan.steps[self.test_plan.current].0 {
+        #[cfg(not(feature = "gaggle"))]
+        let all_users_launched = {
+            // If not running in Gaggle mode, all users for current step must be launched.
+            self.metrics.users >= self.test_plan.steps[self.test_plan.current].0
+        };
+
+        #[cfg(feature = "gaggle")]
+        let all_users_launched = {
+            // If running in Gaggle mode, all configured users must be launched.
+            self.weighted_users.is_empty()
+        };
+
+        if all_users_launched {
             // Pause a tenth of a second waiting for the final user to fully start up.
             tokio::time::sleep(Duration::from_millis(100)).await;
 
