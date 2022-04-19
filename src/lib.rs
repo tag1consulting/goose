@@ -84,6 +84,7 @@ use crate::metrics::{GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
+use chrono::prelude::*;
 
 /// Constant defining Goose's default telnet Controller port.
 const DEFAULT_TELNET_PORT: &str = "5116";
@@ -1663,7 +1664,7 @@ impl GooseAttack {
         // Record when the GooseAttack officially started.
         let now = time::Instant::now();
         self.started = Some(now);
-        self.graph_data.set_started(now);
+        self.graph_data.set_started(now, Utc::now());
 
         Ok(())
     }

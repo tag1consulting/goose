@@ -5,20 +5,22 @@
 //! this data is converted into [`Graph`] structures and HTML markup is generated
 //! based on them.
 
+use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
 use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::time::Instant;
 
 /// Used to collect graph data during a load test.
 pub(crate) struct GraphData {
     /// Tracks when the load test first started with an optional system timestamp.
-    started: Option<Instant>,
+    started: Option<DateTime<Utc>>,
+    /// Tracks elapsed time since the start of the load test.
+    stopwatch: Option<Instant>,
     /// Counts requests per second for each request type.
     requests_per_second: HashMap<String, TimeSeries<u32, u32>>,
     /// Counts errors per second.
@@ -37,6 +39,7 @@ impl GraphData {
         trace!("new graph");
         GraphData {
             started: None,
+            stopwatch: None,
             requests_per_second: HashMap::new(),
             errors_per_second: HashMap::new(),
             average_response_time_per_second: HashMap::new(),
@@ -46,8 +49,9 @@ impl GraphData {
     }
 
     /// Sets started time.
-    pub(crate) fn set_started(&mut self, started: Instant) {
+    pub(crate) fn set_started(&mut self, stopwatch: Instant, started: DateTime<Utc>) {
         self.started = Some(started);
+        self.stopwatch = Some(stopwatch);
     }
 
     /// Record requests per second metric.
@@ -116,9 +120,9 @@ impl GraphData {
 
     /// Records number of users for a current second.
     pub(crate) fn record_users_per_second(&mut self, users: usize) {
-        if let Some(started) = self.started {
-            let second = started.elapsed().as_secs() as usize;
-            self.users_per_second.set_and_maintain_last(second, users);
+        if let Some(stopwatch) = self.stopwatch {
+            self.users_per_second
+                .set_and_maintain_last(stopwatch.elapsed().as_secs() as usize, users);
         }
     }
 
@@ -192,18 +196,7 @@ impl GraphData {
             y_axis_label,
             granular_data,
             data,
-            DateTime::<Utc>::from_utc(
-                NaiveDateTime::from_timestamp(
-                    self.started
-                        .unwrap()
-                        .elapsed()
-                        .as_secs()
-                        .try_into()
-                        .unwrap(),
-                    0,
-                ),
-                Utc,
-            ),
+            self.started.unwrap(),
         )
     }
 
@@ -227,18 +220,7 @@ impl GraphData {
             y_axis_label,
             granular_data,
             hash_map_data,
-            DateTime::<Utc>::from_utc(
-                NaiveDateTime::from_timestamp(
-                    self.started
-                        .unwrap()
-                        .elapsed()
-                        .as_secs()
-                        .try_into()
-                        .unwrap(),
-                    0,
-                ),
-                Utc,
-            ),
+            self.started.unwrap(),
         )
     }
 }
@@ -281,7 +263,92 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
 
     /// Helper function to build HTML charts powered by the
     /// [ECharts](https://echarts.apache.org) library.
-    pub(crate) fn get_markup(self) -> String {
+    pub(crate) fn get_markup(self, history: &Vec<TestPlanHistory>) -> String {
+        let mut steps = String::new();
+        for step in history.windows(2) {
+            let started = Local
+                .timestamp(step[0].timestamp.timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            let stopped = Local
+                .timestamp(step[1].timestamp.timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            match &step[0].action {
+                // For increasing show the current number of users to the new number of users.
+                TestPlanStepAction::Increasing => {
+                    steps.push_str(&format!(
+                        r#"[
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 1)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{started}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ color: 'rgba(44, 102, 79, 0.25)', }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{stopped}',
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 1)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],"#,
+                        started = started,
+                        stopped = stopped,
+                    ));
+                }
+                // For decreasing show the new number of users from the current number of users.
+                TestPlanStepAction::Decreasing => {
+                    steps.push_str(&format!(
+                        r#"[
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 1)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{started}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.25)', }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{stopped}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 1)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],"#,
+                        started = started,
+                        stopped = stopped,
+                    ));
+                }
+                _ => {
+                    ();
+                }
+            }
+        }
+
         let mut total_values: TimeSeries<T, U> = TimeSeries::new();
         let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
             // If we are dealing with a metric with granular data we need to calculate totals.
@@ -410,7 +477,9 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }}
+                                    data: [
+                                        {steps}
+                                    ]
                                 }},
                                 data: {main_values},
                             }},
@@ -425,7 +494,8 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             y_axis_label = self.y_axis_label,
             main_label = main_label,
             legend = legend,
-            other_values = other_values
+            other_values = other_values,
+            steps = steps,
         )
     }
 
