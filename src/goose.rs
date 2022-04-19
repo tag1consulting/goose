@@ -1138,7 +1138,7 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
-        Ok(self.request(goose_request).await?)
+        self.request(goose_request).await
     }
 
     /// A helper to make a named `GET` request of a path and collect relevant metrics.
@@ -1179,7 +1179,7 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
-        Ok(self.request(goose_request).await?)
+        self.request(goose_request).await
     }
 
     /// A helper to make a `POST` request of a path and collect relevant metrics.
@@ -1223,7 +1223,7 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
-        Ok(self.request(goose_request).await?)
+        self.request(goose_request).await
     }
 
     /// A helper to make a `POST` request of a form on a path and collect relevant metrics.
@@ -1268,7 +1268,7 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
-        Ok(self.request(goose_request).await?)
+        self.request(goose_request).await
     }
 
     /// A helper to make a `POST` request of json on a path and collect relevant metrics.
@@ -1316,7 +1316,7 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
-        Ok(self.request(goose_request).await?)
+        self.request(goose_request).await
     }
 
     /// A helper to make a `HEAD` request of a path and collect relevant metrics.
@@ -1352,7 +1352,7 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
-        Ok(self.request(goose_request).await?)
+        self.request(goose_request).await
     }
 
     /// A helper to make a `DELETE` request of a path and collect relevant metrics.
@@ -1388,7 +1388,7 @@ impl GooseUser {
             .build();
 
         // Make the request and return the GooseResponse.
-        Ok(self.request(goose_request).await?)
+        self.request(goose_request).await
     }
 
     /// Used to get a [`reqwest::RequestBuilder`] object. If no [`reqwest::RequestBuilder`] is

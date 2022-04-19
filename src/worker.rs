@@ -11,6 +11,7 @@ const EMPTY_ARGS: Vec<&str> = vec![];
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
 use crate::metrics::{GooseErrorMetrics, GooseRequestMetrics, GooseTaskMetrics};
+use crate::test_plan::TestPlan;
 use crate::{get_worker_id, AttackMode, GooseAttack, GooseConfiguration, WORKER_ID};
 
 /// Workers send GaggleMetrics to the Manager process to be aggregated together.
@@ -100,7 +101,6 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
     let mut config: GooseConfiguration = GooseConfiguration::parse_args_default(&EMPTY_ARGS)
         .expect("failed to generate default configuration");
     let mut weighted_users: Vec<GooseUser> = Vec::new();
-    let mut run_time: usize = 0;
 
     // Wait for the manager to send user parameters.
     info!("waiting for instructions from manager");
@@ -145,11 +145,9 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
         .map_err(|error| eprintln!("{:?} worker_id({})", error, get_worker_id()))
         .expect("failed to create socket");
 
-        // The initializer.config and run_time are the same for all users, only copy it
-        // one time.
+        // The initializer.config is the same for all users, only copy it one time.
         if weighted_users.is_empty() {
             config = initializer.config;
-            run_time = initializer.run_time;
         }
         weighted_users.push(user);
     }
@@ -214,8 +212,6 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
 
     worker_goose_attack.started = Some(time::Instant::now());
     worker_goose_attack.task_sets = goose_attack.task_sets.clone();
-    // Use the run_time from the Manager so Worker can shut down in a timely manner.
-    worker_goose_attack.run_time = run_time;
     worker_goose_attack.weighted_users = weighted_users;
     // This is a Worker instance, not a Manager instance.
     worker_goose_attack.configuration.manager = false;
@@ -245,6 +241,7 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
         goose_attack.configuration.throttle_requests;
     worker_goose_attack.attack_mode = AttackMode::Worker;
     worker_goose_attack.defaults = goose_attack.defaults.clone();
+    worker_goose_attack.test_plan = TestPlan::build(&worker_goose_attack.configuration);
 
     worker_goose_attack
         .start_attack(Some(manager))

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use crate::logger::GooseLogFormat;
 use crate::metrics::GooseCoordinatedOmissionMitigation;
+use crate::test_plan::TestPlan;
 use crate::util;
 use crate::{GooseAttack, GooseError};
 
@@ -73,6 +74,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --status-codes             Tracks additional status code metrics
 ///
 /// Advanced:
+/// --test-plan "TESTPLAN"     Defines a more complex test plan ("10,60;0,30")
 /// --no-telnet                Doesn't enable telnet Controller
 /// --telnet-host HOST         Sets telnet Controller host (default: 0.0.0.0)
 /// --telnet-port PORT         Sets telnet Controller TCP port (default: 5116)
@@ -204,6 +206,9 @@ pub struct GooseConfiguration {
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
     pub status_codes: bool,
 
+    /// Defines a more complex test plan ("10,60;0,30")
+    #[options(no_short, meta = "\"TESTPLAN\"")]
+    pub(crate) test_plan: Option<TestPlan>,
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
@@ -285,6 +290,8 @@ pub(crate) struct GooseDefaults {
     pub startup_time: Option<usize>,
     /// An optional default number of seconds for the test to run.
     pub run_time: Option<usize>,
+    /// An optional default test plan.
+    pub test_plan: Option<TestPlan>,
     /// An optional default log level.
     pub log_level: Option<u8>,
     /// An optional default for the goose log file name.
@@ -389,6 +396,8 @@ pub enum GooseDefault {
     StartupTime,
     /// An optional default number of seconds for the test to run.
     RunTime,
+    /// An optional default test plan.
+    TestPlan,
     /// An optional default log level.
     LogLevel,
     /// An optional default for the log file name.
@@ -518,6 +527,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::WebSocketHost`]
 ///  - [`GooseDefault::ManagerBindHost`]
 ///  - [`GooseDefault::ManagerHost`]
+///  - [`GooseDefault::TestPlan`]
 ///
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
@@ -607,6 +617,9 @@ impl GooseDefaultType<&str> for GooseAttack {
                 self.defaults.manager_bind_host = Some(value.to_string())
             }
             GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
+            GooseDefault::TestPlan => {
+                self.defaults.test_plan = Some(value.parse::<TestPlan>().unwrap())
+            }
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
             | GooseDefault::StartupTime
@@ -702,6 +715,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::HatchRate
             | GooseDefault::Timeout
             | GooseDefault::GooseLog
@@ -799,6 +813,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::Worker => self.defaults.worker = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
@@ -906,6 +921,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                 })
             }
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
@@ -1006,6 +1022,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                 })
             }
             GooseDefault::Host
+            | GooseDefault::TestPlan
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
@@ -1145,6 +1162,24 @@ impl GooseConfigure<f32> for GooseConfiguration {
                 } else {
                     if !value.message.is_empty() {
                         info!("{} = {}", value.message, v)
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+}
+impl GooseConfigure<TestPlan> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a vec<(usize, usize)> value.
+    fn get_value(&self, values: Vec<GooseValue<TestPlan>>) -> Option<TestPlan> {
+        for value in values {
+            if let Some(v) = value.value {
+                if value.filter {
+                    continue;
+                } else {
+                    if !value.message.is_empty() {
+                        info!("{} = {:?}", value.message, v)
                     }
                     return Some(v);
                 }
@@ -1365,8 +1400,24 @@ impl GooseConfiguration {
             // Otherwise use detected number of CPUs if not on Worker.
             GooseValue {
                 value: Some(num_cpus::get()),
-                filter: self.worker,
+                filter: self.worker || self.test_plan.is_some(),
                 message: "users defaulted to number of CPUs",
+            },
+        ]);
+
+        // Configure `test_plan`.
+        self.test_plan = self.get_value(vec![
+            // Use --test-plan if set.
+            GooseValue {
+                value: self.test_plan.clone(),
+                filter: self.test_plan.is_none(),
+                message: "test_plan",
+            },
+            // Otherwise use GooseDefault if set and not on Worker.
+            GooseValue {
+                value: defaults.test_plan.clone(),
+                filter: defaults.test_plan.is_none() || self.worker,
+                message: "test_plan",
             },
         ]);
 
@@ -2249,6 +2300,70 @@ impl GooseConfiguration {
                         detail: "`configuration.users` must be set to at least 2 when `configuration.startup_time` is set.".to_string(),
                     });
                 }
+            }
+        }
+
+        // Validate `test_plan`.
+        if self.test_plan.is_some() {
+            // The --users option isn't compatible with --test-plan.
+            if let Some(users) = self.users.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.users`".to_string(),
+                    value: users.to_string(),
+                    detail: "`configuration.users` can not be set with `configuration.test_plan`."
+                        .to_string(),
+                });
+            }
+            // The --startup-time option isn't compatible with --test-plan.
+            if self.startup_time != "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.startup_time`".to_string(),
+                    value: self.startup_time.to_string(),
+                    detail: "`configuration.startup_time` can not be set with `configuration.test_plan`.".to_string(),
+                });
+            }
+            // The --hatch-rate option isn't compatible with --test-plan.
+            if let Some(hatch_rate) = self.hatch_rate.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.hatch_rate`".to_string(),
+                    value: hatch_rate.to_string(),
+                    detail:
+                        "`configuration.hatch_rate` can not be set with `configuration.test_plan`."
+                            .to_string(),
+                });
+            }
+            // The --run-time option isn't compatible with --test-plan.
+            if self.run_time != "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.run_time`".to_string(),
+                    value: self.run_time.to_string(),
+                    detail:
+                        "`configuration.run_time` can not be set with `configuration.test_plan`."
+                            .to_string(),
+                });
+            }
+            // The --no-reset-metrics option isn't compatible with --test-plan.
+            if self.no_reset_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_reset_metrics".to_string(),
+                    value: self.no_reset_metrics.to_string(),
+                    detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan`."
+                        .to_string(),
+                });
+            }
+            if self.manager {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.test_plan".to_string(),
+                    value: format!("{:?}", self.test_plan),
+                    detail: "`configuration.test_plan` can not be set in Manager mode.".to_string(),
+                });
+            }
+            if self.worker {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.test_plan".to_string(),
+                    value: format!("{:?}", self.test_plan),
+                    detail: "`configuration.test_plan` can not be set in Worker mode.".to_string(),
+                });
             }
         }
 

@@ -8,7 +8,6 @@
 //! contained [`GooseTaskMetrics`], [`GooseRequestMetrics`], and
 //! [`GooseErrorMetrics`] are displayed in tables.
 
-use chrono::prelude::*;
 use http::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
@@ -19,12 +18,13 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
-use tokio::io::AsyncWriteExt;
+//use tokio::io::AsyncWriteExt;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
 use crate::logger::GooseLog;
-use crate::report;
+//use crate::report;
+use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 #[cfg(feature = "gaggle")]
 use crate::worker::{self, GaggleMetrics};
@@ -730,7 +730,6 @@ impl GooseTaskMetricAggregate {
         debug!("incremented {} counter: {}", rounded_time, counter);
     }
 }
-
 /// All metrics optionally collected during a Goose load test.
 ///
 /// By default, Goose collects metrics during a load test in a `GooseMetrics` object
@@ -839,15 +838,8 @@ pub struct GooseMetrics {
     /// A hash of the load test, primarily used to validate all Workers in a Gaggle
     /// are running the same load test.
     pub hash: u64,
-    /// Tracks when the load test first started with an optional system timestamp.
-    pub starting: Option<DateTime<Local>>,
-    /// Tracks when all [`GooseUser`](../goose/struct.GooseUser.html) threads fully
-    /// started with an optional system timestamp.
-    pub started: Option<DateTime<Local>>,
-    /// Tracks when the load test first began stopping with an optional system timestamp.
-    pub stopping: Option<DateTime<Local>>,
-    /// Tracks when the load test stopped with an optional system timestamp.
-    pub stopped: Option<DateTime<Local>>,
+    /// A vector recording the history of each load test step.
+    pub history: Vec<TestPlanHistory>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
     /// Total number of users simulated during this load test.
@@ -995,32 +987,34 @@ impl GooseMetrics {
             let fails_precision = determine_precision(fails);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if fail_percent as usize == 100 || fail_percent as usize == 0 {
+                let fail_and_percent = format!(
+                    "{} ({}%)",
+                    request.fail_count.to_formatted_string(&Locale::en),
+                    fail_percent as usize
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({}%)",
-                        request.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent as usize
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
                     fails_p = fails_precision,
                 )?;
             } else {
+                let fail_and_percent = format!(
+                    "{} ({:.1}%)",
+                    request.fail_count.to_formatted_string(&Locale::en),
+                    fail_percent
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({:.1}%)",
-                        request.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
@@ -1046,32 +1040,34 @@ impl GooseMetrics {
             let fails_precision = determine_precision(fails);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
+                let fail_and_percent = format!(
+                    "{} ({}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent as usize
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent as usize
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
                     fails_p = fails_precision,
                 )?;
             } else {
+                let fail_and_percent = format!(
+                    "{} ({:.1}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({:.1}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
@@ -1139,6 +1135,11 @@ impl GooseMetrics {
                 }
 
                 if fail_percent as usize == 100 || fail_percent as usize == 0 {
+                    let fail_and_percent = format!(
+                        "{} ({}%)",
+                        task.fail_count.to_formatted_string(&Locale::en),
+                        fail_percent as usize
+                    );
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
@@ -1147,17 +1148,18 @@ impl GooseMetrics {
                             24
                         ),
                         total_count.to_formatted_string(&Locale::en),
-                        format!(
-                            "{} ({}%)",
-                            task.fail_count.to_formatted_string(&Locale::en),
-                            fail_percent as usize
-                        ),
+                        fail_and_percent,
                         runs,
                         fails,
                         runs_p = runs_precision,
                         fails_p = fails_precision,
                     )?;
                 } else {
+                    let fail_and_percent = format!(
+                        "{} ({:.1}%)",
+                        task.fail_count.to_formatted_string(&Locale::en),
+                        fail_percent
+                    );
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
@@ -1166,11 +1168,7 @@ impl GooseMetrics {
                             24
                         ),
                         total_count.to_formatted_string(&Locale::en),
-                        format!(
-                            "{} ({:.1}%)",
-                            task.fail_count.to_formatted_string(&Locale::en),
-                            fail_percent
-                        ),
+                        fail_and_percent,
                         runs,
                         fails,
                         runs_p = runs_precision,
@@ -1198,32 +1196,34 @@ impl GooseMetrics {
 
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
+                let fail_and_percent = format!(
+                    "{} ({}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent as usize
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent as usize
-                    ),
+                    fail_and_percent,
                     runs,
                     fails,
                     runs_p = runs_precision,
                     fails_p = fails_precision,
                 )?;
             } else {
+                let fail_and_percent = format!(
+                    "{} ({:.1}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({:.1}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent
-                    ),
+                    fail_and_percent,
                     runs,
                     fails,
                     runs_p = runs_precision,
@@ -2017,8 +2017,8 @@ impl GooseMetrics {
     // Determine the seconds, minutes and hours between two chrono:DateTimes.
     fn get_seconds_minutes_hours(
         &self,
-        start: &chrono::DateTime<chrono::Local>,
-        end: &chrono::DateTime<chrono::Local>,
+        start: &chrono::DateTime<chrono::Utc>,
+        end: &chrono::DateTime<chrono::Utc>,
     ) -> (i64, i64, i64) {
         let duration = end.timestamp() - start.timestamp();
         let seconds = duration % 60;
@@ -2032,47 +2032,94 @@ impl GooseMetrics {
     /// This function is invoked by [`GooseMetrics::print()`].
     pub(crate) fn fmt_overview(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Only display overview in the final metrics.
-        if !self.final_metrics || self.starting.is_none() {
+        if !self.final_metrics || self.history.is_empty() {
             return Ok(());
         }
 
-        // Calculations necessary for overview table.
-        let starting = self.starting.unwrap();
-        let starting_time = starting.format("%Y-%m-%d %H:%M:%S").to_string();
-        let started = if self.started.is_some() {
-            self.started.unwrap()
-        } else {
-            self.stopping.unwrap()
-        };
-        let (starting_seconds, starting_minutes, starting_hours) =
-            self.get_seconds_minutes_hours(&starting, &started);
-        let start_time = started.format("%Y-%m-%d %H:%M:%S").to_string();
-        let stopping = self.stopping.unwrap();
-        let (running_seconds, running_minutes, running_hours) =
-            self.get_seconds_minutes_hours(&started, &stopping);
-        let stopping_time = stopping.format("%Y-%m-%d %H:%M:%S").to_string();
-        let stopped = self.stopped.unwrap();
-        let stopped_time = stopped.format("%Y-%m-%d %H:%M:%S").to_string();
-        let (stopping_seconds, stopping_minutes, stopping_hours) =
-            self.get_seconds_minutes_hours(&stopping, &stopped);
+        writeln!(
+            fmt,
+            "\n === OVERVIEW ===\n ------------------------------------------------------------------------------"
+        )?;
 
+        writeln!(
+            fmt,
+            " {:<12} {:<19} {:<17} {:<10} Users",
+            "Action", "Started", "Stopped", "Elapsed",
+        )?;
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
-        writeln!(fmt, " Users: {}", self.users)?;
+
+        // Step through history looking at current step and next step.
+        for step in self.history.windows(2) {
+            let (seconds, minutes, hours) =
+                self.get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
+            let started = step[0].timestamp.format("%y-%m-%d %H:%M:%S");
+            let stopped = step[1].timestamp.format("%y-%m-%d %H:%M:%S");
+            match &step[0].action {
+                // For maintaining just show the current number of users.
+                TestPlanStepAction::Maintaining => {
+                    writeln!(
+                        fmt,
+                        " {:<12} {} - {} ({:02}:{:02}:{:02}, {})",
+                        format!("{:?}:", step[0].action),
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[0].users,
+                    )?;
+                }
+                // For increasing show the current number of users to the new number of users.
+                TestPlanStepAction::Increasing => {
+                    writeln!(
+                        fmt,
+                        " {:<12} {} - {} ({:02}:{:02}:{:02}, {} -> {})",
+                        format!("{:?}:", step[0].action),
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[0].users,
+                        step[1].users,
+                    )?;
+                }
+                // For decreasing show the new number of users from the current number of users.
+                TestPlanStepAction::Decreasing => {
+                    writeln!(
+                        fmt,
+                        " {:<12} {} - {} ({:02}:{:02}:{:02}, {} <- {})",
+                        format!("{:?}:", step[0].action),
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[1].users,
+                        step[0].users,
+                    )?;
+                }
+                TestPlanStepAction::Finished => {
+                    unreachable!("there shouldn't be a step after finished");
+                }
+            }
+        }
+
         match self.hosts.len() {
             0 => {
                 // A host is required to run a load test.
-                writeln!(fmt, " Target host: undefined")?;
+                writeln!(fmt, "\n Target host: undefined")?;
             }
             1 => {
                 for host in &self.hosts {
-                    writeln!(fmt, " Target host: {}", host)?;
+                    writeln!(fmt, "\n Target host: {}", host)?;
                 }
             }
             _ => {
-                writeln!(fmt, " Target hosts: ")?;
+                writeln!(fmt, "\n Target hosts: ")?;
                 for host in &self.hosts {
                     writeln!(fmt, " - {}", host,)?;
                 }
@@ -2080,25 +2127,7 @@ impl GooseMetrics {
         }
         writeln!(
             fmt,
-            " Starting: {} - {} (duration: {:02}:{:02}:{:02})",
-            starting_time, start_time, starting_hours, starting_minutes, starting_seconds,
-        )?;
-        // Only display time running if the load test fully started.
-        if self.started.is_some() {
-            writeln!(
-                fmt,
-                " Running:  {} - {} (duration: {:02}:{:02}:{:02})",
-                start_time, stopping_time, running_hours, running_minutes, running_seconds,
-            )?;
-        }
-        writeln!(
-            fmt,
-            " Stopping: {} - {} (duration: {:02}:{:02}:{:02})",
-            stopping_time, stopped_time, stopping_hours, stopping_minutes, stopping_seconds,
-        )?;
-        writeln!(
-            fmt,
-            "\n {} v{}",
+            " {} v{}",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
         )?;
@@ -2122,12 +2151,14 @@ impl Serialize for GooseMetrics {
         let mut s = serializer.serialize_struct("GooseMetrics", 10)?;
         s.serialize_field("hash", &self.hash)?;
         // Convert started field to a unix timestamp.
+        /* @TODO: Fixme
         let timestamp = if let Some(started) = self.started {
             started.timestamp()
         } else {
             0
         };
         s.serialize_field("started", &timestamp)?;
+        */
         s.serialize_field("duration", &self.duration)?;
         s.serialize_field("users", &self.users)?;
         s.serialize_field("requests", &self.requests)?;
@@ -2313,40 +2344,45 @@ impl GooseAttack {
             self.sync_metrics(goose_attack_run_state, true).await?;
 
             goose_attack_run_state.all_users_spawned = true;
-            let users = self.configuration.users.unwrap();
-            if !self.configuration.no_reset_metrics {
-                // Display the running metrics collected so far, before resetting them.
-                self.update_duration();
-                self.metrics.print_running();
-                // Reset running_metrics_timer.
-                goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+            // Only reset metrics on startup if not using `--test-plan`.
+            if self.configuration.test_plan.is_none() {
+                let users = self.configuration.users.unwrap();
+                if !self.configuration.no_reset_metrics {
+                    // Display the running metrics collected so far, before resetting them.
+                    self.update_duration();
+                    self.metrics.print_running();
+                    // Reset running_metrics_timer.
+                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
 
-                if self.metrics.display_metrics {
-                    // Users is required here so unwrap() is safe.
-                    if self.metrics.users < users {
-                        println!(
-                            "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
-                        );
-                    } else {
-                        println!(
-                            "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
-                        );
+                    if self.metrics.display_metrics {
+                        // Users is required here so unwrap() is safe.
+                        if self.metrics.users < users {
+                            println!(
+                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
+                            );
+                        } else {
+                            println!(
+                                "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
+                            );
+                        }
                     }
-                }
 
-                self.metrics.requests = HashMap::new();
-                self.metrics.initialize_task_metrics(
-                    &self.task_sets,
-                    &self.configuration,
-                    &self.defaults,
-                )?;
-            } else if self.metrics.users < users {
-                println!(
-                    "{} of {} users hatched, timer expired.\n",
-                    self.metrics.users, users
-                );
+                    self.metrics.requests = HashMap::new();
+                    self.metrics.initialize_task_metrics(
+                        &self.task_sets,
+                        &self.configuration,
+                        &self.defaults,
+                    )?;
+                } else if self.metrics.users < users {
+                    println!(
+                        "{} of {} users hatched, timer expired.\n",
+                        self.metrics.users, users
+                    );
+                } else {
+                    println!("All {} users hatched.\n", self.metrics.users);
+                }
             } else {
-                println!("All {} users hatched.\n", self.metrics.users);
+                println!("{} users hatched.", self.metrics.users);
             }
 
             // Restart the timer now that all threads are launched.
@@ -2455,6 +2491,7 @@ impl GooseAttack {
                         // `GooseMetrics.requests`, and write to the requests log if enabled.
                         self.record_request_metric(&request_metric).await;
 
+                        /* @FIXME
                         if !self.configuration.report_file.is_empty() {
                             let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
@@ -2473,6 +2510,7 @@ impl GooseAttack {
                                     .record_errors_per_second(&key, seconds_since_start);
                             }
                         }
+                         */
                     }
                 }
                 GooseMetric::Task(raw_task) => {
@@ -2480,10 +2518,12 @@ impl GooseAttack {
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
 
+                    /* @FIXME
                     if !self.configuration.report_file.is_empty() {
                         self.graph_data
                             .record_tasks_per_second((raw_task.elapsed / 1000) as usize);
                     }
+                    */
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
@@ -2549,13 +2589,14 @@ impl GooseAttack {
 
     // Update metrics showing how long the load test has been running.
     pub(crate) fn update_duration(&mut self) {
-        if let Some(started) = self.started {
-            self.metrics.duration = started.elapsed().as_secs() as usize;
+        self.metrics.duration = if self.started.is_some() {
+            self.started.unwrap().elapsed().as_secs() as usize
         } else {
-            self.metrics.duration = 0;
-        }
+            0
+        };
     }
 
+    /* @FIXME:
     // Write an HTML-formatted report, if enabled.
     pub(crate) async fn write_html_report(
         &mut self,
@@ -3055,6 +3096,7 @@ impl GooseAttack {
 
         Ok(())
     }
+    */
 }
 
 /// Helper to calculate requests and fails per seconds.

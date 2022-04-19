@@ -27,8 +27,6 @@ pub struct GooseUserInitializer {
     pub base_url: String,
     /// A local copy of the global GooseConfiguration.
     pub config: GooseConfiguration,
-    /// How long the load test should run, in seconds.
-    pub run_time: usize,
     /// Numerical identifier for worker.
     pub worker_id: usize,
 }
@@ -288,8 +286,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     let mut workers: HashSet<Pipe> = HashSet::new();
 
     // Track start time, we'll reset this when the test actually starts.
-    let mut started = time::Instant::now();
-    goose_attack.started = Some(started);
+    goose_attack.started = Some(time::Instant::now());
     let mut running_metrics_timer = time::Instant::now();
     let mut exit_timer = time::Instant::now();
     let mut load_test_running = false;
@@ -311,8 +308,13 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
 
     // Update metrics, which doesn't happen automatically on the Master as we don't
     // invoke start_attack. Hatch rate is required here so unwrap() is safe.
-    let hatch_rate = util::get_hatch_rate(goose_attack.configuration.hatch_rate.clone());
-    let maximum_hatched = hatch_rate * goose_attack.run_time as f32;
+    // Divide the number of new users to launch by the time configured to launch them.
+    let hatch_rate: f32 = (goose_attack.test_plan.steps[0].0)
+        as f32
+        / goose_attack.test_plan.steps[0].1 as f32
+        // Convert from milliseconds to seconds.
+        * 1_000.0;
+    let maximum_hatched = hatch_rate * goose_attack.test_plan.steps[1].1 as f32;
     if maximum_hatched < goose_attack.configuration.users.unwrap() as f32 {
         goose_attack.metrics.users = maximum_hatched as usize;
     } else {
@@ -329,7 +331,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                 if load_test_running {
                     info!(
                         "worker went away, stopping gracefully after {} seconds...",
-                        started.elapsed().as_secs()
+                        goose_attack.started.unwrap().elapsed().as_secs()
                     );
                     load_test_finished = true;
                     exit_timer = time::Instant::now();
@@ -344,10 +346,15 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         if load_test_running {
             if !load_test_finished {
                 // Test ran to completion or was canceled with ctrl-c.
-                if util::timer_expired(started, goose_attack.run_time)
-                    || canceled.load(Ordering::SeqCst)
+                if util::ms_timer_expired(
+                    goose_attack.started.unwrap(),
+                    goose_attack.test_plan.steps[1].1,
+                ) || canceled.load(Ordering::SeqCst)
                 {
-                    info!("stopping after {} seconds...", started.elapsed().as_secs());
+                    info!(
+                        "stopping after {} seconds...",
+                        goose_attack.started.unwrap().elapsed().as_secs()
+                    );
                     goose_attack.metrics.duration =
                         goose_attack.started.unwrap().elapsed().as_secs() as usize;
                     load_test_finished = true;
@@ -470,7 +477,6 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                                 task_sets_index: user.task_sets_index,
                                 base_url: user.base_url.read().await.to_string(),
                                 config: user.config.clone(),
-                                run_time: goose_attack.run_time,
                                 worker_id: workers.len(),
                             });
                         }
@@ -501,8 +507,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                         {
                             info!("gaggle distributed load test started");
                             // Reset start time, the distributed load test is truly starting now.
-                            started = time::Instant::now();
-                            goose_attack.started = Some(started);
+                            goose_attack.started = Some(time::Instant::now());
                             running_metrics_timer = time::Instant::now();
                             load_test_running = true;
 
