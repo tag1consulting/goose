@@ -11,19 +11,14 @@ use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::marker::PhantomData;
+use std::time::Instant;
 
 /// Used to collect graph data during a load test.
 pub(crate) struct GraphData {
     /// Tracks when the load test first started with an optional system timestamp.
-    starting: Option<DateTime<Utc>>,
-    /// Tracks when all [`GooseUser`](../goose/struct.GooseUser.html) threads fully
-    /// started with an optional system timestamp.
-    started: Option<DateTime<Utc>>,
-    /// Tracks when the load test first began stopping with an optional system timestamp.
-    stopping: Option<DateTime<Utc>>,
-    /// Tracks when the load test stopped with an optional system timestamp.
-    stopped: Option<DateTime<Utc>>,
+    started: Option<Instant>,
     /// Counts requests per second for each request type.
     requests_per_second: HashMap<String, TimeSeries<u32, u32>>,
     /// Counts errors per second.
@@ -41,10 +36,7 @@ impl GraphData {
     pub(crate) fn new() -> Self {
         trace!("new graph");
         GraphData {
-            starting: None,
             started: None,
-            stopping: None,
-            stopped: None,
             requests_per_second: HashMap::new(),
             errors_per_second: HashMap::new(),
             average_response_time_per_second: HashMap::new(),
@@ -53,24 +45,9 @@ impl GraphData {
         }
     }
 
-    /// Sets starting time.
-    pub(crate) fn set_starting(&mut self, starting: DateTime<Utc>) {
-        self.starting = Some(starting);
-    }
-
     /// Sets started time.
-    pub(crate) fn set_started(&mut self, started: DateTime<Utc>) {
+    pub(crate) fn set_started(&mut self, started: Instant) {
         self.started = Some(started);
-    }
-
-    /// Sets stopping time.
-    pub(crate) fn set_stopping(&mut self, stopping: DateTime<Utc>) {
-        self.stopping = Some(stopping);
-    }
-
-    /// Sets stopped time.
-    pub(crate) fn set_stopped(&mut self, stopped: DateTime<Utc>) {
-        self.stopped = Some(stopped);
     }
 
     /// Record requests per second metric.
@@ -138,9 +115,9 @@ impl GraphData {
     }
 
     /// Records number of users for a current second.
-    pub(crate) fn record_users_per_second(&mut self, users: usize, now: DateTime<Utc>) {
-        if let Some(starting) = self.starting {
-            let second = (now.timestamp() - starting.timestamp()) as usize;
+    pub(crate) fn record_users_per_second(&mut self, users: usize) {
+        if let Some(started) = self.started {
+            let second = started.elapsed().as_secs() as usize;
             self.users_per_second.set_and_maintain_last(second, users);
         }
     }
@@ -215,14 +192,18 @@ impl GraphData {
             y_axis_label,
             granular_data,
             data,
-            self.starting.unwrap(),
-            if self.started.is_none() && self.stopping.is_some() {
-                self.stopping
-            } else {
-                self.started
-            },
-            self.stopping,
-            self.stopped,
+            DateTime::<Utc>::from_utc(
+                NaiveDateTime::from_timestamp(
+                    self.started
+                        .unwrap()
+                        .elapsed()
+                        .as_secs()
+                        .try_into()
+                        .unwrap(),
+                    0,
+                ),
+                Utc,
+            ),
         )
     }
 
@@ -246,14 +227,18 @@ impl GraphData {
             y_axis_label,
             granular_data,
             hash_map_data,
-            self.starting.unwrap(),
-            if self.started.is_none() && self.stopping.is_some() {
-                self.stopping
-            } else {
-                self.started
-            },
-            self.stopping,
-            self.stopped,
+            DateTime::<Utc>::from_utc(
+                NaiveDateTime::from_timestamp(
+                    self.started
+                        .unwrap()
+                        .elapsed()
+                        .as_secs()
+                        .try_into()
+                        .unwrap(),
+                    0,
+                ),
+                Utc,
+            ),
         )
     }
 }
@@ -269,14 +254,8 @@ pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Cop
     granular_data: bool,
     /// Graph data.
     data: HashMap<String, TimeSeries<T, U>>,
-    /// Time when the test startup phase began.
-    starting: DateTime<Utc>,
-    /// Time when the test was started (startup phase completed).
-    started: Option<DateTime<Utc>>,
-    /// Time when the test stopping phase began.
-    stopping: Option<DateTime<Utc>>,
-    /// Time when the test was completely stopped.
-    stopped: Option<DateTime<Utc>>,
+    /// Time when the test was started.
+    started: DateTime<Utc>,
 }
 
 impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + PartialOrd>
@@ -289,72 +268,20 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         y_axis_label: &'a str,
         granular_data: bool,
         data: HashMap<String, TimeSeries<T, U>>,
-        starting: DateTime<Utc>,
-        started: Option<DateTime<Utc>>,
-        stopping: Option<DateTime<Utc>>,
-        stopped: Option<DateTime<Utc>>,
+        started: DateTime<Utc>,
     ) -> Graph<'a, T, U> {
         Graph {
             html_id,
             y_axis_label,
             granular_data,
             data,
-            starting,
             started,
-            stopping,
-            stopped,
         }
     }
 
     /// Helper function to build HTML charts powered by the
     /// [ECharts](https://echarts.apache.org) library.
     pub(crate) fn get_markup(self) -> String {
-        let datetime_format = "%Y-%m-%d %H:%M:%S";
-
-        let starting_area = if self.started.is_some() {
-            format!(
-                r#"[
-                                            {{
-                                                name: 'Starting',
-                                                xAxis: '{starting}'
-                                            }},
-                                            {{
-                                                xAxis: '{started}'
-                                            }}
-                                        ],"#,
-                starting = Local
-                    .timestamp(self.starting.timestamp(), 0)
-                    .format(datetime_format),
-                started = Local
-                    .timestamp(self.started.unwrap().timestamp(), 0)
-                    .format(datetime_format),
-            )
-        } else {
-            "".to_string()
-        };
-
-        let stopping_area = if self.stopping.is_some() && self.stopped.is_some() {
-            format!(
-                r#"[
-                                            {{
-                                                name: 'Stopping',
-                                                xAxis: '{stopping}'
-                                            }},
-                                            {{
-                                                xAxis: '{stopped}'
-                                            }}
-                                        ],"#,
-                stopping = Local
-                    .timestamp(self.stopping.unwrap().timestamp(), 0)
-                    .format(datetime_format),
-                stopped = Local
-                    .timestamp(self.stopped.unwrap().timestamp(), 0)
-                    .format(datetime_format),
-            )
-        } else {
-            "".to_string()
-        };
-
         let mut total_values: TimeSeries<T, U> = TimeSeries::new();
         let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
             // If we are dealing with a metric with granular data we need to calculate totals.
@@ -483,11 +410,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
-                                    data: [
-                                        {starting_area}
-                                        {stopping_area}
-                                    ]
+                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }}
                                 }},
                                 data: {main_values},
                             }},
@@ -499,8 +422,6 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             html_id = self.html_id,
             main_values =
                 json!(self.add_timestamp_to_html_graph_data(&main_values.get_graph_data())),
-            starting_area = starting_area,
-            stopping_area = stopping_area,
             y_axis_label = self.y_axis_label,
             main_label = main_label,
             legend = legend,
@@ -519,7 +440,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             .map(|(second, value)| {
                 (
                     Local
-                        .timestamp(second as i64 + self.starting.timestamp(), 0)
+                        .timestamp(second as i64 + self.started.timestamp(), 0)
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     *value,

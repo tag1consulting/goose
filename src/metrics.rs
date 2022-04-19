@@ -18,13 +18,12 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
-//use tokio::io::AsyncWriteExt;
+use tokio::io::AsyncWriteExt;
 use chrono::prelude::*;
-
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
 use crate::logger::GooseLog;
-//use crate::report;
+use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 #[cfg(feature = "gaggle")]
@@ -2498,7 +2497,6 @@ impl GooseAttack {
                         // `GooseMetrics.requests`, and write to the requests log if enabled.
                         self.record_request_metric(&request_metric).await;
 
-                        /* @FIXME
                         if !self.configuration.report_file.is_empty() {
                             let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
@@ -2517,7 +2515,6 @@ impl GooseAttack {
                                     .record_errors_per_second(&key, seconds_since_start);
                             }
                         }
-                         */
                     }
                 }
                 GooseMetric::Task(raw_task) => {
@@ -2525,12 +2522,10 @@ impl GooseAttack {
                     self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
 
-                    /* @FIXME
                     if !self.configuration.report_file.is_empty() {
                         self.graph_data
                             .record_tasks_per_second((raw_task.elapsed / 1000) as usize);
                     }
-                    */
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
@@ -2604,7 +2599,6 @@ impl GooseAttack {
         };
     }
 
-    /* @FIXME:
     // Write an HTML-formatted report, if enabled.
     pub(crate) async fn write_html_report(
         &mut self,
@@ -2615,49 +2609,60 @@ impl GooseAttack {
             // Prepare report summary variables.
             let users = self.metrics.users.to_string();
 
-            let starting = self.metrics.starting.unwrap();
-            let started = if self.metrics.started.is_some() {
-                self.metrics.started.unwrap()
-            } else {
-                self.metrics.stopping.unwrap()
-            };
-            let (starting_seconds, starting_minutes, starting_hours) =
-                self.metrics.get_seconds_minutes_hours(&starting, &started);
-            let stopping = self.metrics.stopping.unwrap();
-            let (running_seconds, running_minutes, running_hours) =
-                self.metrics.get_seconds_minutes_hours(&started, &stopping);
-            let stopped = self.metrics.stopped.unwrap();
-            let (stopping_seconds, stopping_minutes, stopping_hours) =
-                self.metrics.get_seconds_minutes_hours(&stopping, &stopped);
-
-            let mut report_range = format!(
-                "<p>Starting: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
-                starting.format("%Y-%m-%d %H:%M:%S"),
-                started.format("%Y-%m-%d %H:%M:%S"),
-                starting_hours,
-                starting_minutes,
-                starting_seconds,
-            );
-
-            if self.metrics.started.is_some() {
-                report_range.push_str(&format!(
-                    "<p>Running: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
-                    started.format("%Y-%m-%d %H:%M:%S"),
-                    stopping.format("%Y-%m-%d %H:%M:%S"),
-                    running_hours,
-                    running_minutes,
-                    running_seconds,
-                ));
+            let mut steps_overview = String::new();
+            for step in self.metrics.history.windows(2) {
+                let (seconds, minutes, hours) = self
+                    .metrics
+                    .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
+                let started = step[0].timestamp.format("%y-%m-%d %H:%M:%S");
+                let stopped = step[1].timestamp.format("%y-%m-%d %H:%M:%S");
+                match &step[0].action {
+                    // For maintaining just show the current number of users.
+                    TestPlanStepAction::Maintaining => {
+                        steps_overview.push_str(&format!(
+                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
+                            step[0].action,
+                            started,
+                            stopped,
+                            hours,
+                            minutes,
+                            seconds,
+                            step[0].users,
+                        ));
+                    }
+                    // For increasing show the current number of users to the new number of users.
+                    TestPlanStepAction::Increasing => {
+                        steps_overview.push_str(&format!(
+                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
+                            step[0].action,
+                            started,
+                            stopped,
+                            hours,
+                            minutes,
+                            seconds,
+                            step[0].users,
+                            step[1].users,
+                        ));
+                    }
+                    // For decreasing show the new number of users from the current number of users.
+                    TestPlanStepAction::Decreasing => {
+                        steps_overview.push_str(&format!(
+                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
+                            step[0].action,
+                            started,
+                            stopped,
+                            hours,
+                            minutes,
+                            seconds,
+                            step[1].users,
+                            step[0].users,
+                        ));
+                    }
+                    TestPlanStepAction::Finished => {
+                        unreachable!("there shouldn't be a step after finished");
+                    }
+                }
             }
-
-            report_range.push_str(&format!(
-                "<p>Stopping: <span>{} - {} (Duration: {:02}:{:02}:{:02})</span></p>",
-                stopping.format("%Y-%m-%d %H:%M:%S"),
-                stopped.format("%Y-%m-%d %H:%M:%S"),
-                stopping_hours,
-                stopping_minutes,
-                stopping_seconds,
-            ));
 
             // Build a comma separated list of hosts.
             let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
@@ -3060,7 +3065,7 @@ impl GooseAttack {
             // Compile the report template.
             let report = report::build_report(
                 &users,
-                &report_range,
+                &steps_overview,
                 hosts,
                 report::GooseReportTemplates {
                     raw_requests_template: &raw_requests_rows.join("\n"),
@@ -3104,7 +3109,6 @@ impl GooseAttack {
 
         Ok(())
     }
-    */
 }
 
 /// Helper to calculate requests and fails per seconds.

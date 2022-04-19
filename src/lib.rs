@@ -43,13 +43,13 @@ extern crate log;
 pub mod config;
 pub mod controller;
 pub mod goose;
-//mod graph;
+mod graph;
 pub mod logger;
 #[cfg(feature = "gaggle")]
 mod manager;
 pub mod metrics;
 pub mod prelude;
-//mod report;
+mod report;
 mod test_plan;
 mod throttle;
 mod user;
@@ -78,7 +78,7 @@ use tokio::fs::File;
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
-//use crate::graph::GraphData;
+use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
@@ -389,8 +389,8 @@ pub struct GooseAttack {
     step_started: Option<time::Instant>,
     /// All metrics merged together.
     metrics: GooseMetrics,
-    // /// All data for report graphs.
-    //graph_data: GraphData,
+    /// All data for report graphs.
+    graph_data: GraphData,
 }
 
 /// Goose's internal global state.
@@ -420,7 +420,7 @@ impl GooseAttack {
             test_plan: TestPlan::new(),
             step_started: None,
             metrics: GooseMetrics::default(),
-            //graph_data: GraphData::new(),
+            graph_data: GraphData::new(),
         })
     }
 
@@ -456,7 +456,7 @@ impl GooseAttack {
             test_plan: TestPlan::new(),
             step_started: None,
             metrics: GooseMetrics::default(),
-            //graph_data: GraphData::new(),
+            graph_data: GraphData::new(),
         })
     }
 
@@ -1661,7 +1661,9 @@ impl GooseAttack {
         };
 
         // Record when the GooseAttack officially started.
-        self.started = Some(time::Instant::now());
+        let now = time::Instant::now();
+        self.started = Some(now);
+        self.graph_data.set_started(now);
 
         Ok(())
     }
@@ -1733,15 +1735,14 @@ impl GooseAttack {
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
                     // Record last users for users per second graph in HTML report.
-                    //self.graph_data.record_users_per_second(self.metrics.users, Utc::now());
+                    self.graph_data.record_users_per_second(self.metrics.users);
                     // The load test is fully stopped at this point.
                     self.metrics
                         .history
                         .push(TestPlanHistory::step(TestPlanStepAction::Finished, 0));
                     //self.graph_data.set_stopped(Utc::now());
                     // Write an html report, if enabled.
-                    // @TODO: Fixme!
-                    //self.write_html_report(&mut goose_attack_run_state).await?;
+                    self.write_html_report(&mut goose_attack_run_state).await?;
                     // Shutdown Goose or go into an idle waiting state.
                     if goose_attack_run_state.shutdown_after_stop {
                         self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Shutdown);
@@ -1761,7 +1762,7 @@ impl GooseAttack {
             }
 
             // Record current users for users per second graph in HTML report.
-            //self.graph_data.record_users_per_second(self.metrics.users, Utc::now());
+            self.graph_data.record_users_per_second(self.metrics.users);
 
             // Regularly synchronize metrics.
             self.sync_metrics(&mut goose_attack_run_state, false)
