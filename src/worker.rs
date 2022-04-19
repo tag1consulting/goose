@@ -8,10 +8,10 @@ use url::Url;
 
 const EMPTY_ARGS: Vec<&str> = vec![];
 
-use crate::config::TestPlan;
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
 use crate::metrics::{GooseErrorMetrics, GooseRequestMetrics, GooseTaskMetrics};
+use crate::test_plan::TestPlan;
 use crate::{get_worker_id, AttackMode, GooseAttack, GooseConfiguration, WORKER_ID};
 
 /// Workers send GaggleMetrics to the Manager process to be aggregated together.

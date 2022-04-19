@@ -3,8 +3,9 @@
 //! By default, Goose launches both a telnet Controller and a WebSocket Controller, allowing
 //! real-time control of the running load test.
 
-use crate::config::{GooseConfiguration, TestPlan};
-use crate::metrics::{GooseMetrics, TestPlanHistory, TestPlanStepAction};
+use crate::config::GooseConfiguration;
+use crate::metrics::GooseMetrics;
+use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 

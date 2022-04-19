@@ -50,6 +50,7 @@ mod manager;
 pub mod metrics;
 pub mod prelude;
 //mod report;
+mod test_plan;
 mod throttle;
 mod user;
 pub mod util;
@@ -63,7 +64,6 @@ use lazy_static::lazy_static;
 use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::cmp;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -75,12 +75,13 @@ use std::time::{self, Duration};
 use std::{fmt, io};
 use tokio::fs::File;
 
-use crate::config::{GooseConfiguration, GooseDefaults, TestPlan};
+use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
 use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
 //use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
-use crate::metrics::{GooseMetric, GooseMetrics, TestPlanHistory, TestPlanStepAction};
+use crate::metrics::{GooseMetric, GooseMetrics};
+use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
@@ -1299,56 +1300,6 @@ impl GooseAttack {
         util::setup_ctrlc_handler(&goose_attack_run_state.canceled);
 
         Ok(goose_attack_run_state)
-    }
-
-    // Advance the active [`GooseAttack`](./struct.GooseAttack.html) to the next TestPlan step.
-    fn advance_test_plan(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
-        // Record the instant this new step starts, for use with timers.
-        self.step_started = Some(time::Instant::now());
-
-        let action = if self.test_plan.current == self.test_plan.steps.len() - 1 {
-            // If this is the last TestPlan step and there are 0 users, shut down.
-            if self.test_plan.steps[self.test_plan.current].0 == 0 {
-                // @TODO: don't shut down if stopped by a controller...
-                self.set_attack_phase(goose_attack_run_state, AttackPhase::Shutdown);
-                TestPlanStepAction::Finished
-            }
-            // Otherwise maintain the number of GooseUser threads until canceled.
-            else {
-                self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
-                TestPlanStepAction::Maintaining
-            }
-        // If this is not the last TestPlan step, determine what happens next.
-        } else if self.test_plan.current < self.test_plan.steps.len() {
-            match self.test_plan.steps[self.test_plan.current]
-                .0
-                .cmp(&self.test_plan.steps[self.test_plan.current + 1].0)
-            {
-                cmp::Ordering::Less => {
-                    self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
-                    TestPlanStepAction::Increasing
-                }
-                cmp::Ordering::Greater => {
-                    self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
-                    TestPlanStepAction::Decreasing
-                }
-                cmp::Ordering::Equal => {
-                    self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
-                    TestPlanStepAction::Maintaining
-                }
-            }
-        } else {
-            unreachable!("Advanced 2 steps beyond the end of the TestPlan.")
-        };
-
-        // Record details about new new TestPlan step that is starting.
-        self.metrics.history.push(TestPlanHistory::step(
-            action,
-            self.test_plan.steps[self.test_plan.current].0,
-        ));
-
-        // Always advance the TestPlan step
-        self.test_plan.current += 1;
     }
 
     // Increase the number of active [`GooseUser`](./goose/struct.GooseUser.html) threads in the

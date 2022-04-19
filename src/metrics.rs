@@ -8,7 +8,6 @@
 //! contained [`GooseTaskMetrics`], [`GooseRequestMetrics`], and
 //! [`GooseErrorMetrics`] are displayed in tables.
 
-use chrono::prelude::*;
 use http::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
@@ -25,6 +24,7 @@ use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
 use crate::logger::GooseLog;
 //use crate::report;
+use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 #[cfg(feature = "gaggle")]
 use crate::worker::{self, GaggleMetrics};
@@ -730,41 +730,6 @@ impl GooseTaskMetricAggregate {
         debug!("incremented {} counter: {}", rounded_time, counter);
     }
 }
-
-/// A test plan is a series of steps performing one of the following actions.
-#[derive(Clone, Debug)]
-pub enum TestPlanStepAction {
-    /// A test plan step that is increasing the number of GooseUser threads.
-    Increasing,
-    /// A test plan step that is maintaining the number of GooseUser threads.
-    Maintaining,
-    /// A test plan step that is increasing the number of GooseUser threads.
-    Decreasing,
-    /// The final step indicating that the load test is finished.
-    Finished,
-}
-
-/// A historical record of a single test plan step, used to generate reports from the metrics.
-#[derive(Clone, Debug)]
-pub struct TestPlanHistory {
-    /// What action happend in this step.
-    pub action: TestPlanStepAction,
-    /// A timestamp of when the step started.
-    pub timestamp: DateTime<Utc>,
-    /// The number of users when the step started.
-    pub users: usize,
-}
-impl TestPlanHistory {
-    /// A helper to record a new test plan step in the historical record.
-    pub(crate) fn step(action: TestPlanStepAction, users: usize) -> TestPlanHistory {
-        TestPlanHistory {
-            action,
-            timestamp: Utc::now(),
-            users,
-        }
-    }
-}
-
 /// All metrics optionally collected during a Goose load test.
 ///
 /// By default, Goose collects metrics during a load test in a `GooseMetrics` object

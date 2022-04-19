@@ -13,8 +13,11 @@
  - [#379](https://github.com/tag1consulting/goose/pull/379) **API change**: default to `INFO` level verbosity, introduce `-q` to reduce Goose verbosity
    o **note**: `-v` now sets Goose to `DEBUG` level verbosity which when enabled will negatively impact load test performance; set `-q` to restore previous level of verbosity
  - [#379](https://github.com/tag1consulting/goose/pull/379) **API change**: remove `.print()` which is no longer required to display metrics after a load test, disable with `--no-print-metrics` or `GooseDefault::NoPrintMetrics`
- - @TODO: introduce `--test-plan` and `GooseDefault::TestPlan`
+ - [#422](https://github.com/tag1consulting/goose/pull/422) **API change**: introduce `--test-plan` and `GooseDefault::TestPlan`
     o internally represent all load tests as `Vec<(usize, usize)>`l test plan
+    o use [FromStr] to auto convert --test-plan "{users},{timespan};{users},{timespan}", where {users} must be an integer, ie "100", and {timespan} can be integer seconds or "30s", "20m", "3h", "1h30m", etc, to internal Vec<(usize, usize)> representation
+    o don't allow `--test-plan` together with `--users`, `--startup-time`, `--hatch-rate`, `--run-time`, `--no-reset-metrics`, `--manager` and `--worker`
+    o internal `AttackPhase`s renamed: `Starting` -> `Increase`, `Running` -> `Maintain`, `Stopping` -> `Decrease`
     
 ## 0.15.2 December 13, 2021
  - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends
