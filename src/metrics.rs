@@ -1022,32 +1022,34 @@ impl GooseMetrics {
             let fails_precision = determine_precision(fails);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if fail_percent as usize == 100 || fail_percent as usize == 0 {
+                let fail_and_percent = format!(
+                    "{} ({}%)",
+                    request.fail_count.to_formatted_string(&Locale::en),
+                    fail_percent as usize
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({}%)",
-                        request.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent as usize
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
                     fails_p = fails_precision,
                 )?;
             } else {
+                let fail_and_percent = format!(
+                    "{} ({:.1}%)",
+                    request.fail_count.to_formatted_string(&Locale::en),
+                    fail_percent
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     util::truncate_string(request_key, 24),
                     total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({:.1}%)",
-                        request.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
@@ -1073,32 +1075,34 @@ impl GooseMetrics {
             let fails_precision = determine_precision(fails);
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
+                let fail_and_percent = format!(
+                    "{} ({}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent as usize
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent as usize
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
                     fails_p = fails_precision,
                 )?;
             } else {
+                let fail_and_percent = format!(
+                    "{} ({:.1}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({:.1}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent
-                    ),
+                    fail_and_percent,
                     reqs,
                     fails,
                     reqs_p = reqs_precision,
@@ -1166,6 +1170,11 @@ impl GooseMetrics {
                 }
 
                 if fail_percent as usize == 100 || fail_percent as usize == 0 {
+                    let fail_and_percent = format!(
+                        "{} ({}%)",
+                        task.fail_count.to_formatted_string(&Locale::en),
+                        fail_percent as usize
+                    );
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
@@ -1174,17 +1183,18 @@ impl GooseMetrics {
                             24
                         ),
                         total_count.to_formatted_string(&Locale::en),
-                        format!(
-                            "{} ({}%)",
-                            task.fail_count.to_formatted_string(&Locale::en),
-                            fail_percent as usize
-                        ),
+                        fail_and_percent,
                         runs,
                         fails,
                         runs_p = runs_precision,
                         fails_p = fails_precision,
                     )?;
                 } else {
+                    let fail_and_percent = format!(
+                        "{} ({:.1}%)",
+                        task.fail_count.to_formatted_string(&Locale::en),
+                        fail_percent
+                    );
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
@@ -1193,11 +1203,7 @@ impl GooseMetrics {
                             24
                         ),
                         total_count.to_formatted_string(&Locale::en),
-                        format!(
-                            "{} ({:.1}%)",
-                            task.fail_count.to_formatted_string(&Locale::en),
-                            fail_percent
-                        ),
+                        fail_and_percent,
                         runs,
                         fails,
                         runs_p = runs_precision,
@@ -1225,32 +1231,34 @@ impl GooseMetrics {
 
             // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
             if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
+                let fail_and_percent = format!(
+                    "{} ({}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent as usize
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent as usize
-                    ),
+                    fail_and_percent,
                     runs,
                     fails,
                     runs_p = runs_precision,
                     fails_p = fails_precision,
                 )?;
             } else {
+                let fail_and_percent = format!(
+                    "{} ({:.1}%)",
+                    aggregate_fail_count.to_formatted_string(&Locale::en),
+                    aggregate_fail_percent
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                     "Aggregated",
                     aggregate_total_count.to_formatted_string(&Locale::en),
-                    format!(
-                        "{} ({:.1}%)",
-                        aggregate_fail_count.to_formatted_string(&Locale::en),
-                        aggregate_fail_percent
-                    ),
+                    fail_and_percent,
                     runs,
                     fails,
                     runs_p = runs_precision,
