@@ -1662,9 +1662,8 @@ impl GooseAttack {
         };
 
         // Record when the GooseAttack officially started.
-        let now = time::Instant::now();
-        self.started = Some(now);
-        self.graph_data.set_started(now, Utc::now());
+        self.started = Some(time::Instant::now());
+        self.graph_data.set_started(Utc::now());
 
         Ok(())
     }
@@ -1736,7 +1735,8 @@ impl GooseAttack {
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
                     // Record last users for users per second graph in HTML report.
-                    self.graph_data.record_users_per_second(self.metrics.users);
+                    self.graph_data
+                        .record_users_per_second(self.metrics.users, Utc::now());
                     // The load test is fully stopped at this point.
                     self.metrics
                         .history
@@ -1763,7 +1763,8 @@ impl GooseAttack {
             }
 
             // Record current users for users per second graph in HTML report.
-            self.graph_data.record_users_per_second(self.metrics.users);
+            self.graph_data
+                .record_users_per_second(self.metrics.users, Utc::now());
 
             // Regularly synchronize metrics.
             self.sync_metrics(&mut goose_attack_run_state, false)
