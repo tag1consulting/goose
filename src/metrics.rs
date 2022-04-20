@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
 //use tokio::io::AsyncWriteExt;
+use chrono::prelude::*;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
@@ -2043,7 +2044,7 @@ impl GooseMetrics {
 
         writeln!(
             fmt,
-            " {:<12} {:<19} {:<17} {:<10} Users",
+            " {:<12} {:<21} {:<19} {:<10} Users",
             "Action", "Started", "Stopped", "Elapsed",
         )?;
         writeln!(
@@ -2055,8 +2056,14 @@ impl GooseMetrics {
         for step in self.history.windows(2) {
             let (seconds, minutes, hours) =
                 self.get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
-            let started = step[0].timestamp.format("%y-%m-%d %H:%M:%S");
-            let stopped = step[1].timestamp.format("%y-%m-%d %H:%M:%S");
+            let started = Local
+                .timestamp(step[0].timestamp.timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            let stopped = Local
+                .timestamp(step[1].timestamp.timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
             match &step[0].action {
                 // For maintaining just show the current number of users.
                 TestPlanStepAction::Maintaining => {
