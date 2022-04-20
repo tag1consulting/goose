@@ -1383,6 +1383,22 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
+        // Configure `test_plan` before `users` so users doesn't get assigned a default when using a test plan.
+        self.test_plan = self.get_value(vec![
+            // Use --test-plan if set.
+            GooseValue {
+                value: self.test_plan.clone(),
+                filter: self.test_plan.is_none(),
+                message: "test_plan",
+            },
+            // Otherwise use GooseDefault if set and not on Worker.
+            GooseValue {
+                value: defaults.test_plan.clone(),
+                filter: defaults.test_plan.is_none() || self.worker,
+                message: "test_plan",
+            },
+        ]);
+
         // Configure `users`.
         self.users = self.get_value(vec![
             // Use --users if set.
@@ -1402,22 +1418,6 @@ impl GooseConfiguration {
                 value: Some(num_cpus::get()),
                 filter: self.worker || self.test_plan.is_some(),
                 message: "users defaulted to number of CPUs",
-            },
-        ]);
-
-        // Configure `test_plan`.
-        self.test_plan = self.get_value(vec![
-            // Use --test-plan if set.
-            GooseValue {
-                value: self.test_plan.clone(),
-                filter: self.test_plan.is_none(),
-                message: "test_plan",
-            },
-            // Otherwise use GooseDefault if set and not on Worker.
-            GooseValue {
-                value: defaults.test_plan.clone(),
-                filter: defaults.test_plan.is_none() || self.worker,
-                message: "test_plan",
             },
         ]);
 
