@@ -1320,8 +1320,9 @@ impl GooseAttack {
         // in the current step.
         debug_assert!(self.test_plan.steps[self.test_plan.current].0 > previous_users);
 
-        // Divide the number of new users to launch by the time configured to launch them.
-        let hatch_rate: f32 = (self.test_plan.steps[self.test_plan.current].0 - previous_users)
+        // Divide the number of new users to launch (minus one, as the first launches immediately without any delay)
+        // by the time configured to launch them.
+        let hatch_rate: f32 = (self.test_plan.steps[self.test_plan.current].0 - previous_users - 1)
             as f32
             / self.test_plan.steps[self.test_plan.current].1 as f32
             // Convert from milliseconds to seconds.
@@ -1426,16 +1427,15 @@ impl GooseAttack {
         }
 
         // Determine if enough users have been launched.
-        #[cfg(not(feature = "gaggle"))]
-        let all_users_launched = {
-            // If not running in Gaggle mode, all users for current step must be launched.
-            self.metrics.users >= self.test_plan.steps[self.test_plan.current].0
-        };
-
-        #[cfg(feature = "gaggle")]
-        let all_users_launched = {
-            // If running in Gaggle mode, all configured users must be launched.
-            self.weighted_users.is_empty()
+        let all_users_launched = match self.attack_mode {
+            AttackMode::Worker | AttackMode::Manager => {
+                // If running in Gaggle mode, all configured users must be launched.
+                self.weighted_users.is_empty()
+            }
+            _ => {
+                // If not running in Gaggle mode, all users for current step must be launched.
+                self.metrics.users >= self.test_plan.steps[self.test_plan.current].0
+            }
         };
 
         if all_users_launched {
@@ -1754,7 +1754,10 @@ impl GooseAttack {
                     }
                 }
                 // By reaching the Shutdown phase, break out of the GooseAttack loop.
-                AttackPhase::Shutdown => break,
+                AttackPhase::Shutdown => {
+                    self.update_duration();
+                    break;
+                }
             }
 
             // Record current users for users per second graph in HTML report.

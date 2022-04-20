@@ -25,6 +25,20 @@ const DEBUG_LOG: &str = "debug-test.log";
 const LOG_FORMAT: GooseLogFormat = GooseLogFormat::Raw;
 const THROTTLE_REQUESTS: usize = 10;
 const EXPECT_WORKERS: usize = 2;
+// Increase, Increase, Maintain, Increase, Decrease
+const TEST_PLAN: &str = "4,1;8,1;12,1;12,1;14,1;0,0";
+const TEST_PLAN_MAX_USERS: usize = 14;
+const TEST_PLAN_RUN_TIME: usize = 5;
+const TEST_PLAN_STEPS: usize = 6;
+
+// There are multiple test variations in this file.
+#[derive(Clone)]
+enum TestType {
+    // Is not a --test-plan configuration.
+    NotTestPlan,
+    // Is --test-plan configuration.
+    TestPlan,
+}
 
 // Can't be tested:
 // - GooseDefault::LogFile (logger can only be configured once)
@@ -71,6 +85,7 @@ fn validate_test(
     mock_endpoints: &[Mock],
     requests_files: &[String],
     debug_files: &[String],
+    test_type: TestType,
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
@@ -101,9 +116,6 @@ fn validate_test(
     // Confirm that we did not track task metrics.
     assert!(goose_metrics.tasks.is_empty());
 
-    // Verify that Goose started the correct number of users.
-    assert!(goose_metrics.users == USERS);
-
     // Verify that the metrics file was created and has the correct number of lines.
     let mut metrics_lines = 0;
     for requests_file in requests_files {
@@ -117,16 +129,44 @@ fn validate_test(
         assert!(std::path::Path::new(debug_file).exists());
         assert!(common::file_length(debug_file) == 0);
     }
-
-    // Requests are made while GooseUsers are hatched, and then for run_time seconds.
-    // Verify that the test ran as long as it was supposed to.
-    assert!(goose_metrics.duration == RUN_TIME);
-
-    // Be sure there were no more requests made than the throttle should allow.
-    // In the case of a gaggle, there's multiple processes running with the same
-    // throttle.
     let number_of_processes = requests_files.len();
-    assert!(metrics_lines <= (RUN_TIME + 1) * THROTTLE_REQUESTS * number_of_processes);
+
+    match test_type {
+        TestType::NotTestPlan => {
+            // Verify that Goose started the correct number of users.
+            assert!(goose_metrics.users == USERS);
+
+            // Requests are made while GooseUsers are hatched, and then for run_time seconds.
+            // Verify that the test ran as long as it was supposed to.
+            assert!(goose_metrics.duration == RUN_TIME);
+
+            // Be sure there were no more requests made than the throttle should allow.
+            // In the case of a gaggle, there's multiple processes running with the same
+            // throttle.
+            assert!(metrics_lines <= (RUN_TIME + 1) * THROTTLE_REQUESTS * number_of_processes);
+        }
+        TestType::TestPlan => {
+            // Verify that Goose started the correct number of users.
+            let mut max_users = 0;
+            for step in &goose_metrics.history {
+                if step.users > max_users {
+                    max_users = step.users;
+                }
+            }
+            assert!(goose_metrics.users == max_users);
+            assert!(TEST_PLAN_MAX_USERS == max_users);
+
+            // Be sure there's history for all load test steps. Add +1 to include "shutdown".
+            assert!(goose_metrics.history.len() == TEST_PLAN_STEPS + 1);
+
+            // Requests are made while GooseUsers are increasing or maintaining.
+            // Verify that the test ran as long as it was supposed to.
+            assert!(goose_metrics.duration == TEST_PLAN_RUN_TIME);
+
+            // Be sure there were no more requests made than the throttle should allow.
+            assert!(metrics_lines <= (TEST_PLAN_RUN_TIME + 1) * THROTTLE_REQUESTS);
+        }
+    }
 
     // Cleanup from test.
     for file in requests_files {
@@ -211,6 +251,7 @@ async fn test_defaults() {
         &mock_endpoints,
         &[request_log],
         &[debug_log],
+        TestType::NotTestPlan,
     );
 }
 
@@ -337,7 +378,13 @@ async fn test_defaults_gaggle() {
         let file = debug_log.to_string() + &i.to_string();
         debug_logs.push(file);
     }
-    validate_test(&goose_metrics, &mock_endpoints, &request_logs, &debug_logs);
+    validate_test(
+        &goose_metrics,
+        &mock_endpoints,
+        &request_logs,
+        &debug_logs,
+        TestType::NotTestPlan,
+    );
 }
 
 #[tokio::test]
@@ -407,6 +454,7 @@ async fn test_no_defaults() {
         &mock_endpoints,
         &[requests_file],
         &[debug_file],
+        TestType::NotTestPlan,
     );
 }
 
@@ -519,6 +567,127 @@ async fn test_no_defaults_gaggle() {
         &mock_endpoints,
         &requests_files,
         &debug_files,
+        TestType::NotTestPlan,
+    );
+}
+
+#[tokio::test]
+// Configure load test with set_default.
+async fn test_plan_defaults() {
+    // Multiple tests run together, so set a unique name.
+    let request_log = "testplandefaults-".to_string() + REQUEST_LOG;
+    let debug_log = "testplandefaults-".to_string() + DEBUG_LOG;
+
+    // Be sure there's no files left over from an earlier test.
+    common::cleanup_files(vec![&request_log, &debug_log]);
+
+    let server = MockServer::start();
+
+    // Setup the mock endpoints needed for this test.
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    let mut config = common::build_configuration(&server, vec![]);
+
+    // Unset options set in common.rs so set_default() is instead used.
+    config.users = None;
+    config.run_time = "".to_string();
+    config.hatch_rate = None;
+    let host = std::mem::take(&mut config.host);
+
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
+        .register_taskset(taskset!("Index").register_task(task!(get_index)))
+        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        // Start at least two users, required to run both TaskSets.
+        .set_default(GooseDefault::Host, host.as_str())
+        .unwrap()
+        .set_default(GooseDefault::TestPlan, TEST_PLAN)
+        .unwrap()
+        .set_default(GooseDefault::LogLevel, LOG_LEVEL)
+        .unwrap()
+        .set_default(GooseDefault::RequestLog, request_log.as_str())
+        .unwrap()
+        .set_default(GooseDefault::RequestFormat, LOG_FORMAT)
+        .unwrap()
+        .set_default(GooseDefault::DebugLog, debug_log.as_str())
+        .unwrap()
+        .set_default(GooseDefault::DebugFormat, LOG_FORMAT)
+        .unwrap()
+        .set_default(GooseDefault::NoDebugBody, true)
+        .unwrap()
+        .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
+        .unwrap()
+        .set_default(GooseDefault::StatusCodes, true)
+        .unwrap()
+        .set_default(GooseDefault::NoTaskMetrics, true)
+        .unwrap()
+        .execute()
+        .await
+        .unwrap();
+
+    validate_test(
+        &goose_metrics,
+        &mock_endpoints,
+        &[request_log],
+        &[debug_log],
+        TestType::TestPlan,
+    );
+}
+
+#[tokio::test]
+// Configure load test with run time options (not with defaults).
+async fn test_plan_no_defaults() {
+    // Multiple tests run together, so set a unique name.
+    let requests_file = "testplannodefaults-".to_string() + REQUEST_LOG;
+    let debug_file = "testplannodefaults-".to_string() + DEBUG_LOG;
+
+    // Be sure there's no files left over from an earlier test.
+    common::cleanup_files(vec![&requests_file, &debug_file]);
+
+    let server = MockServer::start();
+
+    // Setup the mock endpoints needed for this test.
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    let mut config = common::build_configuration(
+        &server,
+        vec![
+            "--test-plan",
+            TEST_PLAN,
+            "--request-log",
+            &requests_file,
+            "--request-format",
+            &format!("{:?}", LOG_FORMAT),
+            "--debug-log",
+            &debug_file,
+            "--debug-format",
+            &format!("{:?}", LOG_FORMAT),
+            "--no-debug-body",
+            "--throttle-requests",
+            &THROTTLE_REQUESTS.to_string(),
+            "--no-task-metrics",
+            "--status-codes",
+        ],
+    );
+
+    config.users = None;
+    config.hatch_rate = None;
+    config.run_time = "".to_string();
+
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
+        .register_taskset(taskset!("Index").register_task(task!(get_index)))
+        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .execute()
+        .await
+        .unwrap();
+
+    validate_test(
+        &goose_metrics,
+        &mock_endpoints,
+        &[requests_file],
+        &[debug_file],
+        TestType::TestPlan,
     );
 }
 

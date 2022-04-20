@@ -2595,9 +2595,10 @@ impl GooseAttack {
     }
 
     // Update metrics showing how long the load test has been running.
+    // 1.2 seconds will round down to 1 second. 1.6 seconds will round up to 2 seconds.
     pub(crate) fn update_duration(&mut self) {
         self.metrics.duration = if self.started.is_some() {
-            self.started.unwrap().elapsed().as_secs() as usize
+            self.started.unwrap().elapsed().as_secs_f32().round() as usize
         } else {
             0
         };
