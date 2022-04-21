@@ -2606,6 +2606,8 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         // Only write the report if enabled.
         if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
+            let test_start_time = self.metrics.history.first().unwrap().timestamp;
+
             // Prepare report summary variables.
             let users = self.metrics.users.to_string();
 
@@ -2990,7 +2992,7 @@ impl GooseAttack {
                     &tasks_rows.join("\n"),
                     self.graph_data
                         .get_tasks_per_second_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history),
+                        .get_markup(&self.metrics.history, test_start_time),
                 );
             } else {
                 tasks_template = "".to_string();
@@ -3007,7 +3009,7 @@ impl GooseAttack {
                     &error_rows.join("\n"),
                     self.graph_data
                         .get_errors_per_second_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history),
+                        .get_markup(&self.metrics.history, test_start_time),
                 )
             } else {
                 "".to_string()
@@ -3080,15 +3082,15 @@ impl GooseAttack {
                     graph_rps_template: &self
                         .graph_data
                         .get_requests_per_second_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history),
+                        .get_markup(&self.metrics.history, test_start_time),
                     graph_average_response_time_template: &self
                         .graph_data
                         .get_average_response_time_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history),
+                        .get_markup(&self.metrics.history, test_start_time),
                     graph_users_per_second: &self
                         .graph_data
                         .get_active_users_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history),
+                        .get_markup(&self.metrics.history, test_start_time),
                 },
             );
 

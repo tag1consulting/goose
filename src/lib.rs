@@ -57,7 +57,6 @@ pub mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
-//use chrono::prelude::*;
 use gumdrop::Options;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
@@ -84,7 +83,6 @@ use crate::metrics::{GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 #[cfg(feature = "gaggle")]
 use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
-use chrono::prelude::*;
 
 /// Constant defining Goose's default telnet Controller port.
 const DEFAULT_TELNET_PORT: &str = "5116";
@@ -1663,7 +1661,6 @@ impl GooseAttack {
 
         // Record when the GooseAttack officially started.
         self.started = Some(time::Instant::now());
-        self.graph_data.set_started(Utc::now());
 
         Ok(())
     }
@@ -1735,8 +1732,10 @@ impl GooseAttack {
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
                     // Record last users for users per second graph in HTML report.
-                    self.graph_data
-                        .record_users_per_second(self.metrics.users, Utc::now());
+                    self.graph_data.record_users_per_second(
+                        self.metrics.users,
+                        self.started.unwrap().elapsed().as_secs() as usize,
+                    );
                     // The load test is fully stopped at this point.
                     self.metrics
                         .history
@@ -1763,8 +1762,10 @@ impl GooseAttack {
             }
 
             // Record current users for users per second graph in HTML report.
-            self.graph_data
-                .record_users_per_second(self.metrics.users, Utc::now());
+            self.graph_data.record_users_per_second(
+                self.metrics.users,
+                self.started.unwrap().elapsed().as_secs() as usize,
+            );
 
             // Regularly synchronize metrics.
             self.sync_metrics(&mut goose_attack_run_state, false)
