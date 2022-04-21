@@ -1,6 +1,5 @@
 //! Optionally writes an html-formatted summary report after running a load test.
 
-use crate::graph::Graph;
 use crate::metrics;
 
 use std::collections::BTreeMap;
@@ -315,7 +314,7 @@ pub(crate) fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
 }
 
 /// If task metrics are enabled, add a task metrics table to the html report.
-pub(crate) fn task_metrics_template(task_rows: &str, graph: Graph<usize, usize>) -> String {
+pub(crate) fn task_metrics_template(task_rows: &str, graph: String) -> String {
     format!(
         r#"<div class="tasks">
         <h2>Task Metrics</h2>
@@ -341,7 +340,7 @@ pub(crate) fn task_metrics_template(task_rows: &str, graph: Graph<usize, usize>)
         </table>
     </div>"#,
         task_rows = task_rows,
-        graph = graph.get_markup(),
+        graph = graph,
     )
 }
 
@@ -380,7 +379,7 @@ pub(crate) fn task_metrics_row(metric: TaskMetric) -> String {
 }
 
 /// If there are errors, add an errors table to the html report.
-pub(crate) fn errors_template(error_rows: &str, graph: Graph<u32, u32>) -> String {
+pub(crate) fn errors_template(error_rows: &str, graph: String) -> String {
     format!(
         r#"<div class="errors">
         <h2>Errors</h2>
@@ -400,7 +399,7 @@ pub(crate) fn errors_template(error_rows: &str, graph: Graph<u32, u32>) -> Strin
         </table>
     </div>"#,
         error_rows = error_rows,
-        graph = graph.get_markup(),
+        graph = graph,
     )
 }
 
@@ -419,7 +418,7 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
 /// Build the html report.
 pub(crate) fn build_report(
     users: &str,
-    report_range: &str,
+    steps_rows: &str,
     hosts: &str,
     templates: GooseReportTemplates,
 ) -> String {
@@ -498,8 +497,22 @@ pub(crate) fn build_report(
         <div class="info">
             <p>Users: <span>{users}</span> </p>
             <p>Target Host: <span>{hosts}</span></p>
-            {report_range}
-            <p><span><small><em>{pkg_name} v{pkg_version}</em></small></span></pr>
+            <p><span><small><em>{pkg_name} v{pkg_version}</em></small></span></p>
+            <h2>Plan overview</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Action</th>
+                            <th>Started</th>
+                            <th>Stopped</th>
+                            <th>Elapsed</th>
+                            <th>Users</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {steps_rows}
+                    </tbody>
+                </table>
         </div>
 
         <div class="requests">
@@ -572,7 +585,7 @@ pub(crate) fn build_report(
 </body>
 </html>"#,
         users = users,
-        report_range = report_range,
+        steps_rows = steps_rows,
         hosts = hosts,
         pkg_name = pkg_name,
         pkg_version = pkg_version,

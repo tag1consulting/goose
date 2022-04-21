@@ -5,6 +5,7 @@
 //! this data is converted into [`Graph`] structures and HTML markup is generated
 //! based on them.
 
+use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
 use serde::Serialize;
@@ -15,15 +16,6 @@ use std::marker::PhantomData;
 
 /// Used to collect graph data during a load test.
 pub(crate) struct GraphData {
-    /// Tracks when the load test first started with an optional system timestamp.
-    starting: Option<DateTime<Utc>>,
-    /// Tracks when all [`GooseUser`](../goose/struct.GooseUser.html) threads fully
-    /// started with an optional system timestamp.
-    started: Option<DateTime<Utc>>,
-    /// Tracks when the load test first began stopping with an optional system timestamp.
-    stopping: Option<DateTime<Utc>>,
-    /// Tracks when the load test stopped with an optional system timestamp.
-    stopped: Option<DateTime<Utc>>,
     /// Counts requests per second for each request type.
     requests_per_second: HashMap<String, TimeSeries<u32, u32>>,
     /// Counts errors per second.
@@ -41,36 +33,12 @@ impl GraphData {
     pub(crate) fn new() -> Self {
         trace!("new graph");
         GraphData {
-            starting: None,
-            started: None,
-            stopping: None,
-            stopped: None,
             requests_per_second: HashMap::new(),
             errors_per_second: HashMap::new(),
             average_response_time_per_second: HashMap::new(),
             tasks_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
         }
-    }
-
-    /// Sets starting time.
-    pub(crate) fn set_starting(&mut self, starting: DateTime<Utc>) {
-        self.starting = Some(starting);
-    }
-
-    /// Sets started time.
-    pub(crate) fn set_started(&mut self, started: DateTime<Utc>) {
-        self.started = Some(started);
-    }
-
-    /// Sets stopping time.
-    pub(crate) fn set_stopping(&mut self, stopping: DateTime<Utc>) {
-        self.stopping = Some(stopping);
-    }
-
-    /// Sets stopped time.
-    pub(crate) fn set_stopped(&mut self, stopped: DateTime<Utc>) {
-        self.stopped = Some(stopped);
     }
 
     /// Record requests per second metric.
@@ -138,11 +106,9 @@ impl GraphData {
     }
 
     /// Records number of users for a current second.
-    pub(crate) fn record_users_per_second(&mut self, users: usize, now: DateTime<Utc>) {
-        if let Some(starting) = self.starting {
-            let second = (now.timestamp() - starting.timestamp()) as usize;
-            self.users_per_second.set_and_maintain_last(second, users);
-        }
+
+    pub(crate) fn record_users_per_second(&mut self, users: usize, second: usize) {
+        self.users_per_second.set_and_maintain_last(second, users);
     }
 
     /// Generate active users graph.
@@ -210,20 +176,7 @@ impl GraphData {
         granular_data: bool,
         data: HashMap<String, TimeSeries<T, U>>,
     ) -> Graph<'a, T, U> {
-        Graph::new(
-            html_id,
-            y_axis_label,
-            granular_data,
-            data,
-            self.starting.unwrap(),
-            if self.started.is_none() && self.stopping.is_some() {
-                self.stopping
-            } else {
-                self.started
-            },
-            self.stopping,
-            self.stopped,
-        )
+        Graph::new(html_id, y_axis_label, granular_data, data)
     }
 
     /// Creates a Graph from single (just total numbers, not granular) data.
@@ -241,20 +194,7 @@ impl GraphData {
         let mut hash_map_data = HashMap::new();
         hash_map_data.insert("Total".to_string(), data);
 
-        Graph::new(
-            html_id,
-            y_axis_label,
-            granular_data,
-            hash_map_data,
-            self.starting.unwrap(),
-            if self.started.is_none() && self.stopping.is_some() {
-                self.stopping
-            } else {
-                self.started
-            },
-            self.stopping,
-            self.stopped,
-        )
+        Graph::new(html_id, y_axis_label, granular_data, hash_map_data)
     }
 }
 
@@ -269,14 +209,6 @@ pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Cop
     granular_data: bool,
     /// Graph data.
     data: HashMap<String, TimeSeries<T, U>>,
-    /// Time when the test startup phase began.
-    starting: DateTime<Utc>,
-    /// Time when the test was started (startup phase completed).
-    started: Option<DateTime<Utc>>,
-    /// Time when the test stopping phase began.
-    stopping: Option<DateTime<Utc>>,
-    /// Time when the test was completely stopped.
-    stopped: Option<DateTime<Utc>>,
 }
 
 impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + PartialOrd>
@@ -289,71 +221,104 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         y_axis_label: &'a str,
         granular_data: bool,
         data: HashMap<String, TimeSeries<T, U>>,
-        starting: DateTime<Utc>,
-        started: Option<DateTime<Utc>>,
-        stopping: Option<DateTime<Utc>>,
-        stopped: Option<DateTime<Utc>>,
     ) -> Graph<'a, T, U> {
         Graph {
             html_id,
             y_axis_label,
             granular_data,
             data,
-            starting,
-            started,
-            stopping,
-            stopped,
         }
     }
 
     /// Helper function to build HTML charts powered by the
     /// [ECharts](https://echarts.apache.org) library.
-    pub(crate) fn get_markup(self) -> String {
-        let datetime_format = "%Y-%m-%d %H:%M:%S";
-
-        let starting_area = if self.started.is_some() {
-            format!(
-                r#"[
-                                            {{
-                                                name: 'Starting',
-                                                xAxis: '{starting}'
-                                            }},
-                                            {{
-                                                xAxis: '{started}'
-                                            }}
-                                        ],"#,
-                starting = Local
-                    .timestamp(self.starting.timestamp(), 0)
-                    .format(datetime_format),
-                started = Local
-                    .timestamp(self.started.unwrap().timestamp(), 0)
-                    .format(datetime_format),
-            )
-        } else {
-            "".to_string()
-        };
-
-        let stopping_area = if self.stopping.is_some() && self.stopped.is_some() {
-            format!(
-                r#"[
-                                            {{
-                                                name: 'Stopping',
-                                                xAxis: '{stopping}'
-                                            }},
-                                            {{
-                                                xAxis: '{stopped}'
-                                            }}
-                                        ],"#,
-                stopping = Local
-                    .timestamp(self.stopping.unwrap().timestamp(), 0)
-                    .format(datetime_format),
-                stopped = Local
-                    .timestamp(self.stopped.unwrap().timestamp(), 0)
-                    .format(datetime_format),
-            )
-        } else {
-            "".to_string()
-        };
+    pub(crate) fn get_markup(
+        self,
+        history: &[TestPlanHistory],
+        test_started_time: DateTime<Utc>,
+    ) -> String {
+        let mut steps = String::new();
+        for step in history.windows(2) {
+            let started = Local
+                .timestamp(step[0].timestamp.timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            let stopped = Local
+                .timestamp(step[1].timestamp.timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            match &step[0].action {
+                // For increasing show the current number of users to the new number of users.
+                TestPlanStepAction::Increasing => {
+                    steps.push_str(&format!(
+                        r#"[
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{started}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ color: 'rgba(44, 102, 79, 0.05)' }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{stopped}',
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],"#,
+                        started = started,
+                        stopped = stopped,
+                    ));
+                }
+                // For decreasing show the new number of users from the current number of users.
+                TestPlanStepAction::Decreasing => {
+                    steps.push_str(&format!(
+                        r#"[
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{started}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{started}',
+                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.05)' }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{stopped}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{stopped}'
+                            }}
+                        ],"#,
+                        started = started,
+                        stopped = stopped,
+                    ));
+                }
+                _ => {}
+            }
+        }
 
         let mut total_values: TimeSeries<T, U> = TimeSeries::new();
         let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
@@ -389,9 +354,10 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                             }},
                             "#,
                         label = label,
-                        values = json!(
-                            self.add_timestamp_to_html_graph_data(&sub_data.get_graph_data())
-                        )
+                        values = json!(self.add_timestamp_to_html_graph_data(
+                            &sub_data.get_graph_data(),
+                            test_started_time
+                        ))
                     );
                     other_values += formatted_line.as_str();
                 }
@@ -483,10 +449,8 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
                                     data: [
-                                        {starting_area}
-                                        {stopping_area}
+                                        {steps}
                                     ]
                                 }},
                                 data: {main_values},
@@ -497,14 +461,15 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                 </script>
             </div>"#,
             html_id = self.html_id,
-            main_values =
-                json!(self.add_timestamp_to_html_graph_data(&main_values.get_graph_data())),
-            starting_area = starting_area,
-            stopping_area = stopping_area,
+            main_values = json!(self.add_timestamp_to_html_graph_data(
+                &main_values.get_graph_data(),
+                test_started_time
+            )),
             y_axis_label = self.y_axis_label,
             main_label = main_label,
             legend = legend,
-            other_values = other_values
+            other_values = other_values,
+            steps = steps,
         )
     }
 
@@ -513,13 +478,17 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
     /// Will take a vector of (generally numerical) values and convert them into tuples where
     /// the second element will be the data point and the first element will be formatted time
     /// it belongs to.
-    fn add_timestamp_to_html_graph_data(&self, data: &[U]) -> Vec<(String, U)> {
+    fn add_timestamp_to_html_graph_data(
+        &self,
+        data: &[U],
+        started: DateTime<Utc>,
+    ) -> Vec<(String, U)> {
         data.iter()
             .enumerate()
             .map(|(second, value)| {
                 (
                     Local
-                        .timestamp(second as i64 + self.starting.timestamp(), 0)
+                        .timestamp(second as i64 + started.timestamp(), 0)
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     *value,
@@ -802,69 +771,6 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_time_setters() {
-        let mut graph = GraphData::new();
-        assert_eq!(graph.starting, None);
-        assert_eq!(graph.started, None);
-        assert_eq!(graph.stopping, None);
-        assert_eq!(graph.stopped, None);
-
-        graph.set_starting(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
-        assert_eq!(
-            graph.starting,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
-        );
-        assert_eq!(graph.started, None);
-        assert_eq!(graph.stopping, None);
-        assert_eq!(graph.stopped, None);
-
-        graph.set_started(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24));
-        assert_eq!(
-            graph.starting,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
-        );
-        assert_eq!(
-            graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24))
-        );
-        assert_eq!(graph.stopping, None);
-        assert_eq!(graph.stopped, None);
-
-        graph.set_stopping(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
-        assert_eq!(
-            graph.starting,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
-        );
-        assert_eq!(
-            graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24))
-        );
-        assert_eq!(
-            graph.stopping,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
-        );
-        assert_eq!(graph.stopped, None);
-
-        graph.set_stopped(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26));
-        assert_eq!(
-            graph.starting,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23))
-        );
-        assert_eq!(
-            graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24))
-        );
-        assert_eq!(
-            graph.stopping,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
-        );
-        assert_eq!(
-            graph.stopped,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
-        );
-    }
-
-    #[test]
     fn test_graph_setters() {
         let mut graph = GraphData::new();
         graph.requests_per_second.insert(
@@ -926,10 +832,6 @@ mod test {
                 total: 0,
             },
         );
-        graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
-        graph.started = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
-        graph.stopping = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26));
-        graph.stopped = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27));
 
         let rps_graph = graph.get_requests_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
@@ -943,22 +845,6 @@ mod test {
         );
         assert_eq!(rps_graph.html_id, "graph-rps");
         assert_eq!(rps_graph.y_axis_label, "Requests #");
-        assert_eq!(
-            rps_graph.starting,
-            Utc.ymd(2021, 12, 14).and_hms(15, 12, 23)
-        );
-        assert_eq!(
-            rps_graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
-        );
-        assert_eq!(
-            rps_graph.stopping,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
-        );
-        assert_eq!(
-            rps_graph.stopped,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
-        );
 
         let users_graph = graph.get_active_users_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
@@ -972,22 +858,6 @@ mod test {
         );
         assert_eq!(users_graph.html_id, "graph-active-users");
         assert_eq!(users_graph.y_axis_label, "Active users #");
-        assert_eq!(
-            users_graph.starting,
-            Utc.ymd(2021, 12, 14).and_hms(15, 12, 23)
-        );
-        assert_eq!(
-            users_graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
-        );
-        assert_eq!(
-            users_graph.stopping,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
-        );
-        assert_eq!(
-            users_graph.stopped,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
-        );
 
         let avg_rt_graph = graph.get_average_response_time_graph(true);
         let expected_time_series: TimeSeries<MovingAverage, f32> = TimeSeries {
@@ -1025,22 +895,6 @@ mod test {
         );
         assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
         assert_eq!(avg_rt_graph.y_axis_label, "Response time [ms]");
-        assert_eq!(
-            avg_rt_graph.starting,
-            Utc.ymd(2021, 12, 14).and_hms(15, 12, 23)
-        );
-        assert_eq!(
-            avg_rt_graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
-        );
-        assert_eq!(
-            avg_rt_graph.stopping,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
-        );
-        assert_eq!(
-            avg_rt_graph.stopped,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
-        );
 
         let tasks_graph = graph.get_tasks_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
@@ -1054,22 +908,6 @@ mod test {
         );
         assert_eq!(tasks_graph.html_id, "graph-tps");
         assert_eq!(tasks_graph.y_axis_label, "Tasks #");
-        assert_eq!(
-            tasks_graph.starting,
-            Utc.ymd(2021, 12, 14).and_hms(15, 12, 23)
-        );
-        assert_eq!(
-            tasks_graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
-        );
-        assert_eq!(
-            tasks_graph.stopping,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
-        );
-        assert_eq!(
-            tasks_graph.stopped,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
-        );
 
         let errors_graph = graph.get_errors_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
@@ -1084,22 +922,6 @@ mod test {
         );
         assert_eq!(errors_graph.html_id, "graph-eps");
         assert_eq!(errors_graph.y_axis_label, "Errors #");
-        assert_eq!(
-            errors_graph.starting,
-            Utc.ymd(2021, 12, 14).and_hms(15, 12, 23)
-        );
-        assert_eq!(
-            errors_graph.started,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25))
-        );
-        assert_eq!(
-            errors_graph.stopping,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26))
-        );
-        assert_eq!(
-            errors_graph.stopped,
-            Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27))
-        );
     }
 
     #[test]
@@ -1510,20 +1332,19 @@ mod test {
     fn test_record_users_per_second() {
         // Should be initialized with empty tasks per second vector.
         let mut graph = GraphData::new();
-        graph.starting = Some(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
         assert_eq!(graph.users_per_second.data.len(), 0);
 
-        graph.record_users_per_second(1, Utc.ymd(2021, 12, 14).and_hms(15, 12, 23));
-        graph.record_users_per_second(1, Utc.ymd(2021, 12, 14).and_hms(15, 12, 24));
-        graph.record_users_per_second(2, Utc.ymd(2021, 12, 14).and_hms(15, 12, 25));
+        graph.record_users_per_second(1, 0);
+        graph.record_users_per_second(1, 1);
+        graph.record_users_per_second(2, 2);
         assert_eq!(graph.users_per_second.data.len(), 3);
         assert_eq!(graph.users_per_second.data[0], 1);
         assert_eq!(graph.users_per_second.data[1], 1);
         assert_eq!(graph.users_per_second.data[2], 2);
         assert_eq!(graph.users_per_second.total(), 6);
 
-        graph.record_users_per_second(5, Utc.ymd(2021, 12, 14).and_hms(15, 12, 28));
-        graph.record_users_per_second(10, Utc.ymd(2021, 12, 14).and_hms(15, 13, 00));
+        graph.record_users_per_second(5, 5);
+        graph.record_users_per_second(10, 37);
         assert_eq!(graph.users_per_second.data.len(), 38);
         assert_eq!(graph.users_per_second.data[0], 1);
         assert_eq!(graph.users_per_second.data[1], 1);
@@ -1633,19 +1454,11 @@ mod test {
     #[test]
     fn test_add_timestamp_to_html_graph_data() {
         let data = vec![123, 234, 345, 456, 567];
-        let graph: Graph<usize, usize> = Graph::new(
-            "html_id",
-            "Label",
-            true,
-            HashMap::new(),
-            Utc.ymd(2021, 12, 14).and_hms(15, 12, 23),
-            None,
-            None,
-            None,
-        );
+        let graph: Graph<usize, usize> = Graph::new("html_id", "Label", true, HashMap::new());
 
         assert_eq!(
-            graph.add_timestamp_to_html_graph_data(&data),
+            graph
+                .add_timestamp_to_html_graph_data(&data, Utc.ymd(2021, 12, 14).and_hms(15, 12, 23)),
             vec![
                 (
                     Local
@@ -1748,7 +1561,6 @@ mod test {
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
 "#,
             html_id = html_id,
             y_axis_label = y_axis_label,
@@ -1773,7 +1585,6 @@ mod test {
         expected += format!(
             r#"                                    data: [
                                         
-                                        
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
@@ -1789,164 +1600,16 @@ mod test {
         ).as_str();
 
         assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                true,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                None,
-                None,
-                None
-            )
-            .get_markup(),
+            Graph::new("graph-rps", "Requests #", true, graph.clone(),)
+                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
             expected
         );
 
         // It should make no difference if we disable granular graphs, since we only have one
         // request.
         assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                false,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                None,
-                None,
-                None
-            )
-            .get_markup(),
-            expected
-        );
-
-        let mut expected = expected_prefix.to_owned();
-        expected += format!(
-            r#"                                    data: [
-                                        [
-                                            {{
-                                                name: 'Starting',
-                                                xAxis: '{starting}'
-                                            }},
-                                            {{
-                                                xAxis: '{started}'
-                                            }}
-                                        ],
-                                        
-                                    ]
-                                }},
-                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
-                            }},
-                            
-                        ]
-                    }});
-                </script>
-            </div>"#,
-            data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M"),
-            starting = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M:%S"),
-            started = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M:%S"),
-        ).as_str();
-
-        assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                true,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
-                None,
-                None
-            )
-            .get_markup(),
-            expected
-        );
-
-        // It should make no difference if we disable granular graphs, since we only have one
-        // request.
-        assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                false,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
-                None,
-                None
-            )
-            .get_markup(),
-            expected
-        );
-
-        let mut expected = expected_prefix.to_owned();
-        expected += format!(
-            r#"                                    data: [
-                                        
-                                        [
-                                            {{
-                                                name: 'Stopping',
-                                                xAxis: '{stopping}'
-                                            }},
-                                            {{
-                                                xAxis: '{stopped}'
-                                            }}
-                                        ],
-                                    ]
-                                }},
-                                data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
-                            }},
-                            
-                        ]
-                    }});
-                </script>
-            </div>"#,
-            data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M"),
-            stopping = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M:%S"),
-            stopped = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M:%S"),
-        ).as_str();
-
-        assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                true,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                None,
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34))
-            )
-            .get_markup(),
-            expected
-        );
-
-        // It should make no difference if we disable granular graphs, since we only have one
-        // request.
-        assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                false,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                None,
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34))
-            )
-            .get_markup(),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
+                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
             expected
         );
 
@@ -1954,23 +1617,58 @@ mod test {
         expected += format!(
             r#"                                    data: [
                                         [
-                                            {{
-                                                name: 'Starting',
-                                                xAxis: '{starting}'
-                                            }},
-                                            {{
-                                                xAxis: '{started}'
-                                            }}
-                                        ],
-                                        [
-                                            {{
-                                                name: 'Stopping',
-                                                xAxis: '{stopping}'
-                                            }},
-                                            {{
-                                                xAxis: '{stopped}'
-                                            }}
-                                        ],
+                            {{
+                                xAxis: '{increasing}',
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{increasing}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{increasing}',
+                                itemStyle: {{ color: 'rgba(44, 102, 79, 0.05)' }},
+                            }},
+                            {{
+                                xAxis: '{decreasing}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{decreasing}',
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{decreasing}'
+                            }}
+                        ],[
+                            {{
+                                xAxis: '{decreasing}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{decreasing}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{decreasing}',
+                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.05)' }},
+                            }},
+                            {{
+                                xAxis: '{finishing}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{finishing}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{finishing}'
+                            }}
+                        ],
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
@@ -1983,49 +1681,46 @@ mod test {
             data_series_prefix = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M"),
-            starting = Local
+            increasing = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
-            started = Local
+            decreasing = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 33).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
+            finishing = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M:%S"),
-            stopping = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 36).timestamp(), 0)
-                .format("%Y-%m-%d %H:%M:%S"),
-            stopped = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 38).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
         ).as_str();
 
+        let steps = vec![
+            TestPlanHistory {
+                action: TestPlanStepAction::Increasing,
+                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                users: 123,
+            },
+            TestPlanHistory {
+                action: TestPlanStepAction::Decreasing,
+                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 33),
+                users: 123,
+            },
+            TestPlanHistory {
+                action: TestPlanStepAction::Finished,
+                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 34),
+                users: 123,
+            },
+        ];
+
         assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                true,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 36)),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 38))
-            )
-            .get_markup(),
+            Graph::new("graph-rps", "Requests #", true, graph.clone(),)
+                .get_markup(&steps, Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
             expected
         );
 
         // It should make no difference if we disable granular graphs, since we only have one
         // request.
         assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                false,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34)),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 36)),
-                Some(Utc.ymd(2021, 11, 21).and_hms(21, 20, 38))
-            )
-            .get_markup(),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
+                .get_markup(&steps, Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
             expected
         );
 
@@ -2036,17 +1731,8 @@ mod test {
         };
         graph.insert("GET /user".to_string(), user_data);
 
-        let markup = Graph::new(
-            "graph-rps",
-            "Requests #",
-            true,
-            graph.clone(),
-            Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-            None,
-            None,
-            None,
-        )
-        .get_markup();
+        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone())
+            .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32));
         let expected_legend = r#"
                         legend: {
                             type: 'plain',
@@ -2068,9 +1754,7 @@ mod test {
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
                                     data: [
-                                        
                                         
                                     ]
                                 }},
@@ -2132,7 +1816,6 @@ mod test {
         expected += format!(
             r#"                                    data: [
                                         
-                                        
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",146],["{data_series_prefix}:33",123],["{data_series_prefix}:34",143],["{data_series_prefix}:35",156]],
@@ -2148,17 +1831,8 @@ mod test {
         ).as_str();
 
         assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                false,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                None,
-                None,
-                None,
-            )
-            .get_markup(),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
+                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
             expected
         );
 
@@ -2171,17 +1845,8 @@ mod test {
         graph.insert("GET /two".to_string(), more_data.clone());
         graph.insert("GET /three".to_string(), more_data);
 
-        let markup = Graph::new(
-            "graph-rps",
-            "Requests #",
-            true,
-            graph.clone(),
-            Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-            None,
-            None,
-            None,
-        )
-        .get_markup();
+        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone())
+            .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32));
         let expected_legend = r#"
                         legend: {
                             type: 'scroll',
@@ -2203,9 +1868,7 @@ mod test {
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-                                    itemStyle: {{ color: 'rgba(6, 6, 6, 0.10)' }},
                                     data: [
-                                        
                                         
                                     ]
                                 }},
@@ -2322,7 +1985,6 @@ mod test {
         expected += format!(
             r#"                                    data: [
                                         
-                                        
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",149],["{data_series_prefix}:33",126],["{data_series_prefix}:34",146],["{data_series_prefix}:35",159]],
@@ -2338,17 +2000,8 @@ mod test {
         ).as_str();
 
         assert_eq!(
-            Graph::new(
-                "graph-rps",
-                "Requests #",
-                false,
-                graph.clone(),
-                Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
-                None,
-                None,
-                None,
-            )
-            .get_markup(),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
+                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
             expected
         );
     }
