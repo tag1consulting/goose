@@ -1732,10 +1732,12 @@ impl GooseAttack {
                     // Collect all metrics sent by GooseUser threads.
                     self.sync_metrics(&mut goose_attack_run_state, true).await?;
                     // Record last users for users per second graph in HTML report.
-                    self.graph_data.record_users_per_second(
-                        self.metrics.users,
-                        self.started.unwrap().elapsed().as_secs() as usize,
-                    );
+                    if let Some(started) = self.started {
+                        self.graph_data.record_users_per_second(
+                            self.metrics.users,
+                            started.elapsed().as_secs() as usize,
+                        );
+                    };
                     // The load test is fully stopped at this point.
                     self.metrics
                         .history
@@ -1762,10 +1764,12 @@ impl GooseAttack {
             }
 
             // Record current users for users per second graph in HTML report.
-            self.graph_data.record_users_per_second(
-                self.metrics.users,
-                self.started.unwrap().elapsed().as_secs() as usize,
-            );
+            if let Some(started) = self.started {
+                self.graph_data.record_users_per_second(
+                    self.metrics.users,
+                    started.elapsed().as_secs() as usize,
+                );
+            };
 
             // Regularly synchronize metrics.
             self.sync_metrics(&mut goose_attack_run_state, false)
