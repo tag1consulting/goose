@@ -8,6 +8,16 @@
 //! contained [`GooseTaskMetrics`], [`GooseRequestMetrics`], and
 //! [`GooseErrorMetrics`] are displayed in tables.
 
+use crate::config::GooseDefaults;
+use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
+use crate::logger::GooseLog;
+use crate::report;
+use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
+use crate::util;
+#[cfg(feature = "gaggle")]
+use crate::worker::{self, GaggleMetrics};
+use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
+use chrono::prelude::*;
 use http::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
@@ -19,16 +29,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::{f32, fmt};
 use tokio::io::AsyncWriteExt;
-use chrono::prelude::*;
-use crate::config::GooseDefaults;
-use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
-use crate::logger::GooseLog;
-use crate::report;
-use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
-use crate::util;
-#[cfg(feature = "gaggle")]
-use crate::worker::{self, GaggleMetrics};
-use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 
 /// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
 /// to the parent Goose process.
