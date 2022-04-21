@@ -1742,7 +1742,6 @@ impl GooseAttack {
                     self.metrics
                         .history
                         .push(TestPlanHistory::step(TestPlanStepAction::Finished, 0));
-                    //self.graph_data.set_stopped(Utc::now());
                     // Write an html report, if enabled.
                     self.write_html_report(&mut goose_attack_run_state).await?;
                     // Shutdown Goose or go into an idle waiting state.
