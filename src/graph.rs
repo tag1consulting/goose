@@ -254,7 +254,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         r#"[
                             {{
                                 xAxis: '{started}',
-                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{started}'
@@ -263,7 +263,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         [
                             {{
                                 xAxis: '{started}',
-                                itemStyle: {{ color: 'rgba(44, 102, 79, 0.25)' }},
+                                itemStyle: {{ color: 'rgba(44, 102, 79, 0.05)' }},
                             }},
                             {{
                                 xAxis: '{stopped}'
@@ -272,7 +272,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         [
                             {{
                                 xAxis: '{stopped}',
-                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{stopped}'
@@ -288,7 +288,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         r#"[
                             {{
                                 xAxis: '{started}',
-                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{started}'
@@ -297,7 +297,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         [
                             {{
                                 xAxis: '{started}',
-                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.25)' }},
+                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.05)' }},
                             }},
                             {{
                                 xAxis: '{stopped}'
@@ -306,7 +306,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         [
                             {{
                                 xAxis: '{stopped}',
-                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{stopped}'
@@ -1619,7 +1619,7 @@ mod test {
                                         [
                             {{
                                 xAxis: '{increasing}',
-                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{increasing}'
@@ -1628,7 +1628,7 @@ mod test {
                         [
                             {{
                                 xAxis: '{increasing}',
-                                itemStyle: {{ color: 'rgba(44, 102, 79, 0.25)' }},
+                                itemStyle: {{ color: 'rgba(44, 102, 79, 0.05)' }},
                             }},
                             {{
                                 xAxis: '{decreasing}'
@@ -1637,7 +1637,7 @@ mod test {
                         [
                             {{
                                 xAxis: '{decreasing}',
-                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(44, 102, 79, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{decreasing}'
@@ -1645,7 +1645,7 @@ mod test {
                         ],[
                             {{
                                 xAxis: '{decreasing}',
-                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{decreasing}'
@@ -1654,7 +1654,7 @@ mod test {
                         [
                             {{
                                 xAxis: '{decreasing}',
-                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.25)' }},
+                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.05)' }},
                             }},
                             {{
                                 xAxis: '{finishing}'
@@ -1663,7 +1663,7 @@ mod test {
                         [
                             {{
                                 xAxis: '{finishing}',
-                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 1)', borderWidth: 1 }},
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
                             }},
                             {{
                                 xAxis: '{finishing}'
