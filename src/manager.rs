@@ -9,7 +9,7 @@ use std::time;
 
 use crate::metrics::{
     self, GooseErrorMetricAggregate, GooseErrorMetrics, GooseRequestMetricAggregate,
-    GooseRequestMetrics, GooseTaskMetricAggregate, GooseTaskMetrics,
+    GooseRequestMetrics, TransactionMetricAggregate, TransactionMetrics,
 };
 use crate::util;
 use crate::worker::GaggleMetrics;
@@ -67,28 +67,31 @@ fn pipe_closed(_pipe: Pipe, event: PipeEvent) {
     }
 }
 
-/// Merge per-user task metrics from user thread into global parent metrics
-fn merge_tasks_from_worker(
-    parent_task: &GooseTaskMetricAggregate,
-    user_task: &GooseTaskMetricAggregate,
-) -> GooseTaskMetricAggregate {
+/// Merge per-user transaction metrics from user thread into global parent metrics
+fn merge_transactions_from_worker(
+    parent_transaction: &TransactionMetricAggregate,
+    user_transaction: &TransactionMetricAggregate,
+) -> TransactionMetricAggregate {
     // Make a mutable copy where we can merge things
-    let mut merged_task = parent_task.clone();
+    let mut merged_transaction = parent_transaction.clone();
     // Iterate over user times, and merge into global time
-    merged_task.times = metrics::merge_times(merged_task.times, user_task.times.clone());
-    // Increment total task time counter.
-    merged_task.total_time += &user_task.total_time;
-    // Increment count of how many task counters we've seen.
-    merged_task.counter += &user_task.counter;
-    // If user had new fastest task time, update global fastest task time.
-    merged_task.min_time = metrics::update_min_time(merged_task.min_time, user_task.min_time);
-    // If user had new slowest task time, update global slowest task time.
-    merged_task.max_time = metrics::update_max_time(merged_task.max_time, user_task.max_time);
+    merged_transaction.times =
+        metrics::merge_times(merged_transaction.times, user_transaction.times.clone());
+    // Increment total transaction time counter.
+    merged_transaction.total_time += &user_transaction.total_time;
+    // Increment count of how many transaction counters we've seen.
+    merged_transaction.counter += &user_transaction.counter;
+    // If user had new fastest transaction time, update global fastest transaction time.
+    merged_transaction.min_time =
+        metrics::update_min_time(merged_transaction.min_time, user_transaction.min_time);
+    // If user had new slowest transaction time, update global slowest transaction time.
+    merged_transaction.max_time =
+        metrics::update_max_time(merged_transaction.max_time, user_transaction.max_time);
     // Increment total success counter.
-    merged_task.success_count += &user_task.success_count;
+    merged_transaction.success_count += &user_transaction.success_count;
     // Increment total fail counter.
-    merged_task.fail_count += &user_task.fail_count;
-    merged_task
+    merged_transaction.fail_count += &user_transaction.fail_count;
+    merged_transaction
 }
 
 /// Merge per-user request metrics from user thread into global parent metrics
@@ -209,15 +212,17 @@ fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestM
     }
 }
 
-/// Helper to merge in task metrics from Worker.
-fn merge_task_metrics(goose_attack: &mut GooseAttack, tasks: GooseTaskMetrics) {
-    for scenario in tasks {
-        for task in scenario {
-            let merged_task = merge_tasks_from_worker(
-                &goose_attack.metrics.tasks[task.scenario_index][task.task_index],
-                &task,
+/// Helper to merge in transaction metrics from Worker.
+fn merge_transaction_metrics(goose_attack: &mut GooseAttack, transactions: TransactionMetrics) {
+    for scenario in transactions {
+        for transaction in scenario {
+            let merged_transaction = merge_transactions_from_worker(
+                &goose_attack.metrics.transactions[transaction.scenario_index]
+                    [transaction.transaction_index],
+                &transaction,
             );
-            goose_attack.metrics.tasks[task.scenario_index][task.task_index] = merged_task;
+            goose_attack.metrics.transactions[transaction.scenario_index]
+                [transaction.transaction_index] = merged_transaction;
         }
     }
 }
@@ -296,15 +301,15 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     let canceled = Arc::new(AtomicBool::new(false));
     util::setup_ctrlc_handler(&canceled);
 
-    // Initialize the optional task metrics.
+    // Initialize the optional transaction metrics.
     goose_attack
         .metrics
-        .initialize_task_metrics(
+        .initialize_transaction_metrics(
             &goose_attack.scenarios,
             &goose_attack.configuration,
             &goose_attack.defaults,
         )
-        .expect("failed to initialize task metrics");
+        .expect("failed to initialize transaction metrics");
 
     // Update metrics, which doesn't happen automatically on the Master as we don't
     // invoke start_attack. Hatch rate is required here so unwrap() is safe.
@@ -541,9 +546,9 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             GaggleMetrics::Requests(requests) => {
                                 merge_request_metrics(&mut goose_attack, requests)
                             }
-                            // Merge in task metrics from Worker.
-                            GaggleMetrics::Tasks(tasks) => {
-                                merge_task_metrics(&mut goose_attack, tasks)
+                            // Merge in transaction metrics from Worker.
+                            GaggleMetrics::Transactions(transactions) => {
+                                merge_transaction_metrics(&mut goose_attack, transactions)
                             }
                             // Merge in error metrics from Worker.
                             GaggleMetrics::Errors(errors) => {

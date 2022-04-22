@@ -26,13 +26,13 @@ async fn main() -> Result<(), GooseError> {
         // In this example, we only create a single scenario, named "WebsiteUser".
         .register_scenario(
             scenario!("WebsiteUser")
-                // After each task runs, sleep randomly from 5 to 15 seconds.
+                // After each transactions runs, sleep randomly from 5 to 15 seconds.
                 .set_wait_time(Duration::from_secs(5), Duration::from_secs(15))?
-                // This task only runs one time when the user first starts.
-                .register_task(task!(website_login).set_on_start())
-                // These next two tasks run repeatedly as long as the load test is running.
-                .register_task(task!(website_index))
-                .register_task(task!(website_about)),
+                // This transaction only runs one time when the user first starts.
+                .register_transaction(transaction!(website_login).set_on_start())
+                // These next two transactions run repeatedly as long as the load test is running.
+                .register_transaction(transaction!(website_index))
+                .register_transaction(transaction!(website_about)),
         )
         .execute()
         .await?;
@@ -40,25 +40,25 @@ async fn main() -> Result<(), GooseError> {
     Ok(())
 }
 
-/// Demonstrates how to log in when a user starts. We flag this task as an
-/// on_start task when registering it above. This means it only runs one time
+/// Demonstrates how to log in when a user starts. We flag this transaction as an
+/// on_start transaction when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
-async fn website_login(user: &mut GooseUser) -> GooseTaskResult {
+async fn website_login(user: &mut GooseUser) -> TransactionResult {
     let params = [("username", "test_user"), ("password", "")];
     let _goose = user.post_form("/login", &params).await?;
 
     Ok(())
 }
 
-/// A very simple task that simply loads the front page.
-async fn website_index(user: &mut GooseUser) -> GooseTaskResult {
+/// A very simple transaction that simply loads the front page.
+async fn website_index(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get("/").await?;
 
     Ok(())
 }
 
-/// A very simple task that simply loads the about page.
-async fn website_about(user: &mut GooseUser) -> GooseTaskResult {
+/// A very simple transaction that simply loads the about page.
+async fn website_about(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get("/about/").await?;
 
     Ok(())

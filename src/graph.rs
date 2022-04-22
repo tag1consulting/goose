@@ -22,8 +22,8 @@ pub(crate) struct GraphData {
     errors_per_second: HashMap<String, TimeSeries<u32, u32>>,
     /// Maintains average response time per second.
     average_response_time_per_second: HashMap<String, TimeSeries<MovingAverage, f32>>,
-    /// Number of tasks at the end of each second of the test.
-    tasks_per_second: TimeSeries<usize, usize>,
+    /// Number of transactions at the end of each second of the test.
+    transactions_per_second: TimeSeries<usize, usize>,
     /// Number of users at the end of each second of the test.
     users_per_second: TimeSeries<usize, usize>,
 }
@@ -36,7 +36,7 @@ impl GraphData {
             requests_per_second: HashMap::new(),
             errors_per_second: HashMap::new(),
             average_response_time_per_second: HashMap::new(),
-            tasks_per_second: TimeSeries::new(),
+            transactions_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
         }
     }
@@ -94,14 +94,14 @@ impl GraphData {
         );
     }
 
-    /// Record tasks per second metric.
-    pub(crate) fn record_tasks_per_second(&mut self, second: usize) {
-        self.tasks_per_second.increase_value(second, 1);
+    /// Record transactions per second metric.
+    pub(crate) fn record_transactions_per_second(&mut self, second: usize) {
+        self.transactions_per_second.increase_value(second, 1);
 
         debug!(
-            "incremented second {} for tasks per second counter: {}",
+            "incremented second {} for transactions per second counter: {}",
             second,
-            self.tasks_per_second.get(second)
+            self.transactions_per_second.get(second)
         );
     }
 
@@ -144,13 +144,16 @@ impl GraphData {
         )
     }
 
-    /// Generate active tasks graph.
-    pub(crate) fn get_tasks_per_second_graph(&self, granular_data: bool) -> Graph<usize, usize> {
+    /// Generate active transactions graph.
+    pub(crate) fn get_transactions_per_second_graph(
+        &self,
+        granular_data: bool,
+    ) -> Graph<usize, usize> {
         self.create_graph_from_single_data(
             "graph-tps",
-            "Tasks #",
+            "Transactions #",
             granular_data,
-            self.tasks_per_second.clone(),
+            self.transactions_per_second.clone(),
         )
     }
 
@@ -818,7 +821,7 @@ mod test {
                 },
             },
         );
-        graph.tasks_per_second = TimeSeries {
+        graph.transactions_per_second = TimeSeries {
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
             total: 0,
@@ -896,18 +899,18 @@ mod test {
         assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
         assert_eq!(avg_rt_graph.y_axis_label, "Response time [ms]");
 
-        let tasks_graph = graph.get_tasks_per_second_graph(true);
+        let transactions_graph = graph.get_transactions_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
             total: 0,
         };
         assert_eq!(
-            tasks_graph.data.get("Total").unwrap().clone(),
+            transactions_graph.data.get("Total").unwrap().clone(),
             expected_time_series
         );
-        assert_eq!(tasks_graph.html_id, "graph-tps");
-        assert_eq!(tasks_graph.y_axis_label, "Tasks #");
+        assert_eq!(transactions_graph.html_id, "graph-tps");
+        assert_eq!(transactions_graph.y_axis_label, "Transactions #");
 
         let errors_graph = graph.get_errors_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
@@ -1287,50 +1290,50 @@ mod test {
     }
 
     #[test]
-    fn test_record_tasks_per_second() {
-        // Should be initialized with empty tasks per second vector.
+    fn test_record_transactions_per_second() {
+        // Should be initialized with empty transactions per second vector.
         let mut graph = GraphData::new();
-        assert_eq!(graph.tasks_per_second.data.len(), 0);
+        assert_eq!(graph.transactions_per_second.data.len(), 0);
 
-        graph.record_tasks_per_second(0);
-        graph.record_tasks_per_second(0);
-        graph.record_tasks_per_second(0);
-        graph.record_tasks_per_second(1);
-        graph.record_tasks_per_second(2);
-        graph.record_tasks_per_second(2);
-        graph.record_tasks_per_second(2);
-        graph.record_tasks_per_second(2);
-        graph.record_tasks_per_second(2);
-        assert_eq!(graph.tasks_per_second.data.len(), 3);
-        assert_eq!(graph.tasks_per_second.data[0], 3);
-        assert_eq!(graph.tasks_per_second.data[1], 1);
-        assert_eq!(graph.tasks_per_second.data[2], 5);
-        assert_eq!(graph.tasks_per_second.total(), 9);
+        graph.record_transactions_per_second(0);
+        graph.record_transactions_per_second(0);
+        graph.record_transactions_per_second(0);
+        graph.record_transactions_per_second(1);
+        graph.record_transactions_per_second(2);
+        graph.record_transactions_per_second(2);
+        graph.record_transactions_per_second(2);
+        graph.record_transactions_per_second(2);
+        graph.record_transactions_per_second(2);
+        assert_eq!(graph.transactions_per_second.data.len(), 3);
+        assert_eq!(graph.transactions_per_second.data[0], 3);
+        assert_eq!(graph.transactions_per_second.data[1], 1);
+        assert_eq!(graph.transactions_per_second.data[2], 5);
+        assert_eq!(graph.transactions_per_second.total(), 9);
 
-        graph.record_tasks_per_second(100);
-        graph.record_tasks_per_second(100);
-        graph.record_tasks_per_second(100);
-        graph.record_tasks_per_second(0);
-        graph.record_tasks_per_second(1);
-        graph.record_tasks_per_second(2);
-        graph.record_tasks_per_second(5);
-        assert_eq!(graph.tasks_per_second.data.len(), 101);
-        assert_eq!(graph.tasks_per_second.data[0], 4);
-        assert_eq!(graph.tasks_per_second.data[1], 2);
-        assert_eq!(graph.tasks_per_second.data[2], 6);
-        assert_eq!(graph.tasks_per_second.data[3], 0);
-        assert_eq!(graph.tasks_per_second.data[4], 0);
-        assert_eq!(graph.tasks_per_second.data[5], 1);
-        assert_eq!(graph.tasks_per_second.data[100], 3);
+        graph.record_transactions_per_second(100);
+        graph.record_transactions_per_second(100);
+        graph.record_transactions_per_second(100);
+        graph.record_transactions_per_second(0);
+        graph.record_transactions_per_second(1);
+        graph.record_transactions_per_second(2);
+        graph.record_transactions_per_second(5);
+        assert_eq!(graph.transactions_per_second.data.len(), 101);
+        assert_eq!(graph.transactions_per_second.data[0], 4);
+        assert_eq!(graph.transactions_per_second.data[1], 2);
+        assert_eq!(graph.transactions_per_second.data[2], 6);
+        assert_eq!(graph.transactions_per_second.data[3], 0);
+        assert_eq!(graph.transactions_per_second.data[4], 0);
+        assert_eq!(graph.transactions_per_second.data[5], 1);
+        assert_eq!(graph.transactions_per_second.data[100], 3);
         for second in 6..100 {
-            assert_eq!(graph.tasks_per_second.data[second], 0);
+            assert_eq!(graph.transactions_per_second.data[second], 0);
         }
-        assert_eq!(graph.tasks_per_second.total(), 16);
+        assert_eq!(graph.transactions_per_second.total(), 16);
     }
 
     #[test]
     fn test_record_users_per_second() {
-        // Should be initialized with empty tasks per second vector.
+        // Should be initialized with empty transactions per second vector.
         let mut graph = GraphData::new();
         assert_eq!(graph.users_per_second.data.len(), 0);
 

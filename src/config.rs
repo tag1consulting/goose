@@ -41,7 +41,7 @@ const DEFAULT_PORT: &str = "5115";
 /// Optional arguments:
 /// -h, --help                 Displays this help
 /// -V, --version              Prints version information
-/// -l, --list                 Lists all tasks and exits
+/// -l, --list                 Lists all transactions and exits
 ///
 /// -H, --host HOST            Defines host to load test (ie http://10.21.32.33)
 /// -u, --users USERS          Sets concurrent users (default: number of CPUs)
@@ -56,7 +56,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --running-metrics TIME     How often to optionally print running metrics
 /// --no-reset-metrics         Doesn't reset metrics after all users have started
 /// --no-metrics               Doesn't track metrics
-/// --no-task-metrics          Doesn't track task metrics
+/// --no-transaction-metrics   Doesn't track transaction metrics
 /// --no-error-summary         Doesn't display an error summary
 /// --no-print-metrics         Doesn't display metrics at end of load test
 /// --report-file NAME         Create an html-formatted report
@@ -64,8 +64,8 @@ const DEFAULT_PORT: &str = "5115";
 /// -R, --request-log NAME     Sets request log file name
 /// --request-format FORMAT    Sets request log format (csv, json, raw, pretty)
 /// --request-body             Include the request body in the request log
-/// -T, --task-log NAME        Sets task log file name
-/// --task-format FORMAT       Sets task log format (csv, json, raw, pretty)
+/// -T, --transaction-log NAME Sets transaction log file name
+/// --transaction-format FORMAT Sets transaction log format (csv, json, raw, pretty)
 /// -E, --error-log NAME       Sets error log file name
 /// --error-format FORMAT      Sets error log format (csv, json, raw, pretty)
 /// -D, --debug-log NAME       Sets debug log file name
@@ -109,9 +109,9 @@ pub struct GooseConfiguration {
     /// Prints version information
     #[options(short = "V")]
     pub version: bool,
-    /// Lists all tasks and exits
+    /// Lists all transactions and exits
     // Add a blank line after this option
-    #[options(short = "l", help = "Lists all tasks and exits\n")]
+    #[options(short = "l", help = "Lists all transactions and exits\n")]
     pub list: bool,
 
     /// Defines host to load test (ie http://10.21.32.33)
@@ -156,9 +156,9 @@ pub struct GooseConfiguration {
     /// Doesn't track metrics
     #[options(no_short)]
     pub no_metrics: bool,
-    /// Doesn't track task metrics
+    /// Doesn't track transaction metrics
     #[options(no_short)]
-    pub no_task_metrics: bool,
+    pub no_transaction_metrics: bool,
     /// Doesn't display metrics at end of load test
     #[options(no_short)]
     pub no_print_metrics: bool,
@@ -180,12 +180,12 @@ pub struct GooseConfiguration {
     /// Include the request body in the request log
     #[options(no_short)]
     pub request_body: bool,
-    /// Sets task log file name
+    /// Sets transaction log file name
     #[options(short = "T", meta = "NAME")]
-    pub task_log: String,
-    /// Sets task log format (csv, json, raw, pretty)
+    pub transaction_log: String,
+    /// Sets transaction log format (csv, json, raw, pretty)
     #[options(no_short, meta = "FORMAT")]
-    pub task_format: Option<GooseLogFormat>,
+    pub transaction_format: Option<GooseLogFormat>,
     /// Sets error log file name
     #[options(short = "E", meta = "NAME")]
     pub error_log: String,
@@ -306,8 +306,8 @@ pub(crate) struct GooseDefaults {
     pub no_reset_metrics: Option<bool>,
     /// An optional default for not tracking metrics.
     pub no_metrics: Option<bool>,
-    /// An optional default for not tracking task metrics.
-    pub no_task_metrics: Option<bool>,
+    /// An optional default for not tracking transaction metrics.
+    pub no_transaction_metrics: Option<bool>,
     /// An optional default for not displaying metrics at the end of the load test.
     pub no_print_metrics: Option<bool>,
     /// An optional default for not displaying an error summary.
@@ -322,10 +322,10 @@ pub(crate) struct GooseDefaults {
     pub request_format: Option<GooseLogFormat>,
     /// An optional default for logging the request body.
     pub request_body: Option<bool>,
-    /// An optional default for the tasks log file name.
-    pub task_log: Option<String>,
-    /// An optional default for the tasks log file format.
-    pub task_format: Option<GooseLogFormat>,
+    /// An optional default for the transaction log file name.
+    pub transaction_log: Option<String>,
+    /// An optional default for the transaction log file format.
+    pub transaction_format: Option<GooseLogFormat>,
     /// An optional default for the error log file name.
     pub error_log: Option<String>,
     /// An optional default for the error log format.
@@ -412,8 +412,8 @@ pub enum GooseDefault {
     NoResetMetrics,
     /// An optional default for not tracking metrics.
     NoMetrics,
-    /// An optional default for not tracking task metrics.
-    NoTaskMetrics,
+    /// An optional default for not tracking transaction metrics.
+    NoTransactionMetrics,
     /// An optional default for not displaying metrics at end of load test.
     NoPrintMetrics,
     /// An optional default for not displaying an error summary.
@@ -428,10 +428,10 @@ pub enum GooseDefault {
     RequestFormat,
     /// An optional default for logging the request body.
     RequestBody,
-    /// An optional default for the task log file name.
-    TaskLog,
-    /// An optional default for the task log file format.
-    TaskFormat,
+    /// An optional default for the transaction log file name.
+    TransactionLog,
+    /// An optional default for the transaction log file format.
+    TransactionFormat,
     /// An optional default for the error log file name.
     ErrorLog,
     /// An optional default for the error log format.
@@ -489,9 +489,9 @@ pub enum GooseDefault {
 /// Most run-time options can be programmatically configured with custom defaults.
 ///
 /// For example, you can optionally configure a default host for the load test. This is
-/// used if no per-[`GooseTaskSet`](../struct.GooseTaskSet.html) host is defined, no
+/// used if no per-[`Scenario`](../struct.Scenario.html) host is defined, no
 /// [`--host`](./enum.GooseDefault.html#variant.Host) CLI option is configured, and if
-/// the [`GooseTask`](../struct.GooseTask.html) itself doesn't hard-code the host in
+/// the [`Transaction`](../struct.Transaction.html) itself doesn't hard-code the host in
 /// the base url of its request. In that case, this host is added to all requests.
 ///
 /// In the following example, the load test is programmatically configured with
@@ -520,7 +520,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::Host`]
 ///  - [`GooseDefault::GooseLog`]
 ///  - [`GooseDefault::RequestFormat`]
-///  - [`GooseDefault::TaskLog`]
+///  - [`GooseDefault::TransactionLog`]
 ///  - [`GooseDefault::ErrorLog`]
 ///  - [`GooseDefault::DebugLog`]
 ///  - [`GooseDefault::TelnetHost`]
@@ -550,7 +550,7 @@ pub enum GooseDefault {
 /// [`bool`] (and otherwise default to [`false`]).
 ///  - [`GooseDefault::NoResetMetrics`]
 ///  - [`GooseDefault::NoMetrics`]
-///  - [`GooseDefault::NoTaskMetrics`]
+///  - [`GooseDefault::NoTransactionMetrics`]
 ///  - [`GooseDefault::RequestBody`]
 ///  - [`GooseDefault::NoPrintMetrics`]
 ///  - [`GooseDefault::NoErrorSummary`]
@@ -568,7 +568,7 @@ pub enum GooseDefault {
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseLogFormat`].
 ///  - [`GooseDefault::RequestLog`]
-///  - [`GooseDefault::TaskLog`]
+///  - [`GooseDefault::TransactionLog`]
 ///  - [`GooseDefault::DebugFormat`]
 ///
 /// The following run-time flags can be configured with a custom default using a
@@ -608,7 +608,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::GooseLog => self.defaults.goose_log = Some(value.to_string()),
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
-            GooseDefault::TaskLog => self.defaults.task_log = Some(value.to_string()),
+            GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
             GooseDefault::ErrorLog => self.defaults.error_log = Some(value.to_string()),
             GooseDefault::DebugLog => self.defaults.debug_log = Some(value.to_string()),
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
@@ -645,7 +645,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::RunningMetrics
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
-            | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoTransactionMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -671,7 +671,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             }
             GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
-            | GooseDefault::TaskFormat
+            | GooseDefault::TransactionFormat
             | GooseDefault::RequestFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -721,7 +721,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TaskLog
+            | GooseDefault::TransactionLog
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
             | GooseDefault::TelnetHost
@@ -739,7 +739,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             }
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
-            | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoTransactionMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -766,7 +766,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
-            | GooseDefault::TaskFormat => {
+            | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -796,7 +796,9 @@ impl GooseDefaultType<bool> for GooseAttack {
         match key {
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
-            GooseDefault::NoTaskMetrics => self.defaults.no_task_metrics = Some(value),
+            GooseDefault::NoTransactionMetrics => {
+                self.defaults.no_transaction_metrics = Some(value)
+            }
             GooseDefault::RequestBody => self.defaults.request_body = Some(value),
             GooseDefault::NoPrintMetrics => self.defaults.no_print_metrics = Some(value),
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
@@ -817,7 +819,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TaskLog
+            | GooseDefault::TransactionLog
             | GooseDefault::RunningMetrics
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
@@ -860,7 +862,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
-            | GooseDefault::TaskFormat => {
+            | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -896,7 +898,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             // Otherwise display a helpful and explicit error.
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
-            | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoTransactionMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -925,7 +927,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TaskLog
+            | GooseDefault::TransactionLog
             | GooseDefault::RunningMetrics
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
@@ -968,7 +970,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
-            | GooseDefault::TaskFormat => {
+            | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -993,11 +995,11 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             GooseDefault::RequestFormat => self.defaults.request_format = Some(value),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value),
             GooseDefault::ErrorFormat => self.defaults.error_format = Some(value),
-            GooseDefault::TaskFormat => self.defaults.task_format = Some(value),
+            GooseDefault::TransactionFormat => self.defaults.transaction_format = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
-            | GooseDefault::NoTaskMetrics
+            | GooseDefault::NoTransactionMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -1026,7 +1028,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TaskLog
+            | GooseDefault::TransactionLog
             | GooseDefault::RunningMetrics
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
@@ -1545,20 +1547,20 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
-        // Configure `no_task_metrics`.
-        self.no_task_metrics = self
+        // Configure `no_transaction_metrics`.
+        self.no_transaction_metrics = self
             .get_value(vec![
-                // Use --no-task-metrics if set.
+                // Use --no-transaction-metrics if set.
                 GooseValue {
-                    value: Some(self.no_task_metrics),
-                    filter: !self.no_task_metrics,
-                    message: "no_task_metrics",
+                    value: Some(self.no_transaction_metrics),
+                    filter: !self.no_transaction_metrics,
+                    message: "no_transaction_metrics",
                 },
                 // Otherwise use GooseDefault if set.
                 GooseValue {
-                    value: defaults.no_task_metrics,
-                    filter: defaults.no_task_metrics.is_none() || self.worker,
-                    message: "no_task_metrics",
+                    value: defaults.no_transaction_metrics,
+                    filter: defaults.no_transaction_metrics.is_none() || self.worker,
+                    message: "no_transaction_metrics",
                 },
             ])
             .unwrap_or(false);
@@ -1974,11 +1976,12 @@ impl GooseConfiguration {
                     detail: "`configuration.request_log` can not be set on the Manager."
                         .to_string(),
                 });
-            } else if !self.task_log.is_empty() {
+            } else if !self.transaction_log.is_empty() {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.task_log`".to_string(),
+                    option: "`configuration.transaction_log`".to_string(),
                     value: self.request_log.clone(),
-                    detail: "`configuration.task_log` can not be set on the Manager.".to_string(),
+                    detail: "`configuration.transaction_log` can not be set on the Manager."
+                        .to_string(),
                 });
             } else if self.no_autostart {
                 return Err(GooseError::InvalidOption {
@@ -2124,12 +2127,12 @@ impl GooseConfiguration {
                     value: self.no_metrics.to_string(),
                     detail: "`configuration.no_metrics` can not be set in Worker mode.".to_string(),
                 });
-            // Can't set `no_task_metrics` on Worker.
-            } else if self.no_task_metrics {
+            // Can't set `no_transaction_metrics` on Worker.
+            } else if self.no_transaction_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_task_metrics".to_string(),
-                    value: self.no_task_metrics.to_string(),
-                    detail: "`configuration.no_task_metrics` can not be set in Worker mode."
+                    option: "`configuration.no_transaction_metrics".to_string(),
+                    value: self.no_transaction_metrics.to_string(),
+                    detail: "`configuration.no_transaction_metrics` can not be set in Worker mode."
                         .to_string(),
                 });
             // Can't set `no_print_metrics` on Worker.
@@ -2383,13 +2386,13 @@ impl GooseConfiguration {
                     value: self.request_log.to_string(),
                     detail: "`configuration.request_log` can not be set with `configuration.no_metrics`.".to_string(),
                 });
-            // Task log can't be written if metrics are disabled.
-            } else if !self.task_log.is_empty() {
+            // Transaction log can't be written if metrics are disabled.
+            } else if !self.transaction_log.is_empty() {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.task_log`".to_string(),
-                    value: self.task_log.to_string(),
+                    option: "`configuration.transaction_log`".to_string(),
+                    value: self.transaction_log.to_string(),
                     detail:
-                        "`configuration.task_log` can not be set with `configuration.no_metrics`."
+                        "`configuration.transaction_log` can not be set with `configuration.no_metrics`."
                             .to_string(),
                 });
             // Error log can't be written if metrics are disabled.
@@ -2557,7 +2560,7 @@ mod test {
         let verbose: usize = 0;
         let report_file = "custom-goose-report.html".to_string();
         let request_log = "custom-goose-request.log".to_string();
-        let task_log = "custom-goose-task.log".to_string();
+        let transaction_log = "custom-goose-transaction.log".to_string();
         let debug_log = "custom-goose-debug.log".to_string();
         let error_log = "custom-goose-error.log".to_string();
         let throttle_requests: usize = 25;
@@ -2593,7 +2596,7 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoMetrics, true)
             .unwrap()
-            .set_default(GooseDefault::NoTaskMetrics, true)
+            .set_default(GooseDefault::NoTransactionMetrics, true)
             .unwrap()
             .set_default(GooseDefault::NoPrintMetrics, true)
             .unwrap()
@@ -2615,9 +2618,9 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::RequestBody, true)
             .unwrap()
-            .set_default(GooseDefault::TaskLog, task_log.as_str())
+            .set_default(GooseDefault::TransactionLog, transaction_log.as_str())
             .unwrap()
-            .set_default(GooseDefault::TaskFormat, GooseLogFormat::Raw)
+            .set_default(GooseDefault::TransactionFormat, GooseLogFormat::Raw)
             .unwrap()
             .set_default(GooseDefault::ErrorLog, error_log.as_str())
             .unwrap()
@@ -2670,7 +2673,7 @@ mod test {
         assert!(goose_attack.defaults.running_metrics == Some(15));
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
-        assert!(goose_attack.defaults.no_task_metrics == Some(true));
+        assert!(goose_attack.defaults.no_transaction_metrics == Some(true));
         assert!(goose_attack.defaults.no_print_metrics == Some(true));
         assert!(goose_attack.defaults.no_error_summary == Some(true));
         assert!(goose_attack.defaults.no_telnet == Some(true));

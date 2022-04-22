@@ -30,52 +30,52 @@ const RUN_TIME: usize = 3;
 // There are two test variations in this file.
 #[derive(Clone)]
 enum TestType {
-    // Schedule multiple task sets.
-    TaskSets,
-    // Schedule multiple tasks.
-    Tasks,
+    // Schedule multiple scenarios.
+    Scenarios,
+    // Schedule multiple transactions.
+    Transactions,
 }
 
-// Test task.
-pub async fn one_with_delay(user: &mut GooseUser) -> GooseTaskResult {
+// Test Transaction.
+pub async fn one_with_delay(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(ONE_PATH).await?;
 
     // "Run out the clock" on the load test when this function runs. Sleep for
     // the total duration the test is to run plus 2 second to be sure no
-    // additional tasks will run after this one.
+    // additional transactions will run after this one.
     sleep(Duration::from_secs(RUN_TIME as u64 + 2)).await;
 
     Ok(())
 }
 
-// Test task.
-pub async fn two_with_delay(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn two_with_delay(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(TWO_PATH).await?;
 
     // "Run out the clock" on the load test when this function runs. Sleep for
     // the total duration the test is to run plus 2 second to be sure no
-    // additional tasks will run after this one.
+    // additional transactions will run after this one.
     sleep(Duration::from_secs(RUN_TIME as u64 + 2)).await;
 
     Ok(())
 }
 
-// Test task.
-pub async fn three(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn three(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(THREE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_start() function, which always runs one time.
-pub async fn start_one(user: &mut GooseUser) -> GooseTaskResult {
+pub async fn start_one(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(START_ONE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_stop() function, which always runs one time.
-pub async fn stop_one(user: &mut GooseUser) -> GooseTaskResult {
+pub async fn stop_one(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(STOP_ONE_PATH).await?;
 
     Ok(())
@@ -158,23 +158,23 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
     mock_endpoints[START_ONE_KEY].assert_hits(1);
 
     match test_type {
-        TestType::TaskSets => {
+        TestType::Scenarios => {
             // Now validate scheduler-specific counters.
             match scheduler {
                 GooseScheduler::RoundRobin => {
-                    // We launch an equal number of each task set, so we call both endpoints
+                    // We launch an equal number of each scenario, so we call both endpoints
                     // an equal number of times.
                     mock_endpoints[TWO_KEY].assert_hits(mock_endpoints[ONE_KEY].hits());
                     mock_endpoints[ONE_KEY].assert_hits(USERS / 2);
                 }
                 GooseScheduler::Serial => {
-                    // As we only launch as many users as the weight of the first task set, we only
+                    // As we only launch as many users as the weight of the first scenario, we only
                     // call the first endpoint, never the second endpoint.
                     mock_endpoints[ONE_KEY].assert_hits(USERS);
                     mock_endpoints[TWO_KEY].assert_hits(0);
                 }
                 GooseScheduler::Random => {
-                    // When scheduling task sets randomly, we don't know how many of each will get
+                    // When scheduling scenarios randomly, we don't know how many of each will get
                     // launched, but we do now that added together they will equal the total number
                     // of users.
                     assert!(
@@ -183,7 +183,7 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
                 }
             }
         }
-        TestType::Tasks => {
+        TestType::Transactions => {
             // Now validate scheduler-specific counters.
             match scheduler {
                 GooseScheduler::RoundRobin => {
@@ -203,7 +203,7 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
                     mock_endpoints[THREE_KEY].assert_hits(USERS * 2);
                 }
                 GooseScheduler::Random => {
-                    // When scheduling task sets randomly, we don't know how many of each will get
+                    // When scheduling scenarios randomly, we don't know how many of each will get
                     // launched, but we do now that added together they will equal the total number
                     // of users (THREE_KEY isn't counted as there's no delay).
                     assert!(
@@ -218,36 +218,36 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
     mock_endpoints[STOP_ONE_KEY].assert_hits(1);
 }
 
-// Returns the appropriate taskset, start_task and stop_task needed to build these tests.
-fn get_tasksets() -> (Scenario, Scenario, GooseTask, GooseTask) {
+// Returns the appropriate scenario, start_transaction and stop_transaction needed to build these tests.
+fn get_scenarios() -> (Scenario, Scenario, Transaction, Transaction) {
     (
-        scenario!("TaskSetOne")
-            .register_task(task!(one_with_delay))
+        scenario!("ScenarioOne")
+            .register_transaction(transaction!(one_with_delay))
             .set_weight(USERS)
             .unwrap(),
-        scenario!("TaskSetTwo")
-            .register_task(task!(two_with_delay))
+        scenario!("ScenarioTwo")
+            .register_transaction(transaction!(two_with_delay))
             // Add one to the weight to avoid this getting reduced by gcd.
             .set_weight(USERS + 1)
             .unwrap(),
-        // Start runs before all other tasks, regardless of where defined.
-        task!(start_one),
-        // Stop runs after all other tasks, regardless of where defined.
-        task!(stop_one),
+        // Start runs before all other transactions, regardless of where defined.
+        transaction!(start_one),
+        // Stop runs after all other transactions, regardless of where defined.
+        transaction!(stop_one),
     )
 }
 
-// Returns a single Scenario with two GooseTasks, a start_task, and a stop_task.
-fn get_tasks() -> (Scenario, GooseTask, GooseTask) {
+// Returns a single Scenario with two Transactions, a start_transaction, and a stop_transaction.
+fn get_transactions() -> (Scenario, Transaction, Transaction) {
     (
-        scenario!("TaskSet")
-            .register_task(task!(three).set_weight(USERS * 2).unwrap())
-            .register_task(task!(two_with_delay).set_weight(USERS).unwrap())
-            .register_task(task!(one_with_delay).set_weight(USERS).unwrap()),
-        // Start runs before all other tasks, regardless of where defined.
-        task!(start_one),
-        // Stop runs after all other tasks, regardless of where defined.
-        task!(stop_one),
+        scenario!("Scenario")
+            .register_transaction(transaction!(three).set_weight(USERS * 2).unwrap())
+            .register_transaction(transaction!(two_with_delay).set_weight(USERS).unwrap())
+            .register_transaction(transaction!(one_with_delay).set_weight(USERS).unwrap()),
+        // Start runs before all other transactions, regardless of where defined.
+        transaction!(start_one),
+        // Stop runs after all other transactions, regardless of where defined.
+        transaction!(stop_one),
     )
 }
 
@@ -263,27 +263,27 @@ async fn run_standalone_test(test_type: &TestType, scheduler: &GooseScheduler) {
     let configuration = common_build_configuration(&server, None, None);
 
     let goose_attack = match test_type {
-        TestType::TaskSets => {
-            // Get the tasksets, start and stop tasks to build a load test.
-            let (taskset1, taskset2, start_task, stop_task) = get_tasksets();
+        TestType::Scenarios => {
+            // Get the scenarios, start and stop transactions to build a load test.
+            let (scenario1, scenario2, start_transaction, stop_transaction) = get_scenarios();
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_scenario(taskset1)
-                .register_scenario(taskset2)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario1)
+                .register_scenario(scenario2)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 .set_scheduler(scheduler.clone())
         }
-        TestType::Tasks => {
-            // Get the taskset, start and stop tasks to build a load test.
-            let (taskset1, start_task, stop_task) = get_tasks();
+        TestType::Transactions => {
+            // Get the scenario, start and stop transactions to build a load test.
+            let (scenario1, start_transaction, stop_transaction) = get_transactions();
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_scenario(taskset1)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario1)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 .set_scheduler(scheduler.clone())
         }
     };
@@ -308,28 +308,28 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = match test_type {
-        TestType::TaskSets => {
-            // Get the tasksets, start and stop tasks to build a load test.
-            let (taskset1, taskset2, start_task, stop_task) = get_tasksets();
+        TestType::Scenarios => {
+            // Get the scenarios, start and stop transactions to build a load test.
+            let (scenario1, scenario2, start_transaction, stop_transaction) = get_scenarios();
             common::launch_gaggle_workers(EXPECT_WORKERS, || {
                 crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                     .unwrap()
-                    .register_scenario(taskset1.clone())
-                    .register_scenario(taskset2.clone())
-                    .test_start(start_task.clone())
-                    .test_stop(stop_task.clone())
+                    .register_scenario(scenario1.clone())
+                    .register_scenario(scenario2.clone())
+                    .test_start(start_transaction.clone())
+                    .test_stop(stop_transaction.clone())
                     .set_scheduler(scheduler.clone())
             })
         }
-        TestType::Tasks => {
-            // Get the taskset, start and stop tasks to build a load test.
-            let (taskset1, start_task, stop_task) = get_tasks();
+        TestType::Transactions => {
+            // Get the scenario, start and stop transactions to build a load test.
+            let (scenario1, start_transaction, stop_transaction) = get_transactions();
             common::launch_gaggle_workers(EXPECT_WORKERS, || {
                 crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                     .unwrap()
-                    .register_scenario(taskset1.clone())
-                    .test_start(start_task.clone())
-                    .test_stop(stop_task.clone())
+                    .register_scenario(scenario1.clone())
+                    .test_start(start_transaction.clone())
+                    .test_stop(stop_transaction.clone())
                     .set_scheduler(scheduler.clone())
             })
         }
@@ -339,27 +339,27 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
     let manager_configuration = common_build_configuration(&server, None, Some(EXPECT_WORKERS));
 
     let manager_goose_attack = match test_type {
-        TestType::TaskSets => {
-            // Get the tasksets, start and stop tasks to build a load test.
-            let (taskset1, taskset2, start_task, stop_task) = get_tasksets();
+        TestType::Scenarios => {
+            // Get the scenarios, start and stop transactions to build a load test.
+            let (scenario1, scenario2, start_transaction, stop_transaction) = get_scenarios();
             // Build the load test for the Manager.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_scenario(taskset1)
-                .register_scenario(taskset2)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario1)
+                .register_scenario(scenario2)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 .set_scheduler(scheduler.clone())
         }
-        TestType::Tasks => {
-            // Get the taskset, start and stop tasks to build a load test.
-            let (taskset1, start_task, stop_task) = get_tasks();
+        TestType::Transactions => {
+            // Get the scenario, start and stop transactions to build a load test.
+            let (scenario1, start_transaction, stop_transaction) = get_transactions();
             // Build the load test for the Manager.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_scenario(taskset1)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario1)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 .set_scheduler(scheduler.clone())
         }
     };
@@ -372,73 +372,73 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating Scenarios in round robin order.
-async fn test_round_robin_taskset() {
-    run_standalone_test(&TestType::TaskSets, &GooseScheduler::RoundRobin).await;
+// Load test with multiple transactions allocating Scenarios in round robin order.
+async fn test_round_robin_scenario() {
+    run_standalone_test(&TestType::Scenarios, &GooseScheduler::RoundRobin).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks allocating Scenarios in round robin order, in
+// Load test with multiple transactions allocating Scenarios in round robin order, in
 // Gaggle mode.
-async fn test_round_robin_taskset_gaggle() {
-    run_gaggle_test(&TestType::TaskSets, &GooseScheduler::RoundRobin).await;
+async fn test_round_robin_scenario_gaggle() {
+    run_gaggle_test(&TestType::Scenarios, &GooseScheduler::RoundRobin).await;
 }
 
 #[tokio::test]
-// Load test with multiple GooseTasks allocated in round robin order.
-async fn test_round_robin_task() {
-    run_standalone_test(&TestType::Tasks, &GooseScheduler::RoundRobin).await;
+// Load test with multiple Transactions allocated in round robin order.
+async fn test_round_robin_transaction() {
+    run_standalone_test(&TestType::Transactions, &GooseScheduler::RoundRobin).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple GooseTasks allocated in round robin order, in
+// Load test with multiple Transactions allocated in round robin order, in
 // Gaggle mode.
-async fn test_round_robin_task_gaggle() {
-    run_gaggle_test(&TestType::Tasks, &GooseScheduler::RoundRobin).await;
+async fn test_round_robin_transaction_gaggle() {
+    run_gaggle_test(&TestType::Transactions, &GooseScheduler::RoundRobin).await;
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating Scenarios in serial order.
-async fn test_serial_taskset() {
-    run_standalone_test(&TestType::TaskSets, &GooseScheduler::Serial).await;
+// Load test with multiple transactions allocating Scenarios in serial order.
+async fn test_serial_scenario() {
+    run_standalone_test(&TestType::Scenarios, &GooseScheduler::Serial).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks allocating Scenarios in serial order, in
+// Load test with multiple transactions allocating Scenarios in serial order, in
 // Gaggle mode.
-async fn test_serial_taskset_gaggle() {
-    run_gaggle_test(&TestType::TaskSets, &GooseScheduler::Serial).await;
+async fn test_serial_scenario_gaggle() {
+    run_gaggle_test(&TestType::Scenarios, &GooseScheduler::Serial).await;
 }
 
 #[tokio::test]
-// Load test with multiple GooseTasks allocated in serial order.
-async fn test_serial_tasks() {
-    run_standalone_test(&TestType::Tasks, &GooseScheduler::Serial).await;
+// Load test with multiple Transactions allocated in serial order.
+async fn test_serial_transactions() {
+    run_standalone_test(&TestType::Transactions, &GooseScheduler::Serial).await;
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating Scenarios in random order.
-async fn test_random_taskset() {
-    run_standalone_test(&TestType::TaskSets, &GooseScheduler::Random).await;
+// Load test with multiple transactions allocating Scenarios in random order.
+async fn test_random_scenario() {
+    run_standalone_test(&TestType::Scenarios, &GooseScheduler::Random).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks allocating Scenarios in random order, in
+// Load test with multiple transactions allocating Scenarios in random order, in
 // Gaggle mode.
-async fn test_random_taskset_gaggle() {
-    run_gaggle_test(&TestType::TaskSets, &GooseScheduler::Random).await;
+async fn test_random_scenario_gaggle() {
+    run_gaggle_test(&TestType::Scenarios, &GooseScheduler::Random).await;
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating Scenarios in random order.
-async fn test_random_tasks() {
-    run_standalone_test(&TestType::Tasks, &GooseScheduler::Random).await;
+// Load test with multiple transactions allocating Scenarios in random order.
+async fn test_random_transactions() {
+    run_standalone_test(&TestType::Transactions, &GooseScheduler::Random).await;
 }

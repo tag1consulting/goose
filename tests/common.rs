@@ -4,7 +4,7 @@ use httpmock::MockServer;
 use std::io::{self, BufRead};
 
 use goose::config::GooseConfiguration;
-use goose::goose::{GooseTask, Scenario};
+use goose::goose::{Scenario, Transaction};
 use goose::metrics::GooseMetrics;
 use goose::GooseAttack;
 
@@ -85,26 +85,26 @@ pub fn launch_gaggle_workers<F: Fn() -> GooseAttack>(
     worker_handles
 }
 
-// Create a GooseAttack object from the configuration, taskset, and optional start and
-// stop tasks.
+// Create a GooseAttack object from the configuration, Scenario, and optional start and
+// stop Transactions.
 #[allow(dead_code)]
 pub fn build_load_test(
     configuration: GooseConfiguration,
     scenario: &Scenario,
-    start_task: Option<&GooseTask>,
-    stop_task: Option<&GooseTask>,
+    start_transaction: Option<&Transaction>,
+    stop_transaction: Option<&Transaction>,
 ) -> GooseAttack {
     // First set up the common base configuration.
     let mut goose = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()
         .register_scenario(scenario.clone());
 
-    if let Some(task) = start_task {
-        goose = goose.test_start(task.clone());
+    if let Some(transaction) = start_transaction {
+        goose = goose.test_start(transaction.clone());
     }
 
-    if let Some(task) = stop_task {
-        goose = goose.test_stop(task.clone());
+    if let Some(transaction) = stop_transaction {
+        goose = goose.test_stop(transaction.clone());
     }
 
     goose

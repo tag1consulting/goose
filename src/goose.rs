@@ -2,9 +2,9 @@
 //!
 //! Goose manages load tests with a series of objects:
 //!
-//! - [`Scenario`] each user is assigned a scenario, which is a collection of tasks.
-//! - [`GooseTask`] tasks define one or more web requests and are assigned to scenarios.
-//! - [`GooseUser`] a user state responsible for repeatedly running all tasks in the assigned scenario.
+//! - [`Scenario`] each user is assigned a scenario, which is a collection of transactions.
+//! - [`Transaction`] transactions define one or more web requests and are assigned to scenarios.
+//! - [`GooseUser`] a user state responsible for repeatedly running all transactions in the assigned scenario.
 //! - [`GooseRequestMetric`] optional metrics collected for each URL/method pair.
 //!
 //! ## Creating Scenarios
@@ -14,7 +14,7 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut loadtest_tasks = scenario!("LoadtestTasks");
+//! let mut loadtest_transactions = scenario!("LoadtestTransactions");
 //! ```
 //!
 //! ### Scenario Weight
@@ -22,17 +22,17 @@
 //! A weight can be applied to a scenario, controlling how often it is assigned to
 //! [`GooseUser`](../goose/struct.GooseUser.html) threads. The larger the integer value
 //! of weight, the more the scenario will be assigned to user threads. In the following
-//! example, `FooTasks` will be assigned to users twice as often as `Bar` tasks. We could
-//! have just added a weight of `2` to `FooTasks` and left the default weight of `1`
-//! assigned to `BarTasks` for the same weighting:
+//! example, `FooTransactions` will be assigned to users twice as often as `Bar`
+//! Transactions. We could have just added a weight of `2` to `FooTransactions` and left
+//! the default weight of `1` assigned to `BarTransactions` for the same weighting:
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), GooseError> {
-//!     let mut foo_tasks = scenario!("FooTasks").set_weight(10)?;
-//!     let mut bar_tasks = scenario!("BarTasks").set_weight(5)?;
+//!     let mut foo_transactions = scenario!("FooTransactions").set_weight(10)?;
+//!     let mut bar_transactions = scenario!("BarTransactions").set_weight(5)?;
 //!
 //!     Ok(())
 //! }
@@ -49,168 +49,168 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut foo_tasks = scenario!("FooTasks").set_host("http://www.local");
-//! let mut bar_tasks = scenario!("BarTasks").set_host("http://www2.local");
+//! let mut foo_transactions = scenario!("FooTransactions").set_host("http://www.local");
+//! let mut bar_transactions = scenario!("BarTransactions").set_host("http://www2.local");
 //! ```
 //!
 //! ### Scenario Wait Time
 //!
-//! Wait time is specified as a low-high Duration range. Each time a task completes in the
+//! Wait time is specified as a low-high Duration range. Each time a transaction completes in the
 //! scenario, the user will pause for a random number of milliseconds inclusively between
-//! the low and high wait times. In the following example, users loading `foo` tasks will
-//! sleep 0 to 2.5 seconds after each task completes, and users loading `bar` tasks will
-//! sleep 5 to 10 seconds after each task completes.
+//! the low and high wait times. In the following example, users loading `foo` transactions will
+//! sleep 0 to 2.5 seconds after each transaction completes, and users loading `bar` transactions will
+//! sleep 5 to 10 seconds after each transaction completes.
 //!
 //! ```rust
 //! use goose::prelude::*;
 //! use std::time::Duration;
 //!
-//! let mut foo_tasks = scenario!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_millis(2500)).unwrap();
-//! let mut bar_tasks = scenario!("BarTasks").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
+//! let mut foo_transactions = scenario!("FooTransactions").set_wait_time(Duration::from_secs(0), Duration::from_millis(2500)).unwrap();
+//! let mut bar_transactions = scenario!("BarTransactions").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
 //! ```
-//! ## Creating Tasks
+//! ## Creating Transactions
 //!
-//! A [`GooseTask`](./struct.GooseTask.html) must include a pointer to a function which
-//! will be executed each time the task is run.
+//! A [`Transaction`](./struct.Transaction.html) must include a pointer to a function which
+//! will be executed each time the transaction is run.
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut a_task = task!(task_function);
+//! let mut a_transaction = transaction!(transaction_function);
 //!
-//! /// A very simple task that loads the front page.
-//! async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// A very simple transaction that loads the front page.
+//! async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("").await?;
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ### Task Name
+//! ### Transaction Name
 //!
-//! A name can be assigned to a task, and will be displayed in metrics about all requests
-//! made by the task.
+//! A name can be assigned to a transaction, and will be displayed in metrics about all requests
+//! made by the transaction.
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut a_task = task!(task_function).set_name("a");
+//! let mut a_transaction = transaction!(transaction_function).set_name("a");
 //!
-//! /// A very simple task that loads the front page.
-//! async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// A very simple transaction that loads the front page.
+//! async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("").await?;
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ### Task Weight
+//! ### Transaction Weight
 //!
-//! Individual tasks can be assigned a weight, controlling how often the task runs. The
-//! larger the value of weight, the more it will run. In the following example, `a_task`
-//! runs 3 times as often as `b_task`:
+//! Individual transactions can be assigned a weight, controlling how often the transaction runs. The
+//! larger the value of weight, the more it will run. In the following example, `a_transaction`
+//! runs 3 times as often as `b_transaction`:
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), GooseError> {
-//!     let mut a_task = task!(a_task_function).set_weight(9)?;
-//!     let mut b_task = task!(b_task_function).set_weight(3)?;
+//!     let mut a_transaction = transaction!(a_transaction_function).set_weight(9)?;
+//!     let mut b_transaction = transaction!(b_transaction_function).set_weight(3)?;
 //!
 //!     Ok(())
 //! }
 //!
-//! /// A very simple task that loads the "a" page.
-//! async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// A very simple transaction that loads the "a" page.
+//! async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("a/").await?;
 //!
 //!     Ok(())
 //! }
 //!
-//! /// Another very simple task that loads the "b" page.
-//! async fn b_task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// Another very simple transaction that loads the "b" page.
+//! async fn b_transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("b/").await?;
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ### Task Sequence
+//! ### Transaction Sequence
 //!
-//! Tasks can also be configured to run in a sequence. For example, a task with a sequence
-//! value of `1` will always run before a task with a sequence value of `2`. Weight can
-//! be applied to sequenced tasks, so for example a task with a weight of `2` and a sequence
-//! of `1` will run two times before a task with a sequence of `2`. Scenarios can contain
-//! tasks with sequence values and without sequence values, and in this case all tasks with
-//! a sequence value will run before tasks without a sequence value. In the following example,
-//! `a_task` runs before `b_task`, which runs before `c_task`:
+//! Transactions can also be configured to run in a sequence. For example, a transaction with a
+//! sequence value of `1` will always run before a transaction with a sequence value of `2`. Weight can
+//! be applied to sequenced transactions, so for example a transaction with a weight of `2` and a sequence
+//! of `1` will run two times before a transaction with a sequence of `2`. Scenarios can contain
+//! transactions with sequence values and without sequence values, and in this case all transactions with
+//! a sequence value will run before transactions without a sequence value. In the following example,
+//! `a_transaction` runs before `b_transaction`, which runs before `c_transaction`:
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut a_task = task!(a_task_function).set_sequence(1);
-//! let mut b_task = task!(b_task_function).set_sequence(2);
-//! let mut c_task = task!(c_task_function);
+//! let mut a_transaction = transaction!(a_transaction_function).set_sequence(1);
+//! let mut b_transaction = transaction!(b_transaction_function).set_sequence(2);
+//! let mut c_transaction = transaction!(c_transaction_function);
 //!
-//! /// A very simple task that loads the "a" page.
-//! async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// A very simple transaction that loads the "a" page.
+//! async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("a/").await?;
 //!
 //!     Ok(())
 //! }
 //!
-//! /// Another very simple task that loads the "b" page.
-//! async fn b_task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// Another very simple transaction that loads the "b" page.
+//! async fn b_transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("b/").await?;
 //!
 //!     Ok(())
 //! }
 //!
-//! /// Another very simple task that loads the "c" page.
-//! async fn c_task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// Another very simple transaction that loads the "c" page.
+//! async fn c_transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("c/").await?;
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ### Task On Start
+//! ### Transaction On Start
 //!
-//! Tasks can be flagged to only run when a user first starts. This can be useful if you'd
+//! Transactions can be flagged to only run when a user first starts. This can be useful if you'd
 //! like your load test to use a logged-in user. It is possible to assign sequences and weights
-//! to [`on_start`](./struct.GooseTask.html#method.set_on_start) functions if you want to have
-//! multiple tasks run in a specific order at start time, and/or the tasks to run multiple times.
-//! A task can be flagged to run both on start and on stop.
+//! to [`on_start`](./struct.Transaction.html#method.set_on_start) functions if you want to have
+//! multiple transactions run in a specific order at start time, and/or the transactions to run multiple times.
+//! A transaction can be flagged to run both on start and on stop.
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut a_task = task!(a_task_function).set_sequence(1).set_on_start();
+//! let mut a_transaction = transaction!(a_transaction_function).set_sequence(1).set_on_start();
 //!
-//! /// A very simple task that loads the "a" page.
-//! async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// A very simple transaction that loads the "a" page.
+//! async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("a/").await?;
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ### Task On Stop
+//! ### Transaction On Stop
 //!
-//! Tasks can be flagged to only run when a user stops. This can be useful if you'd like your
+//! Transactions can be flagged to only run when a user stops. This can be useful if you'd like your
 //! load test to simulate a user logging out when it finishes. It is possible to assign sequences
-//! and weights to [`on_stop`](./struct.GooseTask.html#method.set_on_stop) functions if you want to
-//! have multiple tasks run in a specific order at stop time, and/or the tasks to run multiple
-//! times. A task can be flagged to run both on start and on stop.
+//! and weights to [`on_stop`](./struct.Transaction.html#method.set_on_stop) functions if you want to
+//! have multiple transactions run in a specific order at stop time, and/or the transactions to run multiple
+//! times. A transaction can be flagged to run both on start and on stop.
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut b_task = task!(b_task_function).set_sequence(2).set_on_stop();
+//! let mut b_transaction = transaction!(b_transaction_function).set_sequence(2).set_on_stop();
 //!
-//! /// Another very simple task that loads the "b" page.
-//! async fn b_task_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// Another very simple transaction that loads the "b" page.
+//! async fn b_transaction_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("b/").await?;
 //!
 //!     Ok(())
@@ -238,10 +238,10 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut task = task!(get_function);
+//! let mut transaction = transaction!(get_function);
 //!
-//! /// A very simple task that makes a GET request.
-//! async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// A very simple transaction that makes a GET request.
+//! async fn get_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.get("path/to/foo/").await?;
 //!
 //!     Ok(())
@@ -261,10 +261,10 @@
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut task = task!(post_function);
+//! let mut transaction = transaction!(post_function);
 //!
-//! /// A very simple task that makes a POST request.
-//! async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
+//! /// A very simple transaction that makes a POST request.
+//! async fn post_function(user: &mut GooseUser) -> TransactionResult {
 //!     let _goose = user.post("path/to/foo/", "string value to post").await?;
 //!
 //!     Ok(())
@@ -303,7 +303,7 @@ use crate::logger::GooseLog;
 use crate::metrics::{
     GooseCoordinatedOmissionMitigation, GooseMetric, GooseRawRequest, GooseRequestMetric,
 };
-use crate::{GooseConfiguration, GooseError, WeightedGooseTasks};
+use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
 /// By default Goose sets the following User-Agent header when making requests.
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -311,12 +311,12 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 /// By default Goose times out requests after 60,000 milliseconds.
 static GOOSE_REQUEST_TIMEOUT: u64 = 60_000;
 
-/// `task!(foo)` expands to `GooseTask::new(foo)`, but also does some boxing to work around a limitation in the compiler.
+/// `transaction!(foo)` expands to `Transaction::new(foo)`, but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
-macro_rules! task {
-    ($task_func:ident) => {
-        GooseTask::new(std::sync::Arc::new(move |s| {
-            std::boxed::Box::pin($task_func(s))
+macro_rules! transaction {
+    ($transaction_func:ident) => {
+        Transaction::new(std::sync::Arc::new(move |s| {
+            std::boxed::Box::pin($transaction_func(s))
         }))
     };
 }
@@ -329,13 +329,13 @@ macro_rules! scenario {
     };
 }
 
-/// Goose tasks return a result, which is empty on success, or contains a
-/// [`GooseTaskError`](./enum.GooseTaskError.html) on error.
-pub type GooseTaskResult = Result<(), GooseTaskError>;
+/// Goose transactions return a result, which is empty on success, or contains a
+/// [`TransactionError`](./enum.TransactionError.html) on error.
+pub type TransactionResult = Result<(), TransactionError>;
 
-/// An enumeration of all errors a [`GooseTask`](./struct.GooseTask.html) can return.
+/// An enumeration of all errors a [`Transaction`](./struct.Transaction.html) can return.
 #[derive(Debug)]
-pub enum GooseTaskError {
+pub enum TransactionError {
     /// Wraps a [`reqwest::Error`](https://docs.rs/reqwest/*/reqwest/struct.Error.html).
     Reqwest(reqwest::Error),
     /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
@@ -371,72 +371,72 @@ pub enum GooseTaskError {
     },
 }
 /// Implement a helper to provide a text description of all possible types of errors.
-impl GooseTaskError {
+impl TransactionError {
     fn describe(&self) -> &str {
         match *self {
-            GooseTaskError::Reqwest(_) => "reqwest::Error",
-            GooseTaskError::Url(_) => "url::ParseError",
-            GooseTaskError::RequestFailed { .. } => "request failed",
-            GooseTaskError::RequestCanceled { .. } => {
+            TransactionError::Reqwest(_) => "reqwest::Error",
+            TransactionError::Url(_) => "url::ParseError",
+            TransactionError::RequestFailed { .. } => "request failed",
+            TransactionError::RequestCanceled { .. } => {
                 "request canceled because throttled load test ended"
             }
-            GooseTaskError::MetricsFailed { .. } => "failed to send metrics to parent thread",
-            GooseTaskError::LoggerFailed { .. } => "failed to send log message to logger thread",
-            GooseTaskError::InvalidMethod { .. } => "unrecognized HTTP request method",
+            TransactionError::MetricsFailed { .. } => "failed to send metrics to parent thread",
+            TransactionError::LoggerFailed { .. } => "failed to send log message to logger thread",
+            TransactionError::InvalidMethod { .. } => "unrecognized HTTP request method",
         }
     }
 }
 
 /// Implement format trait to allow displaying errors.
-impl fmt::Display for GooseTaskError {
+impl fmt::Display for TransactionError {
     // Implement display of error with `{}` marker.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            GooseTaskError::Reqwest(ref source) => {
-                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            TransactionError::Reqwest(ref source) => {
+                write!(f, "TransactionError: {} ({})", self.describe(), source)
             }
-            GooseTaskError::Url(ref source) => {
-                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            TransactionError::Url(ref source) => {
+                write!(f, "TransactionError: {} ({})", self.describe(), source)
             }
-            GooseTaskError::RequestCanceled { ref source } => {
-                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            TransactionError::RequestCanceled { ref source } => {
+                write!(f, "TransactionError: {} ({})", self.describe(), source)
             }
-            GooseTaskError::MetricsFailed { ref source } => {
-                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            TransactionError::MetricsFailed { ref source } => {
+                write!(f, "TransactionError: {} ({})", self.describe(), source)
             }
-            GooseTaskError::LoggerFailed { ref source } => {
-                write!(f, "GooseTaskError: {} ({})", self.describe(), source)
+            TransactionError::LoggerFailed { ref source } => {
+                write!(f, "TransactionError: {} ({})", self.describe(), source)
             }
-            _ => write!(f, "GooseTaskError: {}", self.describe()),
+            _ => write!(f, "TransactionError: {}", self.describe()),
         }
     }
 }
 
 // Define the lower level source of this error, if any.
-impl std::error::Error for GooseTaskError {
+impl std::error::Error for TransactionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match *self {
-            GooseTaskError::Reqwest(ref source) => Some(source),
-            GooseTaskError::Url(ref source) => Some(source),
-            GooseTaskError::RequestCanceled { ref source } => Some(source),
-            GooseTaskError::MetricsFailed { ref source } => Some(source),
-            GooseTaskError::LoggerFailed { ref source } => Some(source),
+            TransactionError::Reqwest(ref source) => Some(source),
+            TransactionError::Url(ref source) => Some(source),
+            TransactionError::RequestCanceled { ref source } => Some(source),
+            TransactionError::MetricsFailed { ref source } => Some(source),
+            TransactionError::LoggerFailed { ref source } => Some(source),
             _ => None,
         }
     }
 }
 
 /// Auto-convert Reqwest errors.
-impl From<reqwest::Error> for GooseTaskError {
-    fn from(err: reqwest::Error) -> GooseTaskError {
-        GooseTaskError::Reqwest(err)
+impl From<reqwest::Error> for TransactionError {
+    fn from(err: reqwest::Error) -> TransactionError {
+        TransactionError::Reqwest(err)
     }
 }
 
 /// Auto-convert Url errors.
-impl From<url::ParseError> for GooseTaskError {
-    fn from(err: url::ParseError) -> GooseTaskError {
-        GooseTaskError::Url(err)
+impl From<url::ParseError> for TransactionError {
+    fn from(err: url::ParseError) -> TransactionError {
+        TransactionError::Url(err)
     }
 }
 
@@ -444,24 +444,24 @@ impl From<url::ParseError> for GooseTaskError {
 /// shut down. This causes a
 /// [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
 /// which gets automatically converted to `RequestCanceled`.
-/// [`RequestCanceled`](./enum.GooseTaskError.html#variant.RequestCanceled)
-impl From<flume::SendError<bool>> for GooseTaskError {
-    fn from(source: flume::SendError<bool>) -> GooseTaskError {
-        GooseTaskError::RequestCanceled { source }
+/// [`RequestCanceled`](./enum.TransactionError.html#variant.RequestCanceled)
+impl From<flume::SendError<bool>> for TransactionError {
+    fn from(source: flume::SendError<bool>) -> TransactionError {
+        TransactionError::RequestCanceled { source }
     }
 }
 
 /// Attempt to send metrics to the parent thread failed.
-impl From<flume::SendError<GooseMetric>> for GooseTaskError {
-    fn from(source: flume::SendError<GooseMetric>) -> GooseTaskError {
-        GooseTaskError::MetricsFailed { source }
+impl From<flume::SendError<GooseMetric>> for TransactionError {
+    fn from(source: flume::SendError<GooseMetric>) -> TransactionError {
+        TransactionError::MetricsFailed { source }
     }
 }
 
 /// Attempt to send logs to the logger thread failed.
-impl From<flume::SendError<Option<GooseLog>>> for GooseTaskError {
-    fn from(source: flume::SendError<Option<GooseLog>>) -> GooseTaskError {
-        GooseTaskError::LoggerFailed { source }
+impl From<flume::SendError<Option<GooseLog>>> for TransactionError {
+    fn from(source: flume::SendError<Option<GooseLog>>) -> TransactionError {
+        TransactionError::LoggerFailed { source }
     }
 }
 
@@ -476,28 +476,28 @@ pub struct Scenario {
     /// An integer value that controls the frequency that this scenario will be assigned to a user.
     pub weight: usize,
     /// A [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) range defining the
-    /// minimum and maximum time a [`GooseUser`] should sleep after running a task.
-    pub task_wait: Option<(Duration, Duration)>,
-    /// A vector containing one copy of each [`GooseTask`](./struct.GooseTask.html) that will
+    /// minimum and maximum time a [`GooseUser`] should sleep after running a transaction.
+    pub transaction_wait: Option<(Duration, Duration)>,
+    /// A vector containing one copy of each [`Transaction`](./struct.Transaction.html) that will
     /// run by users running this scenario.
-    pub tasks: Vec<GooseTask>,
+    pub transactions: Vec<Transaction>,
     /// A fully scheduled and weighted vector of integers (pointing to
-    /// [`GooseTask`](./struct.GooseTask.html)s and [`GooseTask`](./struct.GooseTask.html) names.
-    pub weighted_tasks: WeightedGooseTasks,
+    /// [`Transaction`](./struct.Transaction.html)s and [`Transaction`](./struct.Transaction.html) names.
+    pub weighted_transactions: WeightedTransactions,
     /// A vector of vectors of integers, controlling the sequence and order
-    /// [`on_start`](./struct.GooseTask.html#method.set_on_start)
-    /// [`GooseTask`](./struct.GooseTask.html)s are run when the user first starts.
-    pub weighted_on_start_tasks: WeightedGooseTasks,
+    /// [`on_start`](./struct.Transaction.html#method.set_on_start)
+    /// [`Transaction`](./struct.Transaction.html)s are run when the user first starts.
+    pub weighted_on_start_transactions: WeightedTransactions,
     /// A vector of vectors of integers, controlling the sequence and order
-    /// [`on_stop`](./struct.GooseTask.html#method.set_on_stop)
-    /// [`GooseTask`](./struct.GooseTask.html)s are run when the user first starts.
-    pub weighted_on_stop_tasks: WeightedGooseTasks,
+    /// [`on_stop`](./struct.Transaction.html#method.set_on_stop)
+    /// [`Transaction`](./struct.Transaction.html)s are run when the user first starts.
+    pub weighted_on_stop_transactions: WeightedTransactions,
     /// An optional default host to run this `Scenario` against.
     pub host: Option<String>,
 }
 impl Scenario {
     /// Creates a new [`Scenario`](./struct.Scenario.html). Once created, a
-    /// [`GooseTask`](./struct.GooseTask.html) must be assigned to it, and finally it must
+    /// [`Transaction`](./struct.Transaction.html) must be assigned to it, and finally it must
     /// be registered with the [`GooseAttack`](../struct.GooseAttack.html) object. The
     /// returned object must be stored in a mutable value.
     ///
@@ -505,7 +505,7 @@ impl Scenario {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut example_tasks = scenario!("ExampleTasks");
+    /// let mut example_transactions = scenario!("ExampleTransactions");
     /// ```
     pub fn new(name: &str) -> Self {
         trace!("new scenario: name: {}", &name);
@@ -513,38 +513,38 @@ impl Scenario {
             name: name.to_string(),
             scenarios_index: usize::max_value(),
             weight: 1,
-            task_wait: None,
-            tasks: Vec::new(),
-            weighted_tasks: Vec::new(),
-            weighted_on_start_tasks: Vec::new(),
-            weighted_on_stop_tasks: Vec::new(),
+            transaction_wait: None,
+            transactions: Vec::new(),
+            weighted_transactions: Vec::new(),
+            weighted_on_start_transactions: Vec::new(),
+            weighted_on_stop_transactions: Vec::new(),
             host: None,
         }
     }
 
-    /// Registers a [`GooseTask`](./struct.GooseTask.html) with a
+    /// Registers a [`Transaction`](./struct.Transaction.html) with a
     /// [`Scenario`](./struct.Scenario.html), where it is stored in the
-    /// [`Scenario`](./struct.Scenario.html)`.tasks` vector. The function
-    /// associated with the task will be run during the load test.
+    /// [`Scenario`](./struct.Scenario.html)`.transactions` vector. The function
+    /// associated with the transaction will be run during the load test.
     ///
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut example_tasks = scenario!("ExampleTasks");
-    /// example_tasks.register_task(task!(a_task_function));
+    /// let mut example_transactions = scenario!("ExampleTransactions");
+    /// example_transactions.register_transaction(transaction!(a_transaction_function));
     ///
-    /// /// A very simple task that loads the "a" page.
-    /// async fn a_task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that loads the "a" page.
+    /// async fn a_transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("a/").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn register_task(mut self, mut task: GooseTask) -> Self {
-        trace!("{} register_task: {}", self.name, task.name);
-        task.tasks_index = self.tasks.len();
-        self.tasks.push(task);
+    pub fn register_transaction(mut self, mut transaction: Transaction) -> Self {
+        trace!("{} register_transaction: {}", self.name, transaction.name);
+        transaction.transactions_index = self.transactions.len();
+        self.transactions.push(transaction);
         self
     }
 
@@ -559,7 +559,7 @@ impl Scenario {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     let mut example_tasks = scenario!("ExampleTasks").set_weight(3)?;
+    ///     let mut example_transactions = scenario!("ExampleTransactions").set_weight(3)?;
     ///
     ///     Ok(())
     /// }
@@ -586,7 +586,7 @@ impl Scenario {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut example_tasks = scenario!("ExampleTasks").set_host("http://10.1.1.42");
+    /// let mut example_transactions = scenario!("ExampleTransactions").set_host("http://10.1.1.42");
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("{} set_host: {}", self.name, host);
@@ -595,7 +595,7 @@ impl Scenario {
         self
     }
 
-    /// Configure a senario to to pause after running each task. The length of the pause will be randomly
+    /// Configure a senario to to pause after running each transaction. The length of the pause will be randomly
     /// selected from `min_wait` to `max_wait` inclusively.
     ///
     /// # Example
@@ -605,7 +605,7 @@ impl Scenario {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     scenario!("ExampleTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(1))?;
+    ///     scenario!("ExampleTransactions").set_wait_time(Duration::from_secs(0), Duration::from_secs(1))?;
     ///
     ///     Ok(())
     /// }
@@ -630,7 +630,7 @@ impl Scenario {
                         .to_string(),
             });
         }
-        self.task_wait = Some((min_wait, max_wait));
+        self.transaction_wait = Some((min_wait, max_wait));
 
         Ok(self)
     }
@@ -675,7 +675,7 @@ impl fmt::Display for GooseMethod {
 
 /// Convert [`http::method::Method`](https://docs.rs/http/*/http/method/struct.Method.html)
 /// to [`GooseMethod`](./enum.GooseMethod.html).
-pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTaskError> {
+pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, TransactionError> {
     Ok(match method {
         Method::DELETE => GooseMethod::Delete,
         Method::GET => GooseMethod::Get,
@@ -684,7 +684,7 @@ pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, GooseTask
         Method::POST => GooseMethod::Post,
         Method::PUT => GooseMethod::Put,
         _ => {
-            return Err(GooseTaskError::InvalidMethod { method });
+            return Err(TransactionError::InvalidMethod { method });
         }
     })
 }
@@ -771,25 +771,25 @@ impl GaggleUser {
 /// is made as Goose loops through a Scenario.
 #[derive(Debug, Clone)]
 struct GooseRequestCadence {
-    /// The last time this GooseUser lopped through its GooseTasks.
+    /// The last time this GooseUser lopped through its Transactions.
     last_time: std::time::Instant,
-    /// Total milliseconds of delays followed each GooseTask. This has to be substracted out as it's
+    /// Total milliseconds of delays followed each Transaction. This has to be substracted out as it's
     /// not impacted by the upstream server and it can change randomly affecting the cadence.
     delays_since_last_time: u64,
-    /// How many times this GooseUser has looped through all of its GooseTasks.
+    /// How many times this GooseUser has looped through all of its Transactions.
     counter: u64,
-    /// The minimum time taken to loop through all GooseTasks.
+    /// The minimum time taken to loop through all Transactions.
     minimum_cadence: u64,
-    /// The maximum time taken to loop through all GooseTasks.
+    /// The maximum time taken to loop through all Transactions.
     maximum_cadence: u64,
-    /// Average amount of time taken to loop through all GooseTasks.
+    /// Average amount of time taken to loop through all Transactions.
     average_cadence: u64,
-    /// Total amount of time spent processing GooseTasks.
+    /// Total amount of time spent processing Transactions.
     total_elapsed: u64,
     /// If non-zero, the length of the server slowdown detected by the Goose Coordinated
     /// Omission Mitigation in milliseconds.
     coordinated_omission_mitigation: u64,
-    /// The expected cadence to loop through all GooseTasks.
+    /// The expected cadence to loop through all Transactions.
     user_cadence: u64,
     /// If -1 coordinated_omission_mitigation was never enabled. Otherwise is a counter of how
     /// many times the mitigation triggered.
@@ -833,7 +833,7 @@ pub trait GooseUserData: Downcast + Send + Sync + 'static {}
 impl_downcast!(GooseUserData);
 impl<T: Send + Sync + 'static> GooseUserData for T {}
 
-/// An individual user state, repeatedly running all [`GooseTask`](./struct.GooseTask.html)s
+/// An individual user state, repeatedly running all [`Transaction`](./struct.Transaction.html)s
 /// in a specific [`Scenario`](./struct.Scenario.html).
 pub struct GooseUser {
     /// The Instant when this `GooseUser` client started.
@@ -851,9 +851,9 @@ pub struct GooseUser {
     pub logger: Option<flume::Sender<Option<GooseLog>>>,
     /// Channel to throttle.
     pub throttle: Option<flume::Sender<bool>>,
-    /// Normal tasks are optionally throttled,
+    /// Normal transactions are optionally throttled,
     /// [`test_start`](../struct.GooseAttack.html#method.test_start) and
-    /// [`test_stop`](../struct.GooseAttack.html#method.test_stop) tasks are not.
+    /// [`test_stop`](../struct.GooseAttack.html#method.test_stop) transactions are not.
     pub is_throttled: bool,
     /// Channel to parent.
     pub channel_to_parent: Option<flume::Sender<GooseMetric>>,
@@ -862,13 +862,13 @@ pub struct GooseUser {
     pub weighted_users_index: usize,
     /// Load test hash.
     pub load_test_hash: u64,
-    /// Tracks the cadence that this user is looping through all GooseTasks, used by Coordinated
+    /// Tracks the cadence that this user is looping through all Transactions, used by Coordinated
     /// Omission Mitigation.
     request_cadence: GooseRequestCadence,
-    /// Tracks how much time is spent sleeping during a loop through all tasks.
+    /// Tracks how much time is spent sleeping during a loop through all transactions.
     pub(crate) slept: u64,
-    /// Current task name.
-    pub(crate) task_name: Option<String>,
+    /// Current transaction name.
+    pub(crate) transaction_name: Option<String>,
     /// Optional per-user session data of a generic type implementing the
     /// [`GooseUserData`] trait.
     session_data: Option<Box<dyn GooseUserData>>,
@@ -916,7 +916,7 @@ impl GooseUser {
             load_test_hash,
             request_cadence: GooseRequestCadence::new(),
             slept: 0,
-            task_name: None,
+            transaction_name: None,
             session_data: None,
         })
     }
@@ -927,7 +927,7 @@ impl GooseUser {
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
-        // [`test_stop`](../struct.GooseAttack.html#method.test_stop) (teardown) tasks.
+        // [`test_stop`](../struct.GooseAttack.html#method.test_stop) (teardown) transactions.
         single_user.is_throttled = false;
 
         Ok(single_user)
@@ -945,10 +945,10 @@ impl GooseUser {
     ///
     /// struct Foo(String);
     ///
-    /// let mut task = task!(get_session_data_function);
+    /// let mut transaction = transaction!(get_session_data_function);
     ///
-    /// /// A very simple task that makes a GET request.
-    /// async fn get_session_data_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a GET request.
+    /// async fn get_session_data_function(user: &mut GooseUser) -> TransactionResult {
     ///     let foo = user.get_session_data::<Foo>().expect("Missing session data!");
     ///     println!("Session data: {}", foo.0);
     ///
@@ -977,10 +977,10 @@ impl GooseUser {
     ///
     /// struct Foo(String);
     ///
-    /// let mut task = task!(get_session_data_unchecked_function);
+    /// let mut transaction = transaction!(get_session_data_unchecked_function);
     ///
-    /// /// A very simple task that makes a GET request.
-    /// async fn get_session_data_unchecked_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a GET request.
+    /// async fn get_session_data_unchecked_function(user: &mut GooseUser) -> TransactionResult {
     ///     let foo = user.get_session_data_unchecked::<Foo>();
     ///     println!("Session data: {}", foo.0);
     ///
@@ -1008,10 +1008,10 @@ impl GooseUser {
     ///
     /// struct Foo(String);
     ///
-    /// let mut task = task!(get_session_data_mut_function);
+    /// let mut transaction = transaction!(get_session_data_mut_function);
     ///
-    /// /// A very simple task that makes a GET request.
-    /// async fn get_session_data_mut_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a GET request.
+    /// async fn get_session_data_mut_function(user: &mut GooseUser) -> TransactionResult {
     ///     let foo = user.get_session_data_mut::<Foo>().expect("Missing session data!");
     ///     foo.0 = "Bar".to_owned();
     ///     Ok(())
@@ -1040,10 +1040,10 @@ impl GooseUser {
     ///
     /// struct Foo(String);
     ///
-    /// let mut task = task!(get_session_data_unchecked_mut_function);
+    /// let mut transaction = transaction!(get_session_data_unchecked_mut_function);
     ///
-    /// /// A very simple task that makes a GET request.
-    /// async fn get_session_data_unchecked_mut_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a GET request.
+    /// async fn get_session_data_unchecked_mut_function(user: &mut GooseUser) -> TransactionResult {
     ///     let foo = user.get_session_data_unchecked_mut::<Foo>();
     ///     foo.0 = "Bar".to_owned();
     ///     Ok(())
@@ -1071,10 +1071,10 @@ impl GooseUser {
     ///
     /// struct Foo(String);
     ///
-    /// let mut task = task!(set_session_data_function);
+    /// let mut transaction = transaction!(set_session_data_function);
     ///
-    /// /// A very simple task that makes a GET request.
-    /// async fn set_session_data_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a GET request.
+    /// async fn set_session_data_function(user: &mut GooseUser) -> TransactionResult {
     ///     user.set_session_data(Foo("Foo".to_string()));
     ///
     ///     Ok(())
@@ -1093,7 +1093,7 @@ impl GooseUser {
     /// current scenario)
     ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default host
     /// defined for the current load test)
-    pub fn build_url(&self, path: &str) -> Result<String, GooseTaskError> {
+    pub fn build_url(&self, path: &str) -> Result<String, TransactionError> {
         // If URL includes a host, simply use it.
         if let Ok(parsed_path) = Url::parse(path) {
             if let Some(_host) = parsed_path.host() {
@@ -1121,16 +1121,16 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(get_function);
+    /// let mut transaction = transaction!(get_function);
     ///
-    /// /// A very simple task that makes a GET request.
-    /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a GET request.
+    /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("path/to/foo/").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub async fn get(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
+    pub async fn get(&mut self, path: &str) -> Result<GooseResponse, TransactionError> {
         // GET path.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Get)
@@ -1157,10 +1157,10 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(get_function);
+    /// let mut transaction = transaction!(get_function);
     ///
-    /// /// A very simple task that makes a GET request, naming it for metrics.
-    /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a GET request, naming it for metrics.
+    /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get_named("path/to/foo/", "foo").await?;
     ///
     ///     Ok(())
@@ -1170,7 +1170,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         name: &str,
-    ) -> Result<GooseResponse, GooseTaskError> {
+    ) -> Result<GooseResponse, TransactionError> {
         // GET path named.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Get)
@@ -1198,10 +1198,10 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(post_function);
+    /// let mut transaction = transaction!(post_function);
     ///
-    /// /// A very simple task that makes a POST request.
-    /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a POST request.
+    /// async fn post_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.post("path/to/foo/", "BODY BEING POSTED").await?;
     ///
     ///     Ok(())
@@ -1211,7 +1211,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         body: T,
-    ) -> Result<GooseResponse, GooseTaskError> {
+    ) -> Result<GooseResponse, TransactionError> {
         // Build a Reqwest RequestBuilder object.
         let url = self.build_url(path)?;
         let reqwest_request_builder = self.client.post(url);
@@ -1242,10 +1242,10 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(post_function);
+    /// let mut transaction = transaction!(post_function);
     ///
-    /// /// A very simple task that POSTs form parameters.
-    /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that POSTs form parameters.
+    /// async fn post_function(user: &mut GooseUser) -> TransactionResult {
     ///     let params = [("foo", "bar"), ("foo2", "bar2")];
     ///     let _goose = user.post_form("path/to/foo/", &params).await?;
     ///
@@ -1256,7 +1256,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         form: &T,
-    ) -> Result<GooseResponse, GooseTaskError> {
+    ) -> Result<GooseResponse, TransactionError> {
         // Build a Reqwest RequestBuilder object.
         let url = self.build_url(path)?;
         let reqwest_request_builder = self.client.post(url);
@@ -1287,10 +1287,10 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(post_function);
+    /// let mut transaction = transaction!(post_function);
     ///
-    /// /// A very simple task that POSTs an arbitrary json object.
-    /// async fn post_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that POSTs an arbitrary json object.
+    /// async fn post_function(user: &mut GooseUser) -> TransactionResult {
     ///     let json = &serde_json::json!({
     ///         "foo": "bar",
     ///         "foo2": "bar2"
@@ -1304,7 +1304,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         json: &T,
-    ) -> Result<GooseResponse, GooseTaskError> {
+    ) -> Result<GooseResponse, TransactionError> {
         // Build a Reqwest RequestBuilder object.
         let url = self.build_url(path)?;
         let reqwest_request_builder = self.client.post(url);
@@ -1335,16 +1335,16 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(head_function);
+    /// let mut transaction = transaction!(head_function);
     ///
-    /// /// A very simple task that makes a HEAD request.
-    /// async fn head_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a HEAD request.
+    /// async fn head_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.head("path/to/foo/").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub async fn head(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
+    pub async fn head(&mut self, path: &str) -> Result<GooseResponse, TransactionError> {
         // HEAD request.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Head)
@@ -1371,16 +1371,16 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(delete_function);
+    /// let mut transaction = transaction!(delete_function);
     ///
-    /// /// A very simple task that makes a DELETE request.
-    /// async fn delete_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A very simple transaction that makes a DELETE request.
+    /// async fn delete_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.delete("path/to/foo/").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub async fn delete(&mut self, path: &str) -> Result<GooseResponse, GooseTaskError> {
+    pub async fn delete(&mut self, path: &str) -> Result<GooseResponse, TransactionError> {
         // DELETE request.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Delete)
@@ -1407,9 +1407,9 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(test_404);
+    /// let mut transaction = transaction!(test_404);
     ///
-    /// async fn test_404(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn test_404(user: &mut GooseUser) -> TransactionResult {
     ///     use std::time::Duration;
     ///
     ///     // Manually interact with the Reqwest RequestBuilder object.
@@ -1436,7 +1436,7 @@ impl GooseUser {
         &self,
         method: &GooseMethod,
         path: &str,
-    ) -> Result<RequestBuilder, GooseTaskError> {
+    ) -> Result<RequestBuilder, TransactionError> {
         // Prepend the `base_url` to all relative paths.
         let url = self.build_url(path)?;
 
@@ -1467,10 +1467,10 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(get_function);
+    /// let mut transaction = transaction!(get_function);
     ///
-    /// /// A simple task that makes a GET request.
-    /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A simple transaction that makes a GET request.
+    /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
     ///     let goose_request = GooseRequest::builder()
     ///       // Goose will prepend a host name to this path.
     ///       .path("path/to/loadtest")
@@ -1488,7 +1488,7 @@ impl GooseUser {
     pub async fn request<'a>(
         &mut self,
         mut request: GooseRequest<'_>,
-    ) -> Result<GooseResponse, GooseTaskError> {
+    ) -> Result<GooseResponse, TransactionError> {
         // If the RequestBuilder is already defined in the GooseRequest use it.
         let request_builder = if request.request_builder.is_some() {
             request.request_builder.take().unwrap()
@@ -1504,7 +1504,7 @@ impl GooseUser {
         if self.is_throttled && self.throttle.is_some() {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
             debug!("GooseUser: waiting on throttle");
-            // Will result in GooseTaskError::RequestCanceled if this fails.
+            // Will result in TransactionError::RequestCanceled if this fails.
             self.throttle.clone().unwrap().send_async(true).await?;
         };
 
@@ -1638,7 +1638,7 @@ impl GooseUser {
         Ok(GooseResponse::new(request_metric, response))
     }
 
-    /// Tracks the time it takes for the current GooseUser to loop through all GooseTasks
+    /// Tracks the time it takes for the current GooseUser to loop through all Transactions
     /// if Coordinated Omission Mitigation is enabled.
     pub(crate) async fn update_request_cadence(&mut self, thread_number: usize) {
         if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
@@ -1652,13 +1652,13 @@ impl GooseUser {
             let now = std::time::Instant::now();
 
             // Swap out the `slept` counter, which is the total time the GooseUser slept
-            // between tasks, a potentially randomly changing value. Reset to 0 for the
-            // next loop through all GooseTasks.
+            // between transactions, a potentially randomly changing value. Reset to 0 for the
+            // next loop through all Transactions.
             self.request_cadence.delays_since_last_time = self.slept;
             self.slept = 0;
 
             // How much time passed since the last time this GooseUser looped through all
-            // tasks, accounting for time waiting between GooseTasks due to `set_wait_time`.
+            // transactions, accounting for time waiting between Transactions due to `set_wait_time`.
             let elapsed = (now - self.request_cadence.last_time).as_millis() as u64
                 - self.request_cadence.delays_since_last_time;
 
@@ -1687,7 +1687,7 @@ impl GooseUser {
                     );
                     self.request_cadence.coordinated_omission_counter += 1;
                 }
-                // Calculate the expected cadence for this GooseTask request.
+                // Calculate the expected cadence for this Transaction request.
                 let cadence = match co_mitigation {
                     // Expected cadence is the average time between requests.
                     GooseCoordinatedOmissionMitigation::Average => {
@@ -1725,13 +1725,13 @@ impl GooseUser {
     }
 
     /// If Coordinated Omission Mitigation is enabled, compares how long has passed since the last
-    /// loop through all GooseTasks by the current GooseUser. Through this mechanism, Goose is
+    /// loop through all Transactions by the current GooseUser. Through this mechanism, Goose is
     /// able to detect stalls on the upstream server being load tested, backfilling requests based
     /// on what statistically should have happened. Can be disabled with `--co-mitigation disabled`.
     async fn coordinated_omission_mitigation(
         &self,
         request_metric: &GooseRequestMetric,
-    ) -> Result<u64, GooseTaskError> {
+    ) -> Result<u64, TransactionError> {
         if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
             // Return immediately if coordinated omission mitigation is disabled.
             if co_mitigation == &GooseCoordinatedOmissionMitigation::Disabled {
@@ -1744,8 +1744,8 @@ impl GooseUser {
             if self.request_cadence.counter > 3
                 && request_metric.response_time > self.request_cadence.user_cadence
             {
-                let task_name = if let Some(task_name) = &self.task_name {
-                    format!(", task name: \"{}\"", task_name)
+                let transaction_name = if let Some(transaction_name) = &self.transaction_name {
+                    format!(", transaction name: \"{}\"", transaction_name)
                 } else {
                     "".to_string()
                 };
@@ -1756,7 +1756,7 @@ impl GooseUser {
                     request_metric.raw.url,
                     request_metric.status_code,
                     request_metric.response_time,
-                    task_name,
+                    transaction_name,
                 );
             }
 
@@ -1781,7 +1781,10 @@ impl GooseUser {
         }
     }
 
-    fn send_request_metric_to_parent(&self, request_metric: GooseRequestMetric) -> GooseTaskResult {
+    fn send_request_metric_to_parent(
+        &self,
+        request_metric: GooseRequestMetric,
+    ) -> TransactionResult {
         // If requests-file is enabled, send a copy of the raw request to the logger thread.
         if !self.config.request_log.is_empty() {
             if let Some(logger) = self.logger.as_ref() {
@@ -1799,16 +1802,16 @@ impl GooseUser {
         Ok(())
     }
 
-    /// If `request_name` is set, unwrap and use this. Otherwise, if the GooseTask has a name
+    /// If `request_name` is set, unwrap and use this. Otherwise, if the Transaction has a name
     /// set use it. Otherwise use the path.
     fn get_request_name<'a>(&'a self, request: &'a GooseRequest) -> &'a str {
         match request.name {
             // If a request.name is set, unwrap and return it.
             Some(rn) => rn,
             None => {
-                // Otherwise determine if the current GooseTask is named, and if so return it.
-                if let Some(task_name) = &self.task_name {
-                    task_name
+                // Otherwise determine if the current Transaction is named, and if so return it.
+                if let Some(transaction_name) = &self.transaction_name {
+                    transaction_name
                 } else {
                     // Otherwise return a copy of the the path.
                     request.path
@@ -1831,10 +1834,10 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(get_function);
+    /// let mut transaction = transaction!(get_function);
     ///
-    /// /// A simple task that makes a GET request.
-    /// async fn get_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// /// A simple transaction that makes a GET request.
+    /// async fn get_function(user: &mut GooseUser) -> TransactionResult {
     ///     let mut goose = user.get("404").await?;
     ///
     ///     if let Ok(response) = &goose.response {
@@ -1844,12 +1847,12 @@ impl GooseUser {
     ///         }
     ///     }
     ///
-    ///     Err(GooseTaskError::RequestFailed {
+    ///     Err(TransactionError::RequestFailed {
     ///         raw_request: goose.request.clone(),
     ///     })
     /// }
     /// ````
-    pub fn set_success(&self, request: &mut GooseRequestMetric) -> GooseTaskResult {
+    pub fn set_success(&self, request: &mut GooseRequestMetric) -> TransactionResult {
         // Only send update if this was previously not a success.
         if !request.success {
             request.success = true;
@@ -1886,9 +1889,9 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(loadtest_index_page);
+    /// let mut transaction = transaction!(loadtest_index_page);
     ///
-    /// async fn loadtest_index_page(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn loadtest_index_page(user: &mut GooseUser) -> TransactionResult {
     ///     let mut goose = user.get("").await?;
     ///
     ///     if let Ok(response) = goose.response {
@@ -1920,7 +1923,7 @@ impl GooseUser {
         request: &mut GooseRequestMetric,
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
-    ) -> GooseTaskResult {
+    ) -> TransactionResult {
         // Only send update if this was previously a success.
         if request.success {
             request.success = false;
@@ -1934,7 +1937,7 @@ impl GooseUser {
         // Print log to stdout.
         info!("set_failure: {}", tag);
 
-        Err(GooseTaskError::RequestFailed {
+        Err(TransactionError::RequestFailed {
             raw_request: request.clone(),
         })
     }
@@ -1965,9 +1968,9 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut task = task!(loadtest_index_page);
+    /// let mut transaction = transaction!(loadtest_index_page);
     ///
-    /// async fn loadtest_index_page(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn loadtest_index_page(user: &mut GooseUser) -> TransactionResult {
     ///     let mut goose = user.get("").await?;
     ///
     ///     match goose.response {
@@ -2018,7 +2021,7 @@ impl GooseUser {
         request: Option<&GooseRequestMetric>,
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
-    ) -> GooseTaskResult {
+    ) -> TransactionResult {
         if !self.config.debug_log.is_empty() {
             // Logger is not defined when running
             // [`test_start`](../struct.GooseAttack.html#method.test_start),
@@ -2084,8 +2087,8 @@ impl GooseUser {
     ///    will only affect requests made during test teardown;
     ///  - A manually built client is specific to a single Goose thread -- if you are
     ///    generating a large load test with many users, each will need to manually build their
-    ///    own client (typically you'd do this in a Task that is registered with
-    ///   [`GooseTask::set_on_start()`] in each Scenario requiring a custom client;
+    ///    own client (typically you'd do this in a Transaction that is registered with
+    ///   [`Transaction::set_on_start()`] in each Scenario requiring a custom client;
     ///  - Manually building a client will completely replace the automatically built client
     ///    with a brand new one, so any configuration, cookies or headers set in the previously
     ///    built client will be gone;
@@ -2103,9 +2106,9 @@ impl GooseUser {
     /// use goose::prelude::*;
     /// use core::time::Duration;
     ///
-    /// task!(setup_custom_client).set_on_start();
+    /// transaction!(setup_custom_client).set_on_start();
     ///
-    /// async fn setup_custom_client(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn setup_custom_client(user: &mut GooseUser) -> TransactionResult {
     ///     use reqwest::{Client, header};
     ///
     ///     // Build a custom HeaderMap to include with all requests made by this client.
@@ -2160,9 +2163,9 @@ impl GooseUser {
     ///
     /// use goose::prelude::*;
     ///
-    /// task!(custom_cookie_with_custom_client).set_on_start();
+    /// transaction!(custom_cookie_with_custom_client).set_on_start();
     ///
-    /// async fn custom_cookie_with_custom_client(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn custom_cookie_with_custom_client(user: &mut GooseUser) -> TransactionResult {
     ///     // Prepare the contents of a custom cookie.
     ///     let cookie = "my-custom-cookie=custom-value";
     ///
@@ -2189,7 +2192,7 @@ impl GooseUser {
     pub async fn set_client_builder(
         &mut self,
         builder: ClientBuilder,
-    ) -> Result<(), GooseTaskError> {
+    ) -> Result<(), TransactionError> {
         self.client = builder.build()?;
 
         Ok(())
@@ -2231,11 +2234,11 @@ impl GooseUser {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
-    ///         .register_scenario(scenario!("LoadtestTasks")
+    ///         .register_scenario(scenario!("LoadtestTransactions")
     ///             .set_host("http://foo.example.com/")
     ///             .set_wait_time(Duration::from_secs(0), Duration::from_secs(3))?
-    ///             .register_task(task!(task_foo).set_weight(10)?)
-    ///             .register_task(task!(task_bar))
+    ///             .register_transaction(transaction!(transaction_foo).set_weight(10)?)
+    ///             .register_transaction(transaction!(transaction_bar))
     ///         )
     ///         // Set a default run time so this test runs to completion.
     ///         .set_default(GooseDefault::RunTime, 1)?
@@ -2245,15 +2248,15 @@ impl GooseUser {
     ///     Ok(())
     /// }
     ///
-    /// async fn task_foo(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn transaction_foo(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn task_bar(user: &mut GooseUser) -> GooseTaskResult {
-    ///     // Before this task runs, all requests are being made against
-    ///     // http://foo.example.com, after this task runs all subsequent
+    /// async fn transaction_bar(user: &mut GooseUser) -> TransactionResult {
+    ///     // Before this transaction runs, all requests are being made against
+    ///     // http://foo.example.com, after this transaction runs all subsequent
     ///     // requests are made against http://bar.example.com/.
     ///     user.set_base_url("http://bar.example.com/");
     ///     let _goose = user.get("").await?;
@@ -2261,7 +2264,7 @@ impl GooseUser {
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_base_url(&mut self, host: &str) -> Result<(), GooseTaskError> {
+    pub fn set_base_url(&mut self, host: &str) -> Result<(), TransactionError> {
         self.base_url = Url::parse(host)?;
         Ok(())
     }
@@ -2307,10 +2310,10 @@ impl<'a> GooseRequest<'a> {
 /// ```rust
 /// use goose::prelude::*;
 ///
-/// let mut a_task = task!(task_function);
+/// let mut a_transaction = transaction!(transaction_function);
 ///
-/// // A simple task that loads a relative path.
-/// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+/// // A simple transaction that loads a relative path.
+/// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
 ///     // Manually create a GooseRequestBuilder object.
 ///     let goose_request = GooseRequest::builder()
 ///         // Set a relative path to request.
@@ -2358,10 +2361,10 @@ impl<'a> GooseRequestBuilder<'a> {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut a_task = task!(task_function);
+    /// let mut a_transaction = transaction!(transaction_function);
     ///
-    /// // A simple task that loads a relative path.
-    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// // A simple transaction that loads a relative path.
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     // Manually create a GooseRequestBuilder object.
     ///     let goose_request = GooseRequest::builder()
     ///         // Set a relative path to request.
@@ -2390,10 +2393,10 @@ impl<'a> GooseRequestBuilder<'a> {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut a_task = task!(task_function);
+    /// let mut a_transaction = transaction!(transaction_function);
     ///
     /// // Make a DELETE request.
-    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     // Manually create a GooseRequestBuilder object.
     ///     let goose_request = GooseRequest::builder()
     ///         // Set a relative path to request.
@@ -2424,10 +2427,10 @@ impl<'a> GooseRequestBuilder<'a> {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut a_task = task!(task_function);
+    /// let mut a_transaction = transaction!(transaction_function);
     ///
     /// // Make a named request.
-    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     // Manually create a GooseRequestBuilder object.
     ///     let goose_request = GooseRequest::builder()
     ///         // Set a relative path to request.
@@ -2457,10 +2460,10 @@ impl<'a> GooseRequestBuilder<'a> {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut a_task = task!(task_function);
+    /// let mut a_transaction = transaction!(transaction_function);
     ///
     /// // Make a named request.
-    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     // Manually create a GooseRequestBuilder object.
     ///     let goose_request = GooseRequest::builder()
     ///         // Set a relative path to request.
@@ -2525,9 +2528,9 @@ impl<'a> GooseRequestBuilder<'a> {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut a_task = task!(task_function);
+    /// let mut a_transaction = transaction!(transaction_function);
     ///
-    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     use std::time::Duration;
     ///
     ///     // Manually interact with the Reqwest RequestBuilder object.
@@ -2658,38 +2661,40 @@ pub fn get_base_url(
     }
 }
 
-/// The function type of a goose task function.
-pub type GooseTaskFunction = Arc<
-    dyn for<'r> Fn(&'r mut GooseUser) -> Pin<Box<dyn Future<Output = GooseTaskResult> + Send + 'r>>
+/// The function type of a goose transaction function.
+pub type TransactionFunction = Arc<
+    dyn for<'r> Fn(
+            &'r mut GooseUser,
+        ) -> Pin<Box<dyn Future<Output = TransactionResult> + Send + 'r>>
         + Send
         + Sync,
 >;
 
-/// An individual task within a [`Scenario`](./struct.Scenario.html).
+/// An individual transaction within a [`Scenario`](./struct.Scenario.html).
 #[derive(Clone)]
-pub struct GooseTask {
-    /// An index into [`Scenario`](./struct.Scenario.html)`.task`, indicating which
-    /// task this is.
-    pub tasks_index: usize,
-    /// An optional name for the task, used when displaying metrics about requests made.
+pub struct Transaction {
+    /// An index into [`Scenario`](./struct.Scenario.html)`.transaction`, indicating which
+    /// transaction this is.
+    pub transactions_index: usize,
+    /// An optional name for the transaction, used when displaying metrics.
     pub name: String,
-    /// An integer value that controls the frequency that this task will be run.
+    /// An integer value that controls the frequency that this transaction will be run.
     pub weight: usize,
-    /// An integer value that controls when this task runs compared to other tasks in the same
+    /// An integer value that controls when this transaction runs compared to other transactions in the same
     /// [`Scenario`](./struct.Scenario.html).
     pub sequence: usize,
-    /// A flag indicating that this task runs when the user starts.
+    /// A flag indicating that this transaction runs when the user starts.
     pub on_start: bool,
-    /// A flag indicating that this task runs when the user stops.
+    /// A flag indicating that this transaction runs when the user stops.
     pub on_stop: bool,
-    /// A required function that is executed each time this task runs.
-    pub function: GooseTaskFunction,
+    /// A required function that is executed each time this transaction runs.
+    pub function: TransactionFunction,
 }
-impl GooseTask {
-    pub fn new(function: GooseTaskFunction) -> Self {
-        trace!("new task");
-        GooseTask {
-            tasks_index: usize::max_value(),
+impl Transaction {
+    pub fn new(function: TransactionFunction) -> Self {
+        trace!("new transaction");
+        Transaction {
+            transactions_index: usize::max_value(),
             name: "".to_string(),
             weight: 1,
             sequence: 0,
@@ -2699,8 +2704,7 @@ impl GooseTask {
         }
     }
 
-    /// Set an optional name for the task, used when displaying metrics about
-    /// requests made by the task.
+    /// Set an optional name for the transaction, used when displaying metrics.
     ///
     /// Individual requests can also be named using [`GooseRequestBuilder`], or for GET
     /// requests with the [`GooseUser::get_named`] helper.
@@ -2709,79 +2713,87 @@ impl GooseTask {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// task!(my_task_function).set_name("foo");
+    /// transaction!(my_transaction_function).set_name("foo");
     ///
-    /// async fn my_task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn my_transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
-        trace!("[{}] set_name: {}", self.tasks_index, self.name);
+        trace!("[{}] set_name: {}", self.transactions_index, self.name);
         self.name = name.to_string();
         self
     }
 
-    /// Set an optional flag indicating that this task should be run when
+    /// Set an optional flag indicating that this transaction should be run when
     /// a user first starts. This could be used to log the user in, and
-    /// so all subsequent tasks are done as a logged in user. A task with
-    /// this flag set will only run at start time (and optionally at stop
+    /// so all subsequent transaction are done as a logged in user. A transaction
+    /// with this flag set will only run at start time (and optionally at stop
     /// time as well, if that flag is also set).
     ///
-    /// On-start tasks can be sequenced and weighted. Sequences allow
-    /// multiple on-start tasks to run in a controlled order. Weights allow
-    /// on-start tasks to run multiple times when a user starts.
+    /// On-start transactions can be sequenced and weighted. Sequences allow
+    /// multiple on-start transactions to run in a controlled order. Weights allow
+    /// on-start transactions to run multiple times when a user starts.
     ///
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// task!(my_on_start_function).set_on_start();
+    /// transaction!(my_on_start_function).set_on_start();
     ///
-    /// async fn my_on_start_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn my_on_start_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn set_on_start(mut self) -> Self {
-        trace!("{} [{}] set_on_start task", self.name, self.tasks_index);
+        trace!(
+            "{} [{}] set_on_start transaction",
+            self.name,
+            self.transactions_index
+        );
         self.on_start = true;
         self
     }
 
-    /// Set an optional flag indicating that this task should be run when
+    /// Set an optional flag indicating that this transaction should be run when
     /// a user stops. This could be used to log a user out when the user
-    /// finishes its load test. A task with this flag set will only run at
+    /// finishes its load test. A transaction with this flag set will only run at
     /// stop time (and optionally at start time as well, if that flag is
     /// also set).
     ///
-    /// On-stop tasks can be sequenced and weighted. Sequences allow
-    /// multiple on-stop tasks to run in a controlled order. Weights allow
-    /// on-stop tasks to run multiple times when a user stops.
+    /// On-stop transactions can be sequenced and weighted. Sequences allow
+    /// multiple on-stop transactions to run in a controlled order. Weights allow
+    /// on-stop transactions to run multiple times when a user stops.
     ///
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// task!(my_on_stop_function).set_on_stop();
+    /// transaction!(my_on_stop_function).set_on_stop();
     ///
-    /// async fn my_on_stop_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn my_on_stop_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn set_on_stop(mut self) -> Self {
-        trace!("{} [{}] set_on_stop task", self.name, self.tasks_index);
+        trace!(
+            "{} [{}] set_on_stop transaction",
+            self.name,
+            self.transactions_index
+        );
         self.on_stop = true;
         self
     }
 
-    /// Sets a weight on an individual task. The larger the value of weight, the more often it will be run
-    /// in the Scenario. For example, if one task has a weight of 3 and another task has a weight of 1, the
-    /// first task will run 3 times as often.
+    /// Sets a weight on an individual transaction. The larger the value of weight, the more often it will be run
+    /// in the Scenario. For example, if one transaction has a weight of 3 and another transaction has a weight of
+    /// 1, the first transaction will run 3 times as often.
     ///
     /// # Example
     /// ```rust
@@ -2789,12 +2801,12 @@ impl GooseTask {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     task!(task_function).set_weight(3)?;
+    ///     transaction!(transaction_function).set_weight(3)?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("").await?;
     ///
     ///     Ok(())
@@ -2804,7 +2816,7 @@ impl GooseTask {
         trace!(
             "{} [{}] set_weight: {}",
             self.name,
-            self.tasks_index,
+            self.transactions_index,
             weight
         );
         if weight == 0 {
@@ -2818,71 +2830,71 @@ impl GooseTask {
         Ok(self)
     }
 
-    /// Defines the sequence value of an individual tasks. Tasks are run in order of their sequence value,
-    /// so a task with a sequence value of 1 will run before a task with a sequence value of 2. Tasks with
-    /// no sequence value (or a sequence value of 0) will run last, after all tasks with positive sequence
-    /// values.
+    /// Defines the sequence value of an individual transactions. Transactions are run in order of their
+    /// sequence value, so a transaction with a sequence value of 1 will run before a transaction with a
+    /// sequence value of 2. Transactions with no sequence value (or a sequence value of 0) will run last,
+    /// after all transactions with positive sequence values.
     ///
-    /// All tasks with the same sequence value will run in a random order. Tasks can be assigned both
-    /// squence values and weights.
+    /// All transactions with the same sequence value will run in a random order. Transactions can be
+    /// assigned both squence values and weights.
     ///
     /// # Examples
-    /// In this first example, the variable names indicate the order the tasks will be run in:
+    /// In this first example, the variable names indicate the order the transactions will be run in:
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let runs_first = task!(first_task_function).set_sequence(3);
-    /// let runs_second = task!(second_task_function).set_sequence(5835);
-    /// let runs_last = task!(third_task_function);
+    /// let runs_first = transaction!(first_transaction_function).set_sequence(3);
+    /// let runs_second = transaction!(second_transaction_function).set_sequence(5835);
+    /// let runs_last = transaction!(third_transaction_function);
     ///
-    /// async fn first_task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn first_transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("1").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn second_task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn second_transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("2").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn third_task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn third_transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("3").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     ///
-    /// In the following example, the `runs_first` task runs two times, then one instance of `runs_second`
+    /// In the following example, the `runs_first` transactions runs two times, then one instance of `runs_second`
     /// and two instances of `also_runs_second` are all three run. The user will do this over and over
-    /// the entire time it runs, with `runs_first` always running first, then the other tasks being
+    /// the entire time it runs, with `runs_first` always running first, then the other transactions being
     /// run in a random and weighted order:
     /// ```rust
     /// use goose::prelude::*;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     let runs_first = task!(first_task_function).set_sequence(1).set_weight(2)?;
-    ///     let runs_second = task!(second_task_function_a).set_sequence(2);
-    ///     let also_runs_second = task!(second_task_function_b).set_sequence(2).set_weight(2)?;
+    ///     let runs_first = transaction!(first_transaction_function).set_sequence(1).set_weight(2)?;
+    ///     let runs_second = transaction!(second_transaction_function_a).set_sequence(2);
+    ///     let also_runs_second = transaction!(second_transaction_function_b).set_sequence(2).set_weight(2)?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn first_task_function(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn first_transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("1").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn second_task_function_a(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn second_transaction_function_a(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("2a").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    ///     async fn second_task_function_b(user: &mut GooseUser) -> GooseTaskResult {
+    ///     async fn second_transaction_function_b(user: &mut GooseUser) -> TransactionResult {
     ///       let _goose = user.get("2b").await?;
     ///
     ///       Ok(())
@@ -2892,12 +2904,12 @@ impl GooseTask {
         trace!(
             "{} [{}] set_sequence: {}",
             self.name,
-            self.tasks_index,
+            self.transactions_index,
             sequence
         );
         if sequence < 1 {
             info!(
-                "setting sequence to 0 for task {} is unnecessary, sequence disabled",
+                "setting sequence to 0 for transaction {} is unnecessary, sequence disabled",
                 self.name
             );
         }
@@ -2905,9 +2917,9 @@ impl GooseTask {
         self
     }
 }
-impl Hash for GooseTask {
+impl Hash for Transaction {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.tasks_index.hash(state);
+        self.transactions_index.hash(state);
         self.name.hash(state);
         self.weight.hash(state);
         self.sequence.hash(state);
@@ -2937,14 +2949,14 @@ mod tests {
 
     #[test]
     fn goose_scenario() {
-        // Simplistic test task functions.
-        async fn test_function_a(user: &mut GooseUser) -> GooseTaskResult {
+        // Simplistic test transaction functions.
+        async fn test_function_a(user: &mut GooseUser) -> TransactionResult {
             let _goose = user.get("/a/").await?;
 
             Ok(())
         }
 
-        async fn test_function_b(user: &mut GooseUser) -> GooseTaskResult {
+        async fn test_function_b(user: &mut GooseUser) -> TransactionResult {
             let _goose = user.get("/b/").await?;
 
             Ok(())
@@ -2954,47 +2966,47 @@ mod tests {
         assert_eq!(scenario.name, "foo");
         assert_eq!(scenario.scenarios_index, usize::max_value());
         assert_eq!(scenario.weight, 1);
-        assert_eq!(scenario.task_wait, None);
+        assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
-        assert_eq!(scenario.tasks.len(), 0);
-        assert_eq!(scenario.weighted_tasks.len(), 0);
-        assert_eq!(scenario.weighted_on_start_tasks.len(), 0);
-        assert_eq!(scenario.weighted_on_stop_tasks.len(), 0);
+        assert_eq!(scenario.transactions.len(), 0);
+        assert_eq!(scenario.weighted_transactions.len(), 0);
+        assert_eq!(scenario.weighted_on_start_transactions.len(), 0);
+        assert_eq!(scenario.weighted_on_stop_transactions.len(), 0);
 
-        // Registering a task adds it to tasks, but doesn't update weighted_tasks.
-        scenario = scenario.register_task(task!(test_function_a));
-        assert_eq!(scenario.tasks.len(), 1);
-        assert_eq!(scenario.weighted_tasks.len(), 0);
+        // Registering a transaction adds it to transactions, but doesn't update weighted_transactions.
+        scenario = scenario.register_transaction(transaction!(test_function_a));
+        assert_eq!(scenario.transactions.len(), 1);
+        assert_eq!(scenario.weighted_transactions.len(), 0);
         assert_eq!(scenario.scenarios_index, usize::max_value());
         assert_eq!(scenario.weight, 1);
-        assert_eq!(scenario.task_wait, None);
+        assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
 
-        // Different task can be registered.
-        scenario = scenario.register_task(task!(test_function_b));
-        assert_eq!(scenario.tasks.len(), 2);
-        assert_eq!(scenario.weighted_tasks.len(), 0);
+        // Different transactions can be registered.
+        scenario = scenario.register_transaction(transaction!(test_function_b));
+        assert_eq!(scenario.transactions.len(), 2);
+        assert_eq!(scenario.weighted_transactions.len(), 0);
         assert_eq!(scenario.scenarios_index, usize::max_value());
         assert_eq!(scenario.weight, 1);
-        assert_eq!(scenario.task_wait, None);
+        assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
 
-        // Same task can be registered again.
-        scenario = scenario.register_task(task!(test_function_a));
-        assert_eq!(scenario.tasks.len(), 3);
-        assert_eq!(scenario.weighted_tasks.len(), 0);
+        // Same transactions can be registered again.
+        scenario = scenario.register_transaction(transaction!(test_function_a));
+        assert_eq!(scenario.transactions.len(), 3);
+        assert_eq!(scenario.weighted_transactions.len(), 0);
         assert_eq!(scenario.scenarios_index, usize::max_value());
         assert_eq!(scenario.weight, 1);
-        assert_eq!(scenario.task_wait, None);
+        assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
 
         // Setting weight only affects weight field.
         scenario = scenario.set_weight(50).unwrap();
         assert_eq!(scenario.weight, 50);
-        assert_eq!(scenario.tasks.len(), 3);
-        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.transactions.len(), 3);
+        assert_eq!(scenario.weighted_transactions.len(), 0);
         assert_eq!(scenario.scenarios_index, usize::max_value());
-        assert_eq!(scenario.task_wait, None);
+        assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
 
         // Weight can be changed.
@@ -3005,10 +3017,10 @@ mod tests {
         scenario = scenario.set_host("http://foo.example.com/");
         assert_eq!(scenario.host, Some("http://foo.example.com/".to_string()));
         assert_eq!(scenario.weight, 5);
-        assert_eq!(scenario.tasks.len(), 3);
-        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.transactions.len(), 3);
+        assert_eq!(scenario.weighted_transactions.len(), 0);
         assert_eq!(scenario.scenarios_index, usize::max_value());
-        assert_eq!(scenario.task_wait, None);
+        assert_eq!(scenario.transaction_wait, None);
 
         // Host field can be changed.
         scenario = scenario.set_host("https://bar.example.com/");
@@ -3019,13 +3031,13 @@ mod tests {
             .set_wait_time(Duration::from_secs(1), Duration::from_secs(10))
             .unwrap();
         assert_eq!(
-            scenario.task_wait,
+            scenario.transaction_wait,
             Some((Duration::from_secs(1), Duration::from_secs(10)))
         );
         assert_eq!(scenario.host, Some("https://bar.example.com/".to_string()));
         assert_eq!(scenario.weight, 5);
-        assert_eq!(scenario.tasks.len(), 3);
-        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.transactions.len(), 3);
+        assert_eq!(scenario.weighted_transactions.len(), 0);
         assert_eq!(scenario.scenarios_index, usize::max_value());
 
         // Wait time can be changed.
@@ -3033,89 +3045,89 @@ mod tests {
             .set_wait_time(Duration::from_secs(3), Duration::from_secs(9))
             .unwrap();
         assert_eq!(
-            scenario.task_wait,
+            scenario.transaction_wait,
             Some((Duration::from_secs(3), Duration::from_secs(9)))
         );
     }
 
     #[test]
-    fn goose_task() {
-        // Simplistic test task functions.
-        async fn test_function_a(user: &mut GooseUser) -> GooseTaskResult {
+    fn goose_transaction() {
+        // Simplistic test transaction functions.
+        async fn test_function_a(user: &mut GooseUser) -> TransactionResult {
             let _goose = user.get("/a/").await?;
 
             Ok(())
         }
 
         // Initialize scenario.
-        let mut task = task!(test_function_a);
-        assert_eq!(task.tasks_index, usize::max_value());
-        assert_eq!(task.name, "".to_string());
-        assert_eq!(task.weight, 1);
-        assert_eq!(task.sequence, 0);
-        assert!(!task.on_start);
-        assert!(!task.on_stop);
+        let mut transaction = transaction!(test_function_a);
+        assert_eq!(transaction.transactions_index, usize::max_value());
+        assert_eq!(transaction.name, "".to_string());
+        assert_eq!(transaction.weight, 1);
+        assert_eq!(transaction.sequence, 0);
+        assert!(!transaction.on_start);
+        assert!(!transaction.on_stop);
 
         // Name can be set, without affecting other fields.
-        task = task.set_name("foo");
-        assert_eq!(task.name, "foo".to_string());
-        assert_eq!(task.weight, 1);
-        assert_eq!(task.sequence, 0);
-        assert!(!task.on_start);
-        assert!(!task.on_stop);
+        transaction = transaction.set_name("foo");
+        assert_eq!(transaction.name, "foo".to_string());
+        assert_eq!(transaction.weight, 1);
+        assert_eq!(transaction.sequence, 0);
+        assert!(!transaction.on_start);
+        assert!(!transaction.on_stop);
 
         // Name can be set multiple times.
-        task = task.set_name("bar");
-        assert_eq!(task.name, "bar".to_string());
+        transaction = transaction.set_name("bar");
+        assert_eq!(transaction.name, "bar".to_string());
 
         // On start flag can be set, without affecting other fields.
-        task = task.set_on_start();
-        assert!(task.on_start);
-        assert_eq!(task.name, "bar".to_string());
-        assert_eq!(task.weight, 1);
-        assert_eq!(task.sequence, 0);
-        assert!(!task.on_stop);
+        transaction = transaction.set_on_start();
+        assert!(transaction.on_start);
+        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.weight, 1);
+        assert_eq!(transaction.sequence, 0);
+        assert!(!transaction.on_stop);
 
         // Setting on start flag twice doesn't change anything.
-        task = task.set_on_start();
-        assert!(task.on_start);
+        transaction = transaction.set_on_start();
+        assert!(transaction.on_start);
 
         // On stop flag can be set, without affecting other fields.
-        // It's possible to set both on_start and on_stop for same task.
-        task = task.set_on_stop();
-        assert!(task.on_stop);
-        assert!(task.on_start);
-        assert_eq!(task.name, "bar".to_string());
-        assert_eq!(task.weight, 1);
-        assert_eq!(task.sequence, 0);
+        // It's possible to set both on_start and on_stop for same transaction.
+        transaction = transaction.set_on_stop();
+        assert!(transaction.on_stop);
+        assert!(transaction.on_start);
+        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.weight, 1);
+        assert_eq!(transaction.sequence, 0);
 
         // Setting on stop flag twice doesn't change anything.
-        task = task.set_on_stop();
-        assert!(task.on_stop);
+        transaction = transaction.set_on_stop();
+        assert!(transaction.on_stop);
 
         // Setting weight doesn't change anything else.
-        task = task.set_weight(2).unwrap();
-        assert_eq!(task.weight, 2);
-        assert!(task.on_stop);
-        assert!(task.on_start);
-        assert_eq!(task.name, "bar".to_string());
-        assert_eq!(task.sequence, 0);
+        transaction = transaction.set_weight(2).unwrap();
+        assert_eq!(transaction.weight, 2);
+        assert!(transaction.on_stop);
+        assert!(transaction.on_start);
+        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.sequence, 0);
 
         // Weight field can be changed multiple times.
-        task = task.set_weight(3).unwrap();
-        assert_eq!(task.weight, 3);
+        transaction = transaction.set_weight(3).unwrap();
+        assert_eq!(transaction.weight, 3);
 
         // Setting sequence doesn't change anything else.
-        task = task.set_sequence(4);
-        assert_eq!(task.sequence, 4);
-        assert_eq!(task.weight, 3);
-        assert!(task.on_stop);
-        assert!(task.on_start);
-        assert_eq!(task.name, "bar".to_string());
+        transaction = transaction.set_sequence(4);
+        assert_eq!(transaction.sequence, 4);
+        assert_eq!(transaction.weight, 3);
+        assert!(transaction.on_stop);
+        assert!(transaction.on_start);
+        assert_eq!(transaction.name, "bar".to_string());
 
         // Sequence field can be changed multiple times.
-        task = task.set_sequence(8);
-        assert_eq!(task.sequence, 8);
+        transaction = transaction.set_sequence(8);
+        assert_eq!(transaction.sequence, 8);
     }
 
     #[tokio::test]

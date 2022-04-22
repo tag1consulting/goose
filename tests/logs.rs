@@ -21,8 +21,8 @@ const EXPECT_WORKERS: usize = 2;
 enum TestType {
     // Test with requests log enabled.
     Requests,
-    // Test with tasks log enabled.
-    Tasks,
+    // Test with transaction log enabled.
+    Transactions,
     // Test with error log enabled.
     Error,
     // Test with debug log enabled.
@@ -33,7 +33,7 @@ enum TestType {
 
 struct LogFiles<'a> {
     request_logs: &'a [String],
-    task_logs: &'a [String],
+    transaction_logs: &'a [String],
     error_logs: &'a [String],
     debug_logs: &'a [String],
 }
@@ -44,7 +44,7 @@ impl fmt::Display for TestType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let printable = match *self {
             TestType::Requests => "requests",
-            TestType::Tasks => "tasks",
+            TestType::Transactions => "transactions",
             TestType::Error => "error",
             TestType::Debug => "debug",
             TestType::All => "all",
@@ -53,14 +53,14 @@ impl fmt::Display for TestType {
     }
 }
 
-// Test task.
-pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
-// Test task.
-pub async fn get_error(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_error(user: &mut GooseUser) -> TransactionResult {
     let mut goose = user.get(ERROR_PATH).await?;
 
     if let Ok(r) = goose.response {
@@ -94,11 +94,11 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
     ]
 }
 
-// Returns the appropriate taskset, start_task and stop_task needed to build these tests.
-fn get_tasks() -> Scenario {
+// Returns the appropriate scenario, start_transaction and stop_transaction needed to build these tests.
+fn get_transactions() -> Scenario {
     scenario!("LoadTest")
-        .register_task(task!(get_index))
-        .register_task(task!(get_error))
+        .register_transaction(transaction!(get_index))
+        .register_transaction(transaction!(get_error))
 }
 
 // Helper to confirm all variations generate appropriate results.
@@ -144,18 +144,18 @@ fn validate_test(
             // Metrics file must not be empty.
             assert!(requests_file_lines > 0);
         }
-        TestType::Tasks => {
-            // Tasks file must exist.
-            assert!(!log_files.task_logs.is_empty());
+        TestType::Transactions => {
+            // Transaction log must exist.
+            assert!(!log_files.transaction_logs.is_empty());
 
-            // Confirm the tasks log files actually exist.
-            let mut tasks_file_lines = 0;
-            for tasks_file in log_files.task_logs {
-                assert!(std::path::Path::new(tasks_file).exists());
-                tasks_file_lines += common::file_length(tasks_file);
+            // Confirm the transaction log files actually exist.
+            let mut transactions_file_lines = 0;
+            for transactions_file in log_files.transaction_logs {
+                assert!(std::path::Path::new(transactions_file).exists());
+                transactions_file_lines += common::file_length(transactions_file);
             }
-            // Tasks file must not be empty.
-            assert!(tasks_file_lines > 0);
+            // Transaction file must not be empty.
+            assert!(transactions_file_lines > 0);
         }
         TestType::Error => {
             // Error file must exist.
@@ -177,8 +177,8 @@ fn validate_test(
             assert!(!log_files.error_logs.is_empty());
             // Requests file must exist.
             assert!(!log_files.request_logs.is_empty());
-            // Tasks file must exist.
-            assert!(!log_files.task_logs.is_empty());
+            // Transactions file must exist.
+            assert!(!log_files.transaction_logs.is_empty());
 
             // Confirm the debug log files actually exist.
             let mut debug_file_lines = 0;
@@ -207,14 +207,14 @@ fn validate_test(
             // Requests file must not be empty.
             assert!(requests_file_lines > 0);
 
-            // Confirm the tasks log files actually exist.
-            let mut tasks_file_lines = 0;
-            for tasks_log in log_files.task_logs {
-                assert!(std::path::Path::new(tasks_log).exists());
-                tasks_file_lines += common::file_length(tasks_log);
+            // Confirm the transaction log files actually exist.
+            let mut transactions_file_lines = 0;
+            for transactions_log in log_files.transaction_logs {
+                assert!(std::path::Path::new(transactions_log).exists());
+                transactions_file_lines += common::file_length(transactions_log);
             }
-            // Task file must not be empty.
-            assert!(tasks_file_lines > 0);
+            // Transaction file must not be empty.
+            assert!(transactions_file_lines > 0);
         }
     }
 }
@@ -222,7 +222,7 @@ fn validate_test(
 // Helper to run all standalone tests.
 async fn run_standalone_test(test_type: TestType, format: &str) {
     let request_log = test_type.to_string() + "-request-log." + format;
-    let task_log = test_type.to_string() + "-task-log." + format;
+    let transaction_log = test_type.to_string() + "-transaction-log." + format;
     let debug_log = test_type.to_string() + "-debug-log." + format;
     let error_log = test_type.to_string() + "-error-log." + format;
 
@@ -234,15 +234,20 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
         TestType::Debug => vec!["--debug-log", &debug_log, "--debug-format", format],
         TestType::Error => vec!["--error-log", &error_log, "--error-format", format],
         TestType::Requests => vec!["--request-log", &request_log, "--request-format", format],
-        TestType::Tasks => vec!["--task-log", &task_log, "--task-format", format],
+        TestType::Transactions => vec![
+            "--transaction-log",
+            &transaction_log,
+            "--transaction-format",
+            format,
+        ],
         TestType::All => vec![
             "--request-log",
             &request_log,
             "--request-format",
             format,
-            "--task-log",
-            &task_log,
-            "--task-format",
+            "--transaction-log",
+            &transaction_log,
+            "--transaction-format",
             format,
             "--error-log",
             &error_log,
@@ -259,27 +264,27 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration, &get_tasks(), None, None),
+        common::build_load_test(configuration, &get_transactions(), None, None),
         None,
     )
     .await;
 
     let log_files = LogFiles {
         request_logs: &[request_log.to_string()],
-        task_logs: &[task_log.to_string()],
+        transaction_logs: &[transaction_log.to_string()],
         error_logs: &[error_log.to_string()],
         debug_logs: &[debug_log.to_string()],
     };
 
     validate_test(goose_metrics, &mock_endpoints, &test_type, &log_files);
 
-    common::cleanup_files(vec![&request_log, &task_log, &error_log, &debug_log]);
+    common::cleanup_files(vec![&request_log, &transaction_log, &error_log, &debug_log]);
 }
 
 // Helper to run all gaggle tests.
 async fn run_gaggle_test(test_type: TestType, format: &str) {
     let requests_file = test_type.to_string() + "-gaggle-request-log." + format;
-    let tasks_file = test_type.to_string() + "-gaggle-task-log." + format;
+    let transactions_file = test_type.to_string() + "-gaggle-transaction-log." + format;
     let error_file = test_type.to_string() + "-gaggle-error-log." + format;
     let debug_file = test_type.to_string() + "-gaggle-debug-log." + format;
 
@@ -290,18 +295,18 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
     // Launch each worker in its own thread, storing the join handles.
     let mut worker_handles = Vec::new();
     let mut requests_files = Vec::new();
-    let mut tasks_files = Vec::new();
+    let mut transactions_files = Vec::new();
     let mut error_files = Vec::new();
     let mut debug_files = Vec::new();
     for i in 0..EXPECT_WORKERS {
         // Name files different per-Worker thread.
         let worker_requests_file = requests_file.clone() + &i.to_string();
-        let worker_tasks_file = tasks_file.clone() + &i.to_string();
+        let worker_transactions_file = transactions_file.clone() + &i.to_string();
         let worker_error_file = error_file.clone() + &i.to_string();
         let worker_debug_file = debug_file.clone() + &i.to_string();
         // Store filenames to cleanup at end of test.
         requests_files.push(worker_requests_file.clone());
-        tasks_files.push(worker_tasks_file.clone());
+        transactions_files.push(worker_transactions_file.clone());
         error_files.push(worker_error_file.clone());
         debug_files.push(worker_debug_file.clone());
         // Build appropriate configuration.
@@ -327,11 +332,11 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
                 "--request-format",
                 format,
             ],
-            TestType::Tasks => vec![
+            TestType::Transactions => vec![
                 "--worker",
-                "--task-log",
-                &worker_tasks_file,
-                "--task-format",
+                "--transaction-log",
+                &worker_transactions_file,
+                "--transaction-format",
                 format,
             ],
             TestType::All => vec![
@@ -340,9 +345,9 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
                 &worker_requests_file,
                 "--request-format",
                 format,
-                "--task-log",
-                &worker_tasks_file,
-                "--task-format",
+                "--transaction-log",
+                &worker_transactions_file,
+                "--transaction-format",
                 format,
                 "--error-log",
                 &worker_error_file,
@@ -355,8 +360,12 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
             ],
         };
         let worker_configuration = common::build_configuration(&server, worker_configuration_flags);
-        let worker_goose_attack =
-            common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
+        let worker_goose_attack = common::build_load_test(
+            worker_configuration.clone(),
+            &get_transactions(),
+            None,
+            None,
+        );
         // Start worker instance of the load test.
         worker_handles.push(tokio::spawn(common::run_load_test(
             worker_goose_attack,
@@ -381,14 +390,14 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
 
     // Build the load test for the Manager.
     let manager_goose_attack =
-        common::build_load_test(manager_configuration, &get_tasks(), None, None);
+        common::build_load_test(manager_configuration, &get_transactions(), None, None);
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
 
     let log_files = LogFiles {
         request_logs: &requests_files,
-        task_logs: &tasks_files,
+        transaction_logs: &transactions_files,
         error_logs: &error_files,
         debug_logs: &debug_files,
     };
@@ -398,7 +407,7 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
     for file in requests_files {
         common::cleanup_files(vec![&file]);
     }
-    for file in tasks_files {
+    for file in transactions_files {
         common::cleanup_files(vec![&file]);
     }
     for file in error_files {
@@ -466,45 +475,45 @@ async fn test_requests_logs_pretty_gaggle() {
 }
 
 #[tokio::test]
-// Enable json-formatted tasks log.
-async fn test_tasks_logs_json() {
-    run_standalone_test(TestType::Tasks, "json").await;
+// Enable json-formatted transaction log.
+async fn test_transactions_logs_json() {
+    run_standalone_test(TestType::Transactions, "json").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Enable json-formatted tasks log, in Gaggle mode.
-async fn test_tasks_logs_json_gaggle() {
-    run_gaggle_test(TestType::Tasks, "json").await;
+// Enable json-formatted transaction log, in Gaggle mode.
+async fn test_transactions_logs_json_gaggle() {
+    run_gaggle_test(TestType::Transactions, "json").await;
 }
 
 #[tokio::test]
-// Enable csv-formatted tasks log.
-async fn test_tasks_logs_csv() {
-    run_standalone_test(TestType::Tasks, "csv").await;
+// Enable csv-formatted transaction log.
+async fn test_transactions_logs_csv() {
+    run_standalone_test(TestType::Transactions, "csv").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Enable csv-formatted tasks log, in Gaggle mode.
-async fn test_tasks_logs_csv_gaggle() {
-    run_gaggle_test(TestType::Tasks, "csv").await;
+// Enable csv-formatted transaction log, in Gaggle mode.
+async fn test_transactions_logs_csv_gaggle() {
+    run_gaggle_test(TestType::Transactions, "csv").await;
 }
 
 #[tokio::test]
-// Enable raw-formatted tasks log.
-async fn test_tasks_logs_raw() {
-    run_standalone_test(TestType::Tasks, "raw").await;
+// Enable raw-formatted transaction log.
+async fn test_transactions_logs_raw() {
+    run_standalone_test(TestType::Transactions, "raw").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Enable raw-formatted tasks log, in Gaggle mode.
-async fn test_tasks_logs_raw_gaggle() {
-    run_gaggle_test(TestType::Tasks, "raw").await;
+// Enable raw-formatted transaction log, in Gaggle mode.
+async fn test_transactions_logs_raw_gaggle() {
+    run_gaggle_test(TestType::Transactions, "raw").await;
 }
 
 #[tokio::test]

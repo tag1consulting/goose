@@ -6,7 +6,7 @@ use rand::seq::SliceRandom;
 use std::env;
 
 /// Log into the website.
-pub async fn log_in(user: &mut GooseUser) -> GooseTaskResult {
+pub async fn log_in(user: &mut GooseUser) -> TransactionResult {
     // Use ADMIN_USERNAME= to set custom admin username.
     let admin_username = match env::var("ADMIN_USERNAME") {
         Ok(username) => username,
@@ -107,7 +107,7 @@ pub async fn log_in(user: &mut GooseUser) -> GooseTaskResult {
 }
 
 /// Load and edit a random article.
-pub async fn edit_article(user: &mut GooseUser) -> GooseTaskResult {
+pub async fn edit_article(user: &mut GooseUser) -> TransactionResult {
     // First, load a random article.
     let nodes = common::get_nodes(&common::ContentType::Article);
     let article = nodes.choose(&mut rand::thread_rng());
