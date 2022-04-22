@@ -33,18 +33,18 @@ async fn main() -> Result<(), GooseError> {
         .register_scenario(
             scenario!("AnonBrowsingUser")
                 .set_weight(4)?
-                .register_task(
-                    task!(drupal_memcache_front_page)
+                .register_transaction(
+                    transaction!(drupal_memcache_front_page)
                         .set_weight(15)?
                         .set_name("(Anon) front page"),
                 )
-                .register_task(
-                    task!(drupal_memcache_node_page)
+                .register_transaction(
+                    transaction!(drupal_memcache_node_page)
                         .set_weight(10)?
                         .set_name("(Anon) node page"),
                 )
-                .register_task(
-                    task!(drupal_memcache_profile_page)
+                .register_transaction(
+                    transaction!(drupal_memcache_profile_page)
                         .set_weight(3)?
                         .set_name("(Anon) user page"),
                 ),
@@ -52,28 +52,28 @@ async fn main() -> Result<(), GooseError> {
         .register_scenario(
             scenario!("AuthBrowsingUser")
                 .set_weight(1)?
-                .register_task(
-                    task!(drupal_memcache_login)
+                .register_transaction(
+                    transaction!(drupal_memcache_login)
                         .set_on_start()
                         .set_name("(Auth) login"),
                 )
-                .register_task(
-                    task!(drupal_memcache_front_page)
+                .register_transaction(
+                    transaction!(drupal_memcache_front_page)
                         .set_weight(15)?
                         .set_name("(Auth) front page"),
                 )
-                .register_task(
-                    task!(drupal_memcache_node_page)
+                .register_transaction(
+                    transaction!(drupal_memcache_node_page)
                         .set_weight(10)?
                         .set_name("(Auth) node page"),
                 )
-                .register_task(
-                    task!(drupal_memcache_profile_page)
+                .register_transaction(
+                    transaction!(drupal_memcache_profile_page)
                         .set_weight(3)?
                         .set_name("(Auth) user page"),
                 )
-                .register_task(
-                    task!(drupal_memcache_post_comment)
+                .register_transaction(
+                    transaction!(drupal_memcache_post_comment)
                         .set_weight(3)?
                         .set_name("(Auth) comment form"),
                 ),
@@ -85,7 +85,7 @@ async fn main() -> Result<(), GooseError> {
 }
 
 /// View the front page.
-async fn drupal_memcache_front_page(user: &mut GooseUser) -> GooseTaskResult {
+async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
     let mut goose = user.get("/").await?;
 
     match goose.response {
@@ -134,7 +134,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> GooseTaskResult {
 }
 
 /// View a node from 1 to 10,000, created by preptest.sh.
-async fn drupal_memcache_node_page(user: &mut GooseUser) -> GooseTaskResult {
+async fn drupal_memcache_node_page(user: &mut GooseUser) -> TransactionResult {
     let nid = rand::thread_rng().gen_range(1..10_000);
     let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
 
@@ -142,7 +142,7 @@ async fn drupal_memcache_node_page(user: &mut GooseUser) -> GooseTaskResult {
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
-async fn drupal_memcache_profile_page(user: &mut GooseUser) -> GooseTaskResult {
+async fn drupal_memcache_profile_page(user: &mut GooseUser) -> TransactionResult {
     let uid = rand::thread_rng().gen_range(2..5_001);
     let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
 
@@ -150,7 +150,7 @@ async fn drupal_memcache_profile_page(user: &mut GooseUser) -> GooseTaskResult {
 }
 
 /// Log in.
-async fn drupal_memcache_login(user: &mut GooseUser) -> GooseTaskResult {
+async fn drupal_memcache_login(user: &mut GooseUser) -> TransactionResult {
     let mut goose = user.get("/user").await?;
 
     match goose.response {
@@ -216,7 +216,7 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> GooseTaskResult {
 }
 
 /// Post a comment.
-async fn drupal_memcache_post_comment(user: &mut GooseUser) -> GooseTaskResult {
+async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult {
     let nid: i32 = rand::thread_rng().gen_range(1..10_000);
     let node_path = format!("node/{}", &nid);
     let comment_path = format!("/comment/reply/{}", &nid);

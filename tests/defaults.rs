@@ -51,14 +51,14 @@ enum TestType {
 // - GooseDefault::StickyFollow
 //     Needs more complex tests
 
-// Test task.
-pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
-// Test task.
-pub async fn get_about(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_about(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
@@ -113,8 +113,8 @@ fn validate_test(
     assert!(!index_metrics.status_code_counts.is_empty());
     assert!(!about_metrics.status_code_counts.is_empty());
 
-    // Confirm that we did not track task metrics.
-    assert!(goose_metrics.tasks.is_empty());
+    // Confirm that we did not track transaction metrics.
+    assert!(goose_metrics.transactions.is_empty());
 
     // Verify that the metrics file was created and has the correct number of lines.
     let mut metrics_lines = 0;
@@ -202,9 +202,9 @@ async fn test_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_scenario(scenario!("Index").register_task(task!(get_index)))
-        .register_scenario(scenario!("About").register_task(task!(get_about)))
-        // Start at least two users, required to run both TaskSets.
+        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
+        // Start at least two users, required to run both Scenarios.
         .set_default(GooseDefault::Host, host.as_str())
         .unwrap()
         .set_default(GooseDefault::Users, USERS)
@@ -236,7 +236,7 @@ async fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::RunningMetrics, 0)
         .unwrap()
-        .set_default(GooseDefault::NoTaskMetrics, true)
+        .set_default(GooseDefault::NoTransactionMetrics, true)
         .unwrap()
         .set_default(GooseDefault::NoResetMetrics, true)
         .unwrap()
@@ -298,9 +298,9 @@ async fn test_defaults_gaggle() {
         worker_handles.push(tokio::spawn(
             crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
-                .register_scenario(scenario!("Index").register_task(task!(get_index)))
-                .register_scenario(scenario!("About").register_task(task!(get_about)))
-                // Start at least two users, required to run both TaskSets.
+                .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+                .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
+                // Start at least two users, required to run both Scenarios.
                 .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
                 .unwrap()
                 .set_default(GooseDefault::DebugLog, worker_debug_log.as_str())
@@ -327,10 +327,10 @@ async fn test_defaults_gaggle() {
     // Start manager instance in current thread and run a distributed load test.
     let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()
-        // Alter the name of the task set so NoHashCheck is required for load test to run.
-        .register_scenario(scenario!("FooIndex").register_task(task!(get_index)))
-        .register_scenario(scenario!("About").register_task(task!(get_about)))
-        // Start at least two users, required to run both TaskSets.
+        // Alter the name of the transaction set so NoHashCheck is required for load test to run.
+        .register_scenario(scenario!("FooIndex").register_transaction(transaction!(get_index)))
+        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
+        // Start at least two users, required to run both Scenarios.
         .set_default(GooseDefault::Host, host.as_str())
         .unwrap()
         .set_default(GooseDefault::Users, USERS)
@@ -348,7 +348,7 @@ async fn test_defaults_gaggle() {
         .unwrap()
         .set_default(GooseDefault::RunningMetrics, 0)
         .unwrap()
-        .set_default(GooseDefault::NoTaskMetrics, true)
+        .set_default(GooseDefault::NoTransactionMetrics, true)
         .unwrap()
         .set_default(GooseDefault::StickyFollow, true)
         .unwrap()
@@ -423,7 +423,7 @@ async fn test_no_defaults() {
             "--throttle-requests",
             &THROTTLE_REQUESTS.to_string(),
             "--no-reset-metrics",
-            "--no-task-metrics",
+            "--no-transaction-metrics",
             "--status-codes",
             "--running-metrics",
             "30",
@@ -433,10 +433,10 @@ async fn test_no_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_scenario(scenario!("Index").register_task(task!(get_index)))
+        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
         .register_scenario(
             scenario!("About")
-                .register_task(task!(get_about))
+                .register_transaction(transaction!(get_about))
                 // Be sure shutdown happens quickly and cleanly even when there's a large
                 // wait time.
                 .set_wait_time(
@@ -512,8 +512,8 @@ async fn test_no_defaults_gaggle() {
         worker_handles.push(tokio::spawn(
             crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
-                .register_scenario(scenario!("Index").register_task(task!(get_index)))
-                .register_scenario(scenario!("About").register_task(task!(get_about)))
+                .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+                .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
                 .execute(),
         ));
     }
@@ -535,7 +535,7 @@ async fn test_no_defaults_gaggle() {
             "--run-time",
             &RUN_TIME.to_string(),
             "--no-reset-metrics",
-            "--no-task-metrics",
+            "--no-transaction-metrics",
             "--status-codes",
             "--running-metrics",
             "30",
@@ -545,8 +545,8 @@ async fn test_no_defaults_gaggle() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
         .unwrap()
-        .register_scenario(scenario!("Index").register_task(task!(get_index)))
-        .register_scenario(scenario!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
         .execute()
         .await
         .unwrap();
@@ -596,9 +596,9 @@ async fn test_plan_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_scenario(scenario!("Index").register_task(task!(get_index)))
-        .register_scenario(scenario!("About").register_task(task!(get_about)))
-        // Start at least two users, required to run both TaskSets.
+        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
+        // Start at least two users, required to run both Scenarios.
         .set_default(GooseDefault::Host, host.as_str())
         .unwrap()
         .set_default(GooseDefault::TestPlan, TEST_PLAN)
@@ -619,7 +619,7 @@ async fn test_plan_defaults() {
         .unwrap()
         .set_default(GooseDefault::StatusCodes, true)
         .unwrap()
-        .set_default(GooseDefault::NoTaskMetrics, true)
+        .set_default(GooseDefault::NoTransactionMetrics, true)
         .unwrap()
         .execute()
         .await
@@ -665,7 +665,7 @@ async fn test_plan_no_defaults() {
             "--no-debug-body",
             "--throttle-requests",
             &THROTTLE_REQUESTS.to_string(),
-            "--no-task-metrics",
+            "--no-transaction-metrics",
             "--status-codes",
         ],
     );
@@ -676,8 +676,8 @@ async fn test_plan_no_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_scenario(scenario!("Index").register_task(task!(get_index)))
-        .register_scenario(scenario!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
         .execute()
         .await
         .unwrap();
@@ -708,9 +708,9 @@ async fn test_defaults_no_metrics() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_scenario(scenario!("Index").register_task(task!(get_index)))
-        .register_scenario(scenario!("About").register_task(task!(get_about)))
-        // Start at least two users, required to run both TaskSets.
+        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+        .register_scenario(scenario!("About").register_transaction(transaction!(get_about)))
+        // Start at least two users, required to run both Scenarios.
         .set_default(GooseDefault::Users, USERS)
         .unwrap()
         .set_default(GooseDefault::RunTime, RUN_TIME)
@@ -729,7 +729,7 @@ async fn test_defaults_no_metrics() {
 
     // Confirm that we did not track metrics.
     assert!(goose_metrics.requests.is_empty());
-    assert!(goose_metrics.tasks.is_empty());
+    assert!(goose_metrics.transactions.is_empty());
     assert!(goose_metrics.users == USERS);
     assert!(goose_metrics.duration == RUN_TIME);
 }

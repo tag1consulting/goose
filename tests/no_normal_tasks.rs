@@ -21,15 +21,15 @@ const EXPECT_WORKERS: usize = 2;
 const USERS: usize = 5;
 const RUN_TIME: usize = 2;
 
-// Test task.
-pub async fn login(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn login(user: &mut GooseUser) -> TransactionResult {
     let params = [("username", "me"), ("password", "s3crET!")];
     let _goose = user.post_form(LOGIN_PATH, &params).await?;
     Ok(())
 }
 
-// Test task.
-pub async fn logout(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn logout(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(LOGOUT_PATH).await?;
     Ok(())
 }
@@ -92,16 +92,16 @@ fn common_build_configuration(
 
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(mock_endpoints: &[Mock]) {
-    // Confirm that the on_start and on_exit tasks actually ran once per GooseUser.
+    // Confirm that the on_start and on_exit transactions actually ran once per GooseUser.
     mock_endpoints[LOGIN_KEY].assert_hits(USERS);
     mock_endpoints[LOGOUT_KEY].assert_hits(USERS);
 }
 
-// Returns the appropriate taskset needed to build these tests.
-fn get_tasks() -> Scenario {
+// Returns the appropriate scenario needed to build these tests.
+fn get_transactions() -> Scenario {
     scenario!("LoadTest")
-        .register_task(task!(login).set_on_start())
-        .register_task(task!(logout).set_on_stop())
+        .register_transaction(transaction!(login).set_on_start())
+        .register_transaction(transaction!(logout).set_on_stop())
 }
 
 // Helper to run the test, takes a flag for indicating if running in standalone
@@ -121,7 +121,7 @@ async fn run_load_test(is_gaggle: bool) {
 
             // Run the Goose Attack.
             common::run_load_test(
-                common::build_load_test(configuration, &get_tasks(), None, None),
+                common::build_load_test(configuration, &get_transactions(), None, None),
                 None,
             )
             .await;
@@ -132,7 +132,12 @@ async fn run_load_test(is_gaggle: bool) {
 
             // Workers launched in own threads, store thread handles.
             let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-                common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None)
+                common::build_load_test(
+                    worker_configuration.clone(),
+                    &get_transactions(),
+                    None,
+                    None,
+                )
             });
 
             // Build Manager configuration.
@@ -141,7 +146,7 @@ async fn run_load_test(is_gaggle: bool) {
 
             // Run the Goose Attack.
             common::run_load_test(
-                common::build_load_test(manager_configuration, &get_tasks(), None, None),
+                common::build_load_test(manager_configuration, &get_transactions(), None, None),
                 Some(worker_handles),
             )
             .await;
@@ -153,16 +158,16 @@ async fn run_load_test(is_gaggle: bool) {
 }
 
 #[tokio::test]
-// Test taskset with only on_start() and on_stop() tasks.
-async fn test_no_normal_tasks() {
+// Test scenario with only on_start() and on_stop() transactions.
+async fn test_no_normal_transactions() {
     // Run load test with is_gaggle set to false.
     run_load_test(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
-// Test taskset with only on_start() and on_stop() tasks, in Gaggle mode.
-async fn test_no_normal_tasks_gaggle() {
+// Test scenario with only on_start() and on_stop() transactions, in Gaggle mode.
+async fn test_no_normal_transactions_gaggle() {
     // Run load test with is_gaggle set to true.
     run_load_test(true).await;
 }

@@ -14,7 +14,7 @@ pub(crate) struct GooseReportTemplates<'a> {
     pub raw_responses_template: &'a str,
     pub co_requests_template: &'a str,
     pub co_responses_template: &'a str,
-    pub tasks_template: &'a str,
+    pub transactions_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
     pub graph_rps_template: &'a str,
@@ -61,11 +61,11 @@ pub(crate) struct ResponseMetric {
     pub percentile_100: String,
 }
 
-/// Defines the metrics reported about tasks.
+/// Defines the metrics reported about transactions.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct TaskMetric {
+pub(crate) struct TransactionMetric {
     pub is_scenario: bool,
-    pub task: String,
+    pub transaction: String,
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
@@ -313,18 +313,18 @@ pub(crate) fn status_code_metrics_row(metric: StatusCodeMetric) -> String {
     )
 }
 
-/// If task metrics are enabled, add a task metrics table to the html report.
-pub(crate) fn task_metrics_template(task_rows: &str, graph: String) -> String {
+/// If transaction metrics are enabled, add a transaction metrics table to the html report.
+pub(crate) fn transaction_metrics_template(transaction_rows: &str, graph: String) -> String {
     format!(
-        r#"<div class="tasks">
-        <h2>Task Metrics</h2>
+        r#"<div class="transactions">
+        <h2>Transaction Metrics</h2>
 
         {graph}
 
         <table>
             <thead>
                 <tr>
-                    <th colspan="2">Task</th>
+                    <th colspan="2">Transaction</th>
                     <th># Times Run</th>
                     <th># Fails</th>
                     <th>Average (ms)</th>
@@ -335,17 +335,17 @@ pub(crate) fn task_metrics_template(task_rows: &str, graph: String) -> String {
                 </tr>
             </thead>
             <tbody>
-                {task_rows}
+                {transaction_rows}
             </tbody>
         </table>
     </div>"#,
-        task_rows = task_rows,
+        transaction_rows = transaction_rows,
         graph = graph,
     )
 }
 
-/// Build an individual row of task metrics in the html report.
-pub(crate) fn task_metrics_row(metric: TaskMetric) -> String {
+/// Build an individual row of transaction metrics in the html report.
+pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
     if metric.is_scenario {
         format!(
             r#"<tr>
@@ -356,7 +356,7 @@ pub(crate) fn task_metrics_row(metric: TaskMetric) -> String {
     } else {
         format!(
             r#"<tr>
-            <td colspan="2">{task} {name}</strong></td>
+            <td colspan="2">{transaction} {name}</strong></td>
             <td>{number_of_requests}</td>
             <td>{number_of_failures}</td>
             <td>{response_time_average}</td>
@@ -365,7 +365,7 @@ pub(crate) fn task_metrics_row(metric: TaskMetric) -> String {
             <td>{requests_per_second}</td>
             <td>{failures_per_second}</td>
         </tr>"#,
-            task = metric.task,
+            transaction = metric.transaction,
             name = metric.name,
             number_of_requests = metrics::format_number(metric.number_of_requests),
             number_of_failures = metrics::format_number(metric.number_of_failures),
@@ -572,7 +572,7 @@ pub(crate) fn build_report(
 
         {status_codes_template}
 
-        {tasks_template}
+        {transactions_template}
 
         <div class="users">
         <h2>User Metrics</h2>
@@ -593,7 +593,7 @@ pub(crate) fn build_report(
         raw_responses_template = templates.raw_responses_template,
         co_requests_template = templates.co_requests_template,
         co_responses_template = templates.co_responses_template,
-        tasks_template = templates.tasks_template,
+        transactions_template = templates.transactions_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
         graph_rps_template = templates.graph_rps_template,
