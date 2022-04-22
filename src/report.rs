@@ -64,7 +64,7 @@ pub(crate) struct ResponseMetric {
 /// Defines the metrics reported about tasks.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TaskMetric {
-    pub is_task_set: bool,
+    pub is_scenario: bool,
     pub task: String,
     pub name: String,
     pub number_of_requests: usize,
@@ -346,7 +346,7 @@ pub(crate) fn task_metrics_template(task_rows: &str, graph: String) -> String {
 
 /// Build an individual row of task metrics in the html report.
 pub(crate) fn task_metrics_row(metric: TaskMetric) -> String {
-    if metric.is_task_set {
+    if metric.is_scenario {
         format!(
             r#"<tr>
             <td colspan="10" align="left"><strong>{name}</strong></td>

@@ -399,7 +399,7 @@ impl GooseLogger<GooseTaskMetric> for GooseConfiguration {
             // Put quotes around name as it is a string.
             "{},{},{},\"{}\",{},{},{}",
             request.elapsed,
-            request.taskset_index,
+            request.scenario_index,
             request.task_index,
             request.name,
             request.run_time,

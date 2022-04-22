@@ -2,26 +2,26 @@
 //!
 //! Goose manages load tests with a series of objects:
 //!
-//! - [`GooseTaskSet`] each user is assigned a task set, which is a collection of tasks.
-//! - [`GooseTask`] tasks define one or more web requests and are assigned to task sets.
-//! - [`GooseUser`] a user state responsible for repeatedly running all tasks in the assigned task set.
+//! - [`Scenario`] each user is assigned a scenario, which is a collection of tasks.
+//! - [`GooseTask`] tasks define one or more web requests and are assigned to scenarios.
+//! - [`GooseUser`] a user state responsible for repeatedly running all tasks in the assigned scenario.
 //! - [`GooseRequestMetric`] optional metrics collected for each URL/method pair.
 //!
-//! ## Creating Task Sets
+//! ## Creating Scenarios
 //!
-//! A [`GooseTaskSet`](./struct.GooseTaskSet.html) is created by passing in a `&str` name to the `new` function, for example:
+//! A [`Scenario`](./struct.Scenario.html) is created by passing in a `&str` name to the `new` function, for example:
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut loadtest_tasks = taskset!("LoadtestTasks");
+//! let mut loadtest_tasks = scenario!("LoadtestTasks");
 //! ```
 //!
-//! ### Task Set Weight
+//! ### Scenario Weight
 //!
-//! A weight can be applied to a task set, controlling how often it is assigned to
+//! A weight can be applied to a scenario, controlling how often it is assigned to
 //! [`GooseUser`](../goose/struct.GooseUser.html) threads. The larger the integer value
-//! of weight, the more the task set will be assigned to user threads. In the following
+//! of weight, the more the scenario will be assigned to user threads. In the following
 //! example, `FooTasks` will be assigned to users twice as often as `Bar` tasks. We could
 //! have just added a weight of `2` to `FooTasks` and left the default weight of `1`
 //! assigned to `BarTasks` for the same weighting:
@@ -31,32 +31,32 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), GooseError> {
-//!     let mut foo_tasks = taskset!("FooTasks").set_weight(10)?;
-//!     let mut bar_tasks = taskset!("BarTasks").set_weight(5)?;
+//!     let mut foo_tasks = scenario!("FooTasks").set_weight(10)?;
+//!     let mut bar_tasks = scenario!("BarTasks").set_weight(5)?;
 //!
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ### Task Set Host
+//! ### Scenario Host
 //!
-//! A default host can be assigned to a task set, which will be used only if the `--host`
+//! A default host can be assigned to a scenario, which will be used only if the `--host`
 //! CLI option is not set at run-time. For example, this can configure your load test to
 //! run against your local development environment by default, allowing the `--host` option
 //! to override host when you want to load test production. You can also assign different
-//! hosts to different task sets if this is desirable:
+//! hosts to different scenario if this is desirable:
 //!
 //! ```rust
 //! use goose::prelude::*;
 //!
-//! let mut foo_tasks = taskset!("FooTasks").set_host("http://www.local");
-//! let mut bar_tasks = taskset!("BarTasks").set_host("http://www2.local");
+//! let mut foo_tasks = scenario!("FooTasks").set_host("http://www.local");
+//! let mut bar_tasks = scenario!("BarTasks").set_host("http://www2.local");
 //! ```
 //!
-//! ### Task Set Wait Time
+//! ### Scenario Wait Time
 //!
 //! Wait time is specified as a low-high Duration range. Each time a task completes in the
-//! task set, the user will pause for a random number of milliseconds inclusively between
+//! scenario, the user will pause for a random number of milliseconds inclusively between
 //! the low and high wait times. In the following example, users loading `foo` tasks will
 //! sleep 0 to 2.5 seconds after each task completes, and users loading `bar` tasks will
 //! sleep 5 to 10 seconds after each task completes.
@@ -65,8 +65,8 @@
 //! use goose::prelude::*;
 //! use std::time::Duration;
 //!
-//! let mut foo_tasks = taskset!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_millis(2500)).unwrap();
-//! let mut bar_tasks = taskset!("BarTasks").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
+//! let mut foo_tasks = scenario!("FooTasks").set_wait_time(Duration::from_secs(0), Duration::from_millis(2500)).unwrap();
+//! let mut bar_tasks = scenario!("BarTasks").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
 //! ```
 //! ## Creating Tasks
 //!
@@ -141,7 +141,7 @@
 //! Tasks can also be configured to run in a sequence. For example, a task with a sequence
 //! value of `1` will always run before a task with a sequence value of `2`. Weight can
 //! be applied to sequenced tasks, so for example a task with a weight of `2` and a sequence
-//! of `1` will run two times before a task with a sequence of `2`. Task sets can contain
+//! of `1` will run two times before a task with a sequence of `2`. Scenarios can contain
 //! tasks with sequence values and without sequence values, and in this case all tasks with
 //! a sequence value will run before tasks without a sequence value. In the following example,
 //! `a_task` runs before `b_task`, which runs before `c_task`:
@@ -220,7 +220,7 @@
 //! ## Controlling User
 //!
 //! When Goose starts, it creates one or more [`GooseUser`](./struct.GooseUser.html)s,
-//! assigning a single [`GooseTaskSet`](./struct.GooseTaskSet.html) to each. This user is
+//! assigning a single [`Scenario`](./struct.Scenario.html) to each. This user is
 //! then used to generate load. Behind the scenes, Goose is leveraging the
 //! [`reqwest::client`](https://docs.rs/reqwest/*/reqwest/struct.Client.html)
 //! to load web pages, and Goose can therefor do anything [`reqwest`](https://docs.rs/reqwest/)
@@ -321,11 +321,11 @@ macro_rules! task {
     };
 }
 
-/// `taskset!("foo")` expands to `GooseTaskSet::new("foo")`.
+/// `scenario!("foo")` expands to `Scenario::new("foo")`.
 #[macro_export]
-macro_rules! taskset {
+macro_rules! scenario {
     ($name:tt) => {
-        GooseTaskSet::new($name)
+        Scenario::new($name)
     };
 }
 
@@ -465,21 +465,21 @@ impl From<flume::SendError<Option<GooseLog>>> for GooseTaskError {
     }
 }
 
-/// An individual task set.
+/// An individual scenario.
 #[derive(Clone, Hash)]
-pub struct GooseTaskSet {
-    /// The name of the task set.
+pub struct Scenario {
+    /// The name of the scenario.
     pub name: String,
-    /// An integer reflecting where this task set lives in the internal
-    /// [`GooseAttack`](../struct.GooseAttack.html)`.task_sets` vector.
-    pub task_sets_index: usize,
-    /// An integer value that controls the frequency that this task set will be assigned to a user.
+    /// An integer reflecting where this scenario lives in the internal
+    /// [`GooseAttack`](../struct.GooseAttack.html)`.scenarios` vector.
+    pub scenarios_index: usize,
+    /// An integer value that controls the frequency that this scenario will be assigned to a user.
     pub weight: usize,
     /// A [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) range defining the
     /// minimum and maximum time a [`GooseUser`] should sleep after running a task.
     pub task_wait: Option<(Duration, Duration)>,
     /// A vector containing one copy of each [`GooseTask`](./struct.GooseTask.html) that will
-    /// run by users running this task set.
+    /// run by users running this scenario.
     pub tasks: Vec<GooseTask>,
     /// A fully scheduled and weighted vector of integers (pointing to
     /// [`GooseTask`](./struct.GooseTask.html)s and [`GooseTask`](./struct.GooseTask.html) names.
@@ -492,11 +492,11 @@ pub struct GooseTaskSet {
     /// [`on_stop`](./struct.GooseTask.html#method.set_on_stop)
     /// [`GooseTask`](./struct.GooseTask.html)s are run when the user first starts.
     pub weighted_on_stop_tasks: WeightedGooseTasks,
-    /// An optional default host to run this `GooseTaskSet` against.
+    /// An optional default host to run this `Scenario` against.
     pub host: Option<String>,
 }
-impl GooseTaskSet {
-    /// Creates a new [`GooseTaskSet`](./struct.GooseTaskSet.html). Once created, a
+impl Scenario {
+    /// Creates a new [`Scenario`](./struct.Scenario.html). Once created, a
     /// [`GooseTask`](./struct.GooseTask.html) must be assigned to it, and finally it must
     /// be registered with the [`GooseAttack`](../struct.GooseAttack.html) object. The
     /// returned object must be stored in a mutable value.
@@ -505,13 +505,13 @@ impl GooseTaskSet {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut example_tasks = taskset!("ExampleTasks");
+    /// let mut example_tasks = scenario!("ExampleTasks");
     /// ```
     pub fn new(name: &str) -> Self {
-        trace!("new taskset: name: {}", &name);
-        GooseTaskSet {
+        trace!("new scenario: name: {}", &name);
+        Scenario {
             name: name.to_string(),
-            task_sets_index: usize::max_value(),
+            scenarios_index: usize::max_value(),
             weight: 1,
             task_wait: None,
             tasks: Vec::new(),
@@ -523,15 +523,15 @@ impl GooseTaskSet {
     }
 
     /// Registers a [`GooseTask`](./struct.GooseTask.html) with a
-    /// [`GooseTaskSet`](./struct.GooseTaskSet.html), where it is stored in the
-    /// [`GooseTaskSet`](./struct.GooseTaskSet.html)`.tasks` vector. The function
+    /// [`Scenario`](./struct.Scenario.html), where it is stored in the
+    /// [`Scenario`](./struct.Scenario.html)`.tasks` vector. The function
     /// associated with the task will be run during the load test.
     ///
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut example_tasks = taskset!("ExampleTasks");
+    /// let mut example_tasks = scenario!("ExampleTasks");
     /// example_tasks.register_task(task!(a_task_function));
     ///
     /// /// A very simple task that loads the "a" page.
@@ -548,10 +548,10 @@ impl GooseTaskSet {
         self
     }
 
-    /// Sets a weight on a task set. The larger the value of weight, the more often the task set will
-    /// be assigned to users. For example, if you have task set foo with a weight of 3, and task set
+    /// Sets a weight on a scenario. The larger the value of weight, the more often the scenario will
+    /// be assigned to users. For example, if you have scenario foo with a weight of 3, and scenario
     /// bar with a weight of 1, and you spin up a load test with 8 users, 6 of them will be running
-    /// the foo task set, and 2 will be running the bar task set.
+    /// the foo scenario, and 2 will be running the bar scenario.
     ///
     /// # Example
     /// ```rust
@@ -559,7 +559,7 @@ impl GooseTaskSet {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     let mut example_tasks = taskset!("ExampleTasks").set_weight(3)?;
+    ///     let mut example_tasks = scenario!("ExampleTasks").set_weight(3)?;
     ///
     ///     Ok(())
     /// }
@@ -577,7 +577,7 @@ impl GooseTaskSet {
         Ok(self)
     }
 
-    /// Set a default host for the task set. If no `--host` flag is set when running the load test, this
+    /// Set a default host for the scenario. If no `--host` flag is set when running the load test, this
     /// host will be pre-pended on all requests. For example, this can configure your load test to run
     /// against your local development environment by default, and the `--host` option could be used to
     /// override host when running the load test against production.
@@ -586,7 +586,7 @@ impl GooseTaskSet {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut example_tasks = taskset!("ExampleTasks").set_host("http://10.1.1.42");
+    /// let mut example_tasks = scenario!("ExampleTasks").set_host("http://10.1.1.42");
     /// ```
     pub fn set_host(mut self, host: &str) -> Self {
         trace!("{} set_host: {}", self.name, host);
@@ -595,7 +595,7 @@ impl GooseTaskSet {
         self
     }
 
-    /// Configure a task_set to to pause after running each task. The length of the pause will be randomly
+    /// Configure a senario to to pause after running each task. The length of the pause will be randomly
     /// selected from `min_wait` to `max_wait` inclusively.
     ///
     /// # Example
@@ -605,7 +605,7 @@ impl GooseTaskSet {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
-    ///     taskset!("ExampleTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(1))?;
+    ///     scenario!("ExampleTasks").set_wait_time(Duration::from_secs(0), Duration::from_secs(1))?;
     ///
     ///     Ok(())
     /// }
@@ -739,9 +739,9 @@ impl GooseDebug {
 /// The elements needed to build an individual user state on a Gaggle Worker.
 #[derive(Debug, Clone)]
 pub struct GaggleUser {
-    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`
-    /// vector, indicating which [`GooseTaskSet`](./struct.GooseTaskSet.html) is running.
-    pub task_sets_index: usize,
+    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`
+    /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
+    pub scenarios_index: usize,
     /// The base URL to prepend to all relative paths.
     pub base_url: Arc<RwLock<Url>>,
     /// A local copy of the global GooseConfiguration.
@@ -752,14 +752,14 @@ pub struct GaggleUser {
 impl GaggleUser {
     /// Create a new user state.
     pub fn new(
-        task_sets_index: usize,
+        scenarios_index: usize,
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
     ) -> Self {
         trace!("new gaggle user");
         GaggleUser {
-            task_sets_index,
+            scenarios_index,
             base_url: Arc::new(RwLock::new(base_url)),
             config: configuration.clone(),
             load_test_hash,
@@ -768,7 +768,7 @@ impl GaggleUser {
 }
 
 /// Used internally by Coordinated Omission Mitigation, tracks the cadence between when the same request
-/// is made as Goose loops through a GooseTaskSet.
+/// is made as Goose loops through a Scenario.
 #[derive(Debug, Clone)]
 struct GooseRequestCadence {
     /// The last time this GooseUser lopped through its GooseTasks.
@@ -834,13 +834,13 @@ impl_downcast!(GooseUserData);
 impl<T: Send + Sync + 'static> GooseUserData for T {}
 
 /// An individual user state, repeatedly running all [`GooseTask`](./struct.GooseTask.html)s
-/// in a specific [`GooseTaskSet`](./struct.GooseTaskSet.html).
+/// in a specific [`Scenario`](./struct.Scenario.html).
 pub struct GooseUser {
     /// The Instant when this `GooseUser` client started.
     pub started: Instant,
-    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`
-    /// vector, indicating which [`GooseTaskSet`](./struct.GooseTaskSet.html) is running.
-    pub task_sets_index: usize,
+    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`
+    /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
+    pub scenarios_index: usize,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Client,
     /// The base URL to prepend to all relative paths.
@@ -876,7 +876,7 @@ pub struct GooseUser {
 impl GooseUser {
     /// Create a new user state.
     pub fn new(
-        task_sets_index: usize,
+        scenarios_index: usize,
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
@@ -903,7 +903,7 @@ impl GooseUser {
 
         Ok(GooseUser {
             started: Instant::now(),
-            task_sets_index,
+            scenarios_index,
             client,
             base_url,
             config: configuration.clone(),
@@ -1089,8 +1089,8 @@ impl GooseUser {
     /// A `base_url` is determined per user thread, using the following order
     /// of precedence:
     ///  1. `--host` (host specified on the command line when running load test)
-    ///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined for the
-    /// current task set)
+    ///  2. [`Scenario`](./struct.Scenario.html)`.host` (default host defined for the
+    /// current scenario)
     ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default host
     /// defined for the current load test)
     pub fn build_url(&self, path: &str) -> Result<String, GooseTaskError> {
@@ -2078,7 +2078,7 @@ impl GooseUser {
     ///  - A manually built client is specific to a single Goose thread -- if you are
     ///    generating a large load test with many users, each will need to manually build their
     ///    own client (typically you'd do this in a Task that is registered with
-    ///   [`GooseTask::set_on_start()`] in each Task Set requiring a custom client;
+    ///   [`GooseTask::set_on_start()`] in each Scenario requiring a custom client;
     ///  - Manually building a client will completely replace the automatically built client
     ///    with a brand new one, so any configuration, cookies or headers set in the previously
     ///    built client will be gone;
@@ -2224,7 +2224,7 @@ impl GooseUser {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("LoadtestTasks")
+    ///         .register_scenario(scenario!("LoadtestTasks")
     ///             .set_host("http://foo.example.com/")
     ///             .set_wait_time(Duration::from_secs(0), Duration::from_secs(3))?
     ///             .register_task(task!(task_foo).set_weight(10)?)
@@ -2557,17 +2557,17 @@ fn clean_reqwest_error(e: &reqwest::Error, request_name: &str) -> String {
 }
 
 /// A helper to determine which host should be prepended to relative load test
-/// paths in this TaskSet.
+/// paths in this Scenario.
 ///
 /// The first of these defined will be returned as the prepended host:
 ///  1. `--host` (host specified on the command line when running load test)
-///  2. [`GooseTaskSet`](./struct.GooseTaskSet.html)`.host` (default host defined
-///     for the current task set)
+///  2. [`Scenario`](./struct.Scenario.html)`.host` (default host defined
+///     for the current scenario)
 ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default
 ///     host defined for the current load test)
 pub fn get_base_url(
     config_host: Option<String>,
-    task_set_host: Option<String>,
+    scenario_host: Option<String>,
     default_host: Option<String>,
 ) -> Result<Url, GooseError> {
     // If the `--host` CLI option is set, build the URL with it.
@@ -2580,13 +2580,13 @@ pub fn get_base_url(
             })?,
         ),
         None => {
-            match task_set_host {
-                // Otherwise, if `GooseTaskSet.host` is defined, usee this
+            match scenario_host {
+                // Otherwise, if `Scenario.host` is defined, usee this
                 Some(host) => {
                     Ok(
                         Url::parse(&host).map_err(|parse_error| GooseError::InvalidHost {
                             host,
-                            detail: "There was a failure parsing the host specified with the GooseTaskSet.set_host() function.".to_string(),
+                            detail: "There was a failure parsing the host specified with the Scenario.set_host() function.".to_string(),
                             parse_error,
                         })?,
                     )
@@ -2615,10 +2615,10 @@ pub type GooseTaskFunction = Arc<
         + Sync,
 >;
 
-/// An individual task within a [`GooseTaskSet`](./struct.GooseTaskSet.html).
+/// An individual task within a [`Scenario`](./struct.Scenario.html).
 #[derive(Clone)]
 pub struct GooseTask {
-    /// An index into [`GooseTaskSet`](./struct.GooseTaskSet.html)`.task`, indicating which
+    /// An index into [`Scenario`](./struct.Scenario.html)`.task`, indicating which
     /// task this is.
     pub tasks_index: usize,
     /// An optional name for the task, used when displaying metrics about requests made.
@@ -2626,7 +2626,7 @@ pub struct GooseTask {
     /// An integer value that controls the frequency that this task will be run.
     pub weight: usize,
     /// An integer value that controls when this task runs compared to other tasks in the same
-    /// [`GooseTaskSet`](./struct.GooseTaskSet.html).
+    /// [`Scenario`](./struct.Scenario.html).
     pub sequence: usize,
     /// A flag indicating that this task runs when the user starts.
     pub on_start: bool,
@@ -2730,7 +2730,7 @@ impl GooseTask {
     }
 
     /// Sets a weight on an individual task. The larger the value of weight, the more often it will be run
-    /// in the TaskSet. For example, if one task has a weight of 3 and another task has a weight of 1, the
+    /// in the Scenario. For example, if one task has a weight of 3 and another task has a weight of 1, the
     /// first task will run 3 times as often.
     ///
     /// # Example
@@ -2886,7 +2886,7 @@ mod tests {
     }
 
     #[test]
-    fn goose_task_set() {
+    fn goose_scenario() {
         // Simplistic test task functions.
         async fn test_function_a(user: &mut GooseUser) -> GooseTaskResult {
             let _goose = user.get("/a/").await?;
@@ -2900,90 +2900,90 @@ mod tests {
             Ok(())
         }
 
-        let mut task_set = taskset!("foo");
-        assert_eq!(task_set.name, "foo");
-        assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.task_wait, None);
-        assert!(task_set.host.is_none());
-        assert_eq!(task_set.tasks.len(), 0);
-        assert_eq!(task_set.weighted_tasks.len(), 0);
-        assert_eq!(task_set.weighted_on_start_tasks.len(), 0);
-        assert_eq!(task_set.weighted_on_stop_tasks.len(), 0);
+        let mut scenario = scenario!("foo");
+        assert_eq!(scenario.name, "foo");
+        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.weight, 1);
+        assert_eq!(scenario.task_wait, None);
+        assert!(scenario.host.is_none());
+        assert_eq!(scenario.tasks.len(), 0);
+        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.weighted_on_start_tasks.len(), 0);
+        assert_eq!(scenario.weighted_on_stop_tasks.len(), 0);
 
         // Registering a task adds it to tasks, but doesn't update weighted_tasks.
-        task_set = task_set.register_task(task!(test_function_a));
-        assert_eq!(task_set.tasks.len(), 1);
-        assert_eq!(task_set.weighted_tasks.len(), 0);
-        assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.task_wait, None);
-        assert!(task_set.host.is_none());
+        scenario = scenario.register_task(task!(test_function_a));
+        assert_eq!(scenario.tasks.len(), 1);
+        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.weight, 1);
+        assert_eq!(scenario.task_wait, None);
+        assert!(scenario.host.is_none());
 
         // Different task can be registered.
-        task_set = task_set.register_task(task!(test_function_b));
-        assert_eq!(task_set.tasks.len(), 2);
-        assert_eq!(task_set.weighted_tasks.len(), 0);
-        assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.task_wait, None);
-        assert!(task_set.host.is_none());
+        scenario = scenario.register_task(task!(test_function_b));
+        assert_eq!(scenario.tasks.len(), 2);
+        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.weight, 1);
+        assert_eq!(scenario.task_wait, None);
+        assert!(scenario.host.is_none());
 
         // Same task can be registered again.
-        task_set = task_set.register_task(task!(test_function_a));
-        assert_eq!(task_set.tasks.len(), 3);
-        assert_eq!(task_set.weighted_tasks.len(), 0);
-        assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.weight, 1);
-        assert_eq!(task_set.task_wait, None);
-        assert!(task_set.host.is_none());
+        scenario = scenario.register_task(task!(test_function_a));
+        assert_eq!(scenario.tasks.len(), 3);
+        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.weight, 1);
+        assert_eq!(scenario.task_wait, None);
+        assert!(scenario.host.is_none());
 
         // Setting weight only affects weight field.
-        task_set = task_set.set_weight(50).unwrap();
-        assert_eq!(task_set.weight, 50);
-        assert_eq!(task_set.tasks.len(), 3);
-        assert_eq!(task_set.weighted_tasks.len(), 0);
-        assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.task_wait, None);
-        assert!(task_set.host.is_none());
+        scenario = scenario.set_weight(50).unwrap();
+        assert_eq!(scenario.weight, 50);
+        assert_eq!(scenario.tasks.len(), 3);
+        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.task_wait, None);
+        assert!(scenario.host.is_none());
 
         // Weight can be changed.
-        task_set = task_set.set_weight(5).unwrap();
-        assert_eq!(task_set.weight, 5);
+        scenario = scenario.set_weight(5).unwrap();
+        assert_eq!(scenario.weight, 5);
 
         // Setting host only affects host field.
-        task_set = task_set.set_host("http://foo.example.com/");
-        assert_eq!(task_set.host, Some("http://foo.example.com/".to_string()));
-        assert_eq!(task_set.weight, 5);
-        assert_eq!(task_set.tasks.len(), 3);
-        assert_eq!(task_set.weighted_tasks.len(), 0);
-        assert_eq!(task_set.task_sets_index, usize::max_value());
-        assert_eq!(task_set.task_wait, None);
+        scenario = scenario.set_host("http://foo.example.com/");
+        assert_eq!(scenario.host, Some("http://foo.example.com/".to_string()));
+        assert_eq!(scenario.weight, 5);
+        assert_eq!(scenario.tasks.len(), 3);
+        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.task_wait, None);
 
         // Host field can be changed.
-        task_set = task_set.set_host("https://bar.example.com/");
-        assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
+        scenario = scenario.set_host("https://bar.example.com/");
+        assert_eq!(scenario.host, Some("https://bar.example.com/".to_string()));
 
         // Wait time only affects wait time fields.
-        task_set = task_set
+        scenario = scenario
             .set_wait_time(Duration::from_secs(1), Duration::from_secs(10))
             .unwrap();
         assert_eq!(
-            task_set.task_wait,
+            scenario.task_wait,
             Some((Duration::from_secs(1), Duration::from_secs(10)))
         );
-        assert_eq!(task_set.host, Some("https://bar.example.com/".to_string()));
-        assert_eq!(task_set.weight, 5);
-        assert_eq!(task_set.tasks.len(), 3);
-        assert_eq!(task_set.weighted_tasks.len(), 0);
-        assert_eq!(task_set.task_sets_index, usize::max_value());
+        assert_eq!(scenario.host, Some("https://bar.example.com/".to_string()));
+        assert_eq!(scenario.weight, 5);
+        assert_eq!(scenario.tasks.len(), 3);
+        assert_eq!(scenario.weighted_tasks.len(), 0);
+        assert_eq!(scenario.scenarios_index, usize::max_value());
 
         // Wait time can be changed.
-        task_set = task_set
+        scenario = scenario
             .set_wait_time(Duration::from_secs(3), Duration::from_secs(9))
             .unwrap();
         assert_eq!(
-            task_set.task_wait,
+            scenario.task_wait,
             Some((Duration::from_secs(3), Duration::from_secs(9)))
         );
     }
@@ -2997,7 +2997,7 @@ mod tests {
             Ok(())
         }
 
-        // Initialize task set.
+        // Initialize scenario.
         let mut task = task!(test_function_a);
         assert_eq!(task.tasks_index, usize::max_value());
         assert_eq!(task.name, "".to_string());
@@ -3074,7 +3074,7 @@ mod tests {
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
         let user = GooseUser::new(0, base_url, &configuration, 0).unwrap();
-        assert_eq!(user.task_sets_index, 0);
+        assert_eq!(user.scenarios_index, 0);
         assert_eq!(user.weighted_users_index, usize::max_value());
 
         // Confirm the URLs are correctly built using the default_host.
@@ -3093,7 +3093,7 @@ mod tests {
             .unwrap();
         assert_eq!(url, "https://www.example.com/path/to/resource");
 
-        // Create a second user, this time setting a task_set_host.
+        // Create a second user, this time setting a scenario_host.
         let base_url = get_base_url(
             None,
             Some("http://www2.example.com/".to_string()),
@@ -3102,7 +3102,7 @@ mod tests {
         .unwrap();
         let user2 = GooseUser::new(0, base_url, &configuration, 0).unwrap();
 
-        // Confirm the URLs are correctly built using the task_set_host.
+        // Confirm the URLs are correctly built using the scenario_host.
         let url = user2.build_url("/foo").unwrap();
         assert_eq!(url, "http://www2.example.com/foo");
 

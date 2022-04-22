@@ -16,8 +16,8 @@ use crate::spanish::*;
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
     let _goose_metrics = GooseAttack::initialize()?
-        .register_taskset(
-            taskset!("Anonymous English user")
+        .register_scenario(
+            scenario!("Anonymous English user")
                 .set_weight(40)?
                 .set_wait_time(Duration::from_secs(0), Duration::from_secs(3))?
                 .register_task(task!(front_page_en).set_name("anon /").set_weight(2)?)
@@ -43,8 +43,8 @@ async fn main() -> Result<(), GooseError> {
                 .register_task(task!(search_en).set_name("anon /en/search"))
                 .register_task(task!(anonymous_contact_form_en).set_name("anon /en/contact")),
         )
-        .register_taskset(
-            taskset!("Anonymous Spanish user")
+        .register_scenario(
+            scenario!("Anonymous Spanish user")
                 .set_weight(9)?
                 .set_wait_time(Duration::from_secs(0), Duration::from_secs(3))?
                 .register_task(task!(front_page_es).set_name("anon /es/").set_weight(2)?)
@@ -69,8 +69,8 @@ async fn main() -> Result<(), GooseError> {
                 .register_task(task!(search_es).set_name("anon /es/search"))
                 .register_task(task!(anonymous_contact_form_es).set_name("anon /es/contact")),
         )
-        .register_taskset(
-            taskset!("Admin user")
+        .register_scenario(
+            scenario!("Admin user")
                 .set_weight(1)?
                 .set_wait_time(Duration::from_secs(3), Duration::from_secs(10))?
                 .register_task(task!(log_in).set_on_start().set_name("auth /en/user/login"))

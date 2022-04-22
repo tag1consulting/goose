@@ -4,7 +4,7 @@ use serial_test::serial;
 mod common;
 
 use goose::config::GooseConfiguration;
-use goose::goose::GooseTaskSet;
+use goose::goose::Scenario;
 use goose::prelude::*;
 
 // Paths used in load tests performed during these tests.
@@ -292,10 +292,10 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[Mock]) {
 }
 
 // Returns the appropriate taskset needed to build these tests.
-fn get_tasks(test_type: &TestType) -> GooseTaskSet {
+fn get_tasks(test_type: &TestType) -> Scenario {
     match test_type {
         TestType::Chain => {
-            taskset!("LoadTest")
+            scenario!("LoadTest")
                 // Load index directly.
                 .register_task(task!(get_index))
                 // Load redirect path, redirect to redirect2 path, redirect to
@@ -303,7 +303,7 @@ fn get_tasks(test_type: &TestType) -> GooseTaskSet {
                 .register_task(task!(get_redirect))
         }
         TestType::Domain | TestType::Sticky => {
-            taskset!("LoadTest")
+            scenario!("LoadTest")
                 // First load redirect, takes this request only to another domain.
                 .register_task(task!(get_domain_redirect))
                 // Load index.

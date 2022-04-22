@@ -2,13 +2,13 @@ use rand::Rng;
 use std::time::{self, Duration};
 
 use crate::get_worker_id;
-use crate::goose::{GooseTaskFunction, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::goose::{GooseTaskFunction, GooseUser, GooseUserCommand, Scenario};
 use crate::logger::GooseLog;
 use crate::metrics::{GooseMetric, GooseTaskMetric};
 
 pub(crate) async fn user_main(
     thread_number: usize,
-    thread_task_set: GooseTaskSet,
+    thread_task_set: Scenario,
     mut thread_user: GooseUser,
     thread_receiver: flume::Receiver<GooseUserCommand>,
     worker: bool,
@@ -182,7 +182,7 @@ async fn invoke_task_function(
     let started = time::Instant::now();
     let mut raw_task = GooseTaskMetric::new(
         thread_user.started.elapsed().as_millis(),
-        thread_user.task_sets_index,
+        thread_user.scenarios_index,
         thread_task_index,
         thread_task_name.to_string(),
         thread_user.weighted_users_index,

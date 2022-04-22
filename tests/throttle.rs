@@ -148,8 +148,8 @@ fn validate_test(
 }
 
 // Returns the appropriate taskset needed to build these tests.
-fn get_tasks() -> GooseTaskSet {
-    taskset!("LoadTest")
+fn get_tasks() -> Scenario {
+    scenario!("LoadTest")
         .register_task(task!(get_index))
         .register_task(task!(get_about))
 }

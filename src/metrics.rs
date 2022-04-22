@@ -9,7 +9,7 @@
 //! [`GooseErrorMetrics`] are displayed in tables.
 
 use crate::config::GooseDefaults;
-use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
+use crate::goose::{get_base_url, GooseMethod, Scenario};
 use crate::logger::GooseLog;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
@@ -585,9 +585,9 @@ impl GooseRequestMetricTimingData {
 pub struct GooseTaskMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// An index into [`GooseAttack`]`.task_sets`, indicating which task set this is.
-    pub taskset_index: usize,
-    /// An index into [`GooseTaskSet`]`.task`, indicating which task this is.
+    /// An index into [`GooseAttack`]`.scenarios`, indicating which task set this is.
+    pub scenario_index: usize,
+    /// An index into [`Scenario`]`.task`, indicating which task this is.
     pub task_index: usize,
     /// The optional name of the task.
     pub name: String,
@@ -602,14 +602,14 @@ impl GooseTaskMetric {
     /// Create a new GooseTaskMetric metric.
     pub(crate) fn new(
         elapsed: u128,
-        taskset_index: usize,
+        scenario_index: usize,
         task_index: usize,
         name: String,
         user: usize,
     ) -> Self {
         GooseTaskMetric {
             elapsed: elapsed as u64,
-            taskset_index,
+            scenario_index,
             task_index,
             name,
             run_time: 0,
@@ -632,12 +632,12 @@ impl GooseTaskMetric {
 /// structure, and stored in [`GooseMetrics::tasks`].
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseTaskMetricAggregate {
-    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`,
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
     /// indicating which task set this is.
-    pub taskset_index: usize,
+    pub scenario_index: usize,
     /// The task set name.
-    pub taskset_name: String,
-    /// An index into [`GooseTaskSet`](../goose/struct.GooseTaskSet.html)`.task`,
+    pub scenario_name: String,
+    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.task`,
     /// indicating which task this is.
     pub task_index: usize,
     /// An optional name for the task.
@@ -660,14 +660,14 @@ pub struct GooseTaskMetricAggregate {
 impl GooseTaskMetricAggregate {
     /// Create a new GooseTaskMetricAggregate.
     pub(crate) fn new(
-        taskset_index: usize,
-        taskset_name: &str,
+        scenario_index: usize,
+        scenario_name: &str,
         task_index: usize,
         task_name: &str,
     ) -> Self {
         GooseTaskMetricAggregate {
-            taskset_index,
-            taskset_name: taskset_name.to_string(),
+            scenario_index,
+            scenario_name: scenario_name.to_string(),
             task_index,
             task_name: task_name.to_string(),
             times: BTreeMap::new(),
@@ -744,7 +744,7 @@ impl GooseTaskMetricAggregate {
 /// #[tokio::main]
 /// async fn main() -> Result<(), GooseError> {
 ///     let goose_metrics: GooseMetrics = GooseAttack::initialize()?
-///         .register_taskset(taskset!("ExampleUsers")
+///         .register_scenario(scenario!("ExampleUsers")
 ///             .register_task(task!(example_task))
 ///         )
 ///         // Set a default host so the load test will start.
@@ -791,8 +791,8 @@ impl GooseTaskMetricAggregate {
 ///         tasks: [
 ///             [
 ///                 GooseTaskMetricAggregate {
-///                     taskset_index: 0,
-///                     taskset_name: "ExampleUsers",
+///                     scenario_index: 0,
+///                     scenario_name: "ExampleUsers",
 ///                     task_index: 0,
 ///                     task_name: "",
 ///                     times: {
@@ -882,20 +882,20 @@ impl GooseMetrics {
     /// load tested to display when printing metrics.
     pub(crate) fn initialize_task_metrics(
         &mut self,
-        task_sets: &[GooseTaskSet],
+        scenarios: &[Scenario],
         config: &GooseConfiguration,
         defaults: &GooseDefaults,
     ) -> Result<(), GooseError> {
         self.tasks = Vec::new();
-        for task_set in task_sets {
+        for scenario in scenarios {
             // Don't initialize task metrics if metrics or task_metrics are disabled.
             if !config.no_metrics {
                 if !config.no_task_metrics {
                     let mut task_vector = Vec::new();
-                    for task in &task_set.tasks {
+                    for task in &scenario.tasks {
                         task_vector.push(GooseTaskMetricAggregate::new(
-                            task_set.task_sets_index,
-                            &task_set.name,
+                            scenario.scenarios_index,
+                            &scenario.name,
                             task.tasks_index,
                             &task.name,
                         ));
@@ -916,8 +916,8 @@ impl GooseMetrics {
                             } else {
                                 None
                             },
-                            // Determine if the task_set defines a host.
-                            task_set.host.clone(),
+                            // Determine if the scenario defines a host.
+                            scenario.host.clone(),
                             // Determine if there is a default host.
                             defaults.host.clone(),
                         )?
@@ -1106,9 +1106,9 @@ impl GooseMetrics {
         let mut aggregate_fail_count = 0;
         let mut aggregate_total_count = 0;
         let mut task_count = 0;
-        for task_set in &self.tasks {
-            let mut displayed_task_set = false;
-            for task in task_set {
+        for scenario in &self.tasks {
+            let mut displayed_scenario = false;
+            for task in scenario {
                 task_count += 1;
                 let total_count = task.success_count + task.fail_count;
                 let fail_percent = if task.fail_count > 0 {
@@ -1122,16 +1122,16 @@ impl GooseMetrics {
                 let fails_precision = determine_precision(fails);
 
                 // First time through display name of task set.
-                if !displayed_task_set {
+                if !displayed_scenario {
                     writeln!(
                         fmt,
                         " {:24 } |",
                         util::truncate_string(
-                            &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
+                            &format!("{}: {}", task.scenario_index + 1, &task.scenario_name),
                             60
                         ),
                     )?;
-                    displayed_task_set = true;
+                    displayed_scenario = true;
                 }
 
                 if fail_percent as usize == 100 || fail_percent as usize == 0 {
@@ -1264,21 +1264,21 @@ impl GooseMetrics {
             " ------------------------------------------------------------------------------"
         )?;
         let mut task_count = 0;
-        for task_set in &self.tasks {
-            let mut displayed_task_set = false;
-            for task in task_set {
+        for scenario in &self.tasks {
+            let mut displayed_scenario = false;
+            for task in scenario {
                 task_count += 1;
                 // First time through display name of task set.
-                if !displayed_task_set {
+                if !displayed_scenario {
                     writeln!(
                         fmt,
                         " {:24 } |",
                         util::truncate_string(
-                            &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
+                            &format!("{}: {}", task.scenario_index + 1, &task.scenario_name),
                             60
                         ),
                     )?;
-                    displayed_task_set = true;
+                    displayed_scenario = true;
                 }
 
                 // Iterate over user task times, and merge into global task times.
@@ -2320,7 +2320,7 @@ impl GooseAttack {
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();
                     self.metrics.initialize_task_metrics(
-                        &self.task_sets,
+                        &self.scenarios,
                         &self.configuration,
                         &self.defaults,
                     )?;
@@ -2375,7 +2375,7 @@ impl GooseAttack {
 
                     self.metrics.requests = HashMap::new();
                     self.metrics.initialize_task_metrics(
-                        &self.task_sets,
+                        &self.scenarios,
                         &self.configuration,
                         &self.defaults,
                     )?;
@@ -2519,7 +2519,7 @@ impl GooseAttack {
                 }
                 GooseMetric::Task(raw_task) => {
                     // Store a new metric.
-                    self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
+                    self.metrics.tasks[raw_task.scenario_index][raw_task.task_index]
                         .set_time(raw_task.run_time, raw_task.success);
 
                     if !self.configuration.report_file.is_empty() {
@@ -2909,14 +2909,14 @@ impl GooseAttack {
                 let mut aggregate_task_time_minimum: usize = 0;
                 let mut aggregate_task_time_maximum: usize = 0;
                 let mut aggregate_task_times: BTreeMap<usize, usize> = BTreeMap::new();
-                for (task_set_counter, task_set) in self.metrics.tasks.iter().enumerate() {
-                    for (task_counter, task) in task_set.iter().enumerate() {
+                for (scenario_counter, scenario) in self.metrics.tasks.iter().enumerate() {
+                    for (task_counter, task) in scenario.iter().enumerate() {
                         if task_counter == 0 {
-                            // Only the taskset_name is used for task sets.
+                            // Only the scenario_name is used for task sets.
                             task_metrics.push(report::TaskMetric {
-                                is_task_set: true,
+                                is_scenario: true,
                                 task: "".to_string(),
-                                name: task.taskset_name.to_string(),
+                                name: task.scenario_name.to_string(),
                                 number_of_requests: 0,
                                 number_of_failures: 0,
                                 response_time_average: "".to_string(),
@@ -2937,8 +2937,8 @@ impl GooseAttack {
                             _ => task.total_time as f32 / task.counter as f32,
                         };
                         task_metrics.push(report::TaskMetric {
-                            is_task_set: false,
-                            task: format!("{}.{}", task_set_counter, task_counter),
+                            is_scenario: false,
+                            task: format!("{}.{}", scenario_counter, task_counter),
                             name: task.task_name.to_string(),
                             number_of_requests: total_run_count,
                             number_of_failures: task.fail_count,
@@ -2968,7 +2968,7 @@ impl GooseAttack {
                         aggregate_fail_count,
                     );
                 task_metrics.push(report::TaskMetric {
-                    is_task_set: false,
+                    is_scenario: false,
                     task: "".to_string(),
                     name: "Aggregated".to_string(),
                     number_of_requests: aggregate_total_count,

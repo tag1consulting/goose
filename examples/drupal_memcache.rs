@@ -30,8 +30,8 @@ use regex::Regex;
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
-        .register_taskset(
-            taskset!("AnonBrowsingUser")
+        .register_scenario(
+            scenario!("AnonBrowsingUser")
                 .set_weight(4)?
                 .register_task(
                     task!(drupal_memcache_front_page)
@@ -49,8 +49,8 @@ async fn main() -> Result<(), GooseError> {
                         .set_name("(Anon) user page"),
                 ),
         )
-        .register_taskset(
-            taskset!("AuthBrowsingUser")
+        .register_scenario(
+            scenario!("AuthBrowsingUser")
                 .set_weight(1)?
                 .register_task(
                     task!(drupal_memcache_login)

@@ -76,7 +76,7 @@ use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
-use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::goose::{GaggleUser, GooseTask, GooseUser, GooseUserCommand, Scenario};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseMetric, GooseMetrics};
@@ -168,8 +168,8 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
-    /// [`GooseAttack`](./struct.GooseAttack.html) has no [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) defined.
-    NoTaskSets {
+    /// [`GooseAttack`](./struct.GooseAttack.html) has no [`Scenario`](./goose/struct.Scenario.html) defined.
+    NoScenarios {
         /// An optional explanation of the error.
         detail: String,
     },
@@ -186,7 +186,7 @@ impl GooseError {
             GooseError::InvalidOption { .. } => "invalid option or value specified",
             GooseError::InvalidWaitTime { .. } => "invalid wait_time specified",
             GooseError::InvalidWeight { .. } => "invalid weight specified",
-            GooseError::NoTaskSets { .. } => "no task sets defined",
+            GooseError::NoScenarios { .. } => "no scenarios defined",
         }
     }
 }
@@ -278,7 +278,7 @@ pub enum AttackPhase {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// Used to define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s and
+/// Used to define the order [`Scenario`](./goose/struct.Scenario.html)s and
 /// [`GooseTask`](./goose/struct.GooseTask.html)s are allocated.
 ///
 /// In order to configure the scheduler, and to see examples of the different scheduler
@@ -359,12 +359,12 @@ struct GooseAttackRunState {
 
 /// Global internal state for the load test.
 pub struct GooseAttack {
-    /// An optional task that is run one time before starting GooseUsers and running GooseTaskSets.
+    /// An optional task that is run one time before starting GooseUsers and running Scenarios.
     test_start_task: Option<GooseTask>,
     /// An optional task that is run one time after all GooseUsers have finished.
     test_stop_task: Option<GooseTask>,
-    /// A vector containing one copy of each GooseTaskSet defined by this load test.
-    task_sets: Vec<GooseTaskSet>,
+    /// A vector containing one copy of each Scenario defined by this load test.
+    scenarios: Vec<Scenario>,
     /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
     /// A weighted vector containing a lightweight GaggleUser object that is sent to all Workers if running in Gaggle mode.
@@ -377,7 +377,7 @@ pub struct GooseAttack {
     attack_mode: AttackMode,
     /// Which phase the load test is currently operating in.
     attack_phase: AttackPhase,
-    /// Defines the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s and
+    /// Defines the order [`Scenario`](./goose/struct.Scenario.html)s and
     /// [`GooseTask`](./goose/struct.GooseTask.html)s are allocated.
     scheduler: GooseScheduler,
     /// When the load test started.
@@ -407,7 +407,7 @@ impl GooseAttack {
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
-            task_sets: Vec::new(),
+            scenarios: Vec::new(),
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
@@ -443,7 +443,7 @@ impl GooseAttack {
         Ok(GooseAttack {
             test_start_task: None,
             test_stop_task: None,
-            task_sets: Vec::new(),
+            scenarios: Vec::new(),
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
@@ -459,13 +459,13 @@ impl GooseAttack {
         })
     }
 
-    /// Define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are
+    /// Define the order [`Scenario`](./goose/struct.Scenario.html)s are
     /// allocated to new [`GooseUser`](./goose/struct.GooseUser.html)s as they are
     /// launched.
     ///
-    /// By default, [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are allocated
+    /// By default, [`Scenario`](./goose/struct.Scenario.html)s are allocated
     /// to new [`GooseUser`](./goose/struct.GooseUser.html)s in a round robin style.
-    /// For example, if TaskSet A has a weight of 5, TaskSet B has a weight of 3, and
+    /// For example, if Scenario A has a weight of 5, Scenario B has a weight of 3, and
     /// you launch 20 users, they will be launched in the following order:
     ///  A, B, A, B, A, B, A, A, A, B, A, B, A, B, A, A, A, B, A, B
     ///
@@ -479,12 +479,12 @@ impl GooseAttack {
     /// In the serial case, the following pattern is repeated:
     ///  A, A, A, A, A, B, B, B
     ///
-    /// In the following example, [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s
+    /// In the following example, [`Scenario`](./goose/struct.Scenario.html)s
     /// are allocated to launching [`GooseUser`](./goose/struct.GooseUser.html)s in a
     /// random order. This means running the test multiple times can generate
     /// different amounts of load, as depending on your weighting rules you may
     /// have a different number of [`GooseUser`](./goose/struct.GooseUser.html)s
-    /// running each [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) each time.
+    /// running each [`Scenario`](./goose/struct.Scenario.html) each time.
     ///
     /// # Example
     /// ```rust
@@ -494,11 +494,11 @@ impl GooseAttack {
     /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .set_scheduler(GooseScheduler::Random)
-    ///         .register_taskset(taskset!("A Tasks")
+    ///         .register_scenario(scenario!("A Scenario")
     ///             .set_weight(5)?
     ///             .register_task(task!(a_task_1))
     ///         )
-    ///         .register_taskset(taskset!("B Tasks")
+    ///         .register_scenario(scenario!("B Scenario")
     ///             .set_weight(3)?
     ///             .register_task(task!(b_task_1))
     ///         );
@@ -523,7 +523,7 @@ impl GooseAttack {
         self
     }
 
-    /// A load test must contain one or more [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s
+    /// A load test must contain one or more [`Scenario`](./goose/struct.Scenario.html)s
     /// be registered into Goose's global state with this method for it to run.
     ///
     /// # Example
@@ -533,10 +533,10 @@ impl GooseAttack {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("ExampleTasks")
+    ///         .register_scenario(scenario!("ExampleScenario")
     ///             .register_task(task!(example_task))
     ///         )
-    ///         .register_taskset(taskset!("OtherTasks")
+    ///         .register_scenario(scenario!("OtherScenario")
     ///             .register_task(task!(other_task))
     ///         );
     ///
@@ -555,9 +555,9 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     /// ```
-    pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
-        taskset.task_sets_index = self.task_sets.len();
-        self.task_sets.push(taskset);
+    pub fn register_scenario(mut self, mut scenario: Scenario) -> Self {
+        scenario.scenarios_index = self.scenarios.len();
+        self.scenarios.push(scenario);
         self
     }
 
@@ -629,18 +629,18 @@ impl GooseAttack {
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
-    /// [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s to be assigned to
+    /// [`Scenario`](./goose/struct.Scenario.html)s to be assigned to
     /// [`GooseUser`](./goose/struct.GooseUser.html)s
-    fn allocate_task_sets(&mut self) -> Vec<usize> {
-        trace!("allocate_task_sets");
+    fn allocate_scenarios(&mut self) -> Vec<usize> {
+        trace!("allocate_scenarios");
 
         let mut u: usize = 0;
         let mut v: usize;
-        for task_set in &self.task_sets {
+        for scenario in &self.scenarios {
             if u == 0 {
-                u = task_set.weight;
+                u = scenario.weight;
             } else {
-                v = task_set.weight;
+                v = scenario.weight;
                 trace!("calculating greatest common denominator of {} and {}", u, v);
                 u = util::gcd(u, v);
                 trace!("inner gcd: {}", u);
@@ -650,21 +650,21 @@ impl GooseAttack {
         debug!("gcd: {}", u);
 
         // Build a vector of vectors to be used to schedule users.
-        let mut available_task_sets = Vec::with_capacity(self.task_sets.len());
-        let mut total_task_sets = 0;
-        for (index, task_set) in self.task_sets.iter().enumerate() {
+        let mut available_scenarios = Vec::with_capacity(self.scenarios.len());
+        let mut total_scenarios = 0;
+        for (index, scenario) in self.scenarios.iter().enumerate() {
             // divide by greatest common divisor so vector is as short as possible
-            let weight = task_set.weight / u;
+            let weight = scenario.weight / u;
             trace!(
                 "{}: {} has weight of {} (reduced with gcd to {})",
                 index,
-                task_set.name,
-                task_set.weight,
+                scenario.name,
+                scenario.weight,
                 weight
             );
             let weighted_sets = vec![index; weight];
-            total_task_sets += weight;
-            available_task_sets.push(weighted_sets);
+            total_scenarios += weight;
+            available_scenarios.push(weighted_sets);
         }
 
         info!(
@@ -673,83 +673,83 @@ impl GooseAttack {
         );
 
         // Now build the weighted list with the appropriate scheduler.
-        let mut weighted_task_sets = Vec::new();
+        let mut weighted_scenarios = Vec::new();
         match self.scheduler {
             GooseScheduler::RoundRobin => {
                 // Allocate task sets round robin.
-                let task_sets_len = available_task_sets.len();
+                let scenarios_len = available_scenarios.len();
                 loop {
-                    for (task_set_index, task_sets) in available_task_sets
+                    for (scenario_index, scenarios) in available_scenarios
                         .iter_mut()
                         .enumerate()
-                        .take(task_sets_len)
+                        .take(scenarios_len)
                     {
-                        if let Some(task_set) = task_sets.pop() {
-                            debug!("allocating 1 user from TaskSet {}", task_set_index);
-                            weighted_task_sets.push(task_set);
+                        if let Some(scenario) = scenarios.pop() {
+                            debug!("allocating 1 user from Scenario {}", scenario_index);
+                            weighted_scenarios.push(scenario);
                         }
                     }
-                    if weighted_task_sets.len() >= total_task_sets {
+                    if weighted_scenarios.len() >= total_scenarios {
                         break;
                     }
                 }
             }
             GooseScheduler::Serial => {
                 // Allocate task sets serially in the weighted order defined.
-                for (task_set_index, task_sets) in available_task_sets.iter().enumerate() {
+                for (scenario_index, scenarios) in available_scenarios.iter().enumerate() {
                     debug!(
-                        "allocating all {} users from TaskSet {}",
-                        task_sets.len(),
-                        task_set_index
+                        "allocating all {} users from Scenario {}",
+                        scenarios.len(),
+                        scenario_index,
                     );
-                    weighted_task_sets.append(&mut task_sets.clone());
+                    weighted_scenarios.append(&mut scenarios.clone());
                 }
             }
             GooseScheduler::Random => {
                 // Allocate task sets randomly.
                 loop {
-                    let task_set = available_task_sets.choose_mut(&mut rand::thread_rng());
-                    match task_set {
+                    let scenario = available_scenarios.choose_mut(&mut rand::thread_rng());
+                    match scenario {
                         Some(set) => {
                             if let Some(s) = set.pop() {
-                                weighted_task_sets.push(s);
+                                weighted_scenarios.push(s);
                             }
                         }
-                        None => warn!("randomly allocating a GooseTaskSet failed, trying again"),
+                        None => warn!("randomly allocating a Scenario failed, trying again"),
                     }
-                    if weighted_task_sets.len() >= total_task_sets {
+                    if weighted_scenarios.len() >= total_scenarios {
                         break;
                     }
                 }
             }
         }
-        weighted_task_sets
+        weighted_scenarios
     }
 
     /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
-    fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
-        trace!("weight_task_set_users");
+    fn weight_scenario_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
+        trace!("weight_scenario_users");
 
-        let weighted_task_sets = self.allocate_task_sets();
+        let weighted_scenarios = self.allocate_scenarios();
 
         // Allocate a state for each user that will be hatched.
         info!("initializing {} user states...", self.test_plan.max_users());
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
         loop {
-            for task_sets_index in &weighted_task_sets {
+            for scenarios_index in &weighted_scenarios {
                 debug!(
                     "creating user state: {} ({})",
                     weighted_users.len(),
-                    task_sets_index
+                    scenarios_index
                 );
                 let base_url = goose::get_base_url(
                     self.get_configuration_host(),
-                    self.task_sets[*task_sets_index].host.clone(),
+                    self.scenarios[*scenarios_index].host.clone(),
                     self.defaults.host.clone(),
                 )?;
                 weighted_users.push(GooseUser::new(
-                    self.task_sets[*task_sets_index].task_sets_index,
+                    self.scenarios[*scenarios_index].scenarios_index,
                     base_url,
                     &self.configuration,
                     self.metrics.hash,
@@ -764,24 +764,24 @@ impl GooseAttack {
     }
 
     /// Allocate a vector of weighted [`GaggleUser`](./goose/struct.GaggleUser.html).
-    fn prepare_worker_task_set_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
-        trace!("prepare_worker_task_set_users");
+    fn prepare_worker_scenario_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
+        trace!("prepare_worker_scenario_users");
 
-        let weighted_task_sets = self.allocate_task_sets();
+        let weighted_scenarios = self.allocate_scenarios();
 
         // Determine the users sent to each Worker.
         info!("preparing users for Workers...");
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
         loop {
-            for task_sets_index in &weighted_task_sets {
+            for scenarios_index in &weighted_scenarios {
                 let base_url = goose::get_base_url(
                     self.get_configuration_host(),
-                    self.task_sets[*task_sets_index].host.clone(),
+                    self.scenarios[*scenarios_index].host.clone(),
                     self.defaults.host.clone(),
                 )?;
                 weighted_users.push(GaggleUser::new(
-                    self.task_sets[*task_sets_index].task_sets_index,
+                    self.scenarios[*scenarios_index].scenarios_index,
                     base_url,
                     &self.configuration,
                     self.metrics.hash,
@@ -836,7 +836,7 @@ impl GooseAttack {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("ExampleTasks")
+    ///         .register_scenario(scenario!("ExampleTasks")
     ///             .register_task(task!(example_task).set_weight(2)?)
     ///             .register_task(task!(another_example_task).set_weight(3)?)
     ///             // Goose must run against a host, point to localhost so test starts.
@@ -870,8 +870,8 @@ impl GooseAttack {
         }
 
         // At least one task set is required.
-        if self.task_sets.is_empty() {
-            return Err(GooseError::NoTaskSets {
+        if self.scenarios.is_empty() {
+            return Err(GooseError::NoScenarios {
                 detail: "No task sets are defined.".to_string(),
             });
         }
@@ -879,9 +879,9 @@ impl GooseAttack {
         // Display task sets and tasks, then exit.
         if self.configuration.list {
             println!("Available tasks:");
-            for task_set in self.task_sets {
-                println!(" - {} (weight: {})", task_set.name, task_set.weight);
-                for task in task_set.tasks {
+            for scenario in self.scenarios {
+                println!(" - {} (weight: {})", scenario.name, scenario.weight);
+                for task in scenario.tasks {
                     println!("    o {} (weight: {})", task.name, task.weight);
                 }
             }
@@ -921,7 +921,7 @@ impl GooseAttack {
 
         // Calculate a unique hash for the current load test.
         let mut s = DefaultHasher::new();
-        self.task_sets.hash(&mut s);
+        self.scenarios.hash(&mut s);
         self.metrics.hash = s.finish();
         debug!("hash: {}", self.metrics.hash);
 
@@ -973,17 +973,17 @@ impl GooseAttack {
     // Returns OK(()) if there's a valid host, GooseError with details if not.
     fn validate_host(&mut self) -> Result<(), GooseError> {
         if self.configuration.host.is_empty() {
-            for task_set in &self.task_sets {
-                match &task_set.host {
+            for scenario in &self.scenarios {
+                match &scenario.host {
                     Some(h) => {
                         if util::is_valid_host(h).is_ok() {
-                            info!("host for {} configured: {}", task_set.name, h);
+                            info!("host for {} configured: {}", scenario.name, h);
                         }
                     }
                     None => match &self.defaults.host {
                         Some(h) => {
                             if util::is_valid_host(h).is_ok() {
-                                info!("host for {} configured: {}", task_set.name, h);
+                                info!("host for {} configured: {}", scenario.name, h);
                             }
                         }
                         None => {
@@ -991,7 +991,7 @@ impl GooseAttack {
                                 return Err(GooseError::InvalidOption {
                                     option: "--host".to_string(),
                                     value: "".to_string(),
-                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
+                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).", scenario.name)
                                 });
                             }
                         }
@@ -1011,18 +1011,18 @@ impl GooseAttack {
         }
 
         // Apply weights to tasks in each task set.
-        for task_set in &mut self.task_sets {
+        for scenario in &mut self.scenarios {
             let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) =
-                allocate_tasks(task_set, &self.scheduler);
-            task_set.weighted_on_start_tasks = weighted_on_start_tasks;
-            task_set.weighted_tasks = weighted_tasks;
-            task_set.weighted_on_stop_tasks = weighted_on_stop_tasks;
+                allocate_tasks(scenario, &self.scheduler);
+            scenario.weighted_on_start_tasks = weighted_on_start_tasks;
+            scenario.weighted_tasks = weighted_tasks;
+            scenario.weighted_on_stop_tasks = weighted_on_stop_tasks;
             debug!(
                 "weighted {} on_start: {:?} tasks: {:?} on_stop: {:?}",
-                task_set.name,
-                task_set.weighted_on_start_tasks,
-                task_set.weighted_tasks,
-                task_set.weighted_on_stop_tasks
+                scenario.name,
+                scenario.weighted_on_start_tasks,
+                scenario.weighted_tasks,
+                scenario.weighted_on_stop_tasks
             );
         }
 
@@ -1034,10 +1034,10 @@ impl GooseAttack {
 
             if self.attack_mode == AttackMode::StandAlone {
                 // Allocate a state for each of the users we are about to start.
-                self.weighted_users = self.weight_task_set_users()?;
+                self.weighted_users = self.weight_scenario_users()?;
             } else if self.attack_mode == AttackMode::Manager {
                 // Build a list of users to be allocated on Workers.
-                self.weighted_gaggle_users = self.prepare_worker_task_set_users()?;
+                self.weighted_gaggle_users = self.prepare_worker_scenario_users()?;
             }
         }
 
@@ -1374,8 +1374,8 @@ impl GooseAttack {
                 thread_user.channel_to_parent =
                     Some(goose_attack_run_state.all_threads_metrics_tx.clone());
 
-                // Copy the appropriate task_set into the thread.
-                let thread_task_set = self.task_sets[thread_user.task_sets_index].clone();
+                // Copy the appropriate scenario into the thread.
+                let thread_scenario = self.scenarios[thread_user.scenarios_index].clone();
 
                 // We number threads from 1 as they're human-visible (in the logs),
                 // whereas metrics.users starts at 0.
@@ -1391,7 +1391,7 @@ impl GooseAttack {
                 // Launch a new user.
                 let user = tokio::spawn(user::user_main(
                     thread_number,
-                    thread_task_set,
+                    thread_scenario,
                     thread_user,
                     thread_receiver,
                     is_worker,
@@ -1610,7 +1610,7 @@ impl GooseAttack {
         self.metrics = GooseMetrics::default();
         if !self.configuration.no_metrics {
             self.metrics.initialize_task_metrics(
-                &self.task_sets,
+                &self.scenarios,
                 &self.configuration,
                 &self.defaults,
             )?;
@@ -1805,14 +1805,14 @@ impl GooseAttack {
 }
 
 /// Use the configured GooseScheduler to allocate all [`GooseTask`](./goose/struct.GooseTask.html)s
-/// within the [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) in the appropriate order. Returns
+/// within the [`Scenario`](./goose/struct.Scenario.html) in the appropriate order. Returns
 /// three set of ordered tasks: /// `on_start_tasks`, `tasks`, and `on_stop_tasks`. The
 /// `on_start_tasks` are only run once when the [`GooseAttack`](./struct.GooseAttack.html) first
 /// starts. Normal `tasks` are then run for the duration of the
 /// [`GooseAttack`](./struct.GooseAttack.html). The `on_stop_tasks` finally are only run once when
 /// the [`GooseAttack`](./struct.GooseAttack.html) stops.
 fn allocate_tasks(
-    task_set: &GooseTaskSet,
+    scenario: &Scenario,
     scheduler: &GooseScheduler,
 ) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
     debug!(
@@ -1830,8 +1830,8 @@ fn allocate_tasks(
     let mut u: usize = 0;
     let mut v: usize;
 
-    // Find the greatest common divisor of all tasks in the task_set.
-    for task in &task_set.tasks {
+    // Find the greatest common divisor of all tasks in the scenario.
+    for task in &scenario.tasks {
         if task.sequence > 0 {
             if task.on_start {
                 if let Some(sequence) = sequenced_on_start_tasks.get_mut(&task.sequence) {
@@ -1929,24 +1929,24 @@ fn allocate_tasks(
 
     // Sequenced tasks come first.
     for task in scheduled_sequenced_on_start_tasks.iter() {
-        on_start_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+        on_start_tasks.extend(vec![(*task, scenario.tasks[*task].name.to_string())])
     }
     for task in scheduled_sequenced_tasks.iter() {
-        tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+        tasks.extend(vec![(*task, scenario.tasks[*task].name.to_string())])
     }
     for task in scheduled_sequenced_on_stop_tasks.iter() {
-        on_stop_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+        on_stop_tasks.extend(vec![(*task, scenario.tasks[*task].name.to_string())])
     }
 
     // Unsequenced tasks come last.
     for task in scheduled_unsequenced_on_start_tasks.iter() {
-        on_start_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+        on_start_tasks.extend(vec![(*task, scenario.tasks[*task].name.to_string())])
     }
     for task in scheduled_unsequenced_tasks.iter() {
-        tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+        tasks.extend(vec![(*task, scenario.tasks[*task].name.to_string())])
     }
     for task in scheduled_unsequenced_on_stop_tasks.iter() {
-        on_stop_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+        on_stop_tasks.extend(vec![(*task, scenario.tasks[*task].name.to_string())])
     }
 
     // Return sequenced buckets of weighted usize pointers to and names of Goose Tasks

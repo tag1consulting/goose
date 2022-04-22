@@ -186,12 +186,12 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
     mock_endpoints[STOP_ONE_KEY].assert_hits(1);
 }
 
-// Returns the appropriate taskset, start_task and stop_task needed to build these tests.
-fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
+// Returns the appropriate scenario, start_task and stop_task needed to build these tests.
+fn get_tasks(test_type: &TestType) -> (Scenario, GooseTask, GooseTask) {
     match test_type {
         // No sequence declared, so tasks run in default RoundRobin order: 1, 3, 2, 1...
         TestType::NotSequenced => (
-            taskset!("LoadTest")
+            scenario!("LoadTest")
                 .register_task(task!(one).set_weight(2).unwrap())
                 .register_task(task!(three))
                 .register_task(task!(two_with_delay)),
@@ -202,7 +202,7 @@ fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
         ),
         // Sequence added, so tasks run in the declared sequence order: 1, 1, 2, 3...
         TestType::SequencedRoundRobin => (
-            taskset!("LoadTest")
+            scenario!("LoadTest")
                 .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
                 .register_task(task!(three).set_sequence(3))
                 .register_task(task!(one).set_sequence(2).set_weight(2).unwrap())
@@ -213,7 +213,7 @@ fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
             task!(stop_one),
         ),
         TestType::SequencedSerial => (
-            taskset!("LoadTest")
+            scenario!("LoadTest")
                 .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
                 .register_task(task!(three).set_sequence(3))
                 .register_task(task!(one).set_sequence(2).set_weight(2).unwrap())
@@ -237,15 +237,15 @@ async fn run_standalone_test(test_type: TestType) {
     // Build common configuration.
     let configuration = common_build_configuration(&server, None, None);
 
-    // Get the taskset, start and stop tasks to build a load test.
-    let (taskset, start_task, stop_task) = get_tasks(&test_type);
+    // Get the scenario, start and stop tasks to build a load test.
+    let (scenario, start_task, stop_task) = get_tasks(&test_type);
 
     let goose_attack = match test_type {
         TestType::NotSequenced | TestType::SequencedRoundRobin => {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_taskset(taskset)
+                .register_scenario(scenario)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(GooseScheduler::RoundRobin)
@@ -254,7 +254,7 @@ async fn run_standalone_test(test_type: TestType) {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_taskset(taskset)
+                .register_scenario(scenario)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(GooseScheduler::Serial)
@@ -279,8 +279,8 @@ async fn run_gaggle_test(test_type: TestType) {
     // Build common configuration.
     let worker_configuration = common_build_configuration(&server, Some(true), None);
 
-    // Get the taskset, start and stop tasks to build a load test.
-    let (taskset, start_task, stop_task) = get_tasks(&test_type);
+    // Get the scenario, start and stop tasks to build a load test.
+    let (scenario, start_task, stop_task) = get_tasks(&test_type);
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = match test_type {
@@ -289,7 +289,7 @@ async fn run_gaggle_test(test_type: TestType) {
             common::launch_gaggle_workers(EXPECT_WORKERS, || {
                 crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                     .unwrap()
-                    .register_taskset(taskset.clone())
+                    .register_scenario(scenario.clone())
                     .test_start(start_task.clone())
                     .test_stop(stop_task.clone())
                     // Unnecessary as this is the default.
@@ -299,7 +299,7 @@ async fn run_gaggle_test(test_type: TestType) {
         TestType::SequencedSerial => common::launch_gaggle_workers(EXPECT_WORKERS, || {
             crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                 .unwrap()
-                .register_taskset(taskset.clone())
+                .register_scenario(scenario.clone())
                 .test_start(start_task.clone())
                 .test_stop(stop_task.clone())
                 .set_scheduler(GooseScheduler::Serial)
@@ -314,7 +314,7 @@ async fn run_gaggle_test(test_type: TestType) {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_taskset(taskset)
+                .register_scenario(scenario)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 // Unnecessary as this is the default.
@@ -324,7 +324,7 @@ async fn run_gaggle_test(test_type: TestType) {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_taskset(taskset)
+                .register_scenario(scenario)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(GooseScheduler::Serial)
