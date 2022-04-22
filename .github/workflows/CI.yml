@@ -15,23 +15,67 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Verify code formatting
-      run: cargo fmt -- --check
-    - name: Verify code style
-      run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v1.3.0
+    
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    
+    - name: 🔎 Verify code formatting
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt 
+        args: -- --check
+    
+    - name: 🔎 Verify code style
+      uses: actions-rs/cargo@v1
+      with:
+        command: clippy 
+        args: --all-targets --all-features -- -D warnings
 
   build:
     name: build and run tests
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --verbose --all-features
-    - name: Docs
-      run: cargo rustdoc --lib --all-features --examples
-    - name: Run tests
-      run: cargo test --verbose --all-features
-    - name: Run timezone-sensitive tests in non UTC (GMT-5)
-      run: TZ="std +5" cargo test --verbose --all-features graph
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v1.3.0
+    
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    
+    - name: 🔨 Build
+      uses: actions-rs/cargo@v1
+      with:
+        command: build 
+        args: --verbose --all-features
+    
+    - name: 📖 Docs
+      uses: actions-rs/cargo@v1
+      with:
+        command: rustdoc 
+        args: --lib --all-features --examples
+    
+    - name: 🔎 Test
+      uses: actions-rs/cargo@v1
+      with:
+        command: test 
+        args: --verbose --all-features
+    
+    - name: 🔎 timezone-sensitive tests in non UTC (GMT-5)
+      uses: actions-rs/cargo@v1
+      env:
+        TZ: std +5
+      with:
+        command: test 
+        args: --verbose --all-features graph
