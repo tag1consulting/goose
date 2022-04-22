@@ -114,11 +114,11 @@ fn common_build_configuration(
 }
 
 // Dynamically build taskset.
-fn build_taskset() -> GooseTaskSet {
+fn build_taskset() -> Scenario {
     // Get common configuration for building endpoints and the load test itself.
     let test_endpoints = configure_mock_endpoints();
 
-    let mut taskset = GooseTaskSet::new("LoadTest");
+    let mut taskset = Scenario::new("LoadTest");
     for item in &test_endpoints {
         let path = item.path;
         let weight = item.weight;

@@ -4,7 +4,7 @@ use httpmock::MockServer;
 use std::io::{self, BufRead};
 
 use goose::config::GooseConfiguration;
-use goose::goose::{GooseTask, GooseTaskSet};
+use goose::goose::{GooseTask, Scenario};
 use goose::metrics::GooseMetrics;
 use goose::GooseAttack;
 
@@ -90,14 +90,14 @@ pub fn launch_gaggle_workers<F: Fn() -> GooseAttack>(
 #[allow(dead_code)]
 pub fn build_load_test(
     configuration: GooseConfiguration,
-    taskset: &GooseTaskSet,
+    scenario: &Scenario,
     start_task: Option<&GooseTask>,
     stop_task: Option<&GooseTask>,
 ) -> GooseAttack {
     // First set up the common base configuration.
     let mut goose = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()
-        .register_taskset(taskset.clone());
+        .register_scenario(scenario.clone());
 
     if let Some(task) = start_task {
         goose = goose.test_start(task.clone());

@@ -219,13 +219,13 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
 }
 
 // Returns the appropriate taskset, start_task and stop_task needed to build these tests.
-fn get_tasksets() -> (GooseTaskSet, GooseTaskSet, GooseTask, GooseTask) {
+fn get_tasksets() -> (Scenario, Scenario, GooseTask, GooseTask) {
     (
-        taskset!("TaskSetOne")
+        scenario!("TaskSetOne")
             .register_task(task!(one_with_delay))
             .set_weight(USERS)
             .unwrap(),
-        taskset!("TaskSetTwo")
+        scenario!("TaskSetTwo")
             .register_task(task!(two_with_delay))
             // Add one to the weight to avoid this getting reduced by gcd.
             .set_weight(USERS + 1)
@@ -237,10 +237,10 @@ fn get_tasksets() -> (GooseTaskSet, GooseTaskSet, GooseTask, GooseTask) {
     )
 }
 
-// Returns a single GooseTaskSet with two GooseTasks, a start_task, and a stop_task.
-fn get_tasks() -> (GooseTaskSet, GooseTask, GooseTask) {
+// Returns a single Scenario with two GooseTasks, a start_task, and a stop_task.
+fn get_tasks() -> (Scenario, GooseTask, GooseTask) {
     (
-        taskset!("TaskSet")
+        scenario!("TaskSet")
             .register_task(task!(three).set_weight(USERS * 2).unwrap())
             .register_task(task!(two_with_delay).set_weight(USERS).unwrap())
             .register_task(task!(one_with_delay).set_weight(USERS).unwrap()),
@@ -269,8 +269,8 @@ async fn run_standalone_test(test_type: &TestType, scheduler: &GooseScheduler) {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_taskset(taskset1)
-                .register_taskset(taskset2)
+                .register_scenario(taskset1)
+                .register_scenario(taskset2)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(scheduler.clone())
@@ -281,7 +281,7 @@ async fn run_standalone_test(test_type: &TestType, scheduler: &GooseScheduler) {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_taskset(taskset1)
+                .register_scenario(taskset1)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(scheduler.clone())
@@ -314,8 +314,8 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
             common::launch_gaggle_workers(EXPECT_WORKERS, || {
                 crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                     .unwrap()
-                    .register_taskset(taskset1.clone())
-                    .register_taskset(taskset2.clone())
+                    .register_scenario(taskset1.clone())
+                    .register_scenario(taskset2.clone())
                     .test_start(start_task.clone())
                     .test_stop(stop_task.clone())
                     .set_scheduler(scheduler.clone())
@@ -327,7 +327,7 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
             common::launch_gaggle_workers(EXPECT_WORKERS, || {
                 crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                     .unwrap()
-                    .register_taskset(taskset1.clone())
+                    .register_scenario(taskset1.clone())
                     .test_start(start_task.clone())
                     .test_stop(stop_task.clone())
                     .set_scheduler(scheduler.clone())
@@ -345,8 +345,8 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
             // Build the load test for the Manager.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_taskset(taskset1)
-                .register_taskset(taskset2)
+                .register_scenario(taskset1)
+                .register_scenario(taskset2)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(scheduler.clone())
@@ -357,7 +357,7 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
             // Build the load test for the Manager.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_taskset(taskset1)
+                .register_scenario(taskset1)
                 .test_start(start_task)
                 .test_stop(stop_task)
                 .set_scheduler(scheduler.clone())
@@ -372,7 +372,7 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating GooseTaskSets in round robin order.
+// Load test with multiple tasks allocating Scenarios in round robin order.
 async fn test_round_robin_taskset() {
     run_standalone_test(&TestType::TaskSets, &GooseScheduler::RoundRobin).await;
 }
@@ -380,7 +380,7 @@ async fn test_round_robin_taskset() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks allocating GooseTaskSets in round robin order, in
+// Load test with multiple tasks allocating Scenarios in round robin order, in
 // Gaggle mode.
 async fn test_round_robin_taskset_gaggle() {
     run_gaggle_test(&TestType::TaskSets, &GooseScheduler::RoundRobin).await;
@@ -402,7 +402,7 @@ async fn test_round_robin_task_gaggle() {
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating GooseTaskSets in serial order.
+// Load test with multiple tasks allocating Scenarios in serial order.
 async fn test_serial_taskset() {
     run_standalone_test(&TestType::TaskSets, &GooseScheduler::Serial).await;
 }
@@ -410,7 +410,7 @@ async fn test_serial_taskset() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks allocating GooseTaskSets in serial order, in
+// Load test with multiple tasks allocating Scenarios in serial order, in
 // Gaggle mode.
 async fn test_serial_taskset_gaggle() {
     run_gaggle_test(&TestType::TaskSets, &GooseScheduler::Serial).await;
@@ -423,7 +423,7 @@ async fn test_serial_tasks() {
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating GooseTaskSets in random order.
+// Load test with multiple tasks allocating Scenarios in random order.
 async fn test_random_taskset() {
     run_standalone_test(&TestType::TaskSets, &GooseScheduler::Random).await;
 }
@@ -431,14 +431,14 @@ async fn test_random_taskset() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks allocating GooseTaskSets in random order, in
+// Load test with multiple tasks allocating Scenarios in random order, in
 // Gaggle mode.
 async fn test_random_taskset_gaggle() {
     run_gaggle_test(&TestType::TaskSets, &GooseScheduler::Random).await;
 }
 
 #[tokio::test]
-// Load test with multiple tasks allocating GooseTaskSets in random order.
+// Load test with multiple tasks allocating Scenarios in random order.
 async fn test_random_tasks() {
     run_standalone_test(&TestType::Tasks, &GooseScheduler::Random).await;
 }

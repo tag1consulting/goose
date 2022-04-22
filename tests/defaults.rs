@@ -202,8 +202,8 @@ async fn test_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_taskset(taskset!("Index").register_task(task!(get_index)))
-        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("Index").register_task(task!(get_index)))
+        .register_scenario(scenario!("About").register_task(task!(get_about)))
         // Start at least two users, required to run both TaskSets.
         .set_default(GooseDefault::Host, host.as_str())
         .unwrap()
@@ -298,8 +298,8 @@ async fn test_defaults_gaggle() {
         worker_handles.push(tokio::spawn(
             crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
-                .register_taskset(taskset!("Index").register_task(task!(get_index)))
-                .register_taskset(taskset!("About").register_task(task!(get_about)))
+                .register_scenario(scenario!("Index").register_task(task!(get_index)))
+                .register_scenario(scenario!("About").register_task(task!(get_about)))
                 // Start at least two users, required to run both TaskSets.
                 .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
                 .unwrap()
@@ -328,8 +328,8 @@ async fn test_defaults_gaggle() {
     let goose_metrics = crate::GooseAttack::initialize_with_config(configuration)
         .unwrap()
         // Alter the name of the task set so NoHashCheck is required for load test to run.
-        .register_taskset(taskset!("FooIndex").register_task(task!(get_index)))
-        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("FooIndex").register_task(task!(get_index)))
+        .register_scenario(scenario!("About").register_task(task!(get_about)))
         // Start at least two users, required to run both TaskSets.
         .set_default(GooseDefault::Host, host.as_str())
         .unwrap()
@@ -433,9 +433,9 @@ async fn test_no_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_taskset(taskset!("Index").register_task(task!(get_index)))
-        .register_taskset(
-            taskset!("About")
+        .register_scenario(scenario!("Index").register_task(task!(get_index)))
+        .register_scenario(
+            scenario!("About")
                 .register_task(task!(get_about))
                 // Be sure shutdown happens quickly and cleanly even when there's a large
                 // wait time.
@@ -512,8 +512,8 @@ async fn test_no_defaults_gaggle() {
         worker_handles.push(tokio::spawn(
             crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
-                .register_taskset(taskset!("Index").register_task(task!(get_index)))
-                .register_taskset(taskset!("About").register_task(task!(get_about)))
+                .register_scenario(scenario!("Index").register_task(task!(get_index)))
+                .register_scenario(scenario!("About").register_task(task!(get_about)))
                 .execute(),
         ));
     }
@@ -545,8 +545,8 @@ async fn test_no_defaults_gaggle() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(manager_configuration)
         .unwrap()
-        .register_taskset(taskset!("Index").register_task(task!(get_index)))
-        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("Index").register_task(task!(get_index)))
+        .register_scenario(scenario!("About").register_task(task!(get_about)))
         .execute()
         .await
         .unwrap();
@@ -596,8 +596,8 @@ async fn test_plan_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_taskset(taskset!("Index").register_task(task!(get_index)))
-        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("Index").register_task(task!(get_index)))
+        .register_scenario(scenario!("About").register_task(task!(get_about)))
         // Start at least two users, required to run both TaskSets.
         .set_default(GooseDefault::Host, host.as_str())
         .unwrap()
@@ -676,8 +676,8 @@ async fn test_plan_no_defaults() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_taskset(taskset!("Index").register_task(task!(get_index)))
-        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("Index").register_task(task!(get_index)))
+        .register_scenario(scenario!("About").register_task(task!(get_about)))
         .execute()
         .await
         .unwrap();
@@ -708,8 +708,8 @@ async fn test_defaults_no_metrics() {
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
-        .register_taskset(taskset!("Index").register_task(task!(get_index)))
-        .register_taskset(taskset!("About").register_task(task!(get_about)))
+        .register_scenario(scenario!("Index").register_task(task!(get_index)))
+        .register_scenario(scenario!("About").register_task(task!(get_about)))
         // Start at least two users, required to run both TaskSets.
         .set_default(GooseDefault::Users, USERS)
         .unwrap()

@@ -6,7 +6,6 @@ use httpmock::{
 mod common;
 
 use goose::config::GooseConfiguration;
-use goose::goose::GooseTaskSet;
 use goose::prelude::*;
 
 // Paths used in load tests performed during these tests.
@@ -99,8 +98,8 @@ fn validate_test(mock_endpoints: &[Mock]) {
 }
 
 // Returns the appropriate taskset needed to build these tests.
-fn get_tasks() -> GooseTaskSet {
-    taskset!("LoadTest")
+fn get_tasks() -> Scenario {
+    scenario!("LoadTest")
         .register_task(task!(login).set_on_start())
         .register_task(task!(logout).set_on_stop())
 }

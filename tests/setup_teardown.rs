@@ -131,17 +131,20 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
 
 // Build an appropriate GooseAttack object for test type, using supplied configuration.
 fn build_goose_attack(test_type: &TestType, configuration: GooseConfiguration) -> GooseAttack {
-    let taskset = taskset!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap());
+    let scenario = scenario!("LoadTest").register_task(task!(get_index).set_weight(9).unwrap());
     let start_task = task!(setup);
     let stop_task = task!(teardown);
     match test_type {
         TestType::Start => {
-            common::build_load_test(configuration, &taskset, Some(&start_task), None)
+            common::build_load_test(configuration, &scenario, Some(&start_task), None)
         }
-        TestType::Stop => common::build_load_test(configuration, &taskset, None, Some(&stop_task)),
-        TestType::StartAndStop => {
-            common::build_load_test(configuration, &taskset, Some(&start_task), Some(&stop_task))
-        }
+        TestType::Stop => common::build_load_test(configuration, &scenario, None, Some(&stop_task)),
+        TestType::StartAndStop => common::build_load_test(
+            configuration,
+            &scenario,
+            Some(&start_task),
+            Some(&stop_task),
+        ),
     }
 }
 

@@ -21,8 +21,8 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: usize = 30;
 /// All elements required to initialize a user in a worker process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseUserInitializer {
-    /// An index into the internal `GooseTest.task_sets` vector, indicating which GooseTaskSet is running.
-    pub task_sets_index: usize,
+    /// An index into the internal `GooseTest.scenarios` vector, indicating which Scenario is running.
+    pub scenarios_index: usize,
     /// The base_url for this user thread.
     pub base_url: String,
     /// A local copy of the global GooseConfiguration.
@@ -211,13 +211,13 @@ fn merge_request_metrics(goose_attack: &mut GooseAttack, requests: GooseRequestM
 
 /// Helper to merge in task metrics from Worker.
 fn merge_task_metrics(goose_attack: &mut GooseAttack, tasks: GooseTaskMetrics) {
-    for task_set in tasks {
-        for task in task_set {
+    for scenario in tasks {
+        for task in scenario {
             let merged_task = merge_tasks_from_worker(
-                &goose_attack.metrics.tasks[task.taskset_index][task.task_index],
+                &goose_attack.metrics.tasks[task.scenario_index][task.task_index],
                 &task,
             );
-            goose_attack.metrics.tasks[task.taskset_index][task.task_index] = merged_task;
+            goose_attack.metrics.tasks[task.scenario_index][task.task_index] = merged_task;
         }
     }
 }
@@ -300,7 +300,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     goose_attack
         .metrics
         .initialize_task_metrics(
-            &goose_attack.task_sets,
+            &goose_attack.scenarios,
             &goose_attack.configuration,
             &goose_attack.defaults,
         )
@@ -474,7 +474,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             };
                             // Build a vector of GooseUser initializers for next worker.
                             users.push(GooseUserInitializer {
-                                task_sets_index: user.task_sets_index,
+                                scenarios_index: user.scenarios_index,
                                 base_url: user.base_url.read().await.to_string(),
                                 config: user.config.clone(),
                                 worker_id: workers.len(),

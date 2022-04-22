@@ -34,9 +34,9 @@ struct AuthenticationResponse {
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
-        // In this example, we only create a single taskset, named "WebsiteUser".
-        .register_taskset(
-            taskset!("WebsiteUser")
+        // In this example, we only create a single scenario, named "WebsiteUser".
+        .register_scenario(
+            scenario!("WebsiteUser")
                 // After each task runs, sleep randomly from 5 to 15 seconds.
                 .set_wait_time(Duration::from_secs(5), Duration::from_secs(15))?
                 // This task only runs one time when the user first starts.

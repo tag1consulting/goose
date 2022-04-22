@@ -137,7 +137,7 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
             worker_id = initializer.worker_id;
         }
         let user = GooseUser::new(
-            initializer.task_sets_index,
+            initializer.scenarios_index,
             Url::parse(&initializer.base_url).unwrap(),
             &initializer.config,
             goose_attack.metrics.hash,
@@ -211,7 +211,7 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
         .expect("failed to launch GooseAttack");
 
     worker_goose_attack.started = Some(time::Instant::now());
-    worker_goose_attack.task_sets = goose_attack.task_sets.clone();
+    worker_goose_attack.scenarios = goose_attack.scenarios.clone();
     worker_goose_attack.weighted_users = weighted_users;
     // This is a Worker instance, not a Manager instance.
     worker_goose_attack.configuration.manager = false;
