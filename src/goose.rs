@@ -1633,12 +1633,16 @@ impl GooseUser {
                 if let Ok(body) = r.text().await {
                     if !body.is_empty() {
                         error!("{:?} {}, {}", &path, &request_metric.error, &body);
-                        return Err(GooseTaskError::RequestFailed{raw_request: request_metric});
+                        return Err(GooseTaskError::RequestFailed {
+                            raw_request: request_metric,
+                        });
                     }
                 }
             }
             error!("{:?} {}", &path, &request_metric.error);
-            return Err(GooseTaskError::RequestFailed{raw_request: request_metric});
+            return Err(GooseTaskError::RequestFailed {
+                raw_request: request_metric,
+            });
         }
 
         Ok(GooseResponse::new(request_metric, response))
@@ -2487,7 +2491,7 @@ impl<'a> GooseRequestBuilder<'a> {
         self
     }
 
-    /// Configure whether the request should return on error when it 
+    /// Configure whether the request should return on error when it
     /// fails
     ///
     /// Defaults to [`false`].
@@ -2507,7 +2511,7 @@ impl<'a> GooseRequestBuilder<'a> {
     ///         .path("no/such/path")
     ///         // Tell Goose to expect a 404 HTTP response status code.
     ///         .expect_status_code(404)
-    ///         // Tell Goose to return an error if the status code is 
+    ///         // Tell Goose to return an error if the status code is
     ///         // not a 404
     ///         .error_on_fail()
     ///         // Build the GooseRequest object.
