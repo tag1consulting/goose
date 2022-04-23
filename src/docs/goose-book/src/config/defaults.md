@@ -4,8 +4,8 @@ All run-time options can be configured with custom defaults. For example, you ma
 
 ```rust,ignore
     GooseAttack::initialize()?
-        .register_taskset(taskset!("LoadtestTasks")
-            .register_task(task!(loadtest_index))
+        .register_scenario(scenario!("LoadtestTransactions")
+            .register_transaction(transaction!(loadtest_index))
         )
         .set_default(GooseDefault::Host, "http://local.dev/")?
         .execute()
@@ -16,12 +16,14 @@ All run-time options can be configured with custom defaults. For example, you ma
 
 The following defaults can be configured with a `&str`:
  - host: `GooseDefault::Host`
- - log file name: `GooseDefault::LogFile`
+ - set a per-request timeout: `GooseDefault::Timeout`
+ - users to start per second: `GooseDefault::HatchRate`
  - html-formatted report file name: `GooseDefault::ReportFile`
- - requests log file name: `GooseDefault::RequestsFile`
- - requests log file format: `GooseDefault::RequestsFormat`
- - debug log file name: `GooseDefault::DebugFile`
- - debug log file format: `GooseDefault::DebugFormat`
+ - goose log file name: `GooseDefault::GooseLog`
+ - request log file name: `GooseDefault::RequestsLog`
+ - transaction log file name: `GooseDefault::TransactionLog`
+ - error log file name: `GooseDefault::ErrorLog`
+ - debug log file name: `GooseDefault::DebugLog`
  - test plan: `GooseDefault::TestPlan`
  - host to bind telnet Controller to: `GooseDefault::TelnetHost`
  - host to bind WebSocket Controller to: `GooseDefault::WebSocketHost`
@@ -30,10 +32,11 @@ The following defaults can be configured with a `&str`:
 
 The following defaults can be configured with a `usize` integer:
  - total users to start: `GooseDefault::Users`
- - users to start per second: `GooseDefault::HatchRate`
+ - how quickly to start all users: `GooseDefault::StartupTime`
  - how often to print running metrics: `GooseDefault::RunningMetrics`
  - number of seconds for test to run: `GooseDefault::RunTime`
  - log level: `GooseDefault::LogLevel`
+ - quiet: `GooseDefault::Quiet`
  - verbosity: `GooseDefault::Verbose`
  - maximum requests per second: `GooseDefault::ThrottleRequests`
  - number of Workers to expect: `GooseDefault::ExpectWorkers`
@@ -44,17 +47,28 @@ The following defaults can be configured with a `usize` integer:
 
 The following defaults can be configured with a `bool`:
  - do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
- - do not track metrics: `GooseDefault::NoMetrics`
  - do not print metrics: `GooseDefault::NoPrintMetrics`
- - do not track task metrics: `GooseDefault::NoTaskMetrics`
+ - do not track metrics: `GooseDefault::NoMetrics`
+ - do not track transaction metrics: `GooseDefault::NoTransactionMetrics`
+ - do not log the request body in the error log: `GooseDefault::NoRequestBody`
+ - do not display the error summary: `GooseDefault::NoErrorSummary`
+ - do not log the response body in the debug log: `GooseDefault::NoDebugBody`
  - do not start telnet Controller thread: `GooseDefault::NoTelnet`
  - do not start WebSocket Controller thread: `GooseDefault::NoWebSocket`
  - do not autostart load test, wait instead for a Controller to start: `GooseDefault::NoAutoStart`
+ - do not gzip compress requests: `GooseDefault::NoGzip`
  - track status codes: `GooseDefault::StatusCodes`
  - follow redirect of base_url: `GooseDefault::StickyFollow`
  - enable Manager mode: `GooseDefault::Manager`
- - ignore load test checksum: `GooseDefault::NoHashCheck`
  - enable Worker mode: `GooseDefault::Worker`
+ - ignore load test checksum: `GooseDefault::NoHashCheck`
+ - do not collect granular data in the HTML report: `GooseDefault::NoGranularData`
+
+The following defaults can be configured with a `GooseLogFormat`:
+ - request log file format: `GooseDefault::RequestFormat`
+ - transaction log file format: `GooseDefault::TransactionFormat`
+ - error log file format: `GooseDefault::ErrorFormat`
+ - debug log file format: `GooseDefault::DebugFormat`
 
 The following defaults can be configured with a `GooseCoordinatedOmissionMitigation`:
  - default Coordinated Omission Mitigation strategy: `GooseDefault::CoordinatedOmissionMitigation`
@@ -63,8 +77,8 @@ For example, without any run-time options the following load test would automati
 
 ```rust,ignore
     GooseAttack::initialize()?
-        .register_taskset(taskset!("LoadtestTasks")
-            .register_task(task!(loadtest_index))
+        .register_scenario(scenario!("LoadtestTransactions")
+            .register_transaction(transaction!(loadtest_index))
         )
         .set_default(GooseDefault::Host, "local.dev")?
         .set_default(GooseDefault::RequestsFile, "goose-requests.log")?

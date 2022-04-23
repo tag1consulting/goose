@@ -15,7 +15,7 @@
 
 - [Logging](logging/overview.md)
     - [Request Log](logging/requests.md)
-    - [Task Log](logging/tasks.md)
+    - [Transaction Log](logging/transactions.md)
     - [Error Log](logging/errors.md)
     - [Debug Log](logging/debug.md)
 
@@ -35,7 +35,7 @@
 
 - [Configuration](config/overview.md)
     - [Defaults](config/defaults.md)
-    - [Scheduling Users And Tasks](config/scheduler.md)
+    - [Scheduling Scenarios And Transactions](config/scheduler.md)
     - [RustLS](config/rustls.md)
 
 - [Examples](example/overview.md)
