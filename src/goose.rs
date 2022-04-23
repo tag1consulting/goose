@@ -1629,16 +1629,6 @@ impl GooseUser {
         }
 
         if request.error_on_fail && !request_metric.success {
-            if let Ok(r) = response {
-                if let Ok(body) = r.text().await {
-                    if !body.is_empty() {
-                        error!("{:?} {}, {}", &path, &request_metric.error, &body);
-                        return Err(GooseTaskError::RequestFailed {
-                            raw_request: request_metric,
-                        });
-                    }
-                }
-            }
             error!("{:?} {}", &path, &request_metric.error);
             return Err(GooseTaskError::RequestFailed {
                 raw_request: request_metric,
