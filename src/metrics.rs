@@ -847,6 +847,8 @@ pub struct GooseMetrics {
     /// This value may be smaller than what was configured at start time if the test
     /// didn't run long enough for all configured users to start.
     pub maximum_users: usize,
+    /// Total number of users simulated during this load test.
+    pub total_users: usize,
     /// Tracks details about each request made during the load test.
     ///
     /// Can be disabled with the `--no-metrics` run-time option, or with
@@ -2183,7 +2185,8 @@ impl Serialize for GooseMetrics {
         let mut s = serializer.serialize_struct("GooseMetrics", 10)?;
         s.serialize_field("hash", &self.hash)?;
         s.serialize_field("duration", &self.duration)?;
-        s.serialize_field("users", &self.maximum_users)?;
+        s.serialize_field("maximum_users", &self.maximum_users)?;
+        s.serialize_field("total_users", &self.total_users)?;
         s.serialize_field("requests", &self.requests)?;
         s.serialize_field("transactions", &self.transactions)?;
         s.serialize_field("errors", &self.errors)?;

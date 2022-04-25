@@ -81,17 +81,6 @@ impl TestPlan {
         }
     }
 
-    // Determine the maximum number of users configured during the test plan.
-    pub(crate) fn max_users(&self) -> usize {
-        let mut max_users = 0;
-        for step in &self.steps {
-            if step.0 > max_users {
-                max_users = step.0;
-            }
-        }
-        max_users
-    }
-
     // Determine the total number of users required by the test plan.
     pub(crate) fn total_users(&self) -> usize {
         let mut total_users: usize = 0;

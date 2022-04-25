@@ -790,7 +790,7 @@ impl GooseAttack {
                     self.metrics.hash,
                 ));
                 user_count += 1;
-                if user_count == self.test_plan.max_users() {
+                if user_count == self.test_plan.total_users() {
                     debug!("prepared {} weighted_gaggle_users", user_count);
                     return Ok(weighted_users);
                 }
@@ -1391,8 +1391,8 @@ impl GooseAttack {
             // Copy the appropriate task_set into the thread.
             let thread_scenario = self.scenarios[thread_user.scenarios_index].clone();
 
-            let thread_number =
-                goose_attack_run_state.active_users + goose_attack_run_state.stopped_users;
+            // Start at 1 as this is human visible.
+            let thread_number = self.metrics.total_users + 1;
 
             let is_worker = self.attack_mode == AttackMode::Worker;
 
@@ -1412,6 +1412,7 @@ impl GooseAttack {
 
             goose_attack_run_state.users.push(user);
             goose_attack_run_state.active_users += 1;
+            self.metrics.total_users += 1;
             if goose_attack_run_state.active_users > self.metrics.maximum_users {
                 self.metrics.maximum_users = goose_attack_run_state.active_users;
             }
