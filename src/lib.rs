@@ -76,7 +76,7 @@ use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
-use crate::goose::{GaggleUser, GooseTask, GooseTaskSet, GooseUser, GooseUserCommand};
+use crate::goose::{GaggleUser, GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseMetric, GooseMetrics};
@@ -95,13 +95,13 @@ lazy_static! {
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
 }
 
-/// Internal representation of a weighted task list.
-type WeightedGooseTasks = Vec<(usize, String)>;
+/// Internal representation of a weighted transaction list.
+type WeightedTransactions = Vec<(usize, String)>;
 
-/// Internal representation of unsequenced tasks.
-type UnsequencedGooseTasks = Vec<GooseTask>;
-/// Internal representation of sequenced tasks.
-type SequencedGooseTasks = BTreeMap<usize, Vec<GooseTask>>;
+/// Internal representation of unsequenced transactions.
+type UnsequencedTransactions = Vec<Transaction>;
+/// Internal representation of sequenced transactions.
+type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
 
 /// Returns the unique identifier of the running Worker when running in Gaggle mode.
 ///
@@ -126,7 +126,6 @@ pub enum GooseError {
     Reqwest(reqwest::Error),
     /// Wraps a ['tokio::task::JoinError'](https://tokio-rs.github.io/tokio/doc/tokio/task/struct.JoinError.html).
     TokioJoin(tokio::task::JoinError),
-    //std::convert::From<tokio::task::JoinError>
     /// Failed attempt to use code that requires a compile-time feature be enabled.
     FeatureNotEnabled {
         /// The missing compile-time feature.
@@ -168,8 +167,8 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
-    /// [`GooseAttack`](./struct.GooseAttack.html) has no [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) defined.
-    NoTaskSets {
+    /// [`GooseAttack`](./struct.GooseAttack.html) has no [`Scenario`](./goose/struct.Scenario.html) defined.
+    NoScenarios {
         /// An optional explanation of the error.
         detail: String,
     },
@@ -186,7 +185,7 @@ impl GooseError {
             GooseError::InvalidOption { .. } => "invalid option or value specified",
             GooseError::InvalidWaitTime { .. } => "invalid wait_time specified",
             GooseError::InvalidWeight { .. } => "invalid weight specified",
-            GooseError::NoTaskSets { .. } => "no task sets defined",
+            GooseError::NoScenarios { .. } => "no scenarios defined",
         }
     }
 }
@@ -278,8 +277,8 @@ pub enum AttackPhase {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-/// Used to define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s and
-/// [`GooseTask`](./goose/struct.GooseTask.html)s are allocated.
+/// Used to define the order [`Scenario`](./goose/struct.Scenario.html)s and
+/// [`Transaction`](./goose/struct.Transaction.html)s are allocated.
 ///
 /// In order to configure the scheduler, and to see examples of the different scheduler
 /// variants, review the
@@ -359,12 +358,12 @@ struct GooseAttackRunState {
 
 /// Global internal state for the load test.
 pub struct GooseAttack {
-    /// An optional task that is run one time before starting GooseUsers and running GooseTaskSets.
-    test_start_task: Option<GooseTask>,
-    /// An optional task that is run one time after all GooseUsers have finished.
-    test_stop_task: Option<GooseTask>,
-    /// A vector containing one copy of each GooseTaskSet defined by this load test.
-    task_sets: Vec<GooseTaskSet>,
+    /// An optional transaction that is run one time before starting GooseUsers and running Scenarios.
+    test_start_transaction: Option<Transaction>,
+    /// An optional transaction that is run one time after all GooseUsers have finished.
+    test_stop_transaction: Option<Transaction>,
+    /// A vector containing one copy of each Scenario defined by this load test.
+    scenarios: Vec<Scenario>,
     /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
     /// A weighted vector containing a lightweight GaggleUser object that is sent to all Workers if running in Gaggle mode.
@@ -377,8 +376,8 @@ pub struct GooseAttack {
     attack_mode: AttackMode,
     /// Which phase the load test is currently operating in.
     attack_phase: AttackPhase,
-    /// Defines the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s and
-    /// [`GooseTask`](./goose/struct.GooseTask.html)s are allocated.
+    /// Defines the order [`Scenario`](./goose/struct.Scenario.html)s and
+    /// [`Transaction`](./goose/struct.Transaction.html)s are allocated.
     scheduler: GooseScheduler,
     /// When the load test started.
     started: Option<time::Instant>,
@@ -405,9 +404,9 @@ impl GooseAttack {
     pub fn initialize() -> Result<GooseAttack, GooseError> {
         let configuration = GooseConfiguration::parse_args_default_or_exit();
         Ok(GooseAttack {
-            test_start_task: None,
-            test_stop_task: None,
-            task_sets: Vec::new(),
+            test_start_transaction: None,
+            test_stop_transaction: None,
+            scenarios: Vec::new(),
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
@@ -441,9 +440,9 @@ impl GooseAttack {
         configuration: GooseConfiguration,
     ) -> Result<GooseAttack, GooseError> {
         Ok(GooseAttack {
-            test_start_task: None,
-            test_stop_task: None,
-            task_sets: Vec::new(),
+            test_start_transaction: None,
+            test_stop_transaction: None,
+            scenarios: Vec::new(),
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
@@ -459,13 +458,13 @@ impl GooseAttack {
         })
     }
 
-    /// Define the order [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are
+    /// Define the order [`Scenario`](./goose/struct.Scenario.html)s are
     /// allocated to new [`GooseUser`](./goose/struct.GooseUser.html)s as they are
     /// launched.
     ///
-    /// By default, [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s are allocated
+    /// By default, [`Scenario`](./goose/struct.Scenario.html)s are allocated
     /// to new [`GooseUser`](./goose/struct.GooseUser.html)s in a round robin style.
-    /// For example, if TaskSet A has a weight of 5, TaskSet B has a weight of 3, and
+    /// For example, if Scenario A has a weight of 5, Scenario B has a weight of 3, and
     /// you launch 20 users, they will be launched in the following order:
     ///  A, B, A, B, A, B, A, A, A, B, A, B, A, B, A, A, A, B, A, B
     ///
@@ -479,12 +478,12 @@ impl GooseAttack {
     /// In the serial case, the following pattern is repeated:
     ///  A, A, A, A, A, B, B, B
     ///
-    /// In the following example, [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s
+    /// In the following example, [`Scenario`](./goose/struct.Scenario.html)s
     /// are allocated to launching [`GooseUser`](./goose/struct.GooseUser.html)s in a
     /// random order. This means running the test multiple times can generate
     /// different amounts of load, as depending on your weighting rules you may
     /// have a different number of [`GooseUser`](./goose/struct.GooseUser.html)s
-    /// running each [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) each time.
+    /// running each [`Scenario`](./goose/struct.Scenario.html) each time.
     ///
     /// # Example
     /// ```rust
@@ -494,25 +493,25 @@ impl GooseAttack {
     /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
     ///         .set_scheduler(GooseScheduler::Random)
-    ///         .register_taskset(taskset!("A Tasks")
+    ///         .register_scenario(scenario!("A Scenario")
     ///             .set_weight(5)?
-    ///             .register_task(task!(a_task_1))
+    ///             .register_transaction(transaction!(a_transaction))
     ///         )
-    ///         .register_taskset(taskset!("B Tasks")
+    ///         .register_scenario(scenario!("B Scenario")
     ///             .set_weight(3)?
-    ///             .register_task(task!(b_task_1))
+    ///             .register_transaction(transaction!(b_transaction))
     ///         );
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn a_task_1(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn a_transaction(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("/foo").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn b_task_1(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn b_transaction(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("/bar").await?;
     ///
     ///     Ok(())
@@ -523,7 +522,7 @@ impl GooseAttack {
         self
     }
 
-    /// A load test must contain one or more [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s
+    /// A load test must contain one or more [`Scenario`](./goose/struct.Scenario.html)s
     /// be registered into Goose's global state with this method for it to run.
     ///
     /// # Example
@@ -533,46 +532,46 @@ impl GooseAttack {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("ExampleTasks")
-    ///             .register_task(task!(example_task))
+    ///         .register_scenario(scenario!("ExampleScenario")
+    ///             .register_transaction(transaction!(example_transaction))
     ///         )
-    ///         .register_taskset(taskset!("OtherTasks")
-    ///             .register_task(task!(other_task))
+    ///         .register_scenario(scenario!("OtherScenario")
+    ///             .register_transaction(transaction!(other_transaction))
     ///         );
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("/foo").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn other_task(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn other_transaction(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("/bar").await?;
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn register_taskset(mut self, mut taskset: GooseTaskSet) -> Self {
-        taskset.task_sets_index = self.task_sets.len();
-        self.task_sets.push(taskset);
+    pub fn register_scenario(mut self, mut scenario: Scenario) -> Self {
+        scenario.scenarios_index = self.scenarios.len();
+        self.scenarios.push(scenario);
         self
     }
 
-    /// Optionally define a task to run before users are started and all task sets
+    /// Optionally define a transaction to run before users are started and all transactions
     /// start running. This is would generally be used to set up anything required
     /// for the load test.
     ///
     /// The [`GooseUser`](./goose/struct.GooseUser.html) used to run the `test_start`
-    /// tasks is not preserved and does not otherwise affect the subsequent
+    /// transactions is not preserved and does not otherwise affect the subsequent
     /// [`GooseUser`](./goose/struct.GooseUser.html)s that run the rest of the load
     /// test. For example, if the [`GooseUser`](./goose/struct.GooseUser.html)
     /// logs in during `test_start`, subsequent [`GooseUser`](./goose/struct.GooseUser.html)
     /// do not retain this session and are therefor not already logged in.
     ///
-    /// When running in a distributed Gaggle, this task is only run one time by the
+    /// When running in a distributed Gaggle, this transaction is only run one time by the
     /// Manager.
     ///
     /// # Example
@@ -582,27 +581,27 @@ impl GooseAttack {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
-    ///         .test_start(task!(setup));
+    ///         .test_start(transaction!(setup));
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn setup(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn setup(user: &mut GooseUser) -> TransactionResult {
     ///     // do stuff to set up load test ...
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn test_start(mut self, task: GooseTask) -> Self {
-        self.test_start_task = Some(task);
+    pub fn test_start(mut self, transaction: Transaction) -> Self {
+        self.test_start_transaction = Some(transaction);
         self
     }
 
-    /// Optionally define a task to run after all users have finished running
-    /// all defined task sets. This would generally be used to clean up anything
+    /// Optionally define a transaction to run after all users have finished running
+    /// all defined transactions. This would generally be used to clean up anything
     /// that was specifically set up for the load test.
     ///
-    /// When running in a distributed Gaggle, this task is only run one time by the
+    /// When running in a distributed Gaggle, this transaction is only run one time by the
     /// Manager.
     ///
     /// # Example
@@ -612,35 +611,35 @@ impl GooseAttack {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     GooseAttack::initialize()?
-    ///         .test_stop(task!(teardown));
+    ///         .test_stop(transaction!(teardown));
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn teardown(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn teardown(user: &mut GooseUser) -> TransactionResult {
     ///     // do stuff to tear down the load test ...
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn test_stop(mut self, task: GooseTask) -> Self {
-        self.test_stop_task = Some(task);
+    pub fn test_stop(mut self, transaction: Transaction) -> Self {
+        self.test_stop_transaction = Some(transaction);
         self
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
-    /// [`GooseTaskSet`](./goose/struct.GooseTaskSet.html)s to be assigned to
+    /// [`Scenario`](./goose/struct.Scenario.html)s to be assigned to
     /// [`GooseUser`](./goose/struct.GooseUser.html)s
-    fn allocate_task_sets(&mut self) -> Vec<usize> {
-        trace!("allocate_task_sets");
+    fn allocate_scenarios(&mut self) -> Vec<usize> {
+        trace!("allocate_scenarios");
 
         let mut u: usize = 0;
         let mut v: usize;
-        for task_set in &self.task_sets {
+        for scenario in &self.scenarios {
             if u == 0 {
-                u = task_set.weight;
+                u = scenario.weight;
             } else {
-                v = task_set.weight;
+                v = scenario.weight;
                 trace!("calculating greatest common denominator of {} and {}", u, v);
                 u = util::gcd(u, v);
                 trace!("inner gcd: {}", u);
@@ -650,106 +649,106 @@ impl GooseAttack {
         debug!("gcd: {}", u);
 
         // Build a vector of vectors to be used to schedule users.
-        let mut available_task_sets = Vec::with_capacity(self.task_sets.len());
-        let mut total_task_sets = 0;
-        for (index, task_set) in self.task_sets.iter().enumerate() {
+        let mut available_scenarios = Vec::with_capacity(self.scenarios.len());
+        let mut total_scenarios = 0;
+        for (index, scenario) in self.scenarios.iter().enumerate() {
             // divide by greatest common divisor so vector is as short as possible
-            let weight = task_set.weight / u;
+            let weight = scenario.weight / u;
             trace!(
                 "{}: {} has weight of {} (reduced with gcd to {})",
                 index,
-                task_set.name,
-                task_set.weight,
+                scenario.name,
+                scenario.weight,
                 weight
             );
             let weighted_sets = vec![index; weight];
-            total_task_sets += weight;
-            available_task_sets.push(weighted_sets);
+            total_scenarios += weight;
+            available_scenarios.push(weighted_sets);
         }
 
         info!(
-            "allocating tasks and task sets with {:?} scheduler",
+            "allocating transactions and scenarios with {:?} scheduler",
             self.scheduler
         );
 
         // Now build the weighted list with the appropriate scheduler.
-        let mut weighted_task_sets = Vec::new();
+        let mut weighted_scenarios = Vec::new();
         match self.scheduler {
             GooseScheduler::RoundRobin => {
-                // Allocate task sets round robin.
-                let task_sets_len = available_task_sets.len();
+                // Allocate scenarios round robin.
+                let scenarios_len = available_scenarios.len();
                 loop {
-                    for (task_set_index, task_sets) in available_task_sets
+                    for (scenario_index, scenarios) in available_scenarios
                         .iter_mut()
                         .enumerate()
-                        .take(task_sets_len)
+                        .take(scenarios_len)
                     {
-                        if let Some(task_set) = task_sets.pop() {
-                            debug!("allocating 1 user from TaskSet {}", task_set_index);
-                            weighted_task_sets.push(task_set);
+                        if let Some(scenario) = scenarios.pop() {
+                            debug!("allocating 1 user from Scenario {}", scenario_index);
+                            weighted_scenarios.push(scenario);
                         }
                     }
-                    if weighted_task_sets.len() >= total_task_sets {
+                    if weighted_scenarios.len() >= total_scenarios {
                         break;
                     }
                 }
             }
             GooseScheduler::Serial => {
-                // Allocate task sets serially in the weighted order defined.
-                for (task_set_index, task_sets) in available_task_sets.iter().enumerate() {
+                // Allocate scenarios serially in the weighted order defined.
+                for (scenario_index, scenarios) in available_scenarios.iter().enumerate() {
                     debug!(
-                        "allocating all {} users from TaskSet {}",
-                        task_sets.len(),
-                        task_set_index
+                        "allocating all {} users from Scenario {}",
+                        scenarios.len(),
+                        scenario_index,
                     );
-                    weighted_task_sets.append(&mut task_sets.clone());
+                    weighted_scenarios.append(&mut scenarios.clone());
                 }
             }
             GooseScheduler::Random => {
-                // Allocate task sets randomly.
+                // Allocate scenarios randomly.
                 loop {
-                    let task_set = available_task_sets.choose_mut(&mut rand::thread_rng());
-                    match task_set {
+                    let scenario = available_scenarios.choose_mut(&mut rand::thread_rng());
+                    match scenario {
                         Some(set) => {
                             if let Some(s) = set.pop() {
-                                weighted_task_sets.push(s);
+                                weighted_scenarios.push(s);
                             }
                         }
-                        None => warn!("randomly allocating a GooseTaskSet failed, trying again"),
+                        None => warn!("randomly allocating a Scenario failed, trying again"),
                     }
-                    if weighted_task_sets.len() >= total_task_sets {
+                    if weighted_scenarios.len() >= total_scenarios {
                         break;
                     }
                 }
             }
         }
-        weighted_task_sets
+        weighted_scenarios
     }
 
     /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
-    fn weight_task_set_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
-        trace!("weight_task_set_users");
+    fn weight_scenario_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
+        trace!("weight_scenario_users");
 
-        let weighted_task_sets = self.allocate_task_sets();
+        let weighted_scenarios = self.allocate_scenarios();
 
         // Allocate a state for each user that will be hatched.
         info!("initializing {} user states...", self.test_plan.max_users());
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
         loop {
-            for task_sets_index in &weighted_task_sets {
+            for scenarios_index in &weighted_scenarios {
                 debug!(
                     "creating user state: {} ({})",
                     weighted_users.len(),
-                    task_sets_index
+                    scenarios_index
                 );
                 let base_url = goose::get_base_url(
                     self.get_configuration_host(),
-                    self.task_sets[*task_sets_index].host.clone(),
+                    self.scenarios[*scenarios_index].host.clone(),
                     self.defaults.host.clone(),
                 )?;
                 weighted_users.push(GooseUser::new(
-                    self.task_sets[*task_sets_index].task_sets_index,
+                    self.scenarios[*scenarios_index].scenarios_index,
                     base_url,
                     &self.configuration,
                     self.metrics.hash,
@@ -764,24 +763,24 @@ impl GooseAttack {
     }
 
     /// Allocate a vector of weighted [`GaggleUser`](./goose/struct.GaggleUser.html).
-    fn prepare_worker_task_set_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
-        trace!("prepare_worker_task_set_users");
+    fn prepare_worker_scenario_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
+        trace!("prepare_worker_scenario_users");
 
-        let weighted_task_sets = self.allocate_task_sets();
+        let weighted_scenarios = self.allocate_scenarios();
 
         // Determine the users sent to each Worker.
         info!("preparing users for Workers...");
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
         loop {
-            for task_sets_index in &weighted_task_sets {
+            for scenarios_index in &weighted_scenarios {
                 let base_url = goose::get_base_url(
                     self.get_configuration_host(),
-                    self.task_sets[*task_sets_index].host.clone(),
+                    self.scenarios[*scenarios_index].host.clone(),
                     self.defaults.host.clone(),
                 )?;
                 weighted_users.push(GaggleUser::new(
-                    self.task_sets[*task_sets_index].task_sets_index,
+                    self.scenarios[*scenarios_index].scenarios_index,
                     base_url,
                     &self.configuration,
                     self.metrics.hash,
@@ -836,9 +835,9 @@ impl GooseAttack {
     /// #[tokio::main]
     /// async fn main() -> Result<(), GooseError> {
     ///     let _goose_metrics = GooseAttack::initialize()?
-    ///         .register_taskset(taskset!("ExampleTasks")
-    ///             .register_task(task!(example_task).set_weight(2)?)
-    ///             .register_task(task!(another_example_task).set_weight(3)?)
+    ///         .register_scenario(scenario!("ExampleTransaction")
+    ///             .register_transaction(transaction!(example_transaction).set_weight(2)?)
+    ///             .register_transaction(transaction!(another_example_transaction).set_weight(3)?)
     ///             // Goose must run against a host, point to localhost so test starts.
     ///             .set_host("http://localhost")
     ///         )
@@ -850,13 +849,13 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     ///
-    /// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("/foo").await?;
     ///
     ///     Ok(())
     /// }
     ///
-    /// async fn another_example_task(user: &mut GooseUser) -> GooseTaskResult {
+    /// async fn another_example_transaction(user: &mut GooseUser) -> TransactionResult {
     ///     let _goose = user.get("/bar").await?;
     ///
     ///     Ok(())
@@ -869,20 +868,23 @@ impl GooseAttack {
             std::process::exit(0);
         }
 
-        // At least one task set is required.
-        if self.task_sets.is_empty() {
-            return Err(GooseError::NoTaskSets {
-                detail: "No task sets are defined.".to_string(),
+        // At least one scenario is required.
+        if self.scenarios.is_empty() {
+            return Err(GooseError::NoScenarios {
+                detail: "No scenarios are defined.".to_string(),
             });
         }
 
-        // Display task sets and tasks, then exit.
+        // Display scenarios and transactions, then exit.
         if self.configuration.list {
-            println!("Available tasks:");
-            for task_set in self.task_sets {
-                println!(" - {} (weight: {})", task_set.name, task_set.weight);
-                for task in task_set.tasks {
-                    println!("    o {} (weight: {})", task.name, task.weight);
+            println!("Available transactions:");
+            for scenario in self.scenarios {
+                println!(" - {} (weight: {})", scenario.name, scenario.weight);
+                for transaction in scenario.transactions {
+                    println!(
+                        "    o {} (weight: {})",
+                        transaction.name, transaction.weight
+                    );
                 }
             }
             std::process::exit(0);
@@ -906,7 +908,7 @@ impl GooseAttack {
             AttackMode::StandAlone
         };
 
-        // Confirm there's either a global host, or each task set has a host defined.
+        // Confirm there's either a global host, or each scenario has a host defined.
         if let Err(e) = self.validate_host() {
             if self.configuration.no_autostart {
                 info!("host must be configured via Controller before starting load test");
@@ -921,7 +923,7 @@ impl GooseAttack {
 
         // Calculate a unique hash for the current load test.
         let mut s = DefaultHasher::new();
-        self.task_sets.hash(&mut s);
+        self.scenarios.hash(&mut s);
         self.metrics.hash = s.finish();
         debug!("hash: {}", self.metrics.hash);
 
@@ -973,17 +975,17 @@ impl GooseAttack {
     // Returns OK(()) if there's a valid host, GooseError with details if not.
     fn validate_host(&mut self) -> Result<(), GooseError> {
         if self.configuration.host.is_empty() {
-            for task_set in &self.task_sets {
-                match &task_set.host {
+            for scenario in &self.scenarios {
+                match &scenario.host {
                     Some(h) => {
                         if util::is_valid_host(h).is_ok() {
-                            info!("host for {} configured: {}", task_set.name, h);
+                            info!("host for {} configured: {}", scenario.name, h);
                         }
                     }
                     None => match &self.defaults.host {
                         Some(h) => {
                             if util::is_valid_host(h).is_ok() {
-                                info!("host for {} configured: {}", task_set.name, h);
+                                info!("host for {} configured: {}", scenario.name, h);
                             }
                         }
                         None => {
@@ -991,7 +993,7 @@ impl GooseAttack {
                                 return Err(GooseError::InvalidOption {
                                     option: "--host".to_string(),
                                     value: "".to_string(),
-                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the GooseTaskSet.set_host() function (no host defined for {}).", task_set.name)
+                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).", scenario.name)
                                 });
                             }
                         }
@@ -1010,19 +1012,22 @@ impl GooseAttack {
             self.validate_host()?;
         }
 
-        // Apply weights to tasks in each task set.
-        for task_set in &mut self.task_sets {
-            let (weighted_on_start_tasks, weighted_tasks, weighted_on_stop_tasks) =
-                allocate_tasks(task_set, &self.scheduler);
-            task_set.weighted_on_start_tasks = weighted_on_start_tasks;
-            task_set.weighted_tasks = weighted_tasks;
-            task_set.weighted_on_stop_tasks = weighted_on_stop_tasks;
+        // Apply weights to transactions in each scenario.
+        for scenario in &mut self.scenarios {
+            let (
+                weighted_on_start_transactions,
+                weighted_transactions,
+                weighted_on_stop_transactions,
+            ) = allocate_transactions(scenario, &self.scheduler);
+            scenario.weighted_on_start_transactions = weighted_on_start_transactions;
+            scenario.weighted_transactions = weighted_transactions;
+            scenario.weighted_on_stop_transactions = weighted_on_stop_transactions;
             debug!(
-                "weighted {} on_start: {:?} tasks: {:?} on_stop: {:?}",
-                task_set.name,
-                task_set.weighted_on_start_tasks,
-                task_set.weighted_tasks,
-                task_set.weighted_on_stop_tasks
+                "weighted {} on_start: {:?} transactions: {:?} on_stop: {:?}",
+                scenario.name,
+                scenario.weighted_on_start_transactions,
+                scenario.weighted_transactions,
+                scenario.weighted_on_stop_transactions
             );
         }
 
@@ -1034,10 +1039,10 @@ impl GooseAttack {
 
             if self.attack_mode == AttackMode::StandAlone {
                 // Allocate a state for each of the users we are about to start.
-                self.weighted_users = self.weight_task_set_users()?;
+                self.weighted_users = self.weight_scenario_users()?;
             } else if self.attack_mode == AttackMode::Manager {
                 // Build a list of users to be allocated on Workers.
-                self.weighted_gaggle_users = self.prepare_worker_task_set_users()?;
+                self.weighted_gaggle_users = self.prepare_worker_scenario_users()?;
             }
         }
 
@@ -1193,15 +1198,15 @@ impl GooseAttack {
         }
     }
 
-    // Invoke `test_start` tasks if existing.
+    // Invoke `test_start` transactions if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
         if self.attack_mode != AttackMode::Worker {
-            // First run global test_start_task, if defined.
-            match &self.test_start_task {
+            // First run global test_start_transaction, if defined.
+            match &self.test_start_transaction {
                 Some(t) => {
-                    info!("running test_start_task");
-                    // Create a one-time-use User to run the test_start_task.
+                    info!("running test_start_transaction");
+                    // Create a one-time-use User to run the test_start_transaction.
                     let base_url = goose::get_base_url(
                         self.get_configuration_host(),
                         None,
@@ -1211,7 +1216,7 @@ impl GooseAttack {
                     let function = &t.function;
                     let _ = function(&mut user).await;
                 }
-                // No test_start_task defined, nothing to do.
+                // No test_start_transaction defined, nothing to do.
                 None => (),
             }
         }
@@ -1219,15 +1224,15 @@ impl GooseAttack {
         Ok(())
     }
 
-    // Invoke `test_stop` tasks if existing.
+    // Invoke `test_stop` transactions if existing.
     async fn run_test_stop(&self) -> Result<(), GooseError> {
         // Initialize per-user states.
         if self.attack_mode != AttackMode::Worker {
-            // First run global test_stop_task, if defined.
-            match &self.test_stop_task {
+            // First run global test_stop_transaction, if defined.
+            match &self.test_stop_transaction {
                 Some(t) => {
-                    info!("running test_stop_task");
-                    // Create a one-time-use User to run the test_stop_task.
+                    info!("running test_stop_transaction");
+                    // Create a one-time-use User to run the test_stop_transaction.
                     let base_url = goose::get_base_url(
                         self.get_configuration_host(),
                         None,
@@ -1237,7 +1242,7 @@ impl GooseAttack {
                     let function = &t.function;
                     let _ = function(&mut user).await;
                 }
-                // No test_stop_task defined, nothing to do.
+                // No test_stop_transaction defined, nothing to do.
                 None => (),
             }
         }
@@ -1350,7 +1355,7 @@ impl GooseAttack {
                 };
                 goose_attack_run_state.spawn_user_counter += 1;
 
-                // Remember which task group this user is using.
+                // Remember which scenario this user is using.
                 thread_user.weighted_users_index = self.metrics.users;
 
                 // Create a per-thread channel allowing parent thread to control child threads.
@@ -1374,8 +1379,8 @@ impl GooseAttack {
                 thread_user.channel_to_parent =
                     Some(goose_attack_run_state.all_threads_metrics_tx.clone());
 
-                // Copy the appropriate task_set into the thread.
-                let thread_task_set = self.task_sets[thread_user.task_sets_index].clone();
+                // Copy the appropriate scenario into the thread.
+                let thread_scenario = self.scenarios[thread_user.scenarios_index].clone();
 
                 // We number threads from 1 as they're human-visible (in the logs),
                 // whereas metrics.users starts at 0.
@@ -1391,7 +1396,7 @@ impl GooseAttack {
                 // Launch a new user.
                 let user = tokio::spawn(user::user_main(
                     thread_number,
-                    thread_task_set,
+                    thread_scenario,
                     thread_user,
                     thread_receiver,
                     is_worker,
@@ -1575,7 +1580,7 @@ impl GooseAttack {
                     vec![
                         GaggleMetrics::Requests(self.metrics.requests.clone()),
                         GaggleMetrics::Errors(self.metrics.errors.clone()),
-                        GaggleMetrics::Tasks(self.metrics.tasks.clone()),
+                        GaggleMetrics::Transactions(self.metrics.transactions.clone()),
                     ],
                     true,
                 );
@@ -1609,8 +1614,8 @@ impl GooseAttack {
         // Prepare to collect metrics, if enabled.
         self.metrics = GooseMetrics::default();
         if !self.configuration.no_metrics {
-            self.metrics.initialize_task_metrics(
-                &self.task_sets,
+            self.metrics.initialize_transaction_metrics(
+                &self.scenarios,
                 &self.configuration,
                 &self.defaults,
             )?;
@@ -1796,7 +1801,6 @@ impl GooseAttack {
                     TestPlanStepAction::Decreasing,
                     self.metrics.users,
                 ));
-                //self.graph_data.set_stopping(Utc::now());
             }
         }
 
@@ -1804,79 +1808,89 @@ impl GooseAttack {
     }
 }
 
-/// Use the configured GooseScheduler to allocate all [`GooseTask`](./goose/struct.GooseTask.html)s
-/// within the [`GooseTaskSet`](./goose/struct.GooseTaskSet.html) in the appropriate order. Returns
-/// three set of ordered tasks: /// `on_start_tasks`, `tasks`, and `on_stop_tasks`. The
-/// `on_start_tasks` are only run once when the [`GooseAttack`](./struct.GooseAttack.html) first
-/// starts. Normal `tasks` are then run for the duration of the
-/// [`GooseAttack`](./struct.GooseAttack.html). The `on_stop_tasks` finally are only run once when
+/// Use the configured GooseScheduler to allocate all [`Transaction`](./goose/struct.Transaction.html)s
+/// within the [`Scenario`](./goose/struct.Scenario.html) in the appropriate order. Returns
+/// three set of ordered transactions: `on_start_transactions`, `transactions`, and `on_stop_transactions`.
+/// The `on_start_transactions` are only run once when the [`GooseAttack`](./struct.GooseAttack.html) first
+/// starts. Normal `transactions` are then run for the duration of the
+/// [`GooseAttack`](./struct.GooseAttack.html). The `on_stop_transactions` finally are only run once when
 /// the [`GooseAttack`](./struct.GooseAttack.html) stops.
-fn allocate_tasks(
-    task_set: &GooseTaskSet,
+fn allocate_transactions(
+    scenario: &Scenario,
     scheduler: &GooseScheduler,
-) -> (WeightedGooseTasks, WeightedGooseTasks, WeightedGooseTasks) {
+) -> (
+    WeightedTransactions,
+    WeightedTransactions,
+    WeightedTransactions,
+) {
     debug!(
-        "allocating GooseTasks on GooseUsers with {:?} scheduler",
+        "allocating Transactions on GooseUsers with {:?} scheduler",
         scheduler
     );
 
-    // A BTreeMap of Vectors allows us to group and sort tasks per sequence value.
-    let mut sequenced_tasks: SequencedGooseTasks = BTreeMap::new();
-    let mut sequenced_on_start_tasks: SequencedGooseTasks = BTreeMap::new();
-    let mut sequenced_on_stop_tasks: SequencedGooseTasks = BTreeMap::new();
-    let mut unsequenced_tasks: UnsequencedGooseTasks = Vec::new();
-    let mut unsequenced_on_start_tasks: UnsequencedGooseTasks = Vec::new();
-    let mut unsequenced_on_stop_tasks: UnsequencedGooseTasks = Vec::new();
+    // A BTreeMap of Vectors allows us to group and sort transactions per sequence value.
+    let mut sequenced_transactions: SequencedTransactions = BTreeMap::new();
+    let mut sequenced_on_start_transactions: SequencedTransactions = BTreeMap::new();
+    let mut sequenced_on_stop_transactions: SequencedTransactions = BTreeMap::new();
+    let mut unsequenced_transactions: UnsequencedTransactions = Vec::new();
+    let mut unsequenced_on_start_transactions: UnsequencedTransactions = Vec::new();
+    let mut unsequenced_on_stop_transactions: UnsequencedTransactions = Vec::new();
     let mut u: usize = 0;
     let mut v: usize;
 
-    // Find the greatest common divisor of all tasks in the task_set.
-    for task in &task_set.tasks {
-        if task.sequence > 0 {
-            if task.on_start {
-                if let Some(sequence) = sequenced_on_start_tasks.get_mut(&task.sequence) {
-                    // This is another task with this order value.
-                    sequence.push(task.clone());
+    // Find the greatest common divisor of all transactions in the scenario.
+    for transaction in &scenario.transactions {
+        if transaction.sequence > 0 {
+            if transaction.on_start {
+                if let Some(sequence) =
+                    sequenced_on_start_transactions.get_mut(&transaction.sequence)
+                {
+                    // This is another transaction with this order value.
+                    sequence.push(transaction.clone());
                 } else {
-                    // This is the first task with this order value.
-                    sequenced_on_start_tasks.insert(task.sequence, vec![task.clone()]);
+                    // This is the first transaction with this order value.
+                    sequenced_on_start_transactions
+                        .insert(transaction.sequence, vec![transaction.clone()]);
                 }
             }
-            // Allow a task to be both on_start and on_stop.
-            if task.on_stop {
-                if let Some(sequence) = sequenced_on_stop_tasks.get_mut(&task.sequence) {
-                    // This is another task with this order value.
-                    sequence.push(task.clone());
+            // Allow a transaction to be both on_start and on_stop.
+            if transaction.on_stop {
+                if let Some(sequence) =
+                    sequenced_on_stop_transactions.get_mut(&transaction.sequence)
+                {
+                    // This is another transaction with this order value.
+                    sequence.push(transaction.clone());
                 } else {
-                    // This is the first task with this order value.
-                    sequenced_on_stop_tasks.insert(task.sequence, vec![task.clone()]);
+                    // This is the first transaction with this order value.
+                    sequenced_on_stop_transactions
+                        .insert(transaction.sequence, vec![transaction.clone()]);
                 }
             }
-            if !task.on_start && !task.on_stop {
-                if let Some(sequence) = sequenced_tasks.get_mut(&task.sequence) {
-                    // This is another task with this order value.
-                    sequence.push(task.clone());
+            if !transaction.on_start && !transaction.on_stop {
+                if let Some(sequence) = sequenced_transactions.get_mut(&transaction.sequence) {
+                    // This is another transaction with this order value.
+                    sequence.push(transaction.clone());
                 } else {
-                    // This is the first task with this order value.
-                    sequenced_tasks.insert(task.sequence, vec![task.clone()]);
+                    // This is the first transaction with this order value.
+                    sequenced_transactions.insert(transaction.sequence, vec![transaction.clone()]);
                 }
             }
         } else {
-            if task.on_start {
-                unsequenced_on_start_tasks.push(task.clone());
+            if transaction.on_start {
+                unsequenced_on_start_transactions.push(transaction.clone());
             }
-            if task.on_stop {
-                unsequenced_on_stop_tasks.push(task.clone());
+            if transaction.on_stop {
+                unsequenced_on_stop_transactions.push(transaction.clone());
             }
-            if !task.on_start && !task.on_stop {
-                unsequenced_tasks.push(task.clone());
+            if !transaction.on_start && !transaction.on_stop {
+                unsequenced_transactions.push(transaction.clone());
             }
         }
-        // Look for lowest common divisor amongst all tasks of any weight.
+        // Look for lowest common divisor amongst all transactions of any weight.
         if u == 0 {
-            u = task.weight;
+            u = transaction.weight;
         } else {
-            v = task.weight;
+            v = transaction.weight;
             trace!("calculating greatest common denominator of {} and {}", u, v);
             u = util::gcd(u, v);
             trace!("inner gcd: {}", u);
@@ -1885,175 +1899,209 @@ fn allocate_tasks(
     // 'u' will always be the greatest common divisor
     debug!("gcd: {}", u);
 
-    // Apply weights to sequenced tasks.
-    let weighted_sequenced_on_start_tasks = weight_sequenced_tasks(&sequenced_on_start_tasks, u);
-    let weighted_sequenced_tasks = weight_sequenced_tasks(&sequenced_tasks, u);
-    let weighted_sequenced_on_stop_tasks = weight_sequenced_tasks(&sequenced_on_stop_tasks, u);
+    // Apply weights to sequenced transactions.
+    let weighted_sequenced_on_start_transactions =
+        weight_sequenced_transactions(&sequenced_on_start_transactions, u);
+    let weighted_sequenced_transactions = weight_sequenced_transactions(&sequenced_transactions, u);
+    let weighted_sequenced_on_stop_transactions =
+        weight_sequenced_transactions(&sequenced_on_stop_transactions, u);
 
-    // Apply weights to unsequenced tasks.
-    let (weighted_unsequenced_on_start_tasks, total_unsequenced_on_start_tasks) =
-        weight_unsequenced_tasks(&unsequenced_on_start_tasks, u);
-    let (weighted_unsequenced_tasks, total_unsequenced_tasks) =
-        weight_unsequenced_tasks(&unsequenced_tasks, u);
-    let (weighted_unsequenced_on_stop_tasks, total_unsequenced_on_stop_tasks) =
-        weight_unsequenced_tasks(&unsequenced_on_stop_tasks, u);
+    // Apply weights to unsequenced transactions.
+    let (weighted_unsequenced_on_start_transactions, total_unsequenced_on_start_transactions) =
+        weight_unsequenced_transactions(&unsequenced_on_start_transactions, u);
+    let (weighted_unsequenced_transactions, total_unsequenced_transactions) =
+        weight_unsequenced_transactions(&unsequenced_transactions, u);
+    let (weighted_unsequenced_on_stop_transactions, total_unsequenced_on_stop_transactions) =
+        weight_unsequenced_transactions(&unsequenced_on_stop_transactions, u);
 
-    // Schedule sequenced tasks.
-    let scheduled_sequenced_on_start_tasks =
-        schedule_sequenced_tasks(&weighted_sequenced_on_start_tasks, scheduler);
-    let scheduled_sequenced_tasks = schedule_sequenced_tasks(&weighted_sequenced_tasks, scheduler);
-    let scheduled_sequenced_on_stop_tasks =
-        schedule_sequenced_tasks(&weighted_sequenced_on_stop_tasks, scheduler);
+    // Schedule sequenced transactions.
+    let scheduled_sequenced_on_start_transactions =
+        schedule_sequenced_transactions(&weighted_sequenced_on_start_transactions, scheduler);
+    let scheduled_sequenced_transactions =
+        schedule_sequenced_transactions(&weighted_sequenced_transactions, scheduler);
+    let scheduled_sequenced_on_stop_transactions =
+        schedule_sequenced_transactions(&weighted_sequenced_on_stop_transactions, scheduler);
 
-    // Schedule unsequenced tasks.
-    let scheduled_unsequenced_on_start_tasks = schedule_unsequenced_tasks(
-        &weighted_unsequenced_on_start_tasks,
-        total_unsequenced_on_start_tasks,
+    // Schedule unsequenced transactions.
+    let scheduled_unsequenced_on_start_transactions = schedule_unsequenced_transactions(
+        &weighted_unsequenced_on_start_transactions,
+        total_unsequenced_on_start_transactions,
         scheduler,
     );
-    let scheduled_unsequenced_tasks = schedule_unsequenced_tasks(
-        &weighted_unsequenced_tasks,
-        total_unsequenced_tasks,
+    let scheduled_unsequenced_transactions = schedule_unsequenced_transactions(
+        &weighted_unsequenced_transactions,
+        total_unsequenced_transactions,
         scheduler,
     );
-    let scheduled_unsequenced_on_stop_tasks = schedule_unsequenced_tasks(
-        &weighted_unsequenced_on_stop_tasks,
-        total_unsequenced_on_stop_tasks,
+    let scheduled_unsequenced_on_stop_transactions = schedule_unsequenced_transactions(
+        &weighted_unsequenced_on_stop_transactions,
+        total_unsequenced_on_stop_transactions,
         scheduler,
     );
 
-    // Finally build a Vector of tuples: (task id, task name)
-    let mut on_start_tasks = Vec::new();
-    let mut tasks = Vec::new();
-    let mut on_stop_tasks = Vec::new();
+    // Finally build a Vector of tuples: (transaction id, transaction name)
+    let mut on_start_transactions = Vec::new();
+    let mut transactions = Vec::new();
+    let mut on_stop_transactions = Vec::new();
 
-    // Sequenced tasks come first.
-    for task in scheduled_sequenced_on_start_tasks.iter() {
-        on_start_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+    // Sequenced transactions come first.
+    for transaction in scheduled_sequenced_on_start_transactions.iter() {
+        on_start_transactions.extend(vec![(
+            *transaction,
+            scenario.transactions[*transaction].name.to_string(),
+        )])
     }
-    for task in scheduled_sequenced_tasks.iter() {
-        tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+    for transaction in scheduled_sequenced_transactions.iter() {
+        transactions.extend(vec![(
+            *transaction,
+            scenario.transactions[*transaction].name.to_string(),
+        )])
     }
-    for task in scheduled_sequenced_on_stop_tasks.iter() {
-        on_stop_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
-    }
-
-    // Unsequenced tasks come last.
-    for task in scheduled_unsequenced_on_start_tasks.iter() {
-        on_start_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
-    }
-    for task in scheduled_unsequenced_tasks.iter() {
-        tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
-    }
-    for task in scheduled_unsequenced_on_stop_tasks.iter() {
-        on_stop_tasks.extend(vec![(*task, task_set.tasks[*task].name.to_string())])
+    for transaction in scheduled_sequenced_on_stop_transactions.iter() {
+        on_stop_transactions.extend(vec![(
+            *transaction,
+            scenario.transactions[*transaction].name.to_string(),
+        )])
     }
 
-    // Return sequenced buckets of weighted usize pointers to and names of Goose Tasks
-    (on_start_tasks, tasks, on_stop_tasks)
+    // Unsequenced transactions come last.
+    for transaction in scheduled_unsequenced_on_start_transactions.iter() {
+        on_start_transactions.extend(vec![(
+            *transaction,
+            scenario.transactions[*transaction].name.to_string(),
+        )])
+    }
+    for transaction in scheduled_unsequenced_transactions.iter() {
+        transactions.extend(vec![(
+            *transaction,
+            scenario.transactions[*transaction].name.to_string(),
+        )])
+    }
+    for transaction in scheduled_unsequenced_on_stop_transactions.iter() {
+        on_stop_transactions.extend(vec![(
+            *transaction,
+            scenario.transactions[*transaction].name.to_string(),
+        )])
+    }
+
+    // Return sequenced buckets of weighted usize pointers to and names of Transactions.
+    (on_start_transactions, transactions, on_stop_transactions)
 }
 
-/// Build a weighted vector of vectors of unsequenced GooseTasks.
-fn weight_unsequenced_tasks(unsequenced_tasks: &[GooseTask], u: usize) -> (Vec<Vec<usize>>, usize) {
+/// Build a weighted vector of vectors of unsequenced Transactions.
+fn weight_unsequenced_transactions(
+    unsequenced_transactions: &[Transaction],
+    u: usize,
+) -> (Vec<Vec<usize>>, usize) {
     // Build a vector of vectors to be used to schedule users.
-    let mut available_unsequenced_tasks = Vec::with_capacity(unsequenced_tasks.len());
-    let mut total_tasks = 0;
-    for task in unsequenced_tasks.iter() {
+    let mut available_unsequenced_transactions = Vec::with_capacity(unsequenced_transactions.len());
+    let mut total_transactions = 0;
+    for transaction in unsequenced_transactions.iter() {
         // divide by greatest common divisor so vector is as short as possible
-        let weight = task.weight / u;
+        let weight = transaction.weight / u;
         trace!(
             "{}: {} has weight of {} (reduced with gcd to {})",
-            task.tasks_index,
-            task.name,
-            task.weight,
+            transaction.transactions_index,
+            transaction.name,
+            transaction.weight,
             weight
         );
-        let weighted_tasks = vec![task.tasks_index; weight];
-        available_unsequenced_tasks.push(weighted_tasks);
-        total_tasks += weight;
+        let weighted_transactions = vec![transaction.transactions_index; weight];
+        available_unsequenced_transactions.push(weighted_transactions);
+        total_transactions += weight;
     }
-    (available_unsequenced_tasks, total_tasks)
+    (available_unsequenced_transactions, total_transactions)
 }
 
-/// Build a weighted vector of vectors of sequenced GooseTasks.
-fn weight_sequenced_tasks(
-    sequenced_tasks: &SequencedGooseTasks,
+/// Build a weighted vector of vectors of sequenced Transactions.
+fn weight_sequenced_transactions(
+    sequenced_transactions: &SequencedTransactions,
     u: usize,
 ) -> BTreeMap<usize, Vec<Vec<usize>>> {
-    // Build a sequenced BTreeMap containing weighted vectors of GooseTasks.
-    let mut available_sequenced_tasks = BTreeMap::new();
-    // Step through sequences, each containing a bucket of all GooseTasks with the same
-    // sequence value, allowing actual weighting to be done by weight_unsequenced_tasks().
-    for (sequence, unsequenced_tasks) in sequenced_tasks.iter() {
-        let (weighted_tasks, _total_weighted_tasks) =
-            weight_unsequenced_tasks(unsequenced_tasks, u);
-        available_sequenced_tasks.insert(*sequence, weighted_tasks);
+    // Build a sequenced BTreeMap containing weighted vectors of Transactions.
+    let mut available_sequenced_transactions = BTreeMap::new();
+    // Step through sequences, each containing a bucket of all Transactions with the same
+    // sequence value, allowing actual weighting to be done by weight_unsequenced_transactions().
+    for (sequence, unsequenced_transactions) in sequenced_transactions.iter() {
+        let (weighted_transactions, _total_weighted_transactions) =
+            weight_unsequenced_transactions(unsequenced_transactions, u);
+        available_sequenced_transactions.insert(*sequence, weighted_transactions);
     }
 
-    available_sequenced_tasks
+    available_sequenced_transactions
 }
 
-fn schedule_sequenced_tasks(
-    available_sequenced_tasks: &BTreeMap<usize, Vec<Vec<usize>>>,
+fn schedule_sequenced_transactions(
+    available_sequenced_transactions: &BTreeMap<usize, Vec<Vec<usize>>>,
     scheduler: &GooseScheduler,
 ) -> Vec<usize> {
-    let mut weighted_tasks: Vec<usize> = Vec::new();
+    let mut weighted_transactions: Vec<usize> = Vec::new();
 
-    for (_sequence, tasks) in available_sequenced_tasks.iter() {
-        let scheduled_tasks = schedule_unsequenced_tasks(tasks, tasks[0].len(), scheduler);
-        weighted_tasks.extend(scheduled_tasks);
+    for (_sequence, transactions) in available_sequenced_transactions.iter() {
+        let scheduled_transactions =
+            schedule_unsequenced_transactions(transactions, transactions[0].len(), scheduler);
+        weighted_transactions.extend(scheduled_transactions);
     }
 
-    weighted_tasks
+    weighted_transactions
 }
 
-// Return a list of tasks in the order to be run.
-fn schedule_unsequenced_tasks(
-    available_unsequenced_tasks: &[Vec<usize>],
-    total_tasks: usize,
+// Return a list of transactions in the order to be run.
+fn schedule_unsequenced_transactions(
+    available_unsequenced_transactions: &[Vec<usize>],
+    total_transactions: usize,
     scheduler: &GooseScheduler,
 ) -> Vec<usize> {
     // Now build the weighted list with the appropriate scheduler.
-    let mut weighted_tasks = Vec::new();
+    let mut weighted_transactions = Vec::new();
 
     match scheduler {
         GooseScheduler::RoundRobin => {
-            // Allocate task sets round robin.
-            let tasks_len = available_unsequenced_tasks.len();
-            let mut available_tasks = available_unsequenced_tasks.to_owned();
+            // Allocate round robin.
+            let transactions_len = available_unsequenced_transactions.len();
+            let mut available_transactions = available_unsequenced_transactions.to_owned();
             loop {
-                // Tasks are contained in a vector of vectors. The outer vectors each
-                // contain a different GooseTask, and the inner vectors contain each
-                // instance of that specific GooseTask.
-                for (task_index, tasks) in available_tasks.iter_mut().enumerate().take(tasks_len) {
-                    if let Some(task) = tasks.pop() {
-                        debug!("allocating task from Task {}", task_index);
-                        weighted_tasks.push(task);
+                // Transactions are contained in a vector of vectors. The outer vectors each
+                // contain a different Transaction, and the inner vectors contain each
+                // instance of that specific Transaction.
+                for (transaction_index, transactions) in available_transactions
+                    .iter_mut()
+                    .enumerate()
+                    .take(transactions_len)
+                {
+                    if let Some(transaction) = transactions.pop() {
+                        debug!(
+                            "allocating transaction from Transaction {}",
+                            transaction_index
+                        );
+                        weighted_transactions.push(transaction);
                     }
                 }
-                if weighted_tasks.len() >= total_tasks {
+                if weighted_transactions.len() >= total_transactions {
                     break;
                 }
             }
         }
         GooseScheduler::Serial | GooseScheduler::Random => {
-            // Allocate task sets serially in the weighted order defined. If the Random
-            // scheduler is being used, tasks will get shuffled later.
-            for (task_index, tasks) in available_unsequenced_tasks.iter().enumerate() {
+            // Allocate serially in the weighted order defined. If the Random scheduler is being used, they will get
+            // shuffled later.
+            for (transaction_index, transactions) in
+                available_unsequenced_transactions.iter().enumerate()
+            {
                 debug!(
-                    "allocating all {} tasks from Task {}",
-                    tasks.len(),
-                    task_index
+                    "allocating all {} transactions from Transaction {}",
+                    transactions.len(),
+                    transaction_index
                 );
 
-                let mut tasks_clone = tasks.clone();
+                let mut transactions_clone = transactions.clone();
                 if scheduler == &GooseScheduler::Random {
-                    tasks_clone.shuffle(&mut thread_rng());
+                    transactions_clone.shuffle(&mut thread_rng());
                 }
-                weighted_tasks.append(&mut tasks_clone);
+                weighted_transactions.append(&mut transactions_clone);
             }
         }
     }
 
-    weighted_tasks
+    weighted_transactions
 }

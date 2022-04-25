@@ -37,41 +37,41 @@ enum TestType {
     SequencedSerial,
 }
 
-// Test task.
-pub async fn one(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn one(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(ONE_PATH).await?;
 
     Ok(())
 }
 
-// Test task.
-pub async fn two_with_delay(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn two_with_delay(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(TWO_PATH).await?;
 
     // "Run out the clock" on the load test when this function runs. Sleep for
     // the total duration the test is to run plus 2 seconds to be sure no
-    // additional tasks will run after this one.
+    // additional transactions will run after this one.
     sleep(Duration::from_secs(RUN_TIME as u64 + 2)).await;
 
     Ok(())
 }
 
-// Test task.
-pub async fn three(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn three(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(THREE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_start() function, which always runs one time.
-pub async fn start_one(user: &mut GooseUser) -> GooseTaskResult {
+pub async fn start_one(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(START_ONE_PATH).await?;
 
     Ok(())
 }
 
 // Used as a test_stop() function, which always runs one time.
-pub async fn stop_one(user: &mut GooseUser) -> GooseTaskResult {
+pub async fn stop_one(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(STOP_ONE_PATH).await?;
 
     Ok(())
@@ -156,14 +156,14 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
     // Now confirm TestType-specific counters.
     match test_type {
         TestType::NotSequenced => {
-            // All tasks run one time, as they are launched RoundRobin in the order
+            // All transactions run one time, as they are launched RoundRobin in the order
             // defined (and importantly three is defined before two in this test).
             mock_endpoints[ONE_KEY].assert_hits(USERS);
             mock_endpoints[THREE_KEY].assert_hits(USERS);
             mock_endpoints[TWO_KEY].assert_hits(USERS);
         }
         TestType::SequencedRoundRobin => {
-            // Task ONE runs twice as it's scheduled first with a weight of 2. It then
+            // Transaction ONE runs twice as it's scheduled first with a weight of 2. It then
             // runs one more time in the next scheduling as it then round robins between
             // ONE and TWO. When TWO runs it runs out the clock.
             mock_endpoints[ONE_KEY].assert_hits(USERS * 3);
@@ -172,8 +172,8 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
             mock_endpoints[THREE_KEY].assert_hits(0);
         }
         TestType::SequencedSerial => {
-            // Task ONE runs twice as it's scheduled first with a weight of 2. It then
-            // runs two more times in the next scheduling as runs task serially as
+            // Transaction ONE runs twice as it's scheduled first with a weight of 2. It then
+            // runs two more times in the next scheduling as runs transaction serially as
             // defined.
             mock_endpoints[ONE_KEY].assert_hits(USERS * 4);
             // Two runs out the clock, so three never runs.
@@ -186,42 +186,42 @@ fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
     mock_endpoints[STOP_ONE_KEY].assert_hits(1);
 }
 
-// Returns the appropriate taskset, start_task and stop_task needed to build these tests.
-fn get_tasks(test_type: &TestType) -> (GooseTaskSet, GooseTask, GooseTask) {
+// Returns the appropriate scenario, start_transaction and stop_transaction needed to build these tests.
+fn get_transactions(test_type: &TestType) -> (Scenario, Transaction, Transaction) {
     match test_type {
-        // No sequence declared, so tasks run in default RoundRobin order: 1, 3, 2, 1...
+        // No sequence declared, so transactions run in default RoundRobin order: 1, 3, 2, 1...
         TestType::NotSequenced => (
-            taskset!("LoadTest")
-                .register_task(task!(one).set_weight(2).unwrap())
-                .register_task(task!(three))
-                .register_task(task!(two_with_delay)),
-            // Start runs before all other tasks, regardless of where defined.
-            task!(start_one),
-            // Stop runs after all other tasks, regardless of where defined.
-            task!(stop_one),
+            scenario!("LoadTest")
+                .register_transaction(transaction!(one).set_weight(2).unwrap())
+                .register_transaction(transaction!(three))
+                .register_transaction(transaction!(two_with_delay)),
+            // Start runs before all other transactions, regardless of where defined.
+            transaction!(start_one),
+            // Stop runs after all other transactions, regardless of where defined.
+            transaction!(stop_one),
         ),
-        // Sequence added, so tasks run in the declared sequence order: 1, 1, 2, 3...
+        // Sequence added, so transactions run in the declared sequence order: 1, 1, 2, 3...
         TestType::SequencedRoundRobin => (
-            taskset!("LoadTest")
-                .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
-                .register_task(task!(three).set_sequence(3))
-                .register_task(task!(one).set_sequence(2).set_weight(2).unwrap())
-                .register_task(task!(two_with_delay).set_sequence(2)),
-            // Start runs before all other tasks, regardless of where defined.
-            task!(start_one),
-            // Stop runs after all other tasks, regardless of where defined.
-            task!(stop_one),
+            scenario!("LoadTest")
+                .register_transaction(transaction!(one).set_sequence(1).set_weight(2).unwrap())
+                .register_transaction(transaction!(three).set_sequence(3))
+                .register_transaction(transaction!(one).set_sequence(2).set_weight(2).unwrap())
+                .register_transaction(transaction!(two_with_delay).set_sequence(2)),
+            // Start runs before all other transactions, regardless of where defined.
+            transaction!(start_one),
+            // Stop runs after all other transactions, regardless of where defined.
+            transaction!(stop_one),
         ),
         TestType::SequencedSerial => (
-            taskset!("LoadTest")
-                .register_task(task!(one).set_sequence(1).set_weight(2).unwrap())
-                .register_task(task!(three).set_sequence(3))
-                .register_task(task!(one).set_sequence(2).set_weight(2).unwrap())
-                .register_task(task!(two_with_delay).set_sequence(2)),
-            // Start runs before all other tasks, regardless of where defined.
-            task!(start_one),
-            // Stop runs after all other tasks, regardless of where defined.
-            task!(stop_one),
+            scenario!("LoadTest")
+                .register_transaction(transaction!(one).set_sequence(1).set_weight(2).unwrap())
+                .register_transaction(transaction!(three).set_sequence(3))
+                .register_transaction(transaction!(one).set_sequence(2).set_weight(2).unwrap())
+                .register_transaction(transaction!(two_with_delay).set_sequence(2)),
+            // Start runs before all other transactions, regardless of where defined.
+            transaction!(start_one),
+            // Stop runs after all other transactions, regardless of where defined.
+            transaction!(stop_one),
         ),
     }
 }
@@ -237,26 +237,26 @@ async fn run_standalone_test(test_type: TestType) {
     // Build common configuration.
     let configuration = common_build_configuration(&server, None, None);
 
-    // Get the taskset, start and stop tasks to build a load test.
-    let (taskset, start_task, stop_task) = get_tasks(&test_type);
+    // Get the scenario, start and stop transactions to build a load test.
+    let (scenario, start_transaction, stop_transaction) = get_transactions(&test_type);
 
     let goose_attack = match test_type {
         TestType::NotSequenced | TestType::SequencedRoundRobin => {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_taskset(taskset)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 .set_scheduler(GooseScheduler::RoundRobin)
         }
         TestType::SequencedSerial => {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(configuration)
                 .unwrap()
-                .register_taskset(taskset)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 .set_scheduler(GooseScheduler::Serial)
         }
     };
@@ -279,8 +279,8 @@ async fn run_gaggle_test(test_type: TestType) {
     // Build common configuration.
     let worker_configuration = common_build_configuration(&server, Some(true), None);
 
-    // Get the taskset, start and stop tasks to build a load test.
-    let (taskset, start_task, stop_task) = get_tasks(&test_type);
+    // Get the scenario, start and stop transactions to build a load test.
+    let (scenario, start_transaction, stop_transaction) = get_transactions(&test_type);
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = match test_type {
@@ -289,9 +289,9 @@ async fn run_gaggle_test(test_type: TestType) {
             common::launch_gaggle_workers(EXPECT_WORKERS, || {
                 crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                     .unwrap()
-                    .register_taskset(taskset.clone())
-                    .test_start(start_task.clone())
-                    .test_stop(stop_task.clone())
+                    .register_scenario(scenario.clone())
+                    .test_start(start_transaction.clone())
+                    .test_stop(stop_transaction.clone())
                     // Unnecessary as this is the default.
                     .set_scheduler(GooseScheduler::RoundRobin)
             })
@@ -299,9 +299,9 @@ async fn run_gaggle_test(test_type: TestType) {
         TestType::SequencedSerial => common::launch_gaggle_workers(EXPECT_WORKERS, || {
             crate::GooseAttack::initialize_with_config(worker_configuration.clone())
                 .unwrap()
-                .register_taskset(taskset.clone())
-                .test_start(start_task.clone())
-                .test_stop(stop_task.clone())
+                .register_scenario(scenario.clone())
+                .test_start(start_transaction.clone())
+                .test_stop(stop_transaction.clone())
                 .set_scheduler(GooseScheduler::Serial)
         }),
     };
@@ -314,9 +314,9 @@ async fn run_gaggle_test(test_type: TestType) {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_taskset(taskset)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 // Unnecessary as this is the default.
                 .set_scheduler(GooseScheduler::RoundRobin)
         }
@@ -324,9 +324,9 @@ async fn run_gaggle_test(test_type: TestType) {
             // Set up the common base configuration.
             crate::GooseAttack::initialize_with_config(manager_configuration)
                 .unwrap()
-                .register_taskset(taskset)
-                .test_start(start_task)
-                .test_stop(stop_task)
+                .register_scenario(scenario)
+                .test_start(start_transaction)
+                .test_stop(stop_transaction)
                 .set_scheduler(GooseScheduler::Serial)
         }
     };
@@ -339,7 +339,7 @@ async fn run_gaggle_test(test_type: TestType) {
 }
 
 #[tokio::test]
-// Load test with multiple tasks and no sequences defined.
+// Load test with multiple transactions and no sequences defined.
 async fn test_not_sequenced() {
     run_standalone_test(TestType::NotSequenced).await;
 }
@@ -347,20 +347,20 @@ async fn test_not_sequenced() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks and no sequences defined, in Gaggle mode.
+// Load test with multiple transactions and no sequences defined, in Gaggle mode.
 async fn test_not_sequenced_gaggle() {
     run_gaggle_test(TestType::NotSequenced).await;
 }
 
 #[tokio::test]
-// Load test with multiple tasks and sequences defined, using the
+// Load test with multiple transactions and sequences defined, using the
 // round robin scheduler.
 async fn test_sequenced_round_robin() {
     run_standalone_test(TestType::SequencedRoundRobin).await;
 }
 
 #[tokio::test]
-// Load test with multiple tasks and sequences defined, using the
+// Load test with multiple transactions and sequences defined, using the
 // sequential scheduler.
 async fn test_sequenced_sequential() {
     run_standalone_test(TestType::SequencedSerial).await;
@@ -369,7 +369,7 @@ async fn test_sequenced_sequential() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks and sequences defined, using the
+// Load test with multiple transactions and sequences defined, using the
 // round robin scheduler, in Gaggle mode.
 async fn test_sequenced_round_robin_gaggle() {
     run_gaggle_test(TestType::SequencedRoundRobin).await;
@@ -378,7 +378,7 @@ async fn test_sequenced_round_robin_gaggle() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
-// Load test with multiple tasks and sequences defined, using the
+// Load test with multiple transactions and sequences defined, using the
 // sequential scheduler, in Gaggle mode.
 async fn test_sequenced_sequential_gaggle() {
     run_gaggle_test(TestType::SequencedSerial).await;

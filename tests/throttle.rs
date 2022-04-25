@@ -20,14 +20,14 @@ const USERS: usize = 5;
 const RUN_TIME: usize = 3;
 const EXPECT_WORKERS: usize = 2;
 
-// Test task.
-pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
-// Test task.
-pub async fn get_about(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_about(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
@@ -147,11 +147,11 @@ fn validate_test(
     current_requests_file_lines
 }
 
-// Returns the appropriate taskset needed to build these tests.
-fn get_tasks() -> GooseTaskSet {
-    taskset!("LoadTest")
-        .register_task(task!(get_index))
-        .register_task(task!(get_about))
+// Returns the appropriate scenario needed to build these tests.
+fn get_transactions() -> Scenario {
+    scenario!("LoadTest")
+        .register_transaction(transaction!(get_index))
+        .register_transaction(transaction!(get_about))
 }
 
 #[tokio::test]
@@ -178,7 +178,7 @@ async fn test_throttle() {
 
     // Run the Goose Attack.
     common::run_load_test(
-        common::build_load_test(configuration, &get_tasks(), None, None),
+        common::build_load_test(configuration, &get_transactions(), None, None),
         None,
     )
     .await;
@@ -208,7 +208,7 @@ async fn test_throttle() {
 
     // Run the Goose Attack.
     common::run_load_test(
-        common::build_load_test(configuration, &get_tasks(), None, None),
+        common::build_load_test(configuration, &get_transactions(), None, None),
         None,
     )
     .await;
@@ -249,8 +249,12 @@ async fn test_throttle_gaggle() {
         let mut worker_configuration = configuration.clone();
         worker_configuration.request_log = request_log.clone() + &i.to_string();
         request_logs.push(worker_configuration.request_log.clone());
-        let worker_goose_attack =
-            common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
+        let worker_goose_attack = common::build_load_test(
+            worker_configuration.clone(),
+            &get_transactions(),
+            None,
+            None,
+        );
         // Start worker instance of the load test.
         worker_handles.push(tokio::spawn(common::run_load_test(
             worker_goose_attack,
@@ -270,8 +274,12 @@ async fn test_throttle_gaggle() {
     );
 
     // Build the load test for the Manager.
-    let manager_goose_attack =
-        common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
+    let manager_goose_attack = common::build_load_test(
+        manager_configuration.clone(),
+        &get_transactions(),
+        None,
+        None,
+    );
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
@@ -301,8 +309,12 @@ async fn test_throttle_gaggle() {
         let mut worker_configuration = configuration.clone();
         worker_configuration.request_log = request_log.clone() + &i.to_string();
         request_logs.push(worker_configuration.request_log.clone());
-        let worker_goose_attack =
-            common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None);
+        let worker_goose_attack = common::build_load_test(
+            worker_configuration.clone(),
+            &get_transactions(),
+            None,
+            None,
+        );
         // Start worker instance of the load test.
         worker_handles.push(tokio::spawn(common::run_load_test(
             worker_goose_attack,
@@ -312,7 +324,7 @@ async fn test_throttle_gaggle() {
 
     // Build the load test for the Manager.
     let manager_goose_attack =
-        common::build_load_test(manager_configuration, &get_tasks(), None, None);
+        common::build_load_test(manager_configuration, &get_transactions(), None, None);
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;

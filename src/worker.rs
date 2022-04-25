@@ -10,7 +10,7 @@ const EMPTY_ARGS: Vec<&str> = vec![];
 
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
-use crate::metrics::{GooseErrorMetrics, GooseRequestMetrics, GooseTaskMetrics};
+use crate::metrics::{GooseErrorMetrics, GooseRequestMetrics, TransactionMetrics};
 use crate::test_plan::TestPlan;
 use crate::{get_worker_id, AttackMode, GooseAttack, GooseConfiguration, WORKER_ID};
 
@@ -21,8 +21,8 @@ pub enum GaggleMetrics {
     WorkerInit(u64),
     /// Goose request metrics.
     Requests(GooseRequestMetrics),
-    /// Goose task metrics.
-    Tasks(GooseTaskMetrics),
+    /// Goose transaction metrics.
+    Transactions(TransactionMetrics),
     /// Goose error metrics.
     Errors(GooseErrorMetrics),
 }
@@ -137,7 +137,7 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
             worker_id = initializer.worker_id;
         }
         let user = GooseUser::new(
-            initializer.task_sets_index,
+            initializer.scenarios_index,
             Url::parse(&initializer.base_url).unwrap(),
             &initializer.config,
             goose_attack.metrics.hash,
@@ -211,7 +211,7 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
         .expect("failed to launch GooseAttack");
 
     worker_goose_attack.started = Some(time::Instant::now());
-    worker_goose_attack.task_sets = goose_attack.task_sets.clone();
+    worker_goose_attack.scenarios = goose_attack.scenarios.clone();
     worker_goose_attack.weighted_users = weighted_users;
     // This is a Worker instance, not a Manager instance.
     worker_goose_attack.configuration.manager = false;
@@ -222,10 +222,12 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
     // The request_format option is configured on the Worker.
     worker_goose_attack.configuration.request_format =
         goose_attack.configuration.request_format.clone();
-    // The task_log option is configured on the Worker.
-    worker_goose_attack.configuration.task_log = goose_attack.configuration.task_log.to_string();
-    // The task_format option is configured on the Worker.
-    worker_goose_attack.configuration.task_format = goose_attack.configuration.task_format.clone();
+    // The transaction_log option is configured on the Worker.
+    worker_goose_attack.configuration.transaction_log =
+        goose_attack.configuration.transaction_log.to_string();
+    // The transaction_format option is configured on the Worker.
+    worker_goose_attack.configuration.transaction_format =
+        goose_attack.configuration.transaction_format.clone();
     // The error_log option is configured on the Worker.
     worker_goose_attack.configuration.error_log = goose_attack.configuration.error_log.to_string();
     // The error_format option is configured on the Worker.

@@ -453,7 +453,7 @@ pub async fn validate_and_load_static_assets(
     user: &mut GooseUser,
     mut goose: GooseResponse,
     title: &str,
-) -> GooseTaskResult {
+) -> TransactionResult {
     match goose.response {
         Ok(response) => {
             // Copy the headers so we have them for logging if there are errors.
@@ -502,7 +502,7 @@ pub fn get_form_value(html: &str, name: &str) -> Option<String> {
 
 /// Anonymously load the contact form and POST feedback. The english boolean flag indicates
 /// whether to load the English form or the Spanish form.
-pub async fn anonymous_contact_form(user: &mut GooseUser, english: bool) -> GooseTaskResult {
+pub async fn anonymous_contact_form(user: &mut GooseUser, english: bool) -> TransactionResult {
     let contact_form_url = if english {
         "/en/contact"
     } else {
@@ -636,7 +636,7 @@ pub async fn anonymous_contact_form(user: &mut GooseUser, english: bool) -> Goos
 
 /// Load the search page and perform a search using one word from one of the node titles
 /// on the site.
-pub async fn search(user: &mut GooseUser, english: bool) -> GooseTaskResult {
+pub async fn search(user: &mut GooseUser, english: bool) -> TransactionResult {
     let search_form_url = if english {
         "/en/search/node"
     } else {

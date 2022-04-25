@@ -6,7 +6,7 @@ To enable, add the `--debug-log <debug.log>` command line option, where `<debug.
 
 If `--debug-log <foo>` is not specified at run time, nothing will be logged and there is no measurable overhead in your load test.
 
-To write to the debug log, you must invoke [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug) from your load test task functions. The `tag` parameter allows you to record any arbitrary string: it can also identify where in the load test the log was generated, and/or why debug is being written, and/or other details such as the contents of a form the load test posts. Other paramters that can be included in the debug log are the complete Request that was made, as well as the Headers and Body of the Response.
+To write to the debug log, you must invoke [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug) from your load test transaction functions. The `tag` parameter allows you to record any arbitrary string: it can also identify where in the load test the log was generated, and/or why debug is being written, and/or other details such as the contents of a form the load test posts. Other paramters that can be included in the debug log are the complete Request that was made, as well as the Headers and Body of the Response.
 
 (_Known limitations in Reqwest prevent all headers from being recorded: <https://github.com/tag1consulting/goose/issues/336>_)
 

@@ -64,14 +64,14 @@ struct TestState {
     websocket_controller: bool,
 }
 
-// Test task.
-pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
-// Test task.
-pub async fn get_about(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_about(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(ABOUT_PATH).await?;
     Ok(())
 }
@@ -110,7 +110,7 @@ fn common_build_configuration(_server: &MockServer, custom: &mut Vec<&str>) -> G
 }
 
 // Helper to confirm all variations generate appropriate results.
-fn validate_one_taskset(
+fn validate_one_scenario(
     goose_metrics: &GooseMetrics,
     mock_endpoints: &[Mock],
     configuration: &GooseConfiguration,
@@ -147,11 +147,11 @@ fn validate_one_taskset(
     assert!(goose_metrics.duration < RUN_TIME);
 }
 
-// Returns the appropriate taskset needed to build these tests.
-fn get_tasks() -> GooseTaskSet {
-    taskset!("LoadTest")
-        .register_task(task!(get_index).set_weight(2).unwrap())
-        .register_task(task!(get_about).set_weight(1).unwrap())
+// Returns the appropriate scenario needed to build these tests.
+fn get_transactions() -> Scenario {
+    scenario!("LoadTest")
+        .register_transaction(transaction!(get_index).set_weight(2).unwrap())
+        .register_transaction(transaction!(get_about).set_weight(1).unwrap())
 }
 
 // Helper to run all standalone tests.
@@ -472,7 +472,7 @@ async fn run_standalone_test(test_type: TestType) {
                             }
                             // Confirm the metrics are returned and pretty-printed.
                             else {
-                                assert!(response.contains("=== PER TASK METRICS ==="));
+                                assert!(response.contains("=== PER TRANSACTION METRICS ==="));
                             }
 
                             // Move onto the next command.
@@ -582,13 +582,13 @@ async fn run_standalone_test(test_type: TestType) {
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration.clone(), &get_tasks(), None, None),
+        common::build_load_test(configuration.clone(), &get_transactions(), None, None),
         None,
     )
     .await;
 
     // Confirm that the load test ran correctly.
-    validate_one_taskset(
+    validate_one_scenario(
         &goose_metrics,
         &mock_endpoints,
         &configuration,

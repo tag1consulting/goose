@@ -1,6 +1,6 @@
 # Metrics
 
-Here's the output of running the loadtest. The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-task and per-request metrics. The `--no-reset-metrics` flag tells Goose to track all metrics, instead of the default which is to flush all metrics collected during start up.
+Here's the output of running the loadtest. The `-u1024` tells Goose to spin up 1,024 users. The `-r32` option tells Goose to hatch 32 users per second. The `-t10m` option tells Goose to run the load test for 10 minutes, or 600 seconds. The `--status-codes` flag tells Goose to track metrics about HTTP status codes returned by the server, in addition to the default per-transaction and per-request metrics. The `--no-reset-metrics` flag tells Goose to track all metrics, instead of the default which is to flush all metrics collected during start up.
 
 ```bash
 $ cargo run --release -- --host http://local.dev -u1024 -r32 -t10m --status-codes --no-reset-metrics
@@ -37,17 +37,17 @@ All 1024 users hatched.
 11:05:10 [ INFO] exiting user 55 from WebsiteUser...
 11:05:11 [ INFO] printing metrics after 601 seconds...
 
-=== PER TASK METRICS ===
+=== PER TRANSACTION METRICS ===
 ------------------------------------------------------------------------------
- Name                    | # times run    | # fails        | task/s | fail/s
+ Name                    | # times run    | # fails        | trans/s | fail/s
  -----------------------------------------------------------------------------
  1: WebsiteUser          |
-   1:                    | 1,024          | 0 (0%)         | 1.707  | 0.000
-   2:                    | 28,746         | 0 (0%)         | 47.91  | 0.000
-   3:                    | 28,748         | 0 (0%)         | 47.91  | 0.000
- ------------------------+----------------+----------------+--------+---------
- Aggregated              | 58,518         | 0 (0%)         | 97.53  | 0.000
--------------------------------------------------------------------------------
+   1:                    | 1,024          | 0 (0%)         | 1.707   | 0.000
+   2:                    | 28,746         | 0 (0%)         | 47.91   | 0.000
+   3:                    | 28,748         | 0 (0%)         | 47.91   | 0.000
+ ------------------------+----------------+----------------+----------+-------
+ Aggregated              | 58,518         | 0 (0%)         | 97.53   | 0.000
+------------------------------------------------------------------------------
  Name                    | Avg (ms)   | Min        | Max        | Median
  -----------------------------------------------------------------------------
  1: WebsiteUser          |

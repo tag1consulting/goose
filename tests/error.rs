@@ -27,14 +27,14 @@ enum TestType {
     ErrorSummary,
 }
 
-// Test task.
-pub async fn get_index(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(INDEX_PATH).await?;
     Ok(())
 }
 
-// Test task.
-pub async fn get_404_path(user: &mut GooseUser) -> GooseTaskResult {
+// Test transaction.
+pub async fn get_404_path(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(A_404_PATH).await?;
     Ok(())
 }
@@ -142,11 +142,11 @@ fn validate_error(
     assert!(goose_metrics.users == configuration.users.unwrap());
 }
 
-// Returns the appropriate taskset needed to build these tests.
-fn get_tasks() -> GooseTaskSet {
-    taskset!("LoadTest")
-        .register_task(task!(get_index))
-        .register_task(task!(get_404_path))
+// Returns the appropriate scenario needed to build these tests.
+fn get_transactions() -> Scenario {
+    scenario!("LoadTest")
+        .register_transaction(transaction!(get_index))
+        .register_transaction(transaction!(get_404_path))
 }
 
 // Helper to run all standalone tests.
@@ -167,7 +167,7 @@ async fn run_standalone_test(test_type: TestType) {
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration.clone(), &get_tasks(), None, None),
+        common::build_load_test(configuration.clone(), &get_transactions(), None, None),
         None,
     )
     .await;
@@ -189,7 +189,12 @@ async fn run_gaggle_test(test_type: TestType) {
 
     // Workers launched in own threads, store thread handles.
     let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-        common::build_load_test(worker_configuration.clone(), &get_tasks(), None, None)
+        common::build_load_test(
+            worker_configuration.clone(),
+            &get_transactions(),
+            None,
+            None,
+        )
     });
 
     // Build common configuration elements, adding Manager Gaggle flags.
@@ -210,8 +215,12 @@ async fn run_gaggle_test(test_type: TestType) {
     };
 
     // Build the load test for the Manager.
-    let manager_goose_attack =
-        common::build_load_test(manager_configuration.clone(), &get_tasks(), None, None);
+    let manager_goose_attack = common::build_load_test(
+        manager_configuration.clone(),
+        &get_transactions(),
+        None,
+        None,
+    );
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;

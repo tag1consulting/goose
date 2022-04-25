@@ -5,11 +5,11 @@
 //! it returns a [`GooseMetrics`] object.
 //!
 //! When the [`GooseMetrics`] object is viewed with [`std::fmt::Display`], the
-//! contained [`GooseTaskMetrics`], [`GooseRequestMetrics`], and
+//! contained [`TransactionMetrics`], [`GooseRequestMetrics`], and
 //! [`GooseErrorMetrics`] are displayed in tables.
 
 use crate::config::GooseDefaults;
-use crate::goose::{get_base_url, GooseMethod, GooseTaskSet};
+use crate::goose::{get_base_url, GooseMethod, Scenario};
 use crate::logger::GooseLog;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
@@ -39,14 +39,14 @@ use tokio::io::AsyncWriteExt;
 ///
 /// The parent process will spend up to 80% of its time receiving and aggregating
 /// these metrics. The parent process aggregates [`GooseRequestMetric`]s into
-/// [`GooseRequestMetricAggregate`], [`GooseTaskMetric`]s into [`GooseTaskMetricAggregate`],
+/// [`GooseRequestMetricAggregate`], [`TransactionMetric`]s into [`TransactionMetricAggregate`],
 /// and [`GooseErrorMetric`]s into [`GooseErrorMetricAggregate`]. Aggregation happens in the
 /// parent process so the individual [`GooseUser`](../goose/struct.GooseUser.html) threads
 /// can spend all their time generating and validating load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
     Request(GooseRequestMetric),
-    Task(GooseTaskMetric),
+    Transaction(TransactionMetric),
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -177,24 +177,24 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
 /// ```
 pub type GooseRequestMetrics = HashMap<String, GooseRequestMetricAggregate>;
 
-/// All tasks executed during a load test.
+/// All transactions executed during a load test.
 ///
-/// Goose optionally tracks metrics about tasks executed during a load test. The
-/// metrics can be disabled with either the `--no-task-metrics` or the `--no-metrics`
+/// Goose optionally tracks metrics about transactions executed during a load test. The
+/// metrics can be disabled with either the `--no-transaction-metrics` or the `--no-metrics`
 /// run-time option, or with either
-/// [`GooseDefault::NoTaskMetrics`](../config/enum.GooseDefault.html#variant.NoTaskMetrics) or
+/// [`GooseDefault::NoTransactionMetrics`](../config/enum.GooseDefault.html#variant.NoTransactionMetrics) or
 /// [`GooseDefault::NoMetrics`](../config/enum.GooseDefault.html#variant.NoMetrics).
 ///
-/// Aggregated tasks ([`GooseTaskMetricAggregate`]) are stored in a Vector of Vectors
-/// keyed to the order the task is created in the load test.
+/// Aggregated transactions ([`TransactionMetricAggregate`]) are stored in a Vector of Vectors
+/// keyed to the order the transaction is created in the load test.
 ///
 /// # Example
-/// When viewed with [`std::fmt::Display`], [`GooseTaskMetrics`] are displayed in
+/// When viewed with [`std::fmt::Display`], [`TransactionMetrics`] are displayed in
 /// a table:
 /// ```text
-///  === PER TASK METRICS ===
+///  === PER TRANSACTION METRICS ===
 /// ------------------------------------------------------------------------------
-/// Name                     |   # times run |        # fails |   task/s |  fail/s
+/// Name                     |   # times run |        # fails |  trans/s |  fail/s
 /// ------------------------------------------------------------------------------
 /// 1: AnonBrowsingUser      |
 ///   1: (Anon) front page   |           440 |         0 (0%) |    44.00 |    0.00
@@ -224,7 +224,7 @@ pub type GooseRequestMetrics = HashMap<String, GooseRequestMetricAggregate>;
 /// -------------------------+-------------+------------+-------------+-----------
 /// Aggregated               |       76.78 |          3 |         307 |         74
 /// ```
-pub type GooseTaskMetrics = Vec<Vec<GooseTaskMetricAggregate>>;
+pub type TransactionMetrics = Vec<Vec<TransactionMetricAggregate>>;
 
 /// All errors detected during a load test.
 ///
@@ -317,7 +317,7 @@ pub struct GooseRequestMetric {
     /// the upstream server, blocking requests from being made.
     pub coordinated_omission_elapsed: u64,
     /// If non-zero, the calculated cadence of looping through all
-    /// [`GooseTask`](../goose/struct.GooseTask.html)s by this
+    /// [`Transaction`](../goose/struct.Transaction.html)s by this
     /// [`GooseUser`](../goose/struct.GooseUser.html) thread.
     pub user_cadence: u64,
 }
@@ -580,37 +580,37 @@ impl GooseRequestMetricTimingData {
     }
 }
 
-/// The per-task metrics collected each time a task is invoked.
+/// The per-transaction metrics collected each time a transaction is invoked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GooseTaskMetric {
+pub struct TransactionMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
-    /// An index into [`GooseAttack`]`.task_sets`, indicating which task set this is.
-    pub taskset_index: usize,
-    /// An index into [`GooseTaskSet`]`.task`, indicating which task this is.
-    pub task_index: usize,
-    /// The optional name of the task.
+    /// An index into [`GooseAttack`]`.scenarios`, indicating which transaction set this is.
+    pub scenario_index: usize,
+    /// An index into [`Scenario`]`.transaction`, indicating which transaction this is.
+    pub transaction_index: usize,
+    /// The optional name of the transaction.
     pub name: String,
-    /// How long task ran.
+    /// How long transaction ran.
     pub run_time: u64,
     /// Whether or not the request was successful.
     pub success: bool,
     /// Which GooseUser thread processed the request.
     pub user: usize,
 }
-impl GooseTaskMetric {
-    /// Create a new GooseTaskMetric metric.
+impl TransactionMetric {
+    /// Create a new TransactionMetric metric.
     pub(crate) fn new(
         elapsed: u128,
-        taskset_index: usize,
-        task_index: usize,
+        scenario_index: usize,
+        transaction_index: usize,
         name: String,
         user: usize,
     ) -> Self {
-        GooseTaskMetric {
+        TransactionMetric {
             elapsed: elapsed as u64,
-            taskset_index,
-            task_index,
+            scenario_index,
+            transaction_index,
             name,
             run_time: 0,
             success: true,
@@ -618,58 +618,58 @@ impl GooseTaskMetric {
         }
     }
 
-    /// Update a GooseTaskMetric metric.
+    /// Update a TransactionMetric metric.
     pub(crate) fn set_time(&mut self, time: u128, success: bool) {
         self.run_time = time as u64;
         self.success = success;
     }
 }
 
-/// Aggregated per-task metrics updated each time a task is invoked.
+/// Aggregated per-transaction metrics updated each time a transaction is invoked.
 ///
-/// [`GooseTaskMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
+/// [`TransactionMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
 /// threads to the Goose parent process where they are aggregated together into this
-/// structure, and stored in [`GooseMetrics::tasks`].
+/// structure, and stored in [`GooseMetrics::transactions`].
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GooseTaskMetricAggregate {
-    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.task_sets`,
-    /// indicating which task set this is.
-    pub taskset_index: usize,
-    /// The task set name.
-    pub taskset_name: String,
-    /// An index into [`GooseTaskSet`](../goose/struct.GooseTaskSet.html)`.task`,
-    /// indicating which task this is.
-    pub task_index: usize,
-    /// An optional name for the task.
-    pub task_name: String,
-    /// Per-run-time counters, tracking how often tasks take a given time to complete.
+pub struct TransactionMetricAggregate {
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
+    /// indicating which scenario this is.
+    pub scenario_index: usize,
+    /// The scenario name.
+    pub scenario_name: String,
+    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`,
+    /// indicating which transaction this is.
+    pub transaction_index: usize,
+    /// An optional name for the transaction.
+    pub transaction_name: String,
+    /// Per-run-time counters, tracking how often transactions take a given time to complete.
     pub times: BTreeMap<usize, usize>,
-    /// The shortest run-time for this task.
+    /// The shortest run-time for this transaction.
     pub min_time: usize,
-    /// The longest run-time for this task.
+    /// The longest run-time for this transaction.
     pub max_time: usize,
-    /// Total combined run-times for this task.
+    /// Total combined run-times for this transaction.
     pub total_time: usize,
-    /// Total number of times task has run.
+    /// Total number of times transaction has run.
     pub counter: usize,
-    /// Total number of times task has run successfully.
+    /// Total number of times transaction has run successfully.
     pub success_count: usize,
-    /// Total number of times task has failed.
+    /// Total number of times transaction has failed.
     pub fail_count: usize,
 }
-impl GooseTaskMetricAggregate {
-    /// Create a new GooseTaskMetricAggregate.
+impl TransactionMetricAggregate {
+    /// Create a new TransactionMetricAggregate.
     pub(crate) fn new(
-        taskset_index: usize,
-        taskset_name: &str,
-        task_index: usize,
-        task_name: &str,
+        scenario_index: usize,
+        scenario_name: &str,
+        transaction_index: usize,
+        transaction_name: &str,
     ) -> Self {
-        GooseTaskMetricAggregate {
-            taskset_index,
-            taskset_name: taskset_name.to_string(),
-            task_index,
-            task_name: task_name.to_string(),
+        TransactionMetricAggregate {
+            scenario_index,
+            scenario_name: scenario_name.to_string(),
+            transaction_index,
+            transaction_name: transaction_name.to_string(),
             times: BTreeMap::new(),
             min_time: 0,
             max_time: 0,
@@ -680,7 +680,7 @@ impl GooseTaskMetricAggregate {
         }
     }
 
-    /// Track task function elapsed time in milliseconds.
+    /// Track transaction function elapsed time in milliseconds.
     pub(crate) fn set_time(&mut self, time: u64, success: bool) {
         // Perform this conversion only once, then re-use throughout this function.
         let time_usize = time as usize;
@@ -744,8 +744,8 @@ impl GooseTaskMetricAggregate {
 /// #[tokio::main]
 /// async fn main() -> Result<(), GooseError> {
 ///     let goose_metrics: GooseMetrics = GooseAttack::initialize()?
-///         .register_taskset(taskset!("ExampleUsers")
-///             .register_task(task!(example_task))
+///         .register_scenario(scenario!("ExampleUsers")
+///             .register_transaction(transaction!(example_transaction))
 ///         )
 ///         // Set a default host so the load test will start.
 ///         .set_default(GooseDefault::Host, "http://localhost/")?
@@ -788,13 +788,13 @@ impl GooseTaskMetricAggregate {
 ///                 load_test_hash: 0,
 ///             },
 ///         },
-///         tasks: [
+///         transactions: [
 ///             [
-///                 GooseTaskMetricAggregate {
-///                     taskset_index: 0,
-///                     taskset_name: "ExampleUsers",
-///                     task_index: 0,
-///                     task_name: "",
+///                 TransactionMetricAggregate {
+///                     scenario_index: 0,
+///                     scenario_name: "ExampleUsers",
+///                     transaction_index: 0,
+///                     transaction_name: "",
 ///                     times: {
 ///                         3: 14,
 ///                         4: 161,
@@ -827,7 +827,7 @@ impl GooseTaskMetricAggregate {
 ///     Ok(())
 /// }
 ///
-/// async fn example_task(user: &mut GooseUser) -> GooseTaskResult {
+/// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
 ///     let _goose = user.get("/").await?;
 ///
 ///     Ok(())
@@ -852,13 +852,13 @@ pub struct GooseMetrics {
     /// Can be disabled with the `--no-metrics` run-time option, or with
     /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub requests: GooseRequestMetrics,
-    /// Tracks details about each task that is invoked during the load test.
+    /// Transactions details about each transaction that is invoked during the load test.
     ///
-    /// Can be disabled with either the `--no-task-metrics` or `--no-metrics` run-time options,
+    /// Can be disabled with either the `--no-transaction-metrics` or `--no-metrics` run-time options,
     /// or with either the
-    /// [GooseDefault::NoTaskMetrics](../config/enum.GooseDefault.html#variant.NoTaskMetrics) or
+    /// [GooseDefault::NoTransactionMetrics](../config/enum.GooseDefault.html#variant.NoTransactionMetrics) or
     /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
-    pub tasks: GooseTaskMetrics,
+    pub transactions: TransactionMetrics,
     /// Tracks and counts each time an error is detected during the load test.
     ///
     /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
@@ -878,35 +878,35 @@ pub struct GooseMetrics {
     pub(crate) display_metrics: bool,
 }
 impl GooseMetrics {
-    /// Initialize the task_metrics vector, and determine which hosts are being
+    /// Initialize the transaction_metrics vector, and determine which hosts are being
     /// load tested to display when printing metrics.
-    pub(crate) fn initialize_task_metrics(
+    pub(crate) fn initialize_transaction_metrics(
         &mut self,
-        task_sets: &[GooseTaskSet],
+        scenarios: &[Scenario],
         config: &GooseConfiguration,
         defaults: &GooseDefaults,
     ) -> Result<(), GooseError> {
-        self.tasks = Vec::new();
-        for task_set in task_sets {
-            // Don't initialize task metrics if metrics or task_metrics are disabled.
+        self.transactions = Vec::new();
+        for scenario in scenarios {
+            // Don't initialize transaction metrics if metrics or transaction_metrics are disabled.
             if !config.no_metrics {
-                if !config.no_task_metrics {
-                    let mut task_vector = Vec::new();
-                    for task in &task_set.tasks {
-                        task_vector.push(GooseTaskMetricAggregate::new(
-                            task_set.task_sets_index,
-                            &task_set.name,
-                            task.tasks_index,
-                            &task.name,
+                if !config.no_transaction_metrics {
+                    let mut transaction_vector = Vec::new();
+                    for transaction in &scenario.transactions {
+                        transaction_vector.push(TransactionMetricAggregate::new(
+                            scenario.scenarios_index,
+                            &scenario.name,
+                            transaction.transactions_index,
+                            &transaction.name,
                         ));
                     }
-                    self.tasks.push(task_vector);
+                    self.transactions.push(transaction_vector);
                 }
 
                 // The host is not needed on the Worker, metrics are only printed on
                 // the Manager.
                 if !config.worker {
-                    // Determine the base_url for this task based on which of the following
+                    // Determine the base_url for this transaction based on which of the following
                     // are configured so metrics can be printed.
                     self.hosts.insert(
                         get_base_url(
@@ -916,8 +916,8 @@ impl GooseMetrics {
                             } else {
                                 None
                             },
-                            // Determine if the task_set defines a host.
-                            task_set.host.clone(),
+                            // Determine if the scenario defines a host.
+                            scenario.host.clone(),
                             // Determine if there is a default host.
                             defaults.host.clone(),
                         )?
@@ -1079,25 +1079,25 @@ impl GooseMetrics {
         Ok(())
     }
 
-    /// Optionally prepares a table of tasks.
+    /// Optionally prepares a table of transactions.
     ///
     /// This function is invoked by `GooseMetrics::print()` and
     /// `GooseMetrics::print_running()`.
-    pub(crate) fn fmt_tasks(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub(crate) fn fmt_transactions(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if self.tasks.is_empty() || !self.display_metrics {
+        if self.transactions.is_empty() || !self.display_metrics {
             return Ok(());
         }
 
-        // Display metrics from tasks Vector
+        // Display metrics from transactions Vector
         writeln!(
             fmt,
-            "\n === PER TASK METRICS ===\n ------------------------------------------------------------------------------"
+            "\n === PER TRANSACTION METRICS ===\n ------------------------------------------------------------------------------"
         )?;
         writeln!(
             fmt,
             " {:<24} | {:>13} | {:>14} | {:>8} | {:>7}",
-            "Name", "# times run", "# fails", "task/s", "fail/s"
+            "Name", "# times run", "# fails", "trans/s", "fail/s"
         )?;
         writeln!(
             fmt,
@@ -1105,46 +1105,54 @@ impl GooseMetrics {
         )?;
         let mut aggregate_fail_count = 0;
         let mut aggregate_total_count = 0;
-        let mut task_count = 0;
-        for task_set in &self.tasks {
-            let mut displayed_task_set = false;
-            for task in task_set {
-                task_count += 1;
-                let total_count = task.success_count + task.fail_count;
-                let fail_percent = if task.fail_count > 0 {
-                    task.fail_count as f32 / total_count as f32 * 100.0
+        let mut transaction_count = 0;
+        for scenario in &self.transactions {
+            let mut displayed_scenario = false;
+            for transaction in scenario {
+                transaction_count += 1;
+                let total_count = transaction.success_count + transaction.fail_count;
+                let fail_percent = if transaction.fail_count > 0 {
+                    transaction.fail_count as f32 / total_count as f32 * 100.0
                 } else {
                     0.0
                 };
                 let (runs, fails) =
-                    per_second_calculations(self.duration, total_count, task.fail_count);
+                    per_second_calculations(self.duration, total_count, transaction.fail_count);
                 let runs_precision = determine_precision(runs);
                 let fails_precision = determine_precision(fails);
 
-                // First time through display name of task set.
-                if !displayed_task_set {
+                // First time through display name of scenario.
+                if !displayed_scenario {
                     writeln!(
                         fmt,
                         " {:24 } |",
                         util::truncate_string(
-                            &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
+                            &format!(
+                                "{}: {}",
+                                transaction.scenario_index + 1,
+                                &transaction.scenario_name
+                            ),
                             60
                         ),
                     )?;
-                    displayed_task_set = true;
+                    displayed_scenario = true;
                 }
 
                 if fail_percent as usize == 100 || fail_percent as usize == 0 {
                     let fail_and_percent = format!(
                         "{} ({}%)",
-                        task.fail_count.to_formatted_string(&Locale::en),
+                        transaction.fail_count.to_formatted_string(&Locale::en),
                         fail_percent as usize
                     );
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                         util::truncate_string(
-                            &format!("  {}: {}", task.task_index + 1, task.task_name),
+                            &format!(
+                                "  {}: {}",
+                                transaction.transaction_index + 1,
+                                transaction.transaction_name
+                            ),
                             24
                         ),
                         total_count.to_formatted_string(&Locale::en),
@@ -1157,14 +1165,18 @@ impl GooseMetrics {
                 } else {
                     let fail_and_percent = format!(
                         "{} ({:.1}%)",
-                        task.fail_count.to_formatted_string(&Locale::en),
+                        transaction.fail_count.to_formatted_string(&Locale::en),
                         fail_percent
                     );
                     writeln!(
                         fmt,
                         " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
                         util::truncate_string(
-                            &format!("  {}: {}", task.task_index + 1, task.task_name),
+                            &format!(
+                                "  {}: {}",
+                                transaction.transaction_index + 1,
+                                transaction.transaction_name
+                            ),
                             24
                         ),
                         total_count.to_formatted_string(&Locale::en),
@@ -1176,10 +1188,10 @@ impl GooseMetrics {
                     )?;
                 }
                 aggregate_total_count += total_count;
-                aggregate_fail_count += task.fail_count;
+                aggregate_fail_count += transaction.fail_count;
             }
         }
-        if task_count > 1 {
+        if transaction_count > 1 {
             let aggregate_fail_percent = if aggregate_fail_count > 0 {
                 aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
             } else {
@@ -1235,21 +1247,21 @@ impl GooseMetrics {
         Ok(())
     }
 
-    /// Optionally prepares a table of task times.
+    /// Optionally prepares a table of transaction times.
     ///
     /// This function is invoked by `GooseMetrics::print()` and
     /// `GooseMetrics::print_running()`.
-    pub(crate) fn fmt_task_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub(crate) fn fmt_transaction_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         // If there's nothing to display, exit immediately.
-        if self.tasks.is_empty() || !self.display_metrics {
+        if self.transactions.is_empty() || !self.display_metrics {
             return Ok(());
         }
 
-        let mut aggregate_task_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut aggregate_total_task_time: usize = 0;
-        let mut aggregate_task_time_counter: usize = 0;
-        let mut aggregate_min_task_time: usize = 0;
-        let mut aggregate_max_task_time: usize = 0;
+        let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut aggregate_total_transaction_time: usize = 0;
+        let mut aggregate_transaction_time_counter: usize = 0;
+        let mut aggregate_min_transaction_time: usize = 0;
+        let mut aggregate_max_transaction_time: usize = 0;
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
@@ -1263,42 +1275,49 @@ impl GooseMetrics {
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
-        let mut task_count = 0;
-        for task_set in &self.tasks {
-            let mut displayed_task_set = false;
-            for task in task_set {
-                task_count += 1;
-                // First time through display name of task set.
-                if !displayed_task_set {
+        let mut transaction_count = 0;
+        for scenario in &self.transactions {
+            let mut displayed_scenario = false;
+            for transaction in scenario {
+                transaction_count += 1;
+                // First time through display name of scenario.
+                if !displayed_scenario {
                     writeln!(
                         fmt,
                         " {:24 } |",
                         util::truncate_string(
-                            &format!("{}: {}", task.taskset_index + 1, &task.taskset_name),
+                            &format!(
+                                "{}: {}",
+                                transaction.scenario_index + 1,
+                                &transaction.scenario_name
+                            ),
                             60
                         ),
                     )?;
-                    displayed_task_set = true;
+                    displayed_scenario = true;
                 }
 
-                // Iterate over user task times, and merge into global task times.
-                aggregate_task_times = merge_times(aggregate_task_times, task.times.clone());
+                // Iterate over user transaction times, and merge into global transaction times.
+                aggregate_transaction_times =
+                    merge_times(aggregate_transaction_times, transaction.times.clone());
 
-                // Increment total task time counter.
-                aggregate_total_task_time += &task.total_time;
+                // Increment total transaction time counter.
+                aggregate_total_transaction_time += &transaction.total_time;
 
-                // Increment counter tracking individual task times seen.
-                aggregate_task_time_counter += &task.counter;
+                // Increment counter tracking individual transaction times seen.
+                aggregate_transaction_time_counter += &transaction.counter;
 
-                // If user had new fastest task time, update global fastest task time.
-                aggregate_min_task_time = update_min_time(aggregate_min_task_time, task.min_time);
+                // If user had new fastest transaction time, update global fastest transaction time.
+                aggregate_min_transaction_time =
+                    update_min_time(aggregate_min_transaction_time, transaction.min_time);
 
-                // If user had new slowest task` time, update global slowest task` time.
-                aggregate_max_task_time = update_max_time(aggregate_max_task_time, task.max_time);
+                // If user had new slowest transaction` time, update global slowest transaction` time.
+                aggregate_max_transaction_time =
+                    update_max_time(aggregate_max_transaction_time, transaction.max_time);
 
-                let average = match task.counter {
+                let average = match transaction.counter {
                     0 => 0.00,
-                    _ => task.total_time as f32 / task.counter as f32,
+                    _ => transaction.total_time as f32 / transaction.counter as f32,
                 };
                 let average_precision = determine_precision(average);
 
@@ -1306,26 +1325,33 @@ impl GooseMetrics {
                     fmt,
                     " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
                     util::truncate_string(
-                        &format!("  {}: {}", task.task_index + 1, task.task_name),
+                        &format!(
+                            "  {}: {}",
+                            transaction.transaction_index + 1,
+                            transaction.transaction_name
+                        ),
                         24
                     ),
                     average,
-                    format_number(task.min_time),
-                    format_number(task.max_time),
+                    format_number(transaction.min_time),
+                    format_number(transaction.max_time),
                     format_number(util::median(
-                        &task.times,
-                        task.counter,
-                        task.min_time,
-                        task.max_time
+                        &transaction.times,
+                        transaction.counter,
+                        transaction.min_time,
+                        transaction.max_time
                     )),
                     avg_precision = average_precision,
                 )?;
             }
         }
-        if task_count > 1 {
-            let average = match aggregate_task_time_counter {
+        if transaction_count > 1 {
+            let average = match aggregate_transaction_time_counter {
                 0 => 0.00,
-                _ => aggregate_total_task_time as f32 / aggregate_task_time_counter as f32,
+                _ => {
+                    aggregate_total_transaction_time as f32
+                        / aggregate_transaction_time_counter as f32
+                }
             };
             let average_precision = determine_precision(average);
 
@@ -1338,13 +1364,13 @@ impl GooseMetrics {
                 " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
                 "Aggregated",
                 average,
-                format_number(aggregate_min_task_time),
-                format_number(aggregate_max_task_time),
+                format_number(aggregate_min_transaction_time),
+                format_number(aggregate_max_transaction_time),
                 format_number(util::median(
-                    &aggregate_task_times,
-                    aggregate_task_time_counter,
-                    aggregate_min_task_time,
-                    aggregate_max_task_time
+                    &aggregate_transaction_times,
+                    aggregate_transaction_time_counter,
+                    aggregate_min_transaction_time,
+                    aggregate_max_transaction_time
                 )),
                 avg_precision = average_precision,
             )?;
@@ -2168,7 +2194,7 @@ impl Serialize for GooseMetrics {
         s.serialize_field("duration", &self.duration)?;
         s.serialize_field("users", &self.users)?;
         s.serialize_field("requests", &self.requests)?;
-        s.serialize_field("tasks", &self.tasks)?;
+        s.serialize_field("transactions", &self.transactions)?;
         s.serialize_field("errors", &self.errors)?;
         s.serialize_field("final_metrics", &self.final_metrics)?;
         s.serialize_field("display_status_codes", &self.display_status_codes)?;
@@ -2183,8 +2209,8 @@ impl fmt::Display for GooseMetrics {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         // Formats metrics data in tables, depending on what data is contained and which
         // flags are set.
-        self.fmt_tasks(fmt)?;
-        self.fmt_task_times(fmt)?;
+        self.fmt_transactions(fmt)?;
+        self.fmt_transaction_times(fmt)?;
         self.fmt_requests(fmt)?;
         self.fmt_response_times(fmt)?;
         self.fmt_percentiles(fmt)?;
@@ -2308,7 +2334,7 @@ impl GooseAttack {
                         &goose_attack_run_state.socket.clone().unwrap(),
                         vec![
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
-                            GaggleMetrics::Tasks(self.metrics.tasks.clone()),
+                            GaggleMetrics::Transactions(self.metrics.transactions.clone()),
                         ],
                         true,
                     ) {
@@ -2319,8 +2345,8 @@ impl GooseAttack {
                     }
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();
-                    self.metrics.initialize_task_metrics(
-                        &self.task_sets,
+                    self.metrics.initialize_transaction_metrics(
+                        &self.scenarios,
                         &self.configuration,
                         &self.defaults,
                     )?;
@@ -2374,8 +2400,8 @@ impl GooseAttack {
                     }
 
                     self.metrics.requests = HashMap::new();
-                    self.metrics.initialize_task_metrics(
-                        &self.task_sets,
+                    self.metrics.initialize_transaction_metrics(
+                        &self.scenarios,
                         &self.configuration,
                         &self.defaults,
                     )?;
@@ -2517,14 +2543,16 @@ impl GooseAttack {
                         }
                     }
                 }
-                GooseMetric::Task(raw_task) => {
+                GooseMetric::Transaction(raw_transaction) => {
                     // Store a new metric.
-                    self.metrics.tasks[raw_task.taskset_index][raw_task.task_index]
-                        .set_time(raw_task.run_time, raw_task.success);
+                    self.metrics.transactions[raw_transaction.scenario_index]
+                        [raw_transaction.transaction_index]
+                        .set_time(raw_transaction.run_time, raw_transaction.success);
 
                     if !self.configuration.report_file.is_empty() {
-                        self.graph_data
-                            .record_tasks_per_second((raw_task.elapsed / 1000) as usize);
+                        self.graph_data.record_transactions_per_second(
+                            (raw_transaction.elapsed / 1000) as usize,
+                        );
                     }
                 }
             }
@@ -2899,24 +2927,24 @@ impl GooseAttack {
                 co_responses_template = "".to_string();
             }
 
-            // Only build the tasks template if --no-task-metrics isn't enabled.
-            let tasks_template: String;
-            if !self.configuration.no_task_metrics {
-                let mut task_metrics = Vec::new();
+            // Only build the transactions template if --no-transaction-metrics isn't enabled.
+            let transactions_template: String;
+            if !self.configuration.no_transaction_metrics {
+                let mut transaction_metrics = Vec::new();
                 let mut aggregate_total_count = 0;
                 let mut aggregate_fail_count = 0;
-                let mut aggregate_task_time_counter: usize = 0;
-                let mut aggregate_task_time_minimum: usize = 0;
-                let mut aggregate_task_time_maximum: usize = 0;
-                let mut aggregate_task_times: BTreeMap<usize, usize> = BTreeMap::new();
-                for (task_set_counter, task_set) in self.metrics.tasks.iter().enumerate() {
-                    for (task_counter, task) in task_set.iter().enumerate() {
-                        if task_counter == 0 {
-                            // Only the taskset_name is used for task sets.
-                            task_metrics.push(report::TaskMetric {
-                                is_task_set: true,
-                                task: "".to_string(),
-                                name: task.taskset_name.to_string(),
+                let mut aggregate_transaction_time_counter: usize = 0;
+                let mut aggregate_transaction_time_minimum: usize = 0;
+                let mut aggregate_transaction_time_maximum: usize = 0;
+                let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
+                for (scenario_counter, scenario) in self.metrics.transactions.iter().enumerate() {
+                    for (transaction_counter, transaction) in scenario.iter().enumerate() {
+                        if transaction_counter == 0 {
+                            // Only the scenario_name is used for scenarios.
+                            transaction_metrics.push(report::TransactionMetric {
+                                is_scenario: true,
+                                transaction: "".to_string(),
+                                name: transaction.scenario_name.to_string(),
                                 number_of_requests: 0,
                                 number_of_failures: 0,
                                 response_time_average: "".to_string(),
@@ -2926,38 +2954,42 @@ impl GooseAttack {
                                 failures_per_second: "".to_string(),
                             });
                         }
-                        let total_run_count = task.success_count + task.fail_count;
+                        let total_run_count = transaction.success_count + transaction.fail_count;
                         let (requests_per_second, failures_per_second) = per_second_calculations(
                             self.metrics.duration,
                             total_run_count,
-                            task.fail_count,
+                            transaction.fail_count,
                         );
-                        let average = match task.counter {
+                        let average = match transaction.counter {
                             0 => 0.00,
-                            _ => task.total_time as f32 / task.counter as f32,
+                            _ => transaction.total_time as f32 / transaction.counter as f32,
                         };
-                        task_metrics.push(report::TaskMetric {
-                            is_task_set: false,
-                            task: format!("{}.{}", task_set_counter, task_counter),
-                            name: task.task_name.to_string(),
+                        transaction_metrics.push(report::TransactionMetric {
+                            is_scenario: false,
+                            transaction: format!("{}.{}", scenario_counter, transaction_counter),
+                            name: transaction.transaction_name.to_string(),
                             number_of_requests: total_run_count,
-                            number_of_failures: task.fail_count,
+                            number_of_failures: transaction.fail_count,
                             response_time_average: format!("{:.2}", average),
-                            response_time_minimum: task.min_time,
-                            response_time_maximum: task.max_time,
+                            response_time_minimum: transaction.min_time,
+                            response_time_maximum: transaction.max_time,
                             requests_per_second: format!("{:.2}", requests_per_second),
                             failures_per_second: format!("{:.2}", failures_per_second),
                         });
 
                         aggregate_total_count += total_run_count;
-                        aggregate_fail_count += task.fail_count;
-                        aggregate_task_times =
-                            merge_times(aggregate_task_times, task.times.clone());
-                        aggregate_task_time_counter += &task.counter;
-                        aggregate_task_time_minimum =
-                            update_min_time(aggregate_task_time_minimum, task.min_time);
-                        aggregate_task_time_maximum =
-                            update_max_time(aggregate_task_time_maximum, task.max_time);
+                        aggregate_fail_count += transaction.fail_count;
+                        aggregate_transaction_times =
+                            merge_times(aggregate_transaction_times, transaction.times.clone());
+                        aggregate_transaction_time_counter += &transaction.counter;
+                        aggregate_transaction_time_minimum = update_min_time(
+                            aggregate_transaction_time_minimum,
+                            transaction.min_time,
+                        );
+                        aggregate_transaction_time_maximum = update_max_time(
+                            aggregate_transaction_time_maximum,
+                            transaction.max_time,
+                        );
                     }
                 }
 
@@ -2967,9 +2999,9 @@ impl GooseAttack {
                         aggregate_total_count,
                         aggregate_fail_count,
                     );
-                task_metrics.push(report::TaskMetric {
-                    is_task_set: false,
-                    task: "".to_string(),
+                transaction_metrics.push(report::TransactionMetric {
+                    is_scenario: false,
+                    transaction: "".to_string(),
                     name: "Aggregated".to_string(),
                     number_of_requests: aggregate_total_count,
                     number_of_failures: aggregate_fail_count,
@@ -2977,28 +3009,28 @@ impl GooseAttack {
                         "{:.2}",
                         raw_aggregate_response_time_counter as f32 / aggregate_total_count as f32
                     ),
-                    response_time_minimum: aggregate_task_time_minimum,
-                    response_time_maximum: aggregate_task_time_maximum,
+                    response_time_minimum: aggregate_transaction_time_minimum,
+                    response_time_maximum: aggregate_transaction_time_maximum,
                     requests_per_second: format!("{:.2}", aggregate_requests_per_second),
                     failures_per_second: format!("{:.2}", aggregate_failures_per_second),
                 });
-                let mut tasks_rows = Vec::new();
-                // Compile the task metrics template.
-                for metric in task_metrics {
-                    tasks_rows.push(report::task_metrics_row(metric));
+                let mut transactions_rows = Vec::new();
+                // Compile the transaction metrics template.
+                for metric in transaction_metrics {
+                    transactions_rows.push(report::transaction_metrics_row(metric));
                 }
 
-                tasks_template = report::task_metrics_template(
-                    &tasks_rows.join("\n"),
+                transactions_template = report::transaction_metrics_template(
+                    &transactions_rows.join("\n"),
                     self.graph_data
-                        .get_tasks_per_second_graph(!self.configuration.no_granular_report)
+                        .get_transactions_per_second_graph(!self.configuration.no_granular_report)
                         .get_markup(&self.metrics.history, test_start_time),
                 );
             } else {
-                tasks_template = "".to_string();
+                transactions_template = "".to_string();
             }
 
-            // Only build the tasks template if --no-task-metrics isn't enabled.
+            // Only build the transactions template if --no-transaction-metrics isn't enabled.
             let errors_template: String = if !self.metrics.errors.is_empty() {
                 let mut error_rows = Vec::new();
                 for error in self.metrics.errors.values() {
@@ -3076,7 +3108,7 @@ impl GooseAttack {
                     raw_responses_template: &raw_responses_rows.join("\n"),
                     co_requests_template: &co_requests_template,
                     co_responses_template: &co_responses_template,
-                    tasks_template: &tasks_template,
+                    transactions_template: &transactions_template,
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
                     graph_rps_template: &self

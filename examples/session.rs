@@ -34,15 +34,15 @@ struct AuthenticationResponse {
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
     GooseAttack::initialize()?
-        // In this example, we only create a single taskset, named "WebsiteUser".
-        .register_taskset(
-            taskset!("WebsiteUser")
-                // After each task runs, sleep randomly from 5 to 15 seconds.
+        // In this example, we only create a single scenario, named "WebsiteUser".
+        .register_scenario(
+            scenario!("WebsiteUser")
+                // After each transaction runs, sleep randomly from 5 to 15 seconds.
                 .set_wait_time(Duration::from_secs(5), Duration::from_secs(15))?
-                // This task only runs one time when the user first starts.
-                .register_task(task!(website_signup).set_on_start())
-                // These next two tasks run repeatedly as long as the load test is running.
-                .register_task(task!(authenticated_index)),
+                // This transaction only runs one time when the user first starts.
+                .register_transaction(transaction!(website_signup).set_on_start())
+                // These next two transactions run repeatedly as long as the load test is running.
+                .register_transaction(transaction!(authenticated_index)),
         )
         .execute()
         .await?;
@@ -50,10 +50,10 @@ async fn main() -> Result<(), GooseError> {
     Ok(())
 }
 
-/// Demonstrates how to log in and set a session when a user starts. We flag this task as an
-/// on_start task when registering it above. This means it only runs one time
+/// Demonstrates how to log in and set a session when a user starts. We flag this transaction as an
+/// on_start transaction when registering it above. This means it only runs one time
 /// per user, when the user thread first starts.
-async fn website_signup(user: &mut GooseUser) -> GooseTaskResult {
+async fn website_signup(user: &mut GooseUser) -> TransactionResult {
     let params = [("username", "test_user"), ("password", "")];
     let response = user
         .post_form("/signup", &params)
@@ -69,8 +69,8 @@ async fn website_signup(user: &mut GooseUser) -> GooseTaskResult {
     Ok(())
 }
 
-/// A very simple task that simply loads the front page.
-async fn authenticated_index(user: &mut GooseUser) -> GooseTaskResult {
+/// A very simple transaction that simply loads the front page.
+async fn authenticated_index(user: &mut GooseUser) -> TransactionResult {
     // This will panic if the session is missing or if the session is not of the right type.
     // Use `get_session_data` to handle a missing session.
     let session = user.get_session_data_unchecked::<Session>();
