@@ -1630,7 +1630,7 @@ impl GooseUser {
 
         if request.error_on_fail && !request_metric.success {
             error!("{:?} {}", &path, &request_metric.error);
-            return Err(GooseTaskError::RequestFailed {
+            return Err(TransactionError::RequestFailed {
                 raw_request: request_metric,
             });
         }
