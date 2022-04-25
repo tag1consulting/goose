@@ -91,6 +91,20 @@ impl TestPlan {
         }
         max_users
     }
+
+    // Determine the total number of users required by the test plan.
+    pub(crate) fn total_users(&self) -> usize {
+        let mut total_users: usize = 0;
+        let mut previous: usize = 0;
+        for step in &self.steps {
+            // Add to total_users every time there is an increase.
+            if step.0 > previous {
+                total_users += step.0 - previous;
+            }
+            previous = step.0
+        }
+        total_users
+    }
 }
 
 /// Implement [`FromStr`] to convert `"users,timespan"` string formatted test plans to Goose's

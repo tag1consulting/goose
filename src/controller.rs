@@ -1189,7 +1189,7 @@ impl GooseAttack {
                             {
                                 self.metrics.history.push(TestPlanHistory::step(
                                     TestPlanStepAction::Decreasing,
-                                    self.metrics.users,
+                                    goose_attack_run_state.active_users,
                                 ));
                                 self.set_attack_phase(
                                     goose_attack_run_state,
