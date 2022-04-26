@@ -139,7 +139,7 @@ fn validate_error(
     assert!(a_404_metrics.success_count == 0);
 
     // Verify that Goose started the correct number of users.
-    assert!(goose_metrics.maximum_users == configuration.users.unwrap());
+    assert!(goose_metrics.total_users == configuration.users.unwrap());
 }
 
 // Returns the appropriate scenario needed to build these tests.

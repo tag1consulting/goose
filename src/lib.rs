@@ -305,7 +305,7 @@ struct GooseAttackRunState {
     /// A counter tracking how many [`GooseUser`](./goose/struct.GooseUser.html)s are running.
     active_users: usize,
     /// A counter tracking many users have been stopped.
-    stopped_users: usize,
+    completed_users: usize,
     /// This variable accounts for time spent doing things which is then subtracted from
     /// the time sleeping to avoid an unintentional drift in events that are supposed to
     /// happen regularly.
@@ -1280,7 +1280,7 @@ impl GooseAttack {
             adjust_user_timer: std_now,
             adjust_user_in_ms: 0,
             active_users: 0,
-            stopped_users: 0,
+            completed_users: 0,
             drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
             metrics_rx,
@@ -1309,6 +1309,31 @@ impl GooseAttack {
         util::setup_ctrlc_handler(&goose_attack_run_state.canceled);
 
         Ok(goose_attack_run_state)
+    }
+
+    // Add delay before starting next step if there's time remaining.
+    async fn end_of_step_delay(&mut self) {
+        // Determine how long has elapsed since this step started.
+        let elapsed = if let Some(step_started) = self.step_started {
+            step_started.elapsed().as_millis() as u64
+        } else if let Some(started) = self.started {
+            started.elapsed().as_millis() as u64
+        } else {
+            unreachable!("the load test had to have started");
+        };
+
+        // Determine if there's remaining time in this step.
+        if elapsed < self.test_plan.steps[self.test_plan.current].1 as u64 {
+            let remainder = self.test_plan.steps[self.test_plan.current].1 as u64 - elapsed;
+            let maximum_sleep = 1_000;
+            let sleep_duration = if remainder > maximum_sleep {
+                // Do not sleep longer than 1s.
+                Duration::from_millis(maximum_sleep)
+            } else {
+                Duration::from_millis(remainder)
+            };
+            tokio::time::sleep(sleep_duration).await
+        }
     }
 
     // Increase the number of active [`GooseUser`](./goose/struct.GooseUser.html) threads in the
@@ -1362,8 +1387,7 @@ impl GooseAttack {
             };
 
             // Remember which task group this user is using.
-            thread_user.weighted_users_index =
-                goose_attack_run_state.active_users + goose_attack_run_state.stopped_users;
+            thread_user.weighted_users_index = self.metrics.total_users;
 
             // Create a per-thread channel allowing parent thread to control child threads.
             let (parent_sender, thread_receiver): (
@@ -1455,18 +1479,14 @@ impl GooseAttack {
         };
 
         if all_users_launched {
-            // Pause a tenth of a second waiting for the final user to fully start up.
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // Pause up to 1 additional second before moving onto the next step to match
+            // what's defined in the test plan.
+            self.end_of_step_delay().await;
 
             if self.attack_mode == AttackMode::Worker {
                 info!(
                     "[{}] launched {} users...",
                     get_worker_id(),
-                    self.test_plan.steps[self.test_plan.current].0
-                );
-            } else {
-                info!(
-                    "launched {} users...",
                     self.test_plan.steps[self.test_plan.current].0
                 );
             }
@@ -1523,10 +1543,6 @@ impl GooseAttack {
         // Retreive the number of users configured in the previous step.
         let previous_users = self.test_plan.steps[self.test_plan.current - 1].0;
 
-        // Sanity check: decrease_attack can only be called if the number of users is decreasing
-        // in the current step.
-        debug_assert!(self.test_plan.steps[self.test_plan.current].0 < previous_users);
-
         // Divide the number of users to decrease by the time configured to decrease them.
         let decrease_rate: f32 = (previous_users - self.test_plan.steps[self.test_plan.current].0)
             as f32
@@ -1553,17 +1569,17 @@ impl GooseAttack {
                     Ok(_) => {
                         debug!(
                             "telling user {} to exit",
-                            goose_attack_run_state.stopped_users
+                            goose_attack_run_state.completed_users
                         );
                     }
                     Err(e) => {
                         info!(
                             "failed to tell user {} to exit: {}",
-                            goose_attack_run_state.stopped_users, e
+                            goose_attack_run_state.completed_users, e
                         );
                     }
                 }
-                goose_attack_run_state.stopped_users += 1;
+                goose_attack_run_state.completed_users += 1;
                 goose_attack_run_state.active_users -= 1;
             }
         } else {
@@ -1641,6 +1657,10 @@ impl GooseAttack {
         } else if goose_attack_run_state.active_users
             <= self.test_plan.steps[self.test_plan.current].0
         {
+            // Pause up to 1 additional second before moving onto the next step to match
+            // what's defined in the test plan.
+            self.end_of_step_delay().await;
+
             // Moving to the next phase, reset adjust_user_in_ms.
             goose_attack_run_state.adjust_user_in_ms = 0;
 
@@ -1825,10 +1845,7 @@ impl GooseAttack {
                     }
                 }
                 // By reaching the Shutdown phase, break out of the GooseAttack loop.
-                AttackPhase::Shutdown => {
-                    self.update_duration();
-                    break;
-                }
+                AttackPhase::Shutdown => break,
             }
 
             // Record current users for users per second graph in HTML report.

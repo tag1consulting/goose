@@ -211,7 +211,7 @@ fn validate_closer_test(
     assert!(difference >= -2 && difference <= 2);
 
     // Verify that Goose started the correct number of users.
-    assert!(goose_metrics.maximum_users == configuration.users.unwrap());
+    assert!(goose_metrics.total_users == configuration.users.unwrap());
 }
 
 // Helper to run the test, takes a flag for indicating if running in standalone

@@ -138,7 +138,7 @@ fn validate_one_scenario(
     assert!(about_metrics.fail_count == 0);
 
     // Users were correctly configured through the controller.
-    assert!(goose_metrics.maximum_users == USERS);
+    assert!(goose_metrics.total_users == USERS);
 
     // Host was not configured at start time.
     assert!(configuration.host.is_empty());
