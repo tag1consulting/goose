@@ -2494,10 +2494,10 @@ impl<'a> GooseRequestBuilder<'a> {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut a_task = transaction!(task_function);
+    /// let mut a_transaction = transaction!(transaction_function);
     ///
     /// // Make a named request.
-    /// async fn task_function(user: &mut GooseUser) -> TransactionResult {
+    /// async fn transaction_function(user: &mut GooseUser) -> TransactionResult {
     ///     // Manually create a GooseRequestBuilder object.
     ///     let goose_request = GooseRequest::builder()
     ///         // Set a relative path to request.

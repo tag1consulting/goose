@@ -1406,8 +1406,6 @@ impl GooseAttack {
                 None
             };
 
-                //// Copy the appropriate scenario into the thread.
-                //let thread_scenario = self.scenarios[thread_user.scenarios_index].clone();
             // Copy the GooseUser-to-parent sender channel, used by all threads.
             thread_user.channel_to_parent =
                 Some(goose_attack_run_state.all_threads_metrics_tx.clone());

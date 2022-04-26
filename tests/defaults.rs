@@ -161,10 +161,6 @@ fn validate_test(
 
             // Requests are made while GooseUsers are increasing or maintaining.
             // Verify that the test ran as long as it was supposed to.
-            eprintln!(
-                "duration: {}, TEST_PLAN_RUN_TIME: {}",
-                goose_metrics.duration, TEST_PLAN_RUN_TIME
-            );
             assert!(goose_metrics.duration == TEST_PLAN_RUN_TIME);
 
             // Be sure there were no more requests made than the throttle should allow.
@@ -733,7 +729,7 @@ async fn test_defaults_no_metrics() {
 
     // Confirm that we did not track metrics.
     assert!(goose_metrics.requests.is_empty());
-    assert!(goose_metrics.tasks.is_empty());
+    assert!(goose_metrics.transactions.is_empty());
     assert!(goose_metrics.total_users == USERS);
     assert!(goose_metrics.duration == RUN_TIME);
 }
