@@ -72,7 +72,7 @@ const DEFAULT_PORT: &str = "5115";
 /// -D, --debug-log NAME        Sets debug log file name
 /// --debug-format FORMAT       Sets debug log format (csv, json, raw, pretty)
 /// --no-debug-body             Do not include the response body in the debug log
-/// --status-codes              Tracks additional status code metrics
+/// --no-status-codes           Do not track status code metrics
 ///
 /// Advanced:
 /// --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60;0,30")
@@ -202,10 +202,10 @@ pub struct GooseConfiguration {
     /// Do not include the response body in the debug log
     #[options(no_short)]
     pub no_debug_body: bool,
-    /// Tracks additional status code metrics
+    /// Do not track status code metrics
     // Add a blank line and then an Advanced: header after this option
     #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
-    pub status_codes: bool,
+    pub no_status_codes: bool,
 
     /// Defines a more complex test plan ("10,60;0,30")
     #[options(no_short, meta = "\"TESTPLAN\"")]
@@ -349,8 +349,8 @@ pub(crate) struct GooseDefaults {
     pub timeout: Option<String>,
     /// An optional default for coordinated omission mitigation.
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
-    /// An optional default to track additional status code metrics.
-    pub status_codes: Option<bool>,
+    /// An optional default to not track status code metrics.
+    pub no_status_codes: Option<bool>,
     /// An optional default maximum requests per second.
     pub throttle_requests: Option<usize>,
     /// An optional default to follows base_url redirect with subsequent request.
@@ -455,8 +455,8 @@ pub enum GooseDefault {
     Timeout,
     /// An optional default for not setting the gzip Accept-Encoding header.
     NoGzip,
-    /// An optional default to track additional status code metrics.
-    StatusCodes,
+    /// An optional default to not track status code metrics.
+    NoStatusCodes,
     /// An optional default maximum requests per second.
     ThrottleRequests,
     /// An optional default to follows base_url redirect with subsequent request.
@@ -562,7 +562,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoWebSocket`]
 ///  - [`GooseDefault::NoAutoStart`]
 ///  - [`GooseDefault::NoGzip`]
-///  - [`GooseDefault::StatusCodes`]
+///  - [`GooseDefault::NoStatusCodes`]
 ///  - [`GooseDefault::StickyFollow`]
 ///  - [`GooseDefault::Manager`]
 ///  - [`GooseDefault::Worker`]
@@ -659,7 +659,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
-            | GooseDefault::StatusCodes
+            | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
@@ -753,7 +753,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
-            | GooseDefault::StatusCodes
+            | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
@@ -812,7 +812,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
-            GooseDefault::StatusCodes => self.defaults.status_codes = Some(value),
+            GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::Manager => self.defaults.manager = Some(value),
             GooseDefault::NoHashCheck => self.defaults.no_hash_check = Some(value),
@@ -912,7 +912,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
-            | GooseDefault::StatusCodes
+            | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
@@ -1013,7 +1013,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
-            | GooseDefault::StatusCodes
+            | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::Manager
             | GooseDefault::NoHashCheck
@@ -1661,20 +1661,20 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
-        // Configure `status_codes`.
-        self.status_codes = self
+        // Configure `no_status_codes`.
+        self.no_status_codes = self
             .get_value(vec![
                 // Use --status_codes if set.
                 GooseValue {
-                    value: Some(self.status_codes),
-                    filter: !self.status_codes,
-                    message: "status_codes",
+                    value: Some(self.no_status_codes),
+                    filter: !self.no_status_codes,
+                    message: "no_status_codes",
                 },
                 // Otherwise use GooseDefault if set.
                 GooseValue {
-                    value: defaults.status_codes,
-                    filter: defaults.status_codes.is_none() || self.worker,
-                    message: "status_codes",
+                    value: defaults.no_status_codes,
+                    filter: defaults.no_status_codes.is_none() || self.worker,
+                    message: "no_status_codes",
                 },
             ])
             .unwrap_or(false);
@@ -2157,11 +2157,11 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             // Can't set `status_codes` on Worker.
-            } else if self.status_codes {
+            } else if self.no_status_codes {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.status_codes".to_string(),
-                    value: self.status_codes.to_string(),
-                    detail: "`configuration.status_codes` can not be set in Worker mode."
+                    option: "`configuration.no_status_codes".to_string(),
+                    value: self.no_status_codes.to_string(),
+                    detail: "`configuration.no_status_codes` can not be set in Worker mode."
                         .to_string(),
                 });
             // Can't set `no_autostart` on Worker.
@@ -2378,11 +2378,11 @@ impl GooseConfiguration {
         // Validate `no_metrics`.
         if self.no_metrics {
             // Status codes are not collected if metrics are disabled.
-            if self.status_codes {
+            if self.no_status_codes {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.no_metrics`".to_string(),
                     value: true.to_string(),
-                    detail: "`configuration.no_metrics` can not be set with `configuration.status_codes`.".to_string(),
+                    detail: "`configuration.no_metrics` can not be set with `configuration.no_status_codes`.".to_string(),
                 });
             // Request log can't be written if metrics are disabled.
             } else if !self.request_log.is_empty() {
@@ -2637,7 +2637,7 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoDebugBody, true)
             .unwrap()
-            .set_default(GooseDefault::StatusCodes, true)
+            .set_default(GooseDefault::NoStatusCodes, true)
             .unwrap()
             .set_default(
                 GooseDefault::CoordinatedOmissionMitigation,
@@ -2693,7 +2693,7 @@ mod test {
         assert!(goose_attack.defaults.error_format == Some(GooseLogFormat::Csv));
         assert!(goose_attack.defaults.debug_log == Some(debug_log));
         assert!(goose_attack.defaults.debug_format == Some(GooseLogFormat::Csv));
-        assert!(goose_attack.defaults.status_codes == Some(true));
+        assert!(goose_attack.defaults.no_status_codes == Some(true));
         assert!(
             goose_attack.defaults.co_mitigation
                 == Some(GooseCoordinatedOmissionMitigation::Disabled)

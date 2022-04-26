@@ -22,7 +22,8 @@
     o internal `AttackPhase`s renamed: `Starting` -> `Increase`, `Running` -> `Maintain`, `Stopping` -> `Decrease`
  - [#449](https://github.com/tag1consulting/goose/pull/449) **API change**: rename `GooseTaskSet` -> `Scenario`, `GooseTask` -> `Transaction`, `GooseTaskResult` -> `TransationResult`, `GooseTaskEror` -> `TransactionError`, `WeightedGooseTasks` -> `WeightedTransactions`, `GooseTaskFunction` -> `TransactionFunction`, `test_start_task` -> `test_start_transaction`, `test_stop_task` -> `test_stop_transaction`, `register_task` -> `register_transaction`, `task!` -> `transaction!`, `--no-task-metrics` -> `--no-transaction-metrics`, `GooseTaskError` -> `TransactionError`
  - [#450](https://github.com/tag1consulting/goose/pull/450) add support for variable speed and multiple decrease AttackPhases
-    
+ - [#452](https://github.com/tag1consulting/goose/pull/452) **API change**: rename `--status-codes` to `--no-status-codes` and enable collecation and summary of status codes by default
+
 ## 0.15.2 December 13, 2021
  - [#391](https://github.com/tag1consulting/goose/pull/391) properly sleep for configured `set_wait_time()` walking regularly to exit quickly if the load test ends
  - [#394](https://github.com/tag1consulting/goose/pull/394) add additional graphs to the HTML report: errors per second, average response time, active users, active tasks
