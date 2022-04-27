@@ -321,9 +321,11 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         * 1_000.0;
     let maximum_hatched = hatch_rate * goose_attack.test_plan.steps[1].1 as f32;
     if maximum_hatched < goose_attack.configuration.users.unwrap() as f32 {
-        goose_attack.metrics.users = maximum_hatched as usize;
+        goose_attack.metrics.maximum_users = maximum_hatched as usize;
+        goose_attack.metrics.total_users = maximum_hatched as usize;
     } else {
-        goose_attack.metrics.users = goose_attack.configuration.users.unwrap();
+        goose_attack.metrics.maximum_users = goose_attack.configuration.users.unwrap();
+        goose_attack.metrics.total_users = goose_attack.configuration.users.unwrap();
     }
 
     // Worker control loop.

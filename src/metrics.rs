@@ -842,11 +842,13 @@ pub struct GooseMetrics {
     pub history: Vec<TestPlanHistory>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
-    /// Total number of users simulated during this load test.
+    /// Maximum number of users simulated during this load test.
     ///
     /// This value may be smaller than what was configured at start time if the test
     /// didn't run long enough for all configured users to start.
-    pub users: usize,
+    pub maximum_users: usize,
+    /// Total number of users simulated during this load test.
+    pub total_users: usize,
     /// Tracks details about each request made during the load test.
     ///
     /// Can be disabled with the `--no-metrics` run-time option, or with
@@ -2120,7 +2122,7 @@ impl GooseMetrics {
                     )?;
                 }
                 // For decreasing show the new number of users from the current number of users.
-                TestPlanStepAction::Decreasing => {
+                TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
                     writeln!(
                         fmt,
                         " {:<12} {} - {} ({:02}:{:02}:{:02}, {} <- {})",
@@ -2182,17 +2184,9 @@ impl Serialize for GooseMetrics {
     {
         let mut s = serializer.serialize_struct("GooseMetrics", 10)?;
         s.serialize_field("hash", &self.hash)?;
-        // Convert started field to a unix timestamp.
-        /* @TODO: Fixme
-        let timestamp = if let Some(started) = self.started {
-            started.timestamp()
-        } else {
-            0
-        };
-        s.serialize_field("started", &timestamp)?;
-        */
         s.serialize_field("duration", &self.duration)?;
-        s.serialize_field("users", &self.users)?;
+        s.serialize_field("maximum_users", &self.maximum_users)?;
+        s.serialize_field("total_users", &self.total_users)?;
         s.serialize_field("requests", &self.requests)?;
         s.serialize_field("transactions", &self.transactions)?;
         s.serialize_field("errors", &self.errors)?;
@@ -2364,8 +2358,8 @@ impl GooseAttack {
         Ok(())
     }
 
-    // When the [`GooseAttack`](./struct.GooseAttack.html) goes from the `Starting`
-    // phase to the `Running` phase, optionally flush metrics.
+    // When the [`GooseAttack`](./struct.GooseAttack.html) goes from the `Increasing`
+    // phase to the `Maintaining` phase, optionally flush metrics.
     pub(crate) async fn reset_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -2388,9 +2382,9 @@ impl GooseAttack {
 
                     if self.metrics.display_metrics {
                         // Users is required here so unwrap() is safe.
-                        if self.metrics.users < users {
+                        if goose_attack_run_state.active_users < users {
                             println!(
-                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", self.metrics.users, users
+                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", goose_attack_run_state.active_users, users
                             );
                         } else {
                             println!(
@@ -2405,20 +2399,22 @@ impl GooseAttack {
                         &self.configuration,
                         &self.defaults,
                     )?;
-                } else if self.metrics.users < users {
+                } else if goose_attack_run_state.active_users < users {
                     println!(
                         "{} of {} users hatched, timer expired.\n",
-                        self.metrics.users, users
+                        goose_attack_run_state.active_users, users
                     );
                 } else {
-                    println!("All {} users hatched.\n", self.metrics.users);
+                    println!(
+                        "All {} users hatched.\n",
+                        goose_attack_run_state.active_users
+                    );
                 }
+                // Restart the timer now that all threads are launched.
+                self.started = Some(std::time::Instant::now());
             } else {
-                println!("{} users hatched.", self.metrics.users);
+                println!("{} users hatched.", goose_attack_run_state.active_users);
             }
-
-            // Restart the timer now that all threads are launched.
-            self.started = Some(std::time::Instant::now());
         }
 
         Ok(())
@@ -2637,7 +2633,7 @@ impl GooseAttack {
             let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
             // Prepare report summary variables.
-            let users = self.metrics.users.to_string();
+            let users = self.metrics.maximum_users.to_string();
 
             let mut steps_overview = String::new();
             for step in self.metrics.history.windows(2) {
@@ -2675,7 +2671,7 @@ impl GooseAttack {
                         ));
                     }
                     // For decreasing show the new number of users from the current number of users.
-                    TestPlanStepAction::Decreasing => {
+                    TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
                         steps_overview.push_str(&format!(
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
                             step[0].action,

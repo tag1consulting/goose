@@ -81,15 +81,18 @@ impl TestPlan {
         }
     }
 
-    // Determine the maximum number of users configured during the test plan.
-    pub(crate) fn max_users(&self) -> usize {
-        let mut max_users = 0;
+    // Determine the total number of users required by the test plan.
+    pub(crate) fn total_users(&self) -> usize {
+        let mut total_users: usize = 0;
+        let mut previous: usize = 0;
         for step in &self.steps {
-            if step.0 > max_users {
-                max_users = step.0;
+            // Add to total_users every time there is an increase.
+            if step.0 > previous {
+                total_users += step.0 - previous;
             }
+            previous = step.0
         }
-        max_users
+        total_users
     }
 }
 
@@ -143,8 +146,10 @@ pub enum TestPlanStepAction {
     Increasing,
     /// A test plan step that is maintaining the number of GooseUser threads.
     Maintaining,
-    /// A test plan step that is increasing the number of GooseUser threads.
+    /// A test plan step that is decreasing the number of GooseUser threads.
     Decreasing,
+    /// A test plan step that is canceling all GooseUser threads.
+    Canceling,
     /// The final step indicating that the load test is finished.
     Finished,
 }

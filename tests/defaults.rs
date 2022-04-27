@@ -25,11 +25,11 @@ const DEBUG_LOG: &str = "debug-test.log";
 const LOG_FORMAT: GooseLogFormat = GooseLogFormat::Raw;
 const THROTTLE_REQUESTS: usize = 10;
 const EXPECT_WORKERS: usize = 2;
-// Increase, Increase, Maintain, Increase, Decrease
-const TEST_PLAN: &str = "4,1;8,1;12,1;12,1;14,1;0,0";
-const TEST_PLAN_MAX_USERS: usize = 14;
-const TEST_PLAN_RUN_TIME: usize = 5;
-const TEST_PLAN_STEPS: usize = 6;
+// Increase, Increase, Decrease, Increase, Maintain, Decrease, Decrease
+const TEST_PLAN: &str = "4,1;8,1;4,2;10,2;10,1;4,1;0,1";
+const TEST_PLAN_MAX_USERS: usize = 10;
+const TEST_PLAN_RUN_TIME: usize = 9;
+const TEST_PLAN_STEPS: usize = 7;
 
 // There are multiple test variations in this file.
 #[derive(Clone)]
@@ -134,7 +134,7 @@ fn validate_test(
     match test_type {
         TestType::NotTestPlan => {
             // Verify that Goose started the correct number of users.
-            assert!(goose_metrics.users == USERS);
+            assert!(goose_metrics.total_users == USERS);
 
             // Requests are made while GooseUsers are hatched, and then for run_time seconds.
             // Verify that the test ran as long as it was supposed to.
@@ -153,7 +153,7 @@ fn validate_test(
                     max_users = step.users;
                 }
             }
-            assert!(goose_metrics.users == max_users);
+            assert!(goose_metrics.maximum_users == max_users);
             assert!(TEST_PLAN_MAX_USERS == max_users);
 
             // Be sure there's history for all load test steps. Add +1 to include "shutdown".
@@ -730,6 +730,6 @@ async fn test_defaults_no_metrics() {
     // Confirm that we did not track metrics.
     assert!(goose_metrics.requests.is_empty());
     assert!(goose_metrics.transactions.is_empty());
-    assert!(goose_metrics.users == USERS);
+    assert!(goose_metrics.total_users == USERS);
     assert!(goose_metrics.duration == RUN_TIME);
 }

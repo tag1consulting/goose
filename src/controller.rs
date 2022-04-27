@@ -1189,7 +1189,7 @@ impl GooseAttack {
                             {
                                 self.metrics.history.push(TestPlanHistory::step(
                                     TestPlanStepAction::Decreasing,
-                                    self.metrics.users,
+                                    goose_attack_run_state.active_users,
                                 ));
                                 self.set_attack_phase(
                                     goose_attack_run_state,
@@ -1215,11 +1215,15 @@ impl GooseAttack {
                             // If load test is Idle, there are no metrics to display.
                             if self.attack_phase == AttackPhase::Idle {
                                 self.metrics.display_metrics = false;
+                                self.set_attack_phase(
+                                    goose_attack_run_state,
+                                    AttackPhase::Decrease,
+                                );
+                            } else {
+                                self.cancel_attack(goose_attack_run_state).await?;
                             }
                             // Shutdown after stopping.
                             goose_attack_run_state.shutdown_after_stop = true;
-                            // Properly stop any running GooseAttack first.
-                            self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
                             // Confirm shut down to Controller.
                             self.reply_to_controller(
                                 message,
