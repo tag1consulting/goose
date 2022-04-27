@@ -286,7 +286,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     ));
                 }
                 // For decreasing show the new number of users from the current number of users.
-                TestPlanStepAction::Decreasing => {
+                TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
                     steps.push_str(&format!(
                         r#"[
                             {{
@@ -1660,6 +1660,32 @@ mod test {
                                 itemStyle: {{ color: 'rgba(179, 65, 65, 0.05)' }},
                             }},
                             {{
+                                xAxis: '{cancelling}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{cancelling}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{cancelling}'
+                            }}
+                        ],[
+                            {{
+                                xAxis: '{cancelling}',
+                                itemStyle: {{ borderColor: 'rgba(179, 65, 65, 0.25)', borderWidth: 1 }},
+                            }},
+                            {{
+                                xAxis: '{cancelling}'
+                            }}
+                        ],
+                        [
+                            {{
+                                xAxis: '{cancelling}',
+                                itemStyle: {{ color: 'rgba(179, 65, 65, 0.05)' }},
+                            }},
+                            {{
                                 xAxis: '{finishing}'
                             }}
                         ],
@@ -1690,8 +1716,11 @@ mod test {
             decreasing = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 33).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
-            finishing = Local
+            cancelling = Local
                 .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
+                .format("%Y-%m-%d %H:%M:%S"),
+            finishing = Local
+                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 35).timestamp(), 0)
                 .format("%Y-%m-%d %H:%M:%S"),
         ).as_str();
 
@@ -1707,8 +1736,13 @@ mod test {
                 users: 123,
             },
             TestPlanHistory {
-                action: TestPlanStepAction::Finished,
+                action: TestPlanStepAction::Canceling,
                 timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 34),
+                users: 123,
+            },
+            TestPlanHistory {
+                action: TestPlanStepAction::Finished,
+                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 35),
                 users: 123,
             },
         ];
