@@ -2122,7 +2122,7 @@ impl GooseMetrics {
                     )?;
                 }
                 // For decreasing show the new number of users from the current number of users.
-                TestPlanStepAction::Decreasing => {
+                TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
                     writeln!(
                         fmt,
                         " {:<12} {} - {} ({:02}:{:02}:{:02}, {} <- {})",
@@ -2410,12 +2410,11 @@ impl GooseAttack {
                         goose_attack_run_state.active_users
                     );
                 }
+                // Restart the timer now that all threads are launched.
+                self.started = Some(std::time::Instant::now());
             } else {
                 println!("{} users hatched.", goose_attack_run_state.active_users);
             }
-
-            // Restart the timer now that all threads are launched.
-            self.started = Some(std::time::Instant::now());
         }
 
         Ok(())
@@ -2672,7 +2671,7 @@ impl GooseAttack {
                         ));
                     }
                     // For decreasing show the new number of users from the current number of users.
-                    TestPlanStepAction::Decreasing => {
+                    TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
                         steps_overview.push_str(&format!(
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
                             step[0].action,

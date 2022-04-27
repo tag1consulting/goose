@@ -146,8 +146,10 @@ pub enum TestPlanStepAction {
     Increasing,
     /// A test plan step that is maintaining the number of GooseUser threads.
     Maintaining,
-    /// A test plan step that is increasing the number of GooseUser threads.
+    /// A test plan step that is decreasing the number of GooseUser threads.
     Decreasing,
+    /// A test plan step that is canceling all GooseUser threads.
+    Canceling,
     /// The final step indicating that the load test is finished.
     Finished,
 }

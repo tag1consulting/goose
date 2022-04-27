@@ -28,7 +28,7 @@ const EXPECT_WORKERS: usize = 2;
 // Increase, Increase, Decrease, Increase, Maintain, Decrease, Decrease
 const TEST_PLAN: &str = "4,1;8,1;4,2;10,2;10,1;4,1;0,1";
 const TEST_PLAN_MAX_USERS: usize = 10;
-const TEST_PLAN_RUN_TIME: usize = 8;
+const TEST_PLAN_RUN_TIME: usize = 9;
 const TEST_PLAN_STEPS: usize = 7;
 
 // There are multiple test variations in this file.

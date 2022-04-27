@@ -353,6 +353,8 @@ struct GooseAttackRunState {
     /// Thread-safe boolean flag indicating if the [`GooseAttack`](./struct.GooseAttack.html)
     /// has been canceled.
     canceled: Arc<AtomicBool>,
+    /// Whether or not the load test is currently canceling.
+    canceling: bool,
     /// Optional socket used to coordinate a distributed Gaggle.
     socket: Option<Socket>,
 }
@@ -1299,6 +1301,7 @@ impl GooseAttack {
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceled: Arc::new(AtomicBool::new(false)),
+            canceling: false,
             socket,
         };
 
@@ -1525,6 +1528,46 @@ impl GooseAttack {
             )
             .await;
         }
+
+        Ok(())
+    }
+
+    // Quickly abort and shut down an active [`GooseAttack`](./struct.GooseAttack.html).
+    async fn cancel_attack(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        // Determine how long has elapsed since this step started.
+        let elapsed = if let Some(step_started) = self.step_started {
+            step_started.elapsed().as_millis() as usize
+        } else if let Some(started) = self.started {
+            started.elapsed().as_millis() as usize
+        } else {
+            unreachable!("the load test had to have started");
+        };
+
+        // Reset the test_plan to stop all users quickly.
+        self.test_plan.steps = vec![
+            // Record how many active users there are currently.
+            (goose_attack_run_state.active_users, elapsed),
+            // Record how long the attack ran in this step.
+            (0, 0),
+        ];
+        // Reset the current step to what was happening when canceled.
+        self.test_plan.current = 0;
+
+        // Moving to the last phase, reset adjust_user_in_ms.
+        goose_attack_run_state.adjust_user_in_ms = 0;
+
+        // Advance to the final decrease phase.
+        self.advance_test_plan(goose_attack_run_state);
+
+        // Load test isn't just decreasing, it's canceling.
+        self.metrics
+            .history
+            .last_mut()
+            .expect("tried to cancel load test with no history")
+            .action = TestPlanStepAction::Canceling;
 
         Ok(())
     }
@@ -1864,6 +1907,7 @@ impl GooseAttack {
 
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
+                && !goose_attack_run_state.canceling
                 && goose_attack_run_state.canceled.load(Ordering::SeqCst)
             {
                 // Shutdown after stopping as the load test was canceled.
@@ -1875,11 +1919,10 @@ impl GooseAttack {
                 }
 
                 // Cleanly stop the load test.
-                self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Decrease);
-                self.metrics.history.push(TestPlanHistory::step(
-                    TestPlanStepAction::Decreasing,
-                    goose_attack_run_state.active_users,
-                ));
+                self.cancel_attack(&mut goose_attack_run_state).await?;
+
+                // Load test is actively canceling.
+                goose_attack_run_state.canceling = true;
             }
         }
 
