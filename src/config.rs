@@ -1664,7 +1664,7 @@ impl GooseConfiguration {
         // Configure `no_status_codes`.
         self.no_status_codes = self
             .get_value(vec![
-                // Use --status_codes if set.
+                // Use --no-status-codes if set.
                 GooseValue {
                     value: Some(self.no_status_codes),
                     filter: !self.no_status_codes,
@@ -2156,7 +2156,7 @@ impl GooseConfiguration {
                     detail: "`configuration.no_error_summary` can not be set in Worker mode."
                         .to_string(),
                 });
-            // Can't set `status_codes` on Worker.
+            // Can't set `no_status_codes` on Worker.
             } else if self.no_status_codes {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.no_status_codes".to_string(),
@@ -2377,15 +2377,8 @@ impl GooseConfiguration {
 
         // Validate `no_metrics`.
         if self.no_metrics {
-            // Status codes are not collected if metrics are disabled.
-            if self.no_status_codes {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_metrics`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_metrics` can not be set with `configuration.no_status_codes`.".to_string(),
-                });
             // Request log can't be written if metrics are disabled.
-            } else if !self.request_log.is_empty() {
+            if !self.request_log.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.request_log`".to_string(),
                     value: self.request_log.to_string(),
