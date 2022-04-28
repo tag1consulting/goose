@@ -204,7 +204,7 @@ pub struct GooseConfiguration {
     pub no_debug_body: bool,
     /// Do not track status code metrics
     // Add a blank line and then an Advanced: header after this option
-    #[options(no_short, help = "Tracks additional status code metrics\n\nAdvanced:")]
+    #[options(no_short, help = "Do not track status code metrics\n\nAdvanced:")]
     pub no_status_codes: bool,
 
     /// Defines a more complex test plan ("10,60;0,30")

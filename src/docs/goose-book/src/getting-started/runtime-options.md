@@ -42,7 +42,7 @@ Metrics:
   -D, --debug-log NAME        Sets debug log file name
   --debug-format FORMAT       Sets debug log format (csv, json, raw, pretty)
   --no-debug-body             Do not include the response body in the debug log
-  --status-codes              Tracks additional status code metrics
+  --no-status-codes           Do not track status code metrics
 
 Advanced:
   --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60;0,30")
