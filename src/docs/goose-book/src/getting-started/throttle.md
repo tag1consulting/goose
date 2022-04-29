@@ -11,3 +11,5 @@ In this example, Goose will launch 100 GooseUser threads, but the throttle will 
 ```bash
 $ cargo run --release -- -H http://local.dev/ -u100 -r20 --throttle-requests 5
 ```
+
+![Throttled load test](throttle.png)
