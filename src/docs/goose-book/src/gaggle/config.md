@@ -4,7 +4,7 @@
 * `--worker`: starts a Goose process in Worker mode. How many Workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
 * `--no-hash-check`: tells Goose to ignore if the load test application doesn't match between Worker(s) and the Manager. This is not recommended, and can cause the application to panic.
 
-The `--no-metrics`, `--only-summary`, `--no-reset-metrics`, `--status-codes`, and `--no-hash-check` flags must be set on the Manager. Workers inherit these flags from the Manager
+The `--no-metrics`, `--only-summary`, `--no-reset-metrics`, `--no-status-codes`, and `--no-hash-check` flags must be set on the Manager. Workers inherit these flags from the Manager
 
 # Run-time Options
 

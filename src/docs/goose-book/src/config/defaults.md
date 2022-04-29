@@ -57,7 +57,7 @@ The following defaults can be configured with a `bool`:
  - do not start WebSocket Controller thread: `GooseDefault::NoWebSocket`
  - do not autostart load test, wait instead for a Controller to start: `GooseDefault::NoAutoStart`
  - do not gzip compress requests: `GooseDefault::NoGzip`
- - track status codes: `GooseDefault::StatusCodes`
+ - do not track status codes: `GooseDefault::NoStatusCodes`
  - follow redirect of base_url: `GooseDefault::StickyFollow`
  - enable Manager mode: `GooseDefault::Manager`
  - enable Worker mode: `GooseDefault::Worker`
@@ -73,7 +73,7 @@ The following defaults can be configured with a `GooseLogFormat`:
 The following defaults can be configured with a `GooseCoordinatedOmissionMitigation`:
  - default Coordinated Omission Mitigation strategy: `GooseDefault::CoordinatedOmissionMitigation`
 
-For example, without any run-time options the following load test would automatically run against `local.dev`, logging metrics to `goose-metrics.log` and debug to `goose-debug.log`. It will automatically launch 20 users in 4 seconds, and run the load test for 15 minutes. Metrics will be displayed every minute during the test and will include additional status code metrics. The order the defaults are set is not important.
+For example, without any run-time options the following load test would automatically run against `local.dev`, logging metrics to `goose-metrics.log` and debug to `goose-debug.log`. It will automatically launch 20 users in 4 seconds, and run the load test for 15 minutes. Metrics will be displayed every minute during the test, and the status code table will be disabled. The order the defaults are set is not important.
 
 ```rust,ignore
     GooseAttack::initialize()?
@@ -87,7 +87,7 @@ For example, without any run-time options the following load test would automati
         .set_default(GooseDefault::HatchRate, 4)?
         .set_default(GooseDefault::RunTime, 900)?
         .set_default(GooseDefault::RunningMetrics, 60)?
-        .set_default(GooseDefault::StatusCodes, true)?
+        .set_default(GooseDefault::NoStatusCodes, true)?
         .execute()
         .await?;
 

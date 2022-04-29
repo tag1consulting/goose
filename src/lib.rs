@@ -1783,8 +1783,8 @@ impl GooseAttack {
             if !self.configuration.no_print_metrics {
                 self.metrics.display_metrics = true;
             }
-            // Only display status codes if enabled.
-            self.metrics.display_status_codes = self.configuration.status_codes;
+            // Only display status codes if not disaled.
+            self.metrics.display_status_codes = !self.configuration.no_status_codes;
         }
 
         // Reset the run state.

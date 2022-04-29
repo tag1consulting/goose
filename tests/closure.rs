@@ -88,7 +88,6 @@ fn common_build_configuration(
                 &expect_workers.to_string(),
                 "--no-reset-metrics",
                 "--no-transaction-metrics",
-                "--status-codes",
                 "--users",
                 &users.to_string(),
                 "--hatch-rate",
@@ -103,7 +102,6 @@ fn common_build_configuration(
             vec![
                 "--no-reset-metrics",
                 "--no-transaction-metrics",
-                "--status-codes",
                 "--users",
                 &users.to_string(),
                 "--hatch-rate",

@@ -36,67 +36,59 @@ pub fn get_nodes(content_type: &ContentType) -> Vec<Node> {
         ContentType::Article => {
             vec![
                 Node {
-                    nid: 10,
+                    nid: 11,
                     url_en: "/en/articles/give-it-a-go-and-grow-your-own-herbs",
                     url_es: "/es/articles/prueba-y-cultiva-tus-propias-hierbas",
                     title_en: "Give it a go and grow your own herbs",
                     title_es: "Prueba y cultiva tus propias hierbas",
                 },
                 Node {
-                    nid: 11,
+                    nid: 12,
                     url_en: "/en/articles/dairy-free-and-delicious-milk-chocolate",
                     url_es: "/es/articles/delicioso-chocolate-sin-lactosa",
                     title_en: "Dairy-free and delicious milk chocolate",
                     title_es: "Delicioso chocolate sin lactosa",
                 },
                 Node {
-                    nid: 12,
+                    nid: 13,
                     url_en: "/en/articles/the-real-deal-for-supermarket-savvy-shopping",
                     url_es: "/es/articles/el-verdadeo-negocio-para-comprar-en-el-supermercado",
                     title_en: "The real deal for supermarket savvy shopping",
                     title_es: "El verdadero negocio para comprar en el supermercado",
                 },
                 Node {
-                    nid: 13,
+                    nid: 14,
                     url_en: "/en/articles/the-umami-guide-to-our-favourite-mushrooms",
                     url_es: "/es/articles/guia-umami-de-nuestras-setas-preferidas",
                     title_en: "The Umami guide to our favorite mushrooms",
                     title_es: "Guía Umami de nuestras setas preferidas",
                 },
                 Node {
-                    nid: 14,
+                    nid: 15,
                     url_en: "/en/articles/lets-hear-it-for-carrots",
                     url_es: "/es/articles/un-aplauso-para-las-zanahorias",
                     title_en: "Let&#039;s hear it for carrots",
                     title_es: "Un aplauso para las zanahorias",
                 },
                 Node {
-                    nid: 15,
+                    nid: 16,
                     url_en: "/en/articles/baking-mishaps-our-troubleshooting-tips",
-                    url_es:
-                        "/es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas",
+                    url_es: "es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas",
                     title_en: "Baking mishaps - our troubleshooting tips",
                     title_es: "Percances al hornear - nuestros consejos para solucionar los problemas",
                 },
                 Node {
-                    nid: 16,
+                    nid: 17,
                     url_en: "/en/articles/skip-the-spirits-with-delicious-mocktails",
                     url_es: "/es/articles/salta-los-espiritus-con-deliciosos-cocteles-sin-alcohol",
                     title_en: "Skip the spirits with delicious mocktails",
                     title_es: "Salta los espíritus con deliciosos cócteles sin alcohol",
                 },
-                Node {
-                    nid: 17,
-                    url_en: "/en/articles/give-your-oatmeal-the-ultimate-makeover",
-                    url_es: "/es/articles/dale-a-tu-avena-el-cambio-de-imagen-definitivo",
-                    title_en: "Give your oatmeal the ultimate makeover",
-                    title_es: "Dale a tu avena el cambio de imagen definitivo",
-                },
             ]
         }
         ContentType::BasicPage => {
             vec![Node {
-                nid: 18,
+                nid: 19,
                 url_en: "/en/about-umami",
                 url_es: "/es/acerca-de-umami",
                 title_en: "About Umami",
@@ -167,6 +159,13 @@ pub fn get_nodes(content_type: &ContentType) -> Vec<Node> {
                     url_es: "/es/recipes/salsa-de-chile-ardiente",
                     title_en: "Fiery chili sauce",
                     title_es: "Salsa de chile ardiente",
+                },
+                Node {
+                    nid: 10,
+                    url_en: "/en/recipes/borscht-with-pork-ribs",
+                    url_es: "/es/recipes/borscht-con-costillas-de-cerdo",
+                    title_en: "Borscht with pork ribs",
+                    title_es: "Borscht con costillas de cerdo",
                 },
             ]
         }

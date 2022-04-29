@@ -2399,6 +2399,9 @@ impl GooseAttack {
                         &self.configuration,
                         &self.defaults,
                     )?;
+
+                    // Restart the timer now that all threads are launched.
+                    self.started = Some(std::time::Instant::now());
                 } else if goose_attack_run_state.active_users < users {
                     println!(
                         "{} of {} users hatched, timer expired.\n",
@@ -2410,8 +2413,6 @@ impl GooseAttack {
                         goose_attack_run_state.active_users
                     );
                 }
-                // Restart the timer now that all threads are launched.
-                self.started = Some(std::time::Instant::now());
             } else {
                 println!("{} users hatched.", goose_attack_run_state.active_users);
             }
@@ -2450,7 +2451,7 @@ impl GooseAttack {
                 request_metric.response_time,
                 request_metric.coordinated_omission_elapsed > 0,
             );
-            if self.configuration.status_codes {
+            if !self.configuration.no_status_codes {
                 merge_request.set_status_code(request_metric.status_code);
             }
             if request_metric.success {
@@ -3043,8 +3044,8 @@ impl GooseAttack {
                 "".to_string()
             };
 
-            // Only build the status_code template if --status-codes is enabled.
-            let status_code_template: String = if self.configuration.status_codes {
+            // Only build the status_code template if --no-status-codes is not enabled.
+            let status_code_template: String = if !self.configuration.no_status_codes {
                 let mut status_code_metrics = Vec::new();
                 let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
                 for (request_key, request) in self.metrics.requests.iter().sorted() {

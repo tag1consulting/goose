@@ -227,8 +227,6 @@ async fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
         .unwrap()
-        .set_default(GooseDefault::StatusCodes, true)
-        .unwrap()
         .set_default(
             GooseDefault::CoordinatedOmissionMitigation,
             GooseCoordinatedOmissionMitigation::Disabled,
@@ -344,8 +342,6 @@ async fn test_defaults_gaggle() {
             GooseCoordinatedOmissionMitigation::Disabled,
         )
         .unwrap()
-        .set_default(GooseDefault::StatusCodes, true)
-        .unwrap()
         .set_default(GooseDefault::RunningMetrics, 0)
         .unwrap()
         .set_default(GooseDefault::NoTransactionMetrics, true)
@@ -424,7 +420,6 @@ async fn test_no_defaults() {
             &THROTTLE_REQUESTS.to_string(),
             "--no-reset-metrics",
             "--no-transaction-metrics",
-            "--status-codes",
             "--running-metrics",
             "30",
             "--sticky-follow",
@@ -536,7 +531,6 @@ async fn test_no_defaults_gaggle() {
             &RUN_TIME.to_string(),
             "--no-reset-metrics",
             "--no-transaction-metrics",
-            "--status-codes",
             "--running-metrics",
             "30",
             "--sticky-follow",
@@ -617,8 +611,6 @@ async fn test_plan_defaults() {
         .unwrap()
         .set_default(GooseDefault::ThrottleRequests, THROTTLE_REQUESTS)
         .unwrap()
-        .set_default(GooseDefault::StatusCodes, true)
-        .unwrap()
         .set_default(GooseDefault::NoTransactionMetrics, true)
         .unwrap()
         .execute()
@@ -666,7 +658,6 @@ async fn test_plan_no_defaults() {
             "--throttle-requests",
             &THROTTLE_REQUESTS.to_string(),
             "--no-transaction-metrics",
-            "--status-codes",
         ],
     );
 

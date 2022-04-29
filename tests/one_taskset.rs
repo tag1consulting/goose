@@ -58,15 +58,7 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
 // Build appropriate configuration for these tests.
 fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> GooseConfiguration {
     // Common elements in all our tests.
-    let mut configuration = vec![
-        "--users",
-        "2",
-        "--hatch-rate",
-        "4",
-        "--run-time",
-        "2",
-        "--status-codes",
-    ];
+    let mut configuration = vec!["--users", "2", "--hatch-rate", "4", "--run-time", "2"];
 
     // Custom elements in some tests.
     configuration.append(custom);
