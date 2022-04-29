@@ -50,7 +50,7 @@ use goose::prelude::*;
 
 Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the [Reqwest](https://docs.rs/reqwest/) library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.
 
-In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. Relative paths (not starting with a "/") should be used.
+In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. Relative paths (not starting with a `/`) should be used.
 
 The following `loadtest_index` function simply loads the front page of our web page:
 

@@ -1,13 +1,17 @@
 # Glossary
 
-## Scenario
-A **scenario** is a class of actions or steps a user would undertake to achieve
-a specific user journey.
-
-## Transaction
-A **transaction** is a collection of one or more requests that may include logging
-into a website, adding to a shopping cart or checking out, etc. This could
-include assertions or expectation validation.
+## GooseUser
+A thread that repeatedly runs a single **scenario** for the duration of the load test.
 
 ## Request
-A single request based around HTTP verbs.
+A single **request** based around HTTP verbs.
+
+## Scenario
+A collection of steps or **transactions** a user would undertake to achieve a specific
+user journey.
+
+## Transaction
+A **transaction** is a collection of one or more **requests**. For example, this may include
+loading the front page and all contained static assets, logging into the website, or adding one
+or more items to a shopping chart.  Transactions typically include assertions or expectation
+validation.

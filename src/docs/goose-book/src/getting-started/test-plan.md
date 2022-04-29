@@ -9,7 +9,7 @@ A test plan is defined as a series of numerical pairs that each defines a number
 The following command tells Goose to start 10 users over 60 seconds and then to run for 5 minutes before shutting down:
 
 ```bash
-$ cargo run --release -- -H http://local.dev/ --startup-time 1m --users 10 --run-time 5m
+$ cargo run --release -- -H http://local.dev/ --startup-time 1m --users 10 --run-time 5m --no-reset-metrics
 ```
 
 The exact same behaviour can be defined with the following test plan:
@@ -17,6 +17,8 @@ The exact same behaviour can be defined with the following test plan:
 ```bash
 $ cargo run --release -- -H http://local.dev/ --test-plan "10,1m;10,5m;0,0"
 ```
+
+![Simple test plan](test-plan-simple.png)
 
 ## Ramp Down Example
 
@@ -26,6 +28,8 @@ Goose will stop a load test as quickly as it can when the specified `--run-time`
 $ cargo run --release -- -H http://local.dev/ --test-plan "1000,2m;0,500"
 ```
 
+![Ramp down test plan](test-plan-ramp-down.png)
+
 ## Load Spike Example
 
 Another possibility when specifying a test plan is to add load spikes into otherwise steady load. For example, in the following example Goose starts 500 users over 5 minutes and lets it run with a couple of traffic spikes to 2,500 users:
@@ -33,6 +37,8 @@ Another possibility when specifying a test plan is to add load spikes into other
 ```bash
 $ cargo run --release -- -H http://local.dev/ --test-plan "500,5m;500,5m;2500,45;500,45;500,5m;2500,45;500,45;500,5m;0,0"
 ```
+
+![Load spike test plan](test-plan-load-spike.png)
 
 ## Internals
 
