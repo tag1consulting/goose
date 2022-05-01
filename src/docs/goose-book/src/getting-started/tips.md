@@ -11,13 +11,13 @@
 
 By default, Goose will time out requests that take longer than 60 seconds to return, and display a `WARN` level message saying, "operation timed out". For example:
 
-```
+```ignore
 11:52:17 [WARN] "/node/3672": error sending request for url (http://apache/node/3672): operation timed out
 ```
 
 These will also show up in the error summary displayed with the final metrics. For example:
 
-```
+```ignore
  === ERRORS ===
  ------------------------------------------------------------------------------
  Count       | Error
