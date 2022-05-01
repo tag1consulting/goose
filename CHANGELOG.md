@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.16.0-dev
+## 0.16.0 May 1, 2022
  - [#431](https://github.com/tag1consulting/goose/pull/431) rename `--no-granular-data` to `--no-granular-report`
  - [#415](https://github.com/tag1consulting/goose/pull/415) display granular data in HTML graphs, introduce `--no-granular-data` to disable it and display graphs as they were until this change
  - [#406](https://github.com/tag1consulting/goose/pull/406) make sure that the graphs are built correctly if the load test is interrupted during the starting phase
