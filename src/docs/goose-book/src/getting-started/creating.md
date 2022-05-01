@@ -38,7 +38,7 @@ use goose::prelude::*;
 
 > **Note:** Using the above prelude automatically adds the following `use` statements necessary when writing a load test, so you don't need to manually add all of them:
 >
-> ```rust
+> ```rust,ignore
 > use crate::config::{GooseDefault, GooseDefaultType};
 > use crate::goose::{
 >     GooseMethod, GooseRequest, GooseUser, Scenario, Transaction, TransactionError,
