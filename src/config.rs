@@ -75,7 +75,7 @@ const DEFAULT_PORT: &str = "5115";
 /// --no-status-codes           Do not track status code metrics
 ///
 /// Advanced:
-/// --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60;0,30")
+/// --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60s;0,30s")
 /// --no-telnet                 Doesn't enable telnet Controller
 /// --telnet-host HOST          Sets telnet Controller host (default: 0.0.0.0)
 /// --telnet-port PORT          Sets telnet Controller TCP port (default: 5116)
@@ -207,7 +207,7 @@ pub struct GooseConfiguration {
     #[options(no_short, help = "Do not track status code metrics\n\nAdvanced:")]
     pub no_status_codes: bool,
 
-    /// Defines a more complex test plan ("10,60;0,30")
+    /// Defines a more complex test plan ("10,60s;0,30s")
     #[options(no_short, meta = "\"TESTPLAN\"")]
     pub(crate) test_plan: Option<TestPlan>,
     /// Doesn't enable telnet Controller
