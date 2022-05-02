@@ -20,7 +20,7 @@ The following defaults can be configured with a `&str`:
  - html-formatted report file name: `GooseDefault::ReportFile`
  - requests log file name: `GooseDefault::RequestsFile`
  - requests log file format: `GooseDefault::RequestsFormat`
- - debug log file name: `GooseDefault::DebugFile`
+ - debug log file name: `GooseDefault::DebugLog`
  - debug log file format: `GooseDefault::DebugFormat`
  - host to bind telnet Controller to: `GooseDefault::TelnetHost`
  - host to bind WebSocket Controller to: `GooseDefault::WebSocketHost`
@@ -67,7 +67,7 @@ For example, without any run-time options the following load test would automati
         )
         .set_default(GooseDefault::Host, "local.dev")?
         .set_default(GooseDefault::RequestsFile, "goose-requests.log")?
-        .set_default(GooseDefault::DebugFile, "goose-debug.log")?
+        .set_default(GooseDefault::DebugLog, "goose-debug.log")?
         .set_default(GooseDefault::Users, 20)?
         .set_default(GooseDefault::HatchRate, 4)?
         .set_default(GooseDefault::RunTime, 900)?
