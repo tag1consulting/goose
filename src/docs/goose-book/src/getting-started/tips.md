@@ -28,3 +28,29 @@ These will also show up in the error summary displayed with the final metrics. F
 To change how long before requests time out, use `--timeout VALUE` when starting a load test, for example `--timeout 30` will time out requests that take longer than 30 seconds to return. To configure the timeout programatically, use [`.set_default()`](https://docs.rs/goose/*/goose/config/trait.GooseDefaultType.html#tymethod.set_default) to set [GooseDefault::Timeout](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.Timeout).
 
 To completely disable timeouts, you must build a custom Reqwest Client with [`GooseUser::set_client_builder`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder). Alternatively, you can just set a very high timeout, for example `--timeout 86400` will let a request take up to 24 hours.
+
+## HTML Responses
+Sometimes while developing and debugging a load test we'd like to view HTML
+responses in a browser to actually see where each request is actually taking us.
+We may want to run this test with one user to avoid debug noise.
+
+The default debug configuration can be set as below:
+
+```rust
+.set_default(GooseDefault::DebugLog, "goose-debug.log")?
+```
+
+Each line in the debug log defaults to a JSON object and we can install a JSON
+processing crate like [jaq](https://crates.io/crates/jaq).
+
+A simple implementation could be:
+
+```
+cat goose-debug.log | head -n 1 | jaq -r .body > page.html
+```
+
+And we can open the HTML page in a terminal browser (to disable JavaScript):
+
+```
+w3m page.html
+```
