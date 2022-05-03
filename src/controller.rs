@@ -157,6 +157,16 @@ pub enum GooseControllerCommand {
     ///
     /// Goose must be idle to process this command.
     Start,
+    /// Configure how long to take to launch all [`GooseUser`](../goose/struct.GooseUser.html)s.
+    ///
+    /// # Example
+    /// Tells Goose to launch a new user every 1.25 seconds.
+    /// ```notest
+    /// startuptime 1.25
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
+    StartupTime,
     /// Stop a running test, putting it into an idle state.
     ///
     /// # Example
@@ -202,6 +212,7 @@ impl GooseControllerCommand {
             }
             GooseControllerCommand::Shutdown => r"(?i)^shutdown$",
             GooseControllerCommand::Start => r"(?i)^start$",
+            GooseControllerCommand::StartupTime => r"(?i)^(starttime|start_time|start-time|startup|startuptime|startup_time|startup-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
             GooseControllerCommand::Stop => r"(?i)^stop$",
             GooseControllerCommand::Users => r"(?i)^(users?) (\d+)$",
         }
@@ -667,6 +678,13 @@ impl GooseControllerState {
                     )
                 }
             }
+            GooseControllerCommand::StartupTime => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("startup_time configured".to_string())
+                } else {
+                    Err("failed to configure startup_time, be sure load test is idle".to_string())
+                }
+            }
             // This shouldn't work if the load test isn't running.
             GooseControllerCommand::Stop => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
@@ -1023,6 +1041,7 @@ fn display_help() -> String {
  host HOST          set host to load test, ie http://localhost/
  users INT          set number of simulated users
  hatchrate FLOAT    set per-second rate users hatch
+ startup-time TIME  set time to take starting users
  runtime TIME       set how long to run test, ie 1h30m5s
  config             display load test configuration
  config-json        display load test configuration in json format
@@ -1128,18 +1147,11 @@ impl GooseAttack {
                             if [AttackPhase::Increase, AttackPhase::Maintain]
                                 .contains(&self.attack_phase)
                             {
-                                self.metrics.history.push(TestPlanHistory::step(
-                                    TestPlanStepAction::Decreasing,
-                                    goose_attack_run_state.active_users,
-                                ));
-                                self.set_attack_phase(
-                                    goose_attack_run_state,
-                                    AttackPhase::Decrease,
-                                );
                                 // Don't shutdown when load test is stopped by controller, remain idle instead.
                                 goose_attack_run_state.shutdown_after_stop = false;
                                 // Don't automatically restart the load test.
                                 self.configuration.no_autostart = true;
+                                self.cancel_attack(goose_attack_run_state).await?;
                                 self.reply_to_controller(
                                     message,
                                     GooseControllerResponseMessage::Bool(true),
@@ -1240,6 +1252,14 @@ impl GooseAttack {
                             // this is a valid float, so simply use it with further
                             // validation.
                             if let Some(hatch_rate) = &message.request.value {
+                                // If startup_time was already set, unset it first.
+                                if !self.configuration.startup_time.is_empty() {
+                                    info!(
+                                        "resetting startup_time from {} to 0",
+                                        self.configuration.startup_time
+                                    );
+                                    self.configuration.startup_time = "0".to_string();
+                                }
                                 info!(
                                     "changing hatch_rate from {:?} to {}",
                                     self.configuration.hatch_rate, hatch_rate
@@ -1253,6 +1273,43 @@ impl GooseAttack {
                                 warn!(
                                     "Controller didn't provide hatch_rate: {:#?}",
                                     &message.request
+                                );
+                            }
+                        }
+                        GooseControllerCommand::StartupTime => {
+                            if self.attack_phase == AttackPhase::Idle {
+                                // The controller uses a regular expression to validate that
+                                // this is a valid startup time, so simply use it with further
+                                // validation.
+                                if let Some(startup_time) = &message.request.value {
+                                    // If hatch_rate was already set, unset it first.
+                                    if let Some(hatch_rate) = &self.configuration.hatch_rate {
+                                        info!("resetting hatch_rate from {} to None", hatch_rate);
+                                        self.configuration.hatch_rate = None;
+                                    }
+                                    info!(
+                                        "changing startup_rate from {} to {}",
+                                        self.configuration.startup_time, startup_time
+                                    );
+                                    self.configuration.startup_time = startup_time.clone();
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                } else {
+                                    warn!(
+                                        "Controller didn't provide startup_time: {:#?}",
+                                        &message.request
+                                    );
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(false),
+                                    );
+                                }
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    GooseControllerResponseMessage::Bool(false),
                                 );
                             }
                         }

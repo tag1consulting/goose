@@ -20,6 +20,7 @@ goose 0.16.0 controller commands:
  host HOST          set host to load test, ie http://localhost/
  users INT          set number of simulated users
  hatchrate FLOAT    set per-second rate users hatch
+ startup-time TIME  set time to take starting users
  runtime TIME       set how long to run test, ie 1h30m5s
  config             display load test configuration
  config-json        display load test configuration in json format

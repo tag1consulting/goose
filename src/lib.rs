@@ -1560,7 +1560,7 @@ impl GooseAttack {
         // If this is the last step of the load test and there are 0 users, shut down.
         if goose_attack_run_state.active_users == 0
             // Subtract 1 from len() as it starts at 1 while current starts at 0.
-            && self.test_plan.current == self.test_plan.steps.len() - 1
+            && self.test_plan.current >= self.test_plan.steps.len() - 1
         {
             // Load test is shutting down, update pipe handler so there is no panic
             // when the Manager goes away.
