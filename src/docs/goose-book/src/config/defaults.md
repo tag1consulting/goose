@@ -81,8 +81,8 @@ For example, without any run-time options the following load test would automati
             .register_transaction(transaction!(loadtest_index))
         )
         .set_default(GooseDefault::Host, "local.dev")?
-        .set_default(GooseDefault::RequestsFile, "goose-requests.log")?
-        .set_default(GooseDefault::DebugFile, "goose-debug.log")?
+        .set_default(GooseDefault::RequestsLog, "goose-requests.log")?
+        .set_default(GooseDefault::DebugLog, "goose-debug.log")?
         .set_default(GooseDefault::Users, 20)?
         .set_default(GooseDefault::HatchRate, 4)?
         .set_default(GooseDefault::RunTime, 900)?
