@@ -167,6 +167,11 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
+    /// Invalid controller command.
+    InvalidControllerCommand {
+        /// An optional explanation of the error.
+        detail: String,
+    },
     /// [`GooseAttack`](./struct.GooseAttack.html) has no [`Scenario`](./goose/struct.Scenario.html) defined.
     NoScenarios {
         /// An optional explanation of the error.
@@ -185,6 +190,7 @@ impl GooseError {
             GooseError::InvalidOption { .. } => "invalid option or value specified",
             GooseError::InvalidWaitTime { .. } => "invalid wait_time specified",
             GooseError::InvalidWeight { .. } => "invalid weight specified",
+            GooseError::InvalidControllerCommand { .. } => "invalid controller command",
             GooseError::NoScenarios { .. } => "no scenarios defined",
         }
     }

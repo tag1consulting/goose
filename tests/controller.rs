@@ -288,7 +288,7 @@ async fn run_standalone_test(test_type: TestType) {
                         // Confirm that we can't configure an invalid host that does
                         // match the regex.
                         _ => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("failed to reconfigure host"));
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type);
