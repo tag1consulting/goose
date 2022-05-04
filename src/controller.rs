@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::str;
 use std::str::FromStr;
+use std::time::Duration;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1175,6 +1176,7 @@ impl GooseAttack {
                             } else {
                                 self.cancel_attack(goose_attack_run_state).await?;
                             }
+
                             // Shutdown after stopping.
                             goose_attack_run_state.shutdown_after_stop = true;
                             // Confirm shut down to Controller.
@@ -1182,6 +1184,9 @@ impl GooseAttack {
                                 message,
                                 GooseControllerResponseMessage::Bool(true),
                             );
+
+                            // Give the controller thread time to send the response.
+                            tokio::time::sleep(Duration::from_millis(250)).await;
                         }
                         GooseControllerCommand::Host => {
                             if self.attack_phase == AttackPhase::Idle {
@@ -1216,31 +1221,91 @@ impl GooseAttack {
                             }
                         }
                         GooseControllerCommand::Users => {
-                            if self.attack_phase == AttackPhase::Idle {
-                                // The controller uses a regular expression to validate that
-                                // this is a valid integer, so simply use it with further
-                                // validation.
-                                if let Some(users) = &message.request.value {
-                                    info!(
-                                        "changing users from {:?} to {}",
-                                        self.configuration.users, users
-                                    );
-                                    // Use expect() as Controller uses regex to validate this is an integer.
-                                    self.configuration.users = Some(
-                                        usize::from_str(users)
-                                            .expect("failed to convert string to usize"),
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        GooseControllerResponseMessage::Bool(true),
-                                    );
-                                } else {
-                                    warn!(
-                                        "Controller didn't provide users: {:#?}",
-                                        &message.request
-                                    );
+                            // The controller uses a regular expression to validate that
+                            // this is a valid integer, so simply use it with further
+                            // validation.
+                            if let Some(users) = &message.request.value {
+                                // Use expect() as Controller uses regex to validate this is an integer.
+                                let new_users = usize::from_str(users)
+                                    .expect("failed to convert string to usize");
+                                match self.attack_phase {
+                                    // If the load test is idle, simply update the configuration.
+                                    AttackPhase::Idle => {
+                                        let current_users = if !self.test_plan.steps.is_empty() {
+                                            self.test_plan.steps[self.test_plan.current].0
+                                        } else if let Some(users) = self.configuration.users {
+                                            users
+                                        } else {
+                                            0
+                                        };
+                                        info!(
+                                            "changing users from {:?} to {}",
+                                            current_users, new_users
+                                        );
+                                        self.configuration.users = Some(new_users);
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(true),
+                                        );
+                                    }
+                                    // If the load test is running, rebuild the active test plan.
+                                    AttackPhase::Increase
+                                    | AttackPhase::Decrease
+                                    | AttackPhase::Maintain => {
+                                        info!(
+                                            "changing users from {} to {}",
+                                            goose_attack_run_state.active_users, new_users
+                                        );
+                                        // Determine how long has elapsed since this step started.
+                                        let elapsed = self.step_elapsed() as usize;
+
+                                        // Determine how quickly to adjust user account.
+                                        let hatch_rate = if let Some(hatch_rate) =
+                                            self.configuration.hatch_rate.as_ref()
+                                        {
+                                            util::get_hatch_rate(Some(hatch_rate.to_string()))
+                                        } else {
+                                            util::get_hatch_rate(None)
+                                        };
+                                        // Convert hatch_rate to milliseconds.
+                                        let ms_hatch_rate = 1.0 / hatch_rate * 1_000.0;
+                                        // Determine how many users to increase or decrease by.
+                                        let user_difference = (goose_attack_run_state.active_users
+                                            as isize
+                                            - new_users as isize)
+                                            .abs();
+                                        // Multiply the user difference by the hatch rate to get the total_time required.
+                                        let total_time =
+                                            (ms_hatch_rate * user_difference as f32) as usize;
+
+                                        // Reset the test_plan to adjust to the newly specified users.
+                                        self.test_plan.steps = vec![
+                                            // Record how many active users there are currently.
+                                            (goose_attack_run_state.active_users, elapsed),
+                                            // Configure the new user count.
+                                            (new_users, total_time),
+                                        ];
+
+                                        // Reset the current step to what was happening when reconfiguration happened.
+                                        self.test_plan.current = 0;
+
+                                        // Finally, advance to the next step to adjust user count.
+                                        self.advance_test_plan(goose_attack_run_state);
+
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(true),
+                                        );
+                                    }
+                                    _ => {
+                                        self.reply_to_controller(
+                                            message,
+                                            GooseControllerResponseMessage::Bool(false),
+                                        );
+                                    }
                                 }
                             } else {
+                                warn!("Controller didn't provide users: {:#?}", &message.request);
                                 self.reply_to_controller(
                                     message,
                                     GooseControllerResponseMessage::Bool(false),

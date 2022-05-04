@@ -566,19 +566,12 @@ async fn run_standalone_test(test_type: TestType) {
                 }
                 GooseControllerCommand::Stop => {
                     match test_state.step {
-                        // Try to configure users on a running load test.
+                        // Try to configure host on a running load test.
                         0 => {
-                            make_request(&mut test_state, "users 1\r\n");
-                        }
-                        // Confirm users can not be configured on a running load test.
-                        1 => {
-                            assert!(response.starts_with("load test not idle"));
-
-                            // Try to configure host on a running load test.
                             make_request(&mut test_state, "host http://localhost/\r\n");
                         }
                         // Confirm host can not be configured on a running load test.
-                        2 => {
+                        1 => {
                             assert!(response.starts_with("failed to reconfigure host"));
 
                             // Try to stop a running load test.

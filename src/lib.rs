@@ -1327,7 +1327,8 @@ impl GooseAttack {
         } else if let Some(started) = self.started {
             started.elapsed().as_millis()
         } else {
-            unreachable!("the load test had to have started");
+            // An idle load test.
+            0
         }
     }
 
