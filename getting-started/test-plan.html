@@ -144,28 +144,29 @@
                     <main>
                         <h1 id="test-plan"><a class="header" href="#test-plan">Test Plan</a></h1>
 <p>A load test that ramps up to full strength and then runs for a set amount of time can be configured by combining the <code>--startup-time</code> or <code>--hatch-rate</code> options together with the <code>--users</code> and <code>--run-time</code> options. For more complex load patterns you must instead use the <code>--test-plan</code> option.</p>
-<p>A test plan is defined as a series of numerical pairs that each defines a number of users, and a number of seconds to ramp to this number of users. For example, &quot;10,60&quot; means &quot;launch 10 users over 60 seconds&quot;. By stringing together multiple pairs separated by a semicolon you can define more complex test plans. For example, &quot;10,1m;10,5m;0,0&quot; means &quot;launch 10 users over 1 minute, continue with 10 users for 5 minutes, then shut down the load test as quickly as possible&quot;.</p>
+<p>A test plan is defined as a series of numerical pairs that each defines a number of users, and the amount of time to ramp to this number of users. For example, <code>10,60s</code> means &quot;launch 10 users over 60 seconds&quot;. By stringing together multiple pairs separated by a semicolon you can define more complex test plans. For example, <code>10,1m;10,5m;0,0s</code> means &quot;launch 10 users over 1 minute, continue with 10 users for 5 minutes, then shut down the load test as quickly as possible&quot;.</p>
+<p>The amount of time can be defined in seconds (e.g. <code>10,5s</code>), minutes (e.g. <code>10,15m</code>) or hours (e.g. <code>10,1h</code>). The &quot;s/m/h&quot; notation is optional and seconds will be assumed if omitted. However, the explicit notation is recommended, since Goose will be able to detect any mistakes if used.</p>
 <h2 id="simple-example"><a class="header" href="#simple-example">Simple Example</a></h2>
 <p>The following command tells Goose to start 10 users over 60 seconds and then to run for 5 minutes before shutting down:</p>
 <pre><code class="language-bash">$ cargo run --release -- -H http://local.dev/ --startup-time 1m --users 10 --run-time 5m --no-reset-metrics
 </code></pre>
 <p>The exact same behaviour can be defined with the following test plan:</p>
-<pre><code class="language-bash">$ cargo run --release -- -H http://local.dev/ --test-plan &quot;10,1m;10,5m;0,0&quot;
+<pre><code class="language-bash">$ cargo run --release -- -H http://local.dev/ --test-plan &quot;10,1m;10,5m;0,0s&quot;
 </code></pre>
 <p><img src="test-plan-simple.png" alt="Simple test plan" /></p>
 <h2 id="ramp-down-example"><a class="header" href="#ramp-down-example">Ramp Down Example</a></h2>
 <p>Goose will stop a load test as quickly as it can when the specified <code>--run-time</code> completes. To instead configure a load test to ramp down slowly you can use a test plan. In the following example, Goose starts 1000 users in 2 minutes and then slowly stops them over 500 seconds (stopping 2 users per second):</p>
-<pre><code class="language-bash">$ cargo run --release -- -H http://local.dev/ --test-plan &quot;1000,2m;0,500&quot;
+<pre><code class="language-bash">$ cargo run --release -- -H http://local.dev/ --test-plan &quot;1000,2m;0,500s&quot;
 </code></pre>
 <p><img src="test-plan-ramp-down.png" alt="Ramp down test plan" /></p>
 <h2 id="load-spike-example"><a class="header" href="#load-spike-example">Load Spike Example</a></h2>
 <p>Another possibility when specifying a test plan is to add load spikes into otherwise steady load. For example, in the following example Goose starts 500 users over 5 minutes and lets it run with a couple of traffic spikes to 2,500 users:</p>
-<pre><code class="language-bash">$ cargo run --release -- -H http://local.dev/ --test-plan &quot;500,5m;500,5m;2500,45;500,45;500,5m;2500,45;500,45;500,5m;0,0&quot;
+<pre><code class="language-bash">$ cargo run --release -- -H http://local.dev/ --test-plan &quot;500,5m;500,5m;2500,45s;500,45s;500,5m;2500,45s;500,45s;500,5m;0,0s&quot;
 </code></pre>
 <p><img src="test-plan-load-spike.png" alt="Load spike test plan" /></p>
 <h2 id="internals"><a class="header" href="#internals">Internals</a></h2>
 <p>Internally, Goose converts the test plan into a vector of usize tuples, <code>Vec&lt;(usize, usize)&gt;</code>, where the first integer reflects the number of users to be running and the second integer reflects the time in milliseconds. You can see the internal representation when you start a load test, for example:</p>
-<pre><code class="language-bash">% cargo run --release --example simple -- --no-autostart --test-plan &quot;100,30;100,1h&quot; | grep test_plan
+<pre><code class="language-bash">% cargo run --release --example simple -- --no-autostart --test-plan &quot;100,30s;100,1h&quot; | grep test_plan
 13:54:35 [INFO] test_plan = GooseTestPlan { test_plan: [(100, 30000), (100, 3600000)] }
 </code></pre>
 

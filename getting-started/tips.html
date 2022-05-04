@@ -162,6 +162,14 @@
 </code></pre>
 <p>To change how long before requests time out, use <code>--timeout VALUE</code> when starting a load test, for example <code>--timeout 30</code> will time out requests that take longer than 30 seconds to return. To configure the timeout programatically, use <a href="https://docs.rs/goose/*/goose/config/trait.GooseDefaultType.html#tymethod.set_default"><code>.set_default()</code></a> to set <a href="https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.Timeout">GooseDefault::Timeout</a>.</p>
 <p>To completely disable timeouts, you must build a custom Reqwest Client with <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder"><code>GooseUser::set_client_builder</code></a>. Alternatively, you can just set a very high timeout, for example <code>--timeout 86400</code> will let a request take up to 24 hours.</p>
+<h2 id="debugging-html-responses"><a class="header" href="#debugging-html-responses">Debugging HTML Responses</a></h2>
+<p>Sometimes, while developing and debugging a load test we'd like to view HTML responses in a browser to actually see where each request is actually taking us. We may want to run this test with one user to avoid debug noise.</p>
+<p>We can create a debug log by passing the <code>--debug-log NAME</code> command line option.</p>
+<p>Each row in the debug log defaults to a JSON object and we can use <a href="https://stedolan.github.io/jq/">jq</a> for processing JSON or the faster Rust port that supports the same commands <a href="https://crates.io/crates/jaq">jaq</a></p>
+<p>To extract the HTML response from the first log entry, for example, you could use the following commands:</p>
+<pre><code>cat debug.log | head -n 1 | jaq -r .body &gt; page.html
+</code></pre>
+<p>This HTML page can then be viewed in a web browser. You may need to disable JavaScript.</p>
 
                     </main>
 

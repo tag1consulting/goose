@@ -161,7 +161,7 @@
 <li>users to start per second: <code>GooseDefault::HatchRate</code></li>
 <li>html-formatted report file name: <code>GooseDefault::ReportFile</code></li>
 <li>goose log file name: <code>GooseDefault::GooseLog</code></li>
-<li>request log file name: <code>GooseDefault::RequestsLog</code></li>
+<li>request log file name: <code>GooseDefault::RequestLog</code></li>
 <li>transaction log file name: <code>GooseDefault::TransactionLog</code></li>
 <li>error log file name: <code>GooseDefault::ErrorLog</code></li>
 <li>debug log file name: <code>GooseDefault::DebugLog</code></li>
@@ -224,8 +224,8 @@
             .register_transaction(transaction!(loadtest_index))
         )
         .set_default(GooseDefault::Host, &quot;local.dev&quot;)?
-        .set_default(GooseDefault::RequestsFile, &quot;goose-requests.log&quot;)?
-        .set_default(GooseDefault::DebugFile, &quot;goose-debug.log&quot;)?
+        .set_default(GooseDefault::RequestLog, &quot;goose-requests.log&quot;)?
+        .set_default(GooseDefault::DebugLog, &quot;goose-debug.log&quot;)?
         .set_default(GooseDefault::Users, 20)?
         .set_default(GooseDefault::HatchRate, 4)?
         .set_default(GooseDefault::RunTime, 900)?
