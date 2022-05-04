@@ -29,28 +29,18 @@ To change how long before requests time out, use `--timeout VALUE` when starting
 
 To completely disable timeouts, you must build a custom Reqwest Client with [`GooseUser::set_client_builder`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder). Alternatively, you can just set a very high timeout, for example `--timeout 86400` will let a request take up to 24 hours.
 
-## HTML Responses
-Sometimes while developing and debugging a load test we'd like to view HTML
-responses in a browser to actually see where each request is actually taking us.
-We may want to run this test with one user to avoid debug noise.
+## Debugging HTML Responses
 
-The default debug configuration can be set as below:
+Sometimes, while developing and debugging a load test we'd like to view HTML responses in a browser to actually see where each request is actually taking us. We may want to run this test with one user to avoid debug noise.
 
-```rust
-.set_default(GooseDefault::DebugLog, "goose-debug.log")?
-```
+We can create a debug log by passing the ```--debug-log NAME``` command line option.
 
-Each line in the debug log defaults to a JSON object and we can install a JSON
-processing crate like [jaq](https://crates.io/crates/jaq).
+Each row in the debug log defaults to a JSON object and we can use [jq](https://stedolan.github.io/jq/) for processing JSON or the faster Rust port that supports the same commands [jaq](https://crates.io/crates/jaq)
 
-A simple implementation could be:
+To extract the HTML response from the first log entry, for example, you could use the following commands:
 
 ```
-cat goose-debug.log | head -n 1 | jaq -r .body > page.html
+cat debug.log | head -n 1 | jaq -r .body > page.html
 ```
 
-And we can open the HTML page in a terminal browser (to disable JavaScript):
-
-```
-w3m page.html
-```
+This HTML page can then be viewed in a web browser. You may need to disable JavaScript.
