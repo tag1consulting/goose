@@ -1289,6 +1289,16 @@ impl GooseAttack {
                                         // Reset the current step to what was happening when reconfiguration happened.
                                         self.test_plan.current = 0;
 
+                                        // Allocate more users if increasing users.
+                                        if new_users > goose_attack_run_state.active_users {
+                                            self.weighted_users = self
+                                                .weight_scenario_users(user_difference as usize)?;
+                                        }
+
+                                        // Also update the running configurtion (this impacts if the test is stopped and then
+                                        // restarted through the controller).
+                                        self.configuration.users = Some(new_users);
+
                                         // Finally, advance to the next step to adjust user count.
                                         self.advance_test_plan(goose_attack_run_state);
 
