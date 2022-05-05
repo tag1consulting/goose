@@ -167,6 +167,11 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
+    /// Invalid controller command.
+    InvalidControllerCommand {
+        /// An optional explanation of the error.
+        detail: String,
+    },
     /// [`GooseAttack`](./struct.GooseAttack.html) has no [`Scenario`](./goose/struct.Scenario.html) defined.
     NoScenarios {
         /// An optional explanation of the error.
@@ -185,6 +190,7 @@ impl GooseError {
             GooseError::InvalidOption { .. } => "invalid option or value specified",
             GooseError::InvalidWaitTime { .. } => "invalid wait_time specified",
             GooseError::InvalidWeight { .. } => "invalid weight specified",
+            GooseError::InvalidControllerCommand { .. } => "invalid controller command",
             GooseError::NoScenarios { .. } => "no scenarios defined",
         }
     }
@@ -1554,7 +1560,7 @@ impl GooseAttack {
         // If this is the last step of the load test and there are 0 users, shut down.
         if goose_attack_run_state.active_users == 0
             // Subtract 1 from len() as it starts at 1 while current starts at 0.
-            && self.test_plan.current == self.test_plan.steps.len() - 1
+            && self.test_plan.current >= self.test_plan.steps.len() - 1
         {
             // Load test is shutting down, update pipe handler so there is no panic
             // when the Manager goes away.

@@ -24,6 +24,7 @@ const ABOUT_KEY: usize = 1;
 const USERS: usize = 5;
 const HATCH_RATE: usize = 10;
 const RUN_TIME: usize = 10;
+const STARTUP_TIME: usize = 1;
 
 // There are multiple test variations in this file.
 #[derive(Clone)]
@@ -288,7 +289,7 @@ async fn run_standalone_test(test_type: TestType) {
                         // Confirm that we can't configure an invalid host that does
                         // match the regex.
                         _ => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("failed to reconfigure host"));
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type);
@@ -360,6 +361,45 @@ async fn run_standalone_test(test_type: TestType) {
                             // further validation required here.
 
                             // Move onto the next command.
+                            test_state = update_state(Some(test_state), &test_type);
+                        }
+                    }
+                }
+                GooseControllerCommand::StartupTime => {
+                    match test_state.step {
+                        // Try to configure a decimal StartupTime.
+                        0 => {
+                            make_request(&mut test_state, "startup-time .1\r\n");
+                        }
+                        // Configure a StartupTime with hms notation.
+                        1 => {
+                            assert!(response.starts_with("unrecognized command"));
+
+                            make_request(&mut test_state, "startup-time 1h2m3s\r\n");
+                        }
+                        // Configure a proper StartupTime.
+                        2 => {
+                            assert!(response.starts_with("startup_time configured"));
+
+                            make_request(
+                                &mut test_state,
+                                &["startup_time ", &STARTUP_TIME.to_string(), "\r\n"].concat(),
+                            );
+                        }
+                        // Restore the HatchRate.
+                        3 => {
+                            assert!(response.starts_with("startup_time configured"));
+
+                            // Configure hatch_rate with a single integer.
+                            make_request(
+                                &mut test_state,
+                                &["hatchrate ", &HATCH_RATE.to_string(), "\r\n"].concat(),
+                            );
+                        }
+                        // Confirm hatch_rate is configured.
+                        _ => {
+                            assert!(response.starts_with("hatch_rate configured"));
+
                             test_state = update_state(Some(test_state), &test_type);
                         }
                     }
@@ -606,6 +646,7 @@ fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestStat
         GooseControllerCommand::Host,
         GooseControllerCommand::Users,
         GooseControllerCommand::HatchRate,
+        GooseControllerCommand::StartupTime,
         GooseControllerCommand::RunTime,
         GooseControllerCommand::Start,
         GooseControllerCommand::Config,

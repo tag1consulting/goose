@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::str;
 use std::str::FromStr;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -39,63 +41,14 @@ pub(crate) enum GooseControllerProtocol {
 ///  1. Define the command here in the GooseControllerCommand enum.
 ///  2. Add the regular expression for matching the new command in the `command`
 /// [`regex::RegexSet`](https://docs.rs/regex/*/regex/struct.RegexSet.html) in
-/// `controller_main()`.
-///      1. If a value needs to be captured, define the regular expression in a variable
-///         outside the set, and add the variable to the top section of the set with the
-///         other regex variables.
-///      2. In the same function, also add the variable to the `captures` Vector, in the
-///         same order that it was added to the `command` `RegexSet`. Order is important
-///         as this is how the regex is later identified.
-///  3. Check for a match to the new regex in `get_match()`, any additional validation
-///      beyond the regex must be performed here (for example, the regular expression
-///      for capturing hosts simply confirms that the host starts with http or https,
-///      then in `get_match()` it calls [`util::is_valid_host()`](../util/fn.is_valid_host.html)
-///      to be sure it is truly a valid host before passing it to the parent process).
-///  4. Add any parent process logic for the command to `handle_controller_requests()`.
-///  5. Handle the response in `process_response()`, returning a `Result<String, String>`
+/// [`GooseControllerCommand::get_regex`].
+///      - See `Hatchrate` and `Users for a regex that also captures a value.
+///      - See `Host` for a regex that also reuires manual validation afterward.
+///  3. Add any parent process logic for the command to `handle_controller_requests()`.
+///  4. Handle the response in `process_response()`, returning a `Result<String, String>`
 ///     succinctly describing success or failure.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, EnumIter, PartialEq)]
 pub enum GooseControllerCommand {
-    /// Configure the host to load test.
-    ///
-    /// # Example
-    /// Tells Goose to generate load against <http://example.com/>.
-    /// ```notest
-    /// host http://example.com/
-    /// ```
-    ///
-    /// Goose must be idle to process this command.
-    Host,
-    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
-    ///
-    /// # Example
-    /// Tells Goose to simulate 100 concurrent users.
-    /// ```notest
-    /// users 100
-    /// ```
-    ///
-    /// Goose must be idle to process this command.
-    Users,
-    /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
-    ///
-    /// # Example
-    /// Tells Goose to launch a new user every 1.25 seconds.
-    /// ```notest
-    /// hatchrate 1.25
-    /// ```
-    ///
-    /// Goose can be idle or running when processing this command.
-    HatchRate,
-    /// Configure how long the load test should run before stopping and returning to an idle state.
-    ///
-    /// # Example
-    /// Tells Goose to run the load test for 1 minute, before automatically stopping.
-    /// ```notest
-    /// runtime 60
-    /// ```
-    ///
-    /// This can be configured when Goose is idle as well as when a Goose load test is running.
-    RunTime,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -114,6 +67,46 @@ pub enum GooseControllerCommand {
     ///
     /// This command can be run at any time.
     ConfigJson,
+    /// Disconnect from the Controller.
+    ///
+    /// # Example
+    /// Disconnects from the Controller.
+    /// ```notest
+    /// exit
+    /// ```
+    ///
+    /// This command can be run at any time.
+    Exit,
+    /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    ///
+    /// # Example
+    /// Tells Goose to launch a new user every 1.25 seconds.
+    /// ```notest
+    /// hatchrate 1.25
+    /// ```
+    ///
+    /// Goose can be idle or running when processing this command.
+    HatchRate,
+    /// Displays a list of all commands supported by the Controller.
+    ///
+    /// # Example
+    /// Returns the a list of all supported Controller commands.
+    /// ```notest
+    /// help
+    /// ```
+    ///
+    /// This command can be run at any time.
+    Help,
+    /// Configure the host to load test.
+    ///
+    /// # Example
+    /// Tells Goose to generate load against <http://example.com/>.
+    /// ```notest
+    /// host http://example.com/
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
+    Host,
     /// Display the current [`GooseMetric`](../metrics/struct.GooseMetrics.html)s.
     ///
     /// # Example
@@ -134,46 +127,16 @@ pub enum GooseControllerCommand {
     ///
     /// This command can be run at any time.
     MetricsJson,
-    /// Displays a list of all commands supported by the Controller.
+    /// Configure how long the load test should run before stopping and returning to an idle state.
     ///
     /// # Example
-    /// Returns the a list of all supported Controller commands.
+    /// Tells Goose to run the load test for 1 minute, before automatically stopping.
     /// ```notest
-    /// help
+    /// runtime 60
     /// ```
     ///
-    /// This command can be run at any time.
-    Help,
-    /// Disconnect from the Controller.
-    ///
-    /// # Example
-    /// Disconnects from the Controller.
-    /// ```notest
-    /// exit
-    /// ```
-    ///
-    /// This command can be run at any time.
-    Exit,
-    /// Start an idle test.
-    ///
-    /// # Example
-    /// Starts an idle load test.
-    /// ```notest
-    /// start
-    /// ```
-    ///
-    /// Goose must be idle to process this command.
-    Start,
-    /// Stop a running test, putting it into an idle state.
-    ///
-    /// # Example
-    /// Stops a running (or stating) load test.
-    /// ```notest
-    /// stop
-    /// ```
-    ///
-    /// Goose must be running (or starting) to process this command.
-    Stop,
+    /// This can be configured when Goose is idle as well as when a Goose load test is running.
+    RunTime,
     /// Tell the load test to shut down (which will disconnect the controller).
     ///
     /// # Example
@@ -184,6 +147,142 @@ pub enum GooseControllerCommand {
     ///
     /// Goose can process this command at any time.
     Shutdown,
+    /// Start an idle test.
+    ///
+    /// # Example
+    /// Starts an idle load test.
+    /// ```notest
+    /// start
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
+    Start,
+    /// Configure how long to take to launch all [`GooseUser`](../goose/struct.GooseUser.html)s.
+    ///
+    /// # Example
+    /// Tells Goose to launch a new user every 1.25 seconds.
+    /// ```notest
+    /// startuptime 1.25
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
+    StartupTime,
+    /// Stop a running test, putting it into an idle state.
+    ///
+    /// # Example
+    /// Stops a running (or stating) load test.
+    /// ```notest
+    /// stop
+    /// ```
+    ///
+    /// Goose must be running (or starting) to process this command.
+    Stop,
+    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    ///
+    /// # Example
+    /// Tells Goose to simulate 100 concurrent users.
+    /// ```notest
+    /// users 100
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
+    Users,
+}
+
+impl GooseControllerCommand {
+    // Controller commands are recognized by matching against regular expressions.
+    fn get_regex(&self) -> String {
+        match self {
+            GooseControllerCommand::Config => r"(?i)^config$",
+            GooseControllerCommand::ConfigJson => r"(?i)^(configjson|config-json)$",
+            GooseControllerCommand::Exit => r"(?i)^(exit|quit)$",
+            GooseControllerCommand::HatchRate => {
+                r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$"
+            }
+            GooseControllerCommand::Help => r"(?i)^(help|\?)$",
+            GooseControllerCommand::Host => {
+                r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$"
+            }
+            GooseControllerCommand::Metrics => r"(?i)^(metrics|stats)$",
+            GooseControllerCommand::MetricsJson => {
+                r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$"
+            }
+            GooseControllerCommand::RunTime => {
+                r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$"
+            }
+            GooseControllerCommand::Shutdown => r"(?i)^shutdown$",
+            GooseControllerCommand::Start => r"(?i)^start$",
+            GooseControllerCommand::StartupTime => r"(?i)^(starttime|start_time|start-time|startup|startuptime|startup_time|startup-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
+            GooseControllerCommand::Stop => r"(?i)^stop$",
+            GooseControllerCommand::Users => r"(?i)^(users?) (\d+)$",
+        }
+        .to_string()
+    }
+
+    fn get_value(&self, command_string: &str) -> Option<String> {
+        let regex = Regex::new(&self.get_regex())
+            .expect("GooseControllerCommand::get_regex() returned invalid regex [2]");
+        let caps = regex.captures(command_string).unwrap();
+        let value = caps.get(2).map_or("", |m| m.as_str());
+        if value.is_empty() {
+            None
+        } else {
+            // The Regex that captures the host only validates that the host starts with
+            // http:// or https://. Now use a library to properly validate that this is
+            // a valid host before sending to the parent process.
+            if self == &GooseControllerCommand::Host {
+                if util::is_valid_host(value).is_ok() {
+                    Some(value.to_string())
+                } else {
+                    None
+                }
+            // All other Regex that capture values can simply return the value without
+            // additional validation.
+            } else {
+                Some(value.to_string())
+            }
+        }
+    }
+}
+
+/// Implement [`FromStr`] to convert controller commands and optional values to the proper enum
+/// representation.
+impl FromStr for GooseControllerCommand {
+    type Err = GooseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Load all GooseControllerCommand regex into a set.
+        let mut regex_set: Vec<String> = Vec::new();
+        let mut keys = Vec::new();
+        for t in GooseControllerCommand::iter() {
+            keys.push(t.clone());
+            regex_set.push(t.get_regex());
+        }
+        let commands = RegexSet::new(regex_set)
+            .expect("GooseControllerCommand::get_regex() returned invalid regex");
+        let matches: Vec<_> = commands.matches(s).into_iter().collect();
+        // This happens any time the controller receives an invalid command.
+        if matches.is_empty() {
+            return Err(GooseError::InvalidControllerCommand {
+                detail: format!("unrecognized controller command: '{}'.", s),
+            });
+        // This shouldn't ever happen, but if it does report all available information.
+        } else if matches.len() > 1 {
+            let mut matched_commands = Vec::new();
+            for index in matches {
+                matched_commands.push(keys[index].clone())
+            }
+            return Err(GooseError::InvalidControllerCommand {
+                detail: format!(
+                    "matched multiple controller commands: '{}' ({:?}).",
+                    s, matched_commands
+                ),
+            });
+        // Only one command matched.
+        } else {
+            Ok(keys[*matches.first().unwrap()].clone())
+        }
+    }
 }
 
 /// This structure is used to send commands and values to the parent process.
@@ -314,10 +413,6 @@ pub(crate) struct GooseControllerState {
     peer_address: String,
     /// A shared channel for communicating with the parent process.
     channel_tx: flume::Sender<GooseControllerRequest>,
-    /// A compiled set of regular expressions used for matching commands.
-    commands: RegexSet,
-    /// A compiled vector of regular expressions used for capturing values from commands.
-    captures: Vec<Regex>,
     /// Which protocol this Controller understands.
     protocol: GooseControllerProtocol,
 }
@@ -443,104 +538,16 @@ impl GooseControllerState {
     }
 
     // Both Controllers use a common function to identify commands.
-    async fn get_match(&self, command_string: &str) -> Result<GooseControllerRequestMessage, ()> {
-        let matches = self.commands.matches(command_string);
-        if matches.matched(GooseControllerCommand::Help as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Help,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::Exit as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Exit,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::Start as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Start,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::Stop as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Stop,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::Shutdown as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Shutdown,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::Config as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Config,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::ConfigJson as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::ConfigJson,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::Metrics as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Metrics,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::MetricsJson as usize) {
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::MetricsJson,
-                value: None,
-            })
-        } else if matches.matched(GooseControllerCommand::Host as usize) {
-            // Perform a second regex to capture the host value.
-            let caps = self.captures[GooseControllerCommand::Host as usize]
-                .captures(command_string)
-                .unwrap();
-            let host = caps.get(2).map_or("", |m| m.as_str());
-            // The Regex that captures the host only validates that the host starts with
-            // http:// or https://. Now use a library to properly validate that this is
-            // a valid host before sending to the parent process.
-            if util::is_valid_host(host).is_ok() {
-                Ok(GooseControllerRequestMessage {
-                    command: GooseControllerCommand::Host,
-                    value: Some(host.to_string()),
-                })
-            } else {
-                debug!("invalid host: {}", host);
-                Err(())
-            }
-        } else if matches.matched(GooseControllerCommand::Users as usize) {
-            // Perform a second regex to capture the users value.
-            let caps = self.captures[GooseControllerCommand::Users as usize]
-                .captures(command_string)
-                .unwrap();
-            let users = caps.get(2).map_or("", |m| m.as_str());
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::Users,
-                value: Some(users.to_string()),
-            })
-        } else if matches.matched(GooseControllerCommand::HatchRate as usize) {
-            // Perform a second regex to capture the hatch_rate value.
-            let caps = self.captures[GooseControllerCommand::HatchRate as usize]
-                .captures(command_string)
-                .unwrap();
-            let hatch_rate = caps.get(2).map_or("", |m| m.as_str());
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::HatchRate,
-                value: Some(hatch_rate.to_string()),
-            })
-        } else if matches.matched(GooseControllerCommand::RunTime as usize) {
-            // Perform a second regex to capture the run_time value.
-            let caps = self.captures[GooseControllerCommand::RunTime as usize]
-                .captures(command_string)
-                .unwrap();
-            let run_time = caps.get(2).map_or("", |m| m.as_str());
-            Ok(GooseControllerRequestMessage {
-                command: GooseControllerCommand::RunTime,
-                value: Some(run_time.to_string()),
-            })
-        } else {
-            Err(())
-        }
+    async fn get_match(
+        &self,
+        command_string: &str,
+    ) -> Result<GooseControllerRequestMessage, GooseError> {
+        // Use FromStr to convert &str to GooseControllerCommand.
+        let command: GooseControllerCommand = GooseControllerCommand::from_str(command_string)?;
+        // Extract value if there is one, otherwise will be None.
+        let value: Option<String> = command.get_value(command_string);
+
+        Ok(GooseControllerRequestMessage { command, value })
     }
 
     /// Process a request entirely within the Controller thread, without sending a message
@@ -596,37 +603,6 @@ impl GooseControllerState {
         response: GooseControllerResponseMessage,
     ) -> Result<String, String> {
         match command {
-            GooseControllerCommand::Host => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("host configured".to_string())
-                } else {
-                    Err(
-                        "failed to reconfigure host, be sure host is valid and load test is idle"
-                            .to_string(),
-                    )
-                }
-            }
-            GooseControllerCommand::Users => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("users configured".to_string())
-                } else {
-                    Err("load test not idle, failed to reconfigure users".to_string())
-                }
-            }
-            GooseControllerCommand::HatchRate => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("hatch_rate configured".to_string())
-                } else {
-                    Err("failed to configure hatch_rate".to_string())
-                }
-            }
-            GooseControllerCommand::RunTime => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("run_time configured".to_string())
-                } else {
-                    Err("failed to configure run_time".to_string())
-                }
-            }
             GooseControllerCommand::Config => {
                 if let GooseControllerResponseMessage::Config(config) = response {
                     Ok(format!("{:#?}", config))
@@ -639,6 +615,29 @@ impl GooseControllerState {
                     Ok(serde_json::to_string(&config).expect("unexpected serde failure"))
                 } else {
                     Err("error loading configuration".to_string())
+                }
+            }
+            GooseControllerCommand::HatchRate => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("hatch_rate configured".to_string())
+                } else {
+                    Err("failed to configure hatch_rate".to_string())
+                }
+            }
+            // These commands are processed earlier so we should never get here.
+            GooseControllerCommand::Help | GooseControllerCommand::Exit => {
+                let e = "received an impossible HELP or EXIT command";
+                error!("{}", e);
+                Err(e.to_string())
+            }
+            GooseControllerCommand::Host => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("host configured".to_string())
+                } else {
+                    Err(
+                        "failed to reconfigure host, be sure host is valid and load test is idle"
+                            .to_string(),
+                    )
                 }
             }
             GooseControllerCommand::Metrics => {
@@ -655,6 +654,20 @@ impl GooseControllerState {
                     Err("error loading metrics".to_string())
                 }
             }
+            GooseControllerCommand::RunTime => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("run_time configured".to_string())
+                } else {
+                    Err("failed to configure run_time".to_string())
+                }
+            }
+            GooseControllerCommand::Shutdown => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("load test shut down".to_string())
+                } else {
+                    Err("failed to shut down load test".to_string())
+                }
+            }
             GooseControllerCommand::Start => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
                     Ok("load test started".to_string())
@@ -665,6 +678,13 @@ impl GooseControllerState {
                     )
                 }
             }
+            GooseControllerCommand::StartupTime => {
+                if let GooseControllerResponseMessage::Bool(true) = response {
+                    Ok("startup_time configured".to_string())
+                } else {
+                    Err("failed to configure startup_time, be sure load test is idle".to_string())
+                }
+            }
             // This shouldn't work if the load test isn't running.
             GooseControllerCommand::Stop => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
@@ -673,18 +693,12 @@ impl GooseControllerState {
                     Err("load test not running, failed to stop".to_string())
                 }
             }
-            GooseControllerCommand::Shutdown => {
+            GooseControllerCommand::Users => {
                 if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("load test shut down".to_string())
+                    Ok("users configured".to_string())
                 } else {
-                    Err("failed to shut down load test".to_string())
+                    Err("load test not idle, failed to reconfigure users".to_string())
                 }
-            }
-            // These commands are processed earlier so we should never get here.
-            GooseControllerCommand::Help | GooseControllerCommand::Exit => {
-                let e = "received an impossible HELP or EXIT command";
-                error!("{}", e);
-                Err(e.to_string())
             }
         }
     }
@@ -975,59 +989,6 @@ pub(crate) async fn controller_main(
     let listener = TcpListener::bind(&address).await?;
     info!("{:?} controller listening on: {}", protocol, address);
 
-    // These first regular expressions are compiled twice. Once as part of a set used to match
-    // against a command. The second time to capture specific matched values. This is a
-    // limitiation of RegexSet as documented at:
-    // https://docs.rs/regex/1.5.4/regex/struct.RegexSet.html#limitations
-    let host_regex = r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$";
-    let users_regex = r"(?i)^(users?) (\d+)$";
-    let hatchrate_regex = r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$";
-    let runtime_regex =
-        r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$";
-
-    // The following RegexSet is matched against all commands received through the controller.
-    // Developer note: The order commands are defined here must match the order in which
-    // the commands are defined in the GooseControllerCommand enum, as it is used to determine
-    // which expression matched, if any.
-    let commands = RegexSet::new(&[
-        // Modify the host the load test runs against.
-        host_regex,
-        // Modify how many users hatch.
-        users_regex,
-        // Modify how quickly users hatch.
-        hatchrate_regex,
-        // Modify how long the load test will run.
-        runtime_regex,
-        // Display the current load test configuration.
-        r"(?i)^config$",
-        // Display the current load test configuration in json.
-        r"(?i)^(configjson|config-json)$",
-        // Display running metrics for the currently active load test.
-        r"(?i)^(metrics|stats)$",
-        // Display running metrics for the currently active load test in json.
-        r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$",
-        // Provide a list of possible commands.
-        r"(?i)^(help|\?)$",
-        // Exit/quit the controller connection, does not affect load test.
-        r"(?i)^(exit|quit)$",
-        // Start an idle load test.
-        r"(?i)^start$",
-        // Stop an idle load test.
-        r"(?i)^stop$",
-        // Shutdown the load test (which will cause the controller connection to quit).
-        r"(?i)^shutdown$",
-    ])
-    .unwrap();
-
-    // The following regular expressions are used when matching against certain commands
-    // to then capture a matched value.
-    let captures = vec![
-        Regex::new(host_regex).unwrap(),
-        Regex::new(users_regex).unwrap(),
-        Regex::new(hatchrate_regex).unwrap(),
-        Regex::new(runtime_regex).unwrap(),
-    ];
-
     // Counter increments each time a controller client connects with this protocol.
     let mut thread_id: u32 = 0;
 
@@ -1045,8 +1006,6 @@ pub(crate) async fn controller_main(
             thread_id,
             peer_address,
             channel_tx: channel_tx.clone(),
-            commands: commands.clone(),
-            captures: captures.clone(),
             protocol: protocol.clone(),
         };
 
@@ -1082,6 +1041,7 @@ fn display_help() -> String {
  host HOST          set host to load test, ie http://localhost/
  users INT          set number of simulated users
  hatchrate FLOAT    set per-second rate users hatch
+ startup-time TIME  set time to take starting users
  runtime TIME       set how long to run test, ie 1h30m5s
  config             display load test configuration
  config-json        display load test configuration in json format
@@ -1187,18 +1147,11 @@ impl GooseAttack {
                             if [AttackPhase::Increase, AttackPhase::Maintain]
                                 .contains(&self.attack_phase)
                             {
-                                self.metrics.history.push(TestPlanHistory::step(
-                                    TestPlanStepAction::Decreasing,
-                                    goose_attack_run_state.active_users,
-                                ));
-                                self.set_attack_phase(
-                                    goose_attack_run_state,
-                                    AttackPhase::Decrease,
-                                );
                                 // Don't shutdown when load test is stopped by controller, remain idle instead.
                                 goose_attack_run_state.shutdown_after_stop = false;
                                 // Don't automatically restart the load test.
                                 self.configuration.no_autostart = true;
+                                self.cancel_attack(goose_attack_run_state).await?;
                                 self.reply_to_controller(
                                     message,
                                     GooseControllerResponseMessage::Bool(true),
@@ -1246,9 +1199,13 @@ impl GooseAttack {
                                         GooseControllerResponseMessage::Bool(true),
                                     );
                                 } else {
-                                    warn!(
-                                        "Controller didn't provide host: {:#?}",
+                                    debug!(
+                                        "controller didn't provide host: {:#?}",
                                         &message.request
+                                    );
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(false),
                                     );
                                 }
                             } else {
@@ -1295,6 +1252,14 @@ impl GooseAttack {
                             // this is a valid float, so simply use it with further
                             // validation.
                             if let Some(hatch_rate) = &message.request.value {
+                                // If startup_time was already set, unset it first.
+                                if !self.configuration.startup_time.is_empty() {
+                                    info!(
+                                        "resetting startup_time from {} to 0",
+                                        self.configuration.startup_time
+                                    );
+                                    self.configuration.startup_time = "0".to_string();
+                                }
                                 info!(
                                     "changing hatch_rate from {:?} to {}",
                                     self.configuration.hatch_rate, hatch_rate
@@ -1308,6 +1273,43 @@ impl GooseAttack {
                                 warn!(
                                     "Controller didn't provide hatch_rate: {:#?}",
                                     &message.request
+                                );
+                            }
+                        }
+                        GooseControllerCommand::StartupTime => {
+                            if self.attack_phase == AttackPhase::Idle {
+                                // The controller uses a regular expression to validate that
+                                // this is a valid startup time, so simply use it with further
+                                // validation.
+                                if let Some(startup_time) = &message.request.value {
+                                    // If hatch_rate was already set, unset it first.
+                                    if let Some(hatch_rate) = &self.configuration.hatch_rate {
+                                        info!("resetting hatch_rate from {} to None", hatch_rate);
+                                        self.configuration.hatch_rate = None;
+                                    }
+                                    info!(
+                                        "changing startup_rate from {} to {}",
+                                        self.configuration.startup_time, startup_time
+                                    );
+                                    self.configuration.startup_time = startup_time.clone();
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(true),
+                                    );
+                                } else {
+                                    warn!(
+                                        "Controller didn't provide startup_time: {:#?}",
+                                        &message.request
+                                    );
+                                    self.reply_to_controller(
+                                        message,
+                                        GooseControllerResponseMessage::Bool(false),
+                                    );
+                                }
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    GooseControllerResponseMessage::Bool(false),
                                 );
                             }
                         }

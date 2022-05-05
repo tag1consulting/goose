@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.16.1-dev
+ - [#464](https://github.com/tag1consulting/goose/pull/464) add `startuptime` (and `startup_time`) TIME to controllers, setting how long the load test should spend starting configured number of users
 
 ## 0.16.0 May 1, 2022
  - [#431](https://github.com/tag1consulting/goose/pull/431) rename `--no-granular-data` to `--no-granular-report`

@@ -38,6 +38,8 @@ serde = { version = "1.0", features = [
 serde_cbor = "0.11"
 serde_json = "1.0"
 simplelog = "0.10"
+strum = "0.24"
+strum_macros = "0.24"
 tokio = { version = "~1.15.0", features = [
     "fs",
     "io-util",
