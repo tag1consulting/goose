@@ -21,8 +21,10 @@ const ABOUT_PATH: &str = "/about.html";
 const INDEX_KEY: usize = 0;
 const ABOUT_KEY: usize = 1;
 
-const USERS: usize = 5;
-const HATCH_RATE: usize = 10;
+const START_USERS: usize = 5;
+const MAX_USERS: usize = 20;
+const FINAL_USERS: usize = 10;
+const HATCH_RATE: usize = 25;
 const RUN_TIME: usize = 10;
 const STARTUP_TIME: usize = 1;
 
@@ -139,13 +141,19 @@ fn validate_one_scenario(
     assert!(about_metrics.fail_count == 0);
 
     // Users were correctly configured through the controller.
-    assert!(goose_metrics.total_users == USERS);
+    assert!(goose_metrics.total_users == MAX_USERS);
 
     // Host was not configured at start time.
     assert!(configuration.host.is_empty());
 
     // The load test was manually shut down instead of running to completion.
     assert!(goose_metrics.duration < RUN_TIME);
+
+    // Increasing, Maintaining, Increasing, Maintaining, Decreasing, Maintaining, Canceling,
+    // Finished, Finished.
+    // Finished is logged twice because `stop` puts the test to Idle, and then `shutdown`
+    // actually shuts down the test, and both are logged as "Finished".
+    assert!(goose_metrics.history.len() == 9);
 }
 
 // Returns the appropriate scenario needed to build these tests.
@@ -302,7 +310,7 @@ async fn run_standalone_test(test_type: TestType) {
                         0 => {
                             make_request(
                                 &mut test_state,
-                                &["users ", &USERS.to_string(), "\r\n"].concat(),
+                                &["users ", &START_USERS.to_string(), "\r\n"].concat(),
                             );
                         }
                         // Confirm that the users are reconfigured.
@@ -570,9 +578,33 @@ async fn run_standalone_test(test_type: TestType) {
                         0 => {
                             make_request(&mut test_state, "host http://localhost/\r\n");
                         }
-                        // Confirm host can not be configured on a running load test.
+                        // Setting host fails, then reconfigure the number of users, increasing.
                         1 => {
                             assert!(response.starts_with("failed to reconfigure host"));
+
+                            make_request(
+                                &mut test_state,
+                                &["users ", &MAX_USERS.to_string(), "\r\n"].concat(),
+                            );
+                        }
+                        // Setting users succeeds, reconfigure the number of users, decreasing.
+                        2 => {
+                            assert!(response.starts_with("users configured"));
+
+                            // Give Goose a second to increase users.
+                            tokio::time::sleep(time::Duration::from_secs(1)).await;
+
+                            make_request(
+                                &mut test_state,
+                                &["users ", &FINAL_USERS.to_string(), "\r\n"].concat(),
+                            );
+                        }
+                        // Confirm host can not be configured on a running load test.
+                        3 => {
+                            assert!(response.starts_with("users configured"));
+
+                            // Give Goose a second to decrease users.
+                            tokio::time::sleep(time::Duration::from_secs(1)).await;
 
                             // Try to stop a running load test.
                             make_request(&mut test_state, "stop\r\n");

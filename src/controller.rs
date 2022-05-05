@@ -178,7 +178,7 @@ pub enum GooseControllerCommand {
     ///
     /// Goose must be running (or starting) to process this command.
     Stop,
-    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s to launch.
     ///
     /// # Example
     /// Tells Goose to simulate 100 concurrent users.
@@ -186,7 +186,7 @@ pub enum GooseControllerCommand {
     /// users 100
     /// ```
     ///
-    /// Goose must be idle to process this command.
+    /// Can be configured on an idle or running load test.
     Users,
 }
 
