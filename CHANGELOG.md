@@ -2,6 +2,7 @@
 
 ## 0.16.1-dev
  - [#464](https://github.com/tag1consulting/goose/pull/464) add `startuptime` (and `startup_time`) TIME to controllers, setting how long the load test should spend starting configured number of users
+ - [#469](https://github.com/tag1consulting/goose/pull/469) support `users` INT command on controllers during a running load test
 
 ## 0.16.0 May 1, 2022
  - [#431](https://github.com/tag1consulting/goose/pull/431) rename `--no-granular-data` to `--no-granular-report`

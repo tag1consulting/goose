@@ -735,7 +735,7 @@ impl GooseAttack {
     }
 
     /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
-    fn weight_scenario_users(&mut self) -> Result<Vec<GooseUser>, GooseError> {
+    fn weight_scenario_users(&mut self, total_users: usize) -> Result<Vec<GooseUser>, GooseError> {
         trace!("weight_scenario_users");
 
         let weighted_scenarios = self.allocate_scenarios();
@@ -766,7 +766,7 @@ impl GooseAttack {
                     self.metrics.hash,
                 )?);
                 user_count += 1;
-                if user_count == self.test_plan.total_users() {
+                if user_count == total_users {
                     debug!("created {} weighted_users", user_count);
                     return Ok(weighted_users);
                 }
@@ -1051,7 +1051,7 @@ impl GooseAttack {
 
             if self.attack_mode == AttackMode::StandAlone {
                 // Allocate a state for each of the users we are about to start.
-                self.weighted_users = self.weight_scenario_users()?;
+                self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
             } else if self.attack_mode == AttackMode::Manager {
                 // Build a list of users to be allocated on Workers.
                 self.weighted_gaggle_users = self.prepare_worker_scenario_users()?;
@@ -1327,7 +1327,8 @@ impl GooseAttack {
         } else if let Some(started) = self.started {
             started.elapsed().as_millis()
         } else {
-            unreachable!("the load test had to have started");
+            // An idle load test.
+            0
         }
     }
 
