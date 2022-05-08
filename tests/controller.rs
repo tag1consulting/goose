@@ -7,7 +7,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use goose::config::GooseConfiguration;
 use goose::controller::{
-    GooseControllerCommand, GooseControllerWebSocketRequest, GooseControllerWebSocketResponse,
+    ControllerCommand, ControllerWebSocketRequest, ControllerWebSocketResponse,
 };
 use goose::prelude::*;
 
@@ -41,12 +41,12 @@ enum TestType {
 struct TestState {
     // A buffer for the telnet Controller.
     buf: [u8; 2048],
-    // Track iterations through GooseControllerCommands.
+    // Track iterations through ControllerCommands.
     position: usize,
     // Track the steps within a given iteration.
     step: usize,
     // The Controller command currently being tested.
-    command: GooseControllerCommand,
+    command: ControllerCommand,
     // A TCP socket if testing the telnet Controller.
     telnet_stream: Option<TcpStream>,
     // A TCP socket if testing the WebSocket Controller.
@@ -193,7 +193,7 @@ async fn run_standalone_test(test_type: TestType) {
         loop {
             // Process data received from the client in a loop.
             let response;
-            let websocket_response: GooseControllerWebSocketResponse;
+            let websocket_response: ControllerWebSocketResponse;
             if let Some(stream) = test_state.telnet_stream.as_mut() {
                 let _ = match stream.read(&mut test_state.buf) {
                     Ok(data) => data,
@@ -233,7 +233,7 @@ async fn run_standalone_test(test_type: TestType) {
 
             //println!("{:?}: {}", test_state.command, response);
             match test_state.command {
-                GooseControllerCommand::Exit => {
+                ControllerCommand::Exit => {
                     match test_state.step {
                         // Exit the Controller.
                         0 => {
@@ -251,7 +251,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Help => {
+                ControllerCommand::Help => {
                     match test_state.step {
                         0 => {
                             // Request the help text.
@@ -273,7 +273,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Host => {
+                ControllerCommand::Host => {
                     match test_state.step {
                         // Set the host to be load tested.
                         0 => {
@@ -304,7 +304,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Users => {
+                ControllerCommand::Users => {
                     match test_state.step {
                         // Reconfigure the number of users simulated by the load test.
                         0 => {
@@ -331,7 +331,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::HatchRate => {
+                ControllerCommand::HatchRate => {
                     match test_state.step {
                         // Configure a decimal hatch_rate.
                         0 => {
@@ -373,7 +373,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::StartupTime => {
+                ControllerCommand::StartupTime => {
                     match test_state.step {
                         // Try to configure a decimal StartupTime.
                         0 => {
@@ -412,7 +412,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::RunTime => {
+                ControllerCommand::RunTime => {
                     match test_state.step {
                         // Configure run_time using h:m:s format.
                         0 => {
@@ -470,7 +470,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Config => {
+                ControllerCommand::Config => {
                     match test_state.step {
                         // Request the configuration.
                         0 => {
@@ -491,7 +491,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::ConfigJson => {
+                ControllerCommand::ConfigJson => {
                     match test_state.step {
                         // Request the configuration in json format.
                         0 => {
@@ -507,7 +507,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Metrics => {
+                ControllerCommand::Metrics => {
                     match test_state.step {
                         // Request the running metrics.
                         0 => {
@@ -528,7 +528,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::MetricsJson => {
+                ControllerCommand::MetricsJson => {
                     match test_state.step {
                         // Request the running metrics in json format.
                         0 => {
@@ -543,7 +543,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Start => {
+                ControllerCommand::Start => {
                     match test_state.step {
                         // Try to stop an idle load test.
                         0 => {
@@ -572,7 +572,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Stop => {
+                ControllerCommand::Stop => {
                     match test_state.step {
                         // Try to configure host on a running load test.
                         0 => {
@@ -621,7 +621,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                GooseControllerCommand::Shutdown => {
+                ControllerCommand::Shutdown => {
                     match test_state.step {
                         // Shut down the load test.
                         0 => {
@@ -666,20 +666,20 @@ async fn run_standalone_test(test_type: TestType) {
 fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestState {
     // The commands being tested, and the order they are tested.
     let commands_to_test = [
-        GooseControllerCommand::Exit,
-        GooseControllerCommand::Help,
-        GooseControllerCommand::Host,
-        GooseControllerCommand::Users,
-        GooseControllerCommand::HatchRate,
-        GooseControllerCommand::StartupTime,
-        GooseControllerCommand::RunTime,
-        GooseControllerCommand::Start,
-        GooseControllerCommand::Config,
-        GooseControllerCommand::ConfigJson,
-        GooseControllerCommand::Metrics,
-        GooseControllerCommand::MetricsJson,
-        GooseControllerCommand::Stop,
-        GooseControllerCommand::Shutdown,
+        ControllerCommand::Exit,
+        ControllerCommand::Help,
+        ControllerCommand::Host,
+        ControllerCommand::Users,
+        ControllerCommand::HatchRate,
+        ControllerCommand::StartupTime,
+        ControllerCommand::RunTime,
+        ControllerCommand::Start,
+        ControllerCommand::Config,
+        ControllerCommand::ConfigJson,
+        ControllerCommand::Metrics,
+        ControllerCommand::MetricsJson,
+        ControllerCommand::Stop,
+        ControllerCommand::Shutdown,
     ];
 
     if let Some(mut state) = test_state {
@@ -741,7 +741,7 @@ fn make_request(test_state: &mut TestState, command: &str) {
     } else if let Some(stream) = test_state.websocket_stream.as_mut() {
         stream
             .write_message(Message::Text(
-                serde_json::to_string(&GooseControllerWebSocketRequest {
+                serde_json::to_string(&ControllerWebSocketRequest {
                     request: command.to_string(),
                 })
                 .unwrap(),

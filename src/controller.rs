@@ -23,33 +23,38 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-/// Goose currently supports two different Controller protocols: telnet and WebSocket.
+/// Goose supports two different Controller protocols: telnet and WebSocket.
 #[derive(Clone, Debug)]
-pub(crate) enum GooseControllerProtocol {
+pub(crate) enum ControllerProtocol {
     /// Allows control of Goose via telnet.
     Telnet,
     /// Allows control of Goose via a WebSocket.
     WebSocket,
 }
 
+pub(crate) struct ControllerCommandDetails {
+    regex: String,
+    process_response: Box<dyn Fn(ControllerResponseMessage) -> Result<String, String>>,
+}
+
 /// All commands recognized by the Goose Controllers.
 ///
 /// Commands are not case sensitive. When sending commands to the WebSocket Controller,
 /// they must be formatted as json as defined by
-/// [GooseControllerWebSocketRequest](./struct.GooseControllerWebSocketRequest.html).
+/// [ControllerWebSocketRequest](./struct.ControllerWebSocketRequest.html).
 ///
 /// GOOSE DEVELOPER NOTE: The following steps are required to add a new command:
-///  1. Define the command here in the GooseControllerCommand enum.
+///  1. Define the command here in the ControllerCommand enum.
 ///  2. Add the regular expression for matching the new command in the `command`
 /// [`regex::RegexSet`](https://docs.rs/regex/*/regex/struct.RegexSet.html) in
-/// [`GooseControllerCommand::get_regex`].
+/// [`ControllerCommand::get_regex`].
 ///      - See `Hatchrate` and `Users for a regex that also captures a value.
 ///      - See `Host` for a regex that also reuires manual validation afterward.
 ///  3. Add any parent process logic for the command to `handle_controller_requests()`.
 ///  4. Handle the response in `process_response()`, returning a `Result<String, String>`
 ///     succinctly describing success or failure.
 #[derive(Clone, Debug, EnumIter, PartialEq)]
-pub enum GooseControllerCommand {
+pub enum ControllerCommand {
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -190,39 +195,179 @@ pub enum GooseControllerCommand {
     Users,
 }
 
-impl GooseControllerCommand {
-    // Controller commands are recognized by matching against regular expressions.
-    fn get_regex(&self) -> String {
+impl ControllerCommand {
+    fn details(&self) -> ControllerCommandDetails {
         match self {
-            GooseControllerCommand::Config => r"(?i)^config$",
-            GooseControllerCommand::ConfigJson => r"(?i)^(configjson|config-json)$",
-            GooseControllerCommand::Exit => r"(?i)^(exit|quit)$",
-            GooseControllerCommand::HatchRate => {
-                r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$"
+            ControllerCommand::Config => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^config$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Config(config) = response {
+                            Ok(format!("{:#?}", config))
+                        } else {
+                            Err("error loading configuration".to_string())
+                        }
+                    }),
+                }
             }
-            GooseControllerCommand::Help => r"(?i)^(help|\?)$",
-            GooseControllerCommand::Host => {
-                r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$"
+            ControllerCommand::ConfigJson => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(configjson|config-json)$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Config(config) = response {
+                            Ok(serde_json::to_string(&config).expect("unexpected serde failure"))
+                        } else {
+                            Err("error loading configuration".to_string())
+                        }
+                    }),
+                }
             }
-            GooseControllerCommand::Metrics => r"(?i)^(metrics|stats)$",
-            GooseControllerCommand::MetricsJson => {
-                r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$"
+            ControllerCommand::Exit => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(exit|quit)$".to_string(),
+                    process_response: Box::new(|_| {
+                        let e = "received an impossible EXIT command";
+                        error!("{}", e);
+                        Err(e.to_string())
+                    }),
+                }
             }
-            GooseControllerCommand::RunTime => {
-                r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$"
+            ControllerCommand::HatchRate => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("hatch_rate configured".to_string())
+                        } else {
+                            Err("failed to configure hatch_rate".to_string())
+                        }
+                    }),
+                }
             }
-            GooseControllerCommand::Shutdown => r"(?i)^shutdown$",
-            GooseControllerCommand::Start => r"(?i)^start$",
-            GooseControllerCommand::StartupTime => r"(?i)^(starttime|start_time|start-time|startup|startuptime|startup_time|startup-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
-            GooseControllerCommand::Stop => r"(?i)^stop$",
-            GooseControllerCommand::Users => r"(?i)^(users?) (\d+)$",
+            ControllerCommand::Help => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(help|\?)$".to_string(),
+                    process_response: Box::new(|_| {
+                        let e = "received an impossible HELP command";
+                        error!("{}", e);
+                        Err(e.to_string())
+                    }),
+                }
+            }
+            ControllerCommand::Host => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("host configured".to_string())
+                        } else {
+                            Err("failed to reconfigure host, be sure host is valid and load test is idle".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::Metrics => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(metrics|stats)$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Metrics(metrics) = response {
+                            Ok(metrics.to_string())
+                        } else {
+                            Err("error loading metrics".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::MetricsJson => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Metrics(metrics) = response {
+                            Ok(serde_json::to_string(&metrics).expect("unexpected serde failure"))
+                        } else {
+                            Err("error loading metrics".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::RunTime => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("run_time configured".to_string())
+                        } else {
+                            Err("failed to configure run_time".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::Shutdown => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^shutdown$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("load test shut down".to_string())
+                        } else {
+                            Err("failed to shut down load test".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::Start => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^start$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("load test started".to_string())
+                        } else {
+                            Err("unable to start load test, be sure it is idle and host is configured".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::StartupTime => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(starttime|start_time|start-time|startup|startuptime|startup_time|startup-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("startup_time configured".to_string())
+                        } else {
+                            Err("failed to configure startup_time, be sure load test is idle".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::Stop => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^stop$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("load test stopped".to_string())
+                        } else {
+                            Err("load test not running, failed to stop".to_string())
+                        }
+                    }),
+                }
+            }
+            ControllerCommand::Users => {
+                ControllerCommandDetails {
+                    regex: r"(?i)^(users?) (\d+)$".to_string(),
+                    process_response: Box::new(|response| {
+                        if let ControllerResponseMessage::Bool(true) = response {
+                            Ok("users configured".to_string())
+                        } else {
+                            Err("load test not idle, failed to reconfigure users".to_string())
+                        }
+                    }),
+                }
+            }
         }
-        .to_string()
     }
 
     fn get_value(&self, command_string: &str) -> Option<String> {
-        let regex = Regex::new(&self.get_regex())
-            .expect("GooseControllerCommand::get_regex() returned invalid regex [2]");
+        let regex = Regex::new(&self.details().regex)
+            .expect("ControllerCommand::details().regex returned invalid regex [2]");
         let caps = regex.captures(command_string).unwrap();
         let value = caps.get(2).map_or("", |m| m.as_str());
         if value.is_empty() {
@@ -231,7 +376,7 @@ impl GooseControllerCommand {
             // The Regex that captures the host only validates that the host starts with
             // http:// or https://. Now use a library to properly validate that this is
             // a valid host before sending to the parent process.
-            if self == &GooseControllerCommand::Host {
+            if self == &ControllerCommand::Host {
                 if util::is_valid_host(value).is_ok() {
                     Some(value.to_string())
                 } else {
@@ -248,19 +393,19 @@ impl GooseControllerCommand {
 
 /// Implement [`FromStr`] to convert controller commands and optional values to the proper enum
 /// representation.
-impl FromStr for GooseControllerCommand {
+impl FromStr for ControllerCommand {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Load all GooseControllerCommand regex into a set.
+        // Load all ControllerCommand regex into a set.
         let mut regex_set: Vec<String> = Vec::new();
         let mut keys = Vec::new();
-        for t in GooseControllerCommand::iter() {
+        for t in ControllerCommand::iter() {
             keys.push(t.clone());
-            regex_set.push(t.get_regex());
+            regex_set.push(t.details().regex);
         }
         let commands = RegexSet::new(regex_set)
-            .expect("GooseControllerCommand::get_regex() returned invalid regex");
+            .expect("ControllerCommand::details().regex returned invalid regex");
         let matches: Vec<_> = commands.matches(s).into_iter().collect();
         // This happens any time the controller receives an invalid command.
         if matches.is_empty() {
@@ -288,16 +433,16 @@ impl FromStr for GooseControllerCommand {
 
 /// This structure is used to send commands and values to the parent process.
 #[derive(Debug)]
-pub(crate) struct GooseControllerRequestMessage {
+pub(crate) struct ControllerRequestMessage {
     /// The command that is being sent to the parent.
-    pub command: GooseControllerCommand,
+    pub command: ControllerCommand,
     /// An optional value that is being sent to the parent.
     pub value: Option<String>,
 }
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
 #[derive(Debug)]
-pub(crate) enum GooseControllerResponseMessage {
+pub(crate) enum ControllerResponseMessage {
     /// A response containing a boolean value.
     Bool(bool),
     /// A response containing the load test configuration.
@@ -308,22 +453,22 @@ pub(crate) enum GooseControllerResponseMessage {
 
 /// The request that's passed from the controller to the parent thread.
 #[derive(Debug)]
-pub(crate) struct GooseControllerRequest {
+pub(crate) struct ControllerRequest {
     /// Optional one-shot channel if a reply is required.
-    pub response_channel: Option<tokio::sync::oneshot::Sender<GooseControllerResponse>>,
+    pub response_channel: Option<tokio::sync::oneshot::Sender<ControllerResponse>>,
     /// An integer identifying which controller client is making the request.
     pub client_id: u32,
     /// The actual request message.
-    pub request: GooseControllerRequestMessage,
+    pub request: ControllerRequestMessage,
 }
 
 /// The response that's passed from the parent to the controller.
 #[derive(Debug)]
-pub(crate) struct GooseControllerResponse {
+pub(crate) struct ControllerResponse {
     /// An integer identifying which controller the parent is responding to.
     pub _client_id: u32,
     /// The actual response message.
-    pub response: GooseControllerResponseMessage,
+    pub response: ControllerResponseMessage,
 }
 
 /// This structure defines the required json format of any request sent to the WebSocket
@@ -338,7 +483,7 @@ pub(crate) struct GooseControllerResponse {
 /// ```
 ///
 /// The request "String" value must be a valid
-/// [`GooseControllerCommand`](./enum.GooseControllerCommand.html).
+/// [`ControllerCommand`](./enum.ControllerCommand.html).
 ///
 /// # Example
 /// The following request will shut down the load test:
@@ -349,9 +494,9 @@ pub(crate) struct GooseControllerResponse {
 /// ```
 ///
 /// Responses will be formatted as defined in
-/// [GooseControllerWebSocketResponse](./struct.GooseControllerWebSocketResponse.html).
+/// [ControllerWebSocketResponse](./struct.ControllerWebSocketResponse.html).
 #[derive(Debug, Deserialize, Serialize)]
-pub struct GooseControllerWebSocketRequest {
+pub struct ControllerWebSocketRequest {
     /// A valid command string.
     pub request: String,
 }
@@ -378,9 +523,9 @@ pub struct GooseControllerWebSocketRequest {
 /// ```
 ///
 /// Requests must be formatted as defined in
-/// [GooseControllerWebSocketRequest](./struct.GooseControllerWebSocketRequest.html).
+/// [ControllerWebSocketRequest](./struct.ControllerWebSocketRequest.html).
 #[derive(Debug, Deserialize, Serialize)]
-pub struct GooseControllerWebSocketResponse {
+pub struct ControllerWebSocketResponse {
     /// The response from the controller.
     pub response: String,
     /// Whether the request was successful or not.
@@ -388,45 +533,45 @@ pub struct GooseControllerWebSocketResponse {
 }
 
 /// Return type to indicate whether or not to exit the Controller thread.
-type GooseControllerExit = bool;
+type ControllerExit = bool;
 
 /// The telnet Controller message buffer.
-type GooseControllerTelnetMessage = [u8; 1024];
+type ControllerTelnetMessage = [u8; 1024];
 
 /// The WebSocket Controller message buffer.
-type GooseControllerWebSocketMessage = std::result::Result<
+type ControllerWebSocketMessage = std::result::Result<
     tokio_tungstenite::tungstenite::Message,
     tokio_tungstenite::tungstenite::Error,
 >;
 
-/// Simplify the GooseControllerExecuteCommand trait definition for WebSockets.
-type GooseControllerWebSocketSender = futures::stream::SplitSink<
+/// Simplify the ControllerExecuteCommand trait definition for WebSockets.
+type ControllerWebSocketSender = futures::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
     tokio_tungstenite::tungstenite::Message,
 >;
 
 /// This state object is created in the main Controller thread and then passed to the specific
 /// per-client thread.
-pub(crate) struct GooseControllerState {
+pub(crate) struct ControllerState {
     /// Track which controller-thread this is.
     thread_id: u32,
     /// Track the ip and port of the connected TCP client.
     peer_address: String,
     /// A shared channel for communicating with the parent process.
-    channel_tx: flume::Sender<GooseControllerRequest>,
+    channel_tx: flume::Sender<ControllerRequest>,
     /// Which protocol this Controller understands.
-    protocol: GooseControllerProtocol,
+    protocol: ControllerProtocol,
 }
 // Defines functions shared by all Controllers.
-impl GooseControllerState {
+impl ControllerState {
     async fn accept_connections(self, mut socket: tokio::net::TcpStream) {
         info!(
             "{:?} client [{}] connected from {}",
             self.protocol, self.thread_id, self.peer_address
         );
         match self.protocol {
-            GooseControllerProtocol::Telnet => {
-                let mut buf: GooseControllerTelnetMessage = [0; 1024];
+            ControllerProtocol::Telnet => {
+                let mut buf: ControllerTelnetMessage = [0; 1024];
 
                 // Display initial goose> prompt.
                 write_to_socket_raw(&mut socket, "goose> ").await;
@@ -483,7 +628,7 @@ impl GooseControllerState {
                     }
                 }
             }
-            GooseControllerProtocol::WebSocket => {
+            ControllerProtocol::WebSocket => {
                 let stream = match tokio_tungstenite::accept_async(socket).await {
                     Ok(s) => s,
                     Err(e) => {
@@ -542,24 +687,21 @@ impl GooseControllerState {
     async fn get_match(
         &self,
         command_string: &str,
-    ) -> Result<GooseControllerRequestMessage, GooseError> {
-        // Use FromStr to convert &str to GooseControllerCommand.
-        let command: GooseControllerCommand = GooseControllerCommand::from_str(command_string)?;
+    ) -> Result<ControllerRequestMessage, GooseError> {
+        // Use FromStr to convert &str to ControllerCommand.
+        let command: ControllerCommand = ControllerCommand::from_str(command_string)?;
         // Extract value if there is one, otherwise will be None.
         let value: Option<String> = command.get_value(command_string);
 
-        Ok(GooseControllerRequestMessage { command, value })
+        Ok(ControllerRequestMessage { command, value })
     }
 
     /// Process a request entirely within the Controller thread, without sending a message
     /// to the parent thread.
-    fn process_local_command(
-        &self,
-        request_message: &GooseControllerRequestMessage,
-    ) -> Option<String> {
+    fn process_local_command(&self, request_message: &ControllerRequestMessage) -> Option<String> {
         match request_message.command {
-            GooseControllerCommand::Help => Some(display_help()),
-            GooseControllerCommand::Exit => Some("goodbye!".to_string()),
+            ControllerCommand::Help => Some(display_help()),
+            ControllerCommand::Exit => Some("goodbye!".to_string()),
             // All other commands require sending the request to the parent thread.
             _ => None,
         }
@@ -569,18 +711,18 @@ impl GooseControllerState {
     /// a reply.
     async fn process_command(
         &self,
-        request: GooseControllerRequestMessage,
-    ) -> Result<GooseControllerResponseMessage, String> {
+        request: ControllerRequestMessage,
+    ) -> Result<ControllerResponseMessage, String> {
         // Create a one-shot channel to allow the parent to reply to our request. As flume
         // doesn't implement a one-shot channel, we use tokio for this temporary channel.
         let (response_tx, response_rx): (
-            tokio::sync::oneshot::Sender<GooseControllerResponse>,
-            tokio::sync::oneshot::Receiver<GooseControllerResponse>,
+            tokio::sync::oneshot::Sender<ControllerResponse>,
+            tokio::sync::oneshot::Receiver<ControllerResponse>,
         ) = tokio::sync::oneshot::channel();
 
         if self
             .channel_tx
-            .try_send(GooseControllerRequest {
+            .try_send(ControllerRequest {
                 response_channel: Some(response_tx),
                 client_id: self.thread_id,
                 request,
@@ -596,128 +738,21 @@ impl GooseControllerState {
             Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
         }
     }
-
-    // Process the response received back from the parent process after running a command.
-    fn process_response(
-        &self,
-        command: GooseControllerCommand,
-        response: GooseControllerResponseMessage,
-    ) -> Result<String, String> {
-        match command {
-            GooseControllerCommand::Config => {
-                if let GooseControllerResponseMessage::Config(config) = response {
-                    Ok(format!("{:#?}", config))
-                } else {
-                    Err("error loading configuration".to_string())
-                }
-            }
-            GooseControllerCommand::ConfigJson => {
-                if let GooseControllerResponseMessage::Config(config) = response {
-                    Ok(serde_json::to_string(&config).expect("unexpected serde failure"))
-                } else {
-                    Err("error loading configuration".to_string())
-                }
-            }
-            GooseControllerCommand::HatchRate => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("hatch_rate configured".to_string())
-                } else {
-                    Err("failed to configure hatch_rate".to_string())
-                }
-            }
-            // These commands are processed earlier so we should never get here.
-            GooseControllerCommand::Help | GooseControllerCommand::Exit => {
-                let e = "received an impossible HELP or EXIT command";
-                error!("{}", e);
-                Err(e.to_string())
-            }
-            GooseControllerCommand::Host => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("host configured".to_string())
-                } else {
-                    Err(
-                        "failed to reconfigure host, be sure host is valid and load test is idle"
-                            .to_string(),
-                    )
-                }
-            }
-            GooseControllerCommand::Metrics => {
-                if let GooseControllerResponseMessage::Metrics(metrics) = response {
-                    Ok(metrics.to_string())
-                } else {
-                    Err("error loading metrics".to_string())
-                }
-            }
-            GooseControllerCommand::MetricsJson => {
-                if let GooseControllerResponseMessage::Metrics(metrics) = response {
-                    Ok(serde_json::to_string(&metrics).expect("unexpected serde failure"))
-                } else {
-                    Err("error loading metrics".to_string())
-                }
-            }
-            GooseControllerCommand::RunTime => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("run_time configured".to_string())
-                } else {
-                    Err("failed to configure run_time".to_string())
-                }
-            }
-            GooseControllerCommand::Shutdown => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("load test shut down".to_string())
-                } else {
-                    Err("failed to shut down load test".to_string())
-                }
-            }
-            GooseControllerCommand::Start => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("load test started".to_string())
-                } else {
-                    Err(
-                        "unable to start load test, be sure it is idle and host is configured"
-                            .to_string(),
-                    )
-                }
-            }
-            GooseControllerCommand::StartupTime => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("startup_time configured".to_string())
-                } else {
-                    Err("failed to configure startup_time, be sure load test is idle".to_string())
-                }
-            }
-            // This shouldn't work if the load test isn't running.
-            GooseControllerCommand::Stop => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("load test stopped".to_string())
-                } else {
-                    Err("load test not running, failed to stop".to_string())
-                }
-            }
-            GooseControllerCommand::Users => {
-                if let GooseControllerResponseMessage::Bool(true) = response {
-                    Ok("users configured".to_string())
-                } else {
-                    Err("load test not idle, failed to reconfigure users".to_string())
-                }
-            }
-        }
-    }
 }
 
 /// Controller-protocol-specific functions, necessary to manage the different way each
 /// Controller protocol communicates with a client.
 #[async_trait]
-trait GooseController<T> {
+trait Controller<T> {
     // Extract the command string from a Controller client request.
     async fn get_command_string(&self, raw_value: T) -> Result<String, String>;
 }
 #[async_trait]
-impl GooseController<GooseControllerTelnetMessage> for GooseControllerState {
+impl Controller<ControllerTelnetMessage> for ControllerState {
     // Extract the command string from a telnet Controller client request.
     async fn get_command_string(
         &self,
-        raw_value: GooseControllerTelnetMessage,
+        raw_value: ControllerTelnetMessage,
     ) -> Result<String, String> {
         let command_string = match str::from_utf8(&raw_value) {
             Ok(m) => {
@@ -738,17 +773,17 @@ impl GooseController<GooseControllerTelnetMessage> for GooseControllerState {
     }
 }
 #[async_trait]
-impl GooseController<GooseControllerWebSocketMessage> for GooseControllerState {
+impl Controller<ControllerWebSocketMessage> for ControllerState {
     // Extract the command string from a WebSocket Controller client request.
     async fn get_command_string(
         &self,
-        raw_value: GooseControllerWebSocketMessage,
+        raw_value: ControllerWebSocketMessage,
     ) -> Result<String, String> {
         if let Ok(request) = raw_value {
             if request.is_text() {
                 if let Ok(request) = request.into_text() {
                     debug!("websocket request: {:?}", request.trim());
-                    let command_string: GooseControllerWebSocketRequest =
+                    let command_string: ControllerWebSocketRequest =
                         match serde_json::from_str(&request) {
                             Ok(c) => c,
                             Err(_) => {
@@ -771,31 +806,31 @@ impl GooseController<GooseControllerWebSocketMessage> for GooseControllerState {
     }
 }
 #[async_trait]
-trait GooseControllerExecuteCommand<T> {
+trait ControllerExecuteCommand<T> {
     // Run the command received from a Controller request. Returns a boolean, if true exit.
     async fn execute_command(
         &self,
         socket: &mut T,
-        request_message: GooseControllerRequestMessage,
-    ) -> GooseControllerExit;
+        request_message: ControllerRequestMessage,
+    ) -> ControllerExit;
 
     // Send response to Controller client. The response is wrapped in a Result to indicate
     // if the request was successful or not.
     async fn write_to_socket(&self, socket: &mut T, response_message: Result<String, String>);
 }
 #[async_trait]
-impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerState {
+impl ControllerExecuteCommand<tokio::net::TcpStream> for ControllerState {
     // Run the command received from a telnet Controller request.
     async fn execute_command(
         &self,
         socket: &mut tokio::net::TcpStream,
-        request_message: GooseControllerRequestMessage,
-    ) -> GooseControllerExit {
+        request_message: ControllerRequestMessage,
+    ) -> ControllerExit {
         // First handle commands that don't require interaction with the parent process.
         if let Some(message) = self.process_local_command(&request_message) {
             self.write_to_socket(socket, Ok(message)).await;
             // If Exit was received return true to exit, otherwise return false.
-            return request_message.command == GooseControllerCommand::Exit;
+            return request_message.command == ControllerCommand::Exit;
         }
 
         // Retain a copy of the command used when processing the parent response.
@@ -814,11 +849,11 @@ impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerSta
         };
 
         // If Shutdown command was received return true to exit, otherwise return false.
-        let exit_controller = command == GooseControllerCommand::Shutdown;
+        let exit_controller = command == ControllerCommand::Shutdown;
 
         // Write the response to the Controller client socket.
-        self.write_to_socket(socket, self.process_response(command, response))
-            .await;
+        let processed_response = (command.details().process_response)(response);
+        self.write_to_socket(socket, processed_response).await;
 
         // Return true if it's time to exit the Controller.
         exit_controller
@@ -846,19 +881,19 @@ impl GooseControllerExecuteCommand<tokio::net::TcpStream> for GooseControllerSta
     }
 }
 #[async_trait]
-impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseControllerState {
+impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
     // Run the command received from a WebSocket Controller request.
     async fn execute_command(
         &self,
-        socket: &mut GooseControllerWebSocketSender,
-        request_message: GooseControllerRequestMessage,
-    ) -> GooseControllerExit {
+        socket: &mut ControllerWebSocketSender,
+        request_message: ControllerRequestMessage,
+    ) -> ControllerExit {
         // First handle commands that don't require interaction with the parent process.
         if let Some(message) = self.process_local_command(&request_message) {
             self.write_to_socket(socket, Ok(message)).await;
 
             // If Exit was received return true to exit, otherwise return false.
-            let exit_controller = request_message.command == GooseControllerCommand::Exit;
+            let exit_controller = request_message.command == ControllerCommand::Exit;
             // If exiting, notify the WebSocket client that this connection is closing.
             if exit_controller
                 && socket
@@ -877,8 +912,8 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
 
         // WebSocket Controller always returns JSON, convert command where necessary.
         let command = match request_message.command {
-            GooseControllerCommand::Config => GooseControllerCommand::ConfigJson,
-            GooseControllerCommand::Metrics => GooseControllerCommand::MetricsJson,
+            ControllerCommand::Config => ControllerCommand::ConfigJson,
+            ControllerCommand::Metrics => ControllerCommand::MetricsJson,
             _ => request_message.command.clone(),
         };
 
@@ -895,11 +930,11 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
         };
 
         // If Shutdown command was received return true to exit, otherwise return false.
-        let exit_controller = command == GooseControllerCommand::Shutdown;
+        let exit_controller = command == ControllerCommand::Shutdown;
 
         // Write the response to the Controller client socket.
-        self.write_to_socket(socket, self.process_response(command, response))
-            .await;
+        let processed_response = (command.details().process_response)(response);
+        self.write_to_socket(socket, processed_response).await;
 
         // If exiting, notify the WebSocket client that this connection is closing.
         if exit_controller
@@ -921,7 +956,7 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
     // Send a json-formatted response to the WebSocket.
     async fn write_to_socket(
         &self,
-        socket: &mut GooseControllerWebSocketSender,
+        socket: &mut ControllerWebSocketSender,
         response_result: Result<String, String>,
     ) {
         let success;
@@ -937,7 +972,7 @@ impl GooseControllerExecuteCommand<GooseControllerWebSocketSender> for GooseCont
         };
         if let Err(e) = socket
             .send(Message::Text(
-                match serde_json::to_string(&GooseControllerWebSocketResponse {
+                match serde_json::to_string(&ControllerWebSocketResponse {
                     response,
                     // Success is true if there is no error, false if there is an error.
                     success,
@@ -966,17 +1001,17 @@ pub(crate) async fn controller_main(
     // Expose load test configuration to controller thread.
     configuration: GooseConfiguration,
     // For sending requests to the parent process.
-    channel_tx: flume::Sender<GooseControllerRequest>,
+    channel_tx: flume::Sender<ControllerRequest>,
     // Which type of controller to launch.
-    protocol: GooseControllerProtocol,
+    protocol: ControllerProtocol,
 ) -> io::Result<()> {
     // Build protocol-appropriate address.
     let address = match &protocol {
-        GooseControllerProtocol::Telnet => format!(
+        ControllerProtocol::Telnet => format!(
             "{}:{}",
             configuration.telnet_host, configuration.telnet_port
         ),
-        GooseControllerProtocol::WebSocket => format!(
+        ControllerProtocol::WebSocket => format!(
             "{}:{}",
             configuration.websocket_host, configuration.websocket_port
         ),
@@ -1003,7 +1038,7 @@ pub(crate) async fn controller_main(
             .map_or("UNKNOWN ADDRESS".to_string(), |p| p.to_string());
 
         // Create a per-client Controller state.
-        let controller_state = GooseControllerState {
+        let controller_state = ControllerState {
             thread_id,
             peer_address,
             channel_tx: channel_tx.clone(),
@@ -1058,12 +1093,12 @@ impl GooseAttack {
     /// Use the provided oneshot channel to reply to a controller client request.
     pub(crate) fn reply_to_controller(
         &mut self,
-        request: GooseControllerRequest,
-        response: GooseControllerResponseMessage,
+        request: ControllerRequest,
+        response: ControllerResponseMessage,
     ) {
         if let Some(oneshot_tx) = request.response_channel {
             if oneshot_tx
-                .send(GooseControllerResponse {
+                .send(ControllerResponse {
                     _client_id: request.client_id,
                     response,
                 })
@@ -1090,25 +1125,23 @@ impl GooseAttack {
                     );
                     match &message.request.command {
                         // Send back a copy of the running configuration.
-                        GooseControllerCommand::Config | GooseControllerCommand::ConfigJson => {
+                        ControllerCommand::Config | ControllerCommand::ConfigJson => {
                             self.reply_to_controller(
                                 message,
-                                GooseControllerResponseMessage::Config(Box::new(
+                                ControllerResponseMessage::Config(Box::new(
                                     self.configuration.clone(),
                                 )),
                             );
                         }
                         // Send back a copy of the running metrics.
-                        GooseControllerCommand::Metrics | GooseControllerCommand::MetricsJson => {
+                        ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
                             self.reply_to_controller(
                                 message,
-                                GooseControllerResponseMessage::Metrics(Box::new(
-                                    self.metrics.clone(),
-                                )),
+                                ControllerResponseMessage::Metrics(Box::new(self.metrics.clone())),
                             );
                         }
                         // Start the load test, and acknowledge command.
-                        GooseControllerCommand::Start => {
+                        ControllerCommand::Start => {
                             // We can only start an idle load test.
                             if self.attack_phase == AttackPhase::Idle {
                                 self.test_plan = TestPlan::build(&self.configuration);
@@ -1120,7 +1153,7 @@ impl GooseAttack {
                                     );
                                     self.reply_to_controller(
                                         message,
-                                        GooseControllerResponseMessage::Bool(true),
+                                        ControllerResponseMessage::Bool(true),
                                     );
                                     // Reset the run state when starting a new load test.
                                     self.reset_run_state(goose_attack_run_state).await?;
@@ -1132,18 +1165,18 @@ impl GooseAttack {
                                     // Do not move to Starting phase if unable to prepare load test.
                                     self.reply_to_controller(
                                         message,
-                                        GooseControllerResponseMessage::Bool(false),
+                                        ControllerResponseMessage::Bool(false),
                                     );
                                 }
                             } else {
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(false),
+                                    ControllerResponseMessage::Bool(false),
                                 );
                             }
                         }
                         // Stop the load test, and acknowledge command.
-                        GooseControllerCommand::Stop => {
+                        ControllerCommand::Stop => {
                             // We can only stop a starting or running load test.
                             if [AttackPhase::Increase, AttackPhase::Maintain]
                                 .contains(&self.attack_phase)
@@ -1155,17 +1188,17 @@ impl GooseAttack {
                                 self.cancel_attack(goose_attack_run_state).await?;
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(true),
+                                    ControllerResponseMessage::Bool(true),
                                 );
                             } else {
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(false),
+                                    ControllerResponseMessage::Bool(false),
                                 );
                             }
                         }
                         // Stop the load test, and acknowledge request.
-                        GooseControllerCommand::Shutdown => {
+                        ControllerCommand::Shutdown => {
                             // If load test is Idle, there are no metrics to display.
                             if self.attack_phase == AttackPhase::Idle {
                                 self.metrics.display_metrics = false;
@@ -1182,13 +1215,13 @@ impl GooseAttack {
                             // Confirm shut down to Controller.
                             self.reply_to_controller(
                                 message,
-                                GooseControllerResponseMessage::Bool(true),
+                                ControllerResponseMessage::Bool(true),
                             );
 
                             // Give the controller thread time to send the response.
                             tokio::time::sleep(Duration::from_millis(250)).await;
                         }
-                        GooseControllerCommand::Host => {
+                        ControllerCommand::Host => {
                             if self.attack_phase == AttackPhase::Idle {
                                 // The controller uses a regular expression to validate that
                                 // this is a valid hostname, so simply use it with further
@@ -1201,7 +1234,7 @@ impl GooseAttack {
                                     self.configuration.host = host.to_string();
                                     self.reply_to_controller(
                                         message,
-                                        GooseControllerResponseMessage::Bool(true),
+                                        ControllerResponseMessage::Bool(true),
                                     );
                                 } else {
                                     debug!(
@@ -1210,17 +1243,17 @@ impl GooseAttack {
                                     );
                                     self.reply_to_controller(
                                         message,
-                                        GooseControllerResponseMessage::Bool(false),
+                                        ControllerResponseMessage::Bool(false),
                                     );
                                 }
                             } else {
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(false),
+                                    ControllerResponseMessage::Bool(false),
                                 );
                             }
                         }
-                        GooseControllerCommand::Users => {
+                        ControllerCommand::Users => {
                             // The controller uses a regular expression to validate that
                             // this is a valid integer, so simply use it with further
                             // validation.
@@ -1245,7 +1278,7 @@ impl GooseAttack {
                                         self.configuration.users = Some(new_users);
                                         self.reply_to_controller(
                                             message,
-                                            GooseControllerResponseMessage::Bool(true),
+                                            ControllerResponseMessage::Bool(true),
                                         );
                                     }
                                     // If the load test is running, rebuild the active test plan.
@@ -1304,13 +1337,13 @@ impl GooseAttack {
 
                                         self.reply_to_controller(
                                             message,
-                                            GooseControllerResponseMessage::Bool(true),
+                                            ControllerResponseMessage::Bool(true),
                                         );
                                     }
                                     _ => {
                                         self.reply_to_controller(
                                             message,
-                                            GooseControllerResponseMessage::Bool(false),
+                                            ControllerResponseMessage::Bool(false),
                                         );
                                     }
                                 }
@@ -1318,11 +1351,11 @@ impl GooseAttack {
                                 warn!("Controller didn't provide users: {:#?}", &message.request);
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(false),
+                                    ControllerResponseMessage::Bool(false),
                                 );
                             }
                         }
-                        GooseControllerCommand::HatchRate => {
+                        ControllerCommand::HatchRate => {
                             // The controller uses a regular expression to validate that
                             // this is a valid float, so simply use it with further
                             // validation.
@@ -1342,7 +1375,7 @@ impl GooseAttack {
                                 self.configuration.hatch_rate = Some(hatch_rate.clone());
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(true),
+                                    ControllerResponseMessage::Bool(true),
                                 );
                             } else {
                                 warn!(
@@ -1351,7 +1384,7 @@ impl GooseAttack {
                                 );
                             }
                         }
-                        GooseControllerCommand::StartupTime => {
+                        ControllerCommand::StartupTime => {
                             if self.attack_phase == AttackPhase::Idle {
                                 // The controller uses a regular expression to validate that
                                 // this is a valid startup time, so simply use it with further
@@ -1369,7 +1402,7 @@ impl GooseAttack {
                                     self.configuration.startup_time = startup_time.clone();
                                     self.reply_to_controller(
                                         message,
-                                        GooseControllerResponseMessage::Bool(true),
+                                        ControllerResponseMessage::Bool(true),
                                     );
                                 } else {
                                     warn!(
@@ -1378,17 +1411,17 @@ impl GooseAttack {
                                     );
                                     self.reply_to_controller(
                                         message,
-                                        GooseControllerResponseMessage::Bool(false),
+                                        ControllerResponseMessage::Bool(false),
                                     );
                                 }
                             } else {
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(false),
+                                    ControllerResponseMessage::Bool(false),
                                 );
                             }
                         }
-                        GooseControllerCommand::RunTime => {
+                        ControllerCommand::RunTime => {
                             // The controller uses a regular expression to validate that
                             // this is a valid run time, so simply use it with further
                             // validation.
@@ -1400,7 +1433,7 @@ impl GooseAttack {
                                 self.configuration.run_time = run_time.clone();
                                 self.reply_to_controller(
                                     message,
-                                    GooseControllerResponseMessage::Bool(true),
+                                    ControllerResponseMessage::Bool(true),
                                 );
                             } else {
                                 warn!(
@@ -1410,7 +1443,7 @@ impl GooseAttack {
                             }
                         }
                         // These messages shouldn't be received here.
-                        GooseControllerCommand::Help | GooseControllerCommand::Exit => {
+                        ControllerCommand::Help | ControllerCommand::Exit => {
                             warn!("Unexpected command: {:?}", &message.request);
                         }
                     }
