@@ -1204,14 +1204,20 @@ impl ControllerState {
                         } else {
                             self.write_to_socket(
                                 &mut ws_sender,
-                                Err("unrecognized command, see Goose README.md".to_string()),
+                                Err(
+                                    "unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html"
+                                        .to_string(),
+                                ),
                             )
                             .await;
                         }
                     } else {
                         self.write_to_socket(
                             &mut ws_sender,
-                            Err("unable to parse json, see Goose README.md".to_string()),
+                            Err(
+                                "invalid json, see Goose book https://book.goose.rs/controller/websocket.html"
+                                    .to_string(),
+                            ),
                         )
                         .await;
                     }
@@ -1324,7 +1330,7 @@ impl Controller<ControllerWebSocketMessage> for ControllerState {
                         match serde_json::from_str(&request) {
                             Ok(c) => c,
                             Err(_) => {
-                                return Err("unrecognized json request, refer to Goose README.md"
+                                return Err("invalid json, see Goose book https://book.goose.rs/controller/websocket.html"
                                     .to_string())
                             }
                         };
