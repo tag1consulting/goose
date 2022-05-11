@@ -304,6 +304,28 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
+                ControllerCommand::TestPlan => {
+                    match test_state.step {
+                        // Try and set an invalid testplan.
+                        0 => {
+                            make_request(&mut test_state, "testplan 10\r\n");
+                        }
+                        1 => {
+                            // Confirm that an invalid testplan fails.
+                            assert!(response.starts_with("unrecognized command"));
+
+                            // Set a valid test plan.
+                            make_request(&mut test_state, "test_plan 10,2s;10,30m5s;0,1h2s\r\n");
+                        }
+                        _ => {
+                            // Confirm that an invalid testplan fails.
+                            assert!(response.starts_with("test-plan configured"));
+
+                            // Move onto the next command.
+                            test_state = update_state(Some(test_state), &test_type);
+                        }
+                    }
+                }
                 ControllerCommand::Users => {
                     match test_state.step {
                         // Reconfigure the number of users simulated by the load test.
@@ -669,6 +691,7 @@ fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestStat
         ControllerCommand::Exit,
         ControllerCommand::Help,
         ControllerCommand::Host,
+        ControllerCommand::TestPlan,
         ControllerCommand::Users,
         ControllerCommand::HatchRate,
         ControllerCommand::StartupTime,
