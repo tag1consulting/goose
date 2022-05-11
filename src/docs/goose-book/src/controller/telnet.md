@@ -12,21 +12,26 @@ Connected to localhost.
 Escape character is '^]'.
 goose> ?
 goose 0.16.1 controller commands:
- help (?)           this help
- exit (quit)        exit controller
- start              start an idle load test
- stop               stop a running load test and return to idle state
- shutdown           shutdown running load test (and exit controller)
- host HOST          set host to load test, ie http://localhost/
- users INT          set number of simulated users
- hatchrate FLOAT    set per-second rate users hatch
- startup-time TIME  set time to take starting users
- runtime TIME       set how long to run test, ie 1h30m5s
- config             display load test configuration
- config-json        display load test configuration in json format
- metrics            display metrics for current load test
- metrics-json       display metrics for current load test in json format
-goose>
+help               this help
+exit               exit controller
+
+start              start an idle load test
+stop               stop a running load test and return to idle state
+shutdown           shutdown load test and exit controller
+
+host HOST          set host to load test, ie https://web.site/
+hatchrate FLOAT    set per-second rate users hatch
+startup-time TIME  set total time to take starting users
+users INT          set number of simulated users
+runtime TIME       set how long to run test, ie 1h30m5s
+
+config             display load test configuration
+config-json        display load test configuration in json format
+metrics            display metrics for current load test
+metrics-json       display metrics for current load test in json format
+goose> q
+goodbye!
+goose> Connection closed by foreign host.
 ```
 
 ## Example

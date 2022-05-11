@@ -75,7 +75,7 @@ use std::{fmt, io};
 use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
-use crate::controller::{GooseControllerProtocol, GooseControllerRequest};
+use crate::controller::{ControllerProtocol, ControllerRequest};
 use crate::goose::{GaggleUser, GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
@@ -333,7 +333,7 @@ struct GooseAttackRunState {
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
     /// Optional channel allowing controller thread to make requests, if not disabled.
-    controller_channel_rx: Option<flume::Receiver<GooseControllerRequest>>,
+    controller_channel_rx: Option<flume::Receiver<ControllerRequest>>,
     /// Optional unbuffered writer for html-formatted report file, if enabled.
     report_file: Option<File>,
     /// A flag tracking whether or not the header has been written when the metrics
@@ -1123,7 +1123,7 @@ impl GooseAttack {
     // threads share a control channel, allowing it to send requests to the parent process. When
     // a response is required, the Controller will also send a one-shot channel allowing a direct
     // reply.
-    async fn setup_controllers(&mut self) -> Option<flume::Receiver<GooseControllerRequest>> {
+    async fn setup_controllers(&mut self) -> Option<flume::Receiver<ControllerRequest>> {
         // If the telnet controller is disabled, return immediately.
         if self.configuration.no_telnet && self.configuration.no_websocket {
             return None;
@@ -1132,8 +1132,8 @@ impl GooseAttack {
         // Create an unbounded channel for controller threads to send requests to the parent
         // process.
         let (all_threads_controller_request_tx, controller_request_rx): (
-            flume::Sender<GooseControllerRequest>,
-            flume::Receiver<GooseControllerRequest>,
+            flume::Sender<ControllerRequest>,
+            flume::Receiver<ControllerRequest>,
         ) = flume::unbounded();
 
         // Configured telnet Controller if not disabled.
@@ -1162,7 +1162,7 @@ impl GooseAttack {
             let _ = Some(tokio::spawn(controller::controller_main(
                 self.configuration.clone(),
                 all_threads_controller_request_tx.clone(),
-                GooseControllerProtocol::Telnet,
+                ControllerProtocol::Telnet,
             )));
         }
 
@@ -1193,7 +1193,7 @@ impl GooseAttack {
             let _ = Some(tokio::spawn(controller::controller_main(
                 self.configuration.clone(),
                 all_threads_controller_request_tx,
-                GooseControllerProtocol::WebSocket,
+                ControllerProtocol::WebSocket,
             )));
         }
 
