@@ -19,11 +19,12 @@ start              start an idle load test
 stop               stop a running load test and return to idle state
 shutdown           shutdown load test and exit controller
 
-host HOST          set host to load test, ie https://web.site/
+host HOST          set host to load test, (ie https://web.site/)
 hatchrate FLOAT    set per-second rate users hatch
 startup-time TIME  set total time to take starting users
 users INT          set number of simulated users
-runtime TIME       set how long to run test, ie 1h30m5s
+runtime TIME       set how long to run test, (ie 1h30m5s)
+test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)
 
 config             display load test configuration
 config-json        display load test configuration in json format

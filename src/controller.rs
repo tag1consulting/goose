@@ -40,6 +40,7 @@ use tokio_tungstenite::tungstenite::Message;
 ///        the necessary logic to `ControllerCommand::validate_value`.
 ///  3. Add any necessary parent process logic for the command to
 ///    `GooseAttack::handle_controller_requests` (also in this file).
+///  4. Add a test for the new command in tests/controller.rs.
 #[derive(Clone, Debug, EnumIter, PartialEq)]
 pub enum ControllerCommand {
     /// Displays a list of all commands supported by the Controller.
@@ -142,6 +143,17 @@ pub enum ControllerCommand {
     ///
     /// This can be configured when Goose is idle as well as when a Goose load test is running.
     RunTime,
+    /// Define a load test plan. This will replace the previously configured test plan, if any.
+    ///
+    /// # Example
+    /// Tells Goose to launch 10 users in 5 seconds, maintain them for 30 seconds, and then spend 5 seconds
+    /// stopping them.
+    /// ```notest
+    /// testplan "10,5s;10,30s;0,5s"
+    /// ```
+    ///
+    /// Can be configured on an idle or running load test.
+    TestPlan,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -183,6 +195,8 @@ pub enum ControllerCommand {
 }
 
 /// Defines details around identifying and processing ControllerCommands.
+///
+/// As order doesn't matter here, it's preferred to define commands in alphabetical order.
 impl ControllerCommand {
     /// Each ControllerCommand must define complete ControllerCommentDetails.
     ///  - `help` returns a ControllerHelp struct that is used to provide inline help.
@@ -261,7 +275,7 @@ impl ControllerCommand {
             ControllerCommand::Host => ControllerCommandDetails {
                 help: ControllerHelp {
                     name: "host HOST",
-                    description: "set host to load test, ie https://web.site/\n",
+                    description: "set host to load test, (ie https://web.site/)\n",
                 },
                 regex: r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$",
                 process_response: Box::new(|response| {
@@ -306,7 +320,7 @@ impl ControllerCommand {
             ControllerCommand::RunTime => ControllerCommandDetails {
                 help: ControllerHelp {
                     name: "runtime TIME",
-                    description: "set how long to run test, ie 1h30m5s\n\n",
+                    description: "set how long to run test, (ie 1h30m5s)\n",
                 },
                 regex: r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
                 process_response: Box::new(|response| {
@@ -375,6 +389,20 @@ impl ControllerCommand {
                         Ok("load test stopped".to_string())
                     } else {
                         Err("load test not running, failed to stop".to_string())
+                    }
+                }),
+            },
+            ControllerCommand::TestPlan => ControllerCommandDetails {
+                help: ControllerHelp {
+                    name: "test-plan PLAN",
+                    description: "define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
+                },
+                regex: r"(?i)^(testplan|test_plan|test-plan|plan) (((\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)*;*)+)$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("test-plan configured".to_string())
+                    } else {
+                        Err("failed to configure test-plan, be sure test-plan is valid".to_string())
                     }
                 }),
             },
@@ -467,6 +495,7 @@ impl GooseAttack {
                         "request from controller client {}: {:?}",
                         message.client_id, message.request
                     );
+                    // As order is not important here, commands should be defined in alphabetical order.
                     match &message.request.command {
                         // Send back a copy of the running configuration.
                         ControllerCommand::Config | ControllerCommand::ConfigJson => {
@@ -605,6 +634,9 @@ impl GooseAttack {
                                 // Use expect() as Controller uses regex to validate this is an integer.
                                 let new_users = usize::from_str(users)
                                     .expect("failed to convert string to usize");
+                                // If setting users, any existing configuration for a test plan isn't valid.
+                                self.configuration.test_plan = None;
+
                                 match self.attack_phase {
                                     // If the load test is idle, simply update the configuration.
                                     AttackPhase::Idle => {
@@ -717,6 +749,8 @@ impl GooseAttack {
                                     self.configuration.hatch_rate, hatch_rate
                                 );
                                 self.configuration.hatch_rate = Some(hatch_rate.clone());
+                                // If setting hatch_rate, any existing configuration for a test plan isn't valid.
+                                self.configuration.test_plan = None;
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(true),
@@ -744,6 +778,8 @@ impl GooseAttack {
                                         self.configuration.startup_time, startup_time
                                     );
                                     self.configuration.startup_time = startup_time.clone();
+                                    // If setting startup_time, any existing configuration for a test plan isn't valid.
+                                    self.configuration.test_plan = None;
                                     self.reply_to_controller(
                                         message,
                                         ControllerResponseMessage::Bool(true),
@@ -775,6 +811,8 @@ impl GooseAttack {
                                     self.configuration.run_time, run_time
                                 );
                                 self.configuration.run_time = run_time.clone();
+                                // If setting run_time, any existing configuration for a test plan isn't valid.
+                                self.configuration.test_plan = None;
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(true),
@@ -783,6 +821,78 @@ impl GooseAttack {
                                 warn!(
                                     "Controller didn't provide run_time: {:#?}",
                                     &message.request
+                                );
+                            }
+                        }
+                        ControllerCommand::TestPlan => {
+                            if let Some(value) = &message.request.value {
+                                match value.parse::<TestPlan>() {
+                                    Ok(t) => {
+                                        // Switch the configuration to use the test plan.
+                                        self.configuration.test_plan = Some(t.clone());
+                                        self.configuration.users = None;
+                                        self.configuration.hatch_rate = None;
+                                        self.configuration.startup_time = "0".to_string();
+                                        self.configuration.run_time = "0".to_string();
+                                        match self.attack_phase {
+                                            // If the load test is idle, just update the configuration.
+                                            AttackPhase::Idle => {
+                                                self.reply_to_controller(
+                                                    message,
+                                                    ControllerResponseMessage::Bool(true),
+                                                );
+                                            }
+                                            // If the load test is running, rebuild the active test plan.
+                                            AttackPhase::Increase
+                                            | AttackPhase::Decrease
+                                            | AttackPhase::Maintain => {
+                                                // Rebuild the active test plan.
+                                                self.test_plan = t;
+
+                                                // Reallocate users.
+                                                self.weighted_users = self.weight_scenario_users(
+                                                    self.test_plan.total_users(),
+                                                )?;
+
+                                                // Determine how long the current step has been running.
+                                                let elapsed = self.step_elapsed() as usize;
+
+                                                // Insert the current state of the test plan before the new test plan.
+                                                self.test_plan.steps.insert(
+                                                    0,
+                                                    (goose_attack_run_state.active_users, elapsed),
+                                                );
+
+                                                // Finally, advance to the next step to adjust user count.
+                                                self.advance_test_plan(goose_attack_run_state);
+
+                                                // The load test is successfully reconfigured.
+                                                self.reply_to_controller(
+                                                    message,
+                                                    ControllerResponseMessage::Bool(true),
+                                                );
+                                            }
+                                            _ => {
+                                                unreachable!("Controller used in impossible phase.")
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Controller provided invalid test_plan: {}", e);
+                                        self.reply_to_controller(
+                                            message,
+                                            ControllerResponseMessage::Bool(false),
+                                        );
+                                    }
+                                }
+                            } else {
+                                warn!(
+                                    "Controller didn't provide test_plan: {:#?}",
+                                    &message.request
+                                );
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
                                 );
                             }
                         }
