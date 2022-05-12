@@ -211,9 +211,9 @@ tokio = &quot;^1.12&quot;
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.16.0
+  Downloaded goose v0.16.1
       ...
-   Compiling goose v0.16.0
+   Compiling goose v0.16.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -731,7 +731,7 @@ All 9 users hatched.
  Decreasing:  2022-04-28 10:22:34 - 2022-04-28 10:22:34 (00:00:00, 0 &lt;- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.16.0
+ goose v0.16.1
  ------------------------------------------------------------------------------
 </code></pre>
 <p>In addition to the above metrics displayed on the CLI, we've also told Goose to create an HTML report. The report starts with a brief overview, offering the same information found in the text overview above:
@@ -856,54 +856,122 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.16.0 controller commands:
- help (?)           this help
- exit (quit)        exit controller
- start              start an idle load test
- stop               stop a running load test and return to idle state
- shutdown           shutdown running load test (and exit controller)
- host HOST          set host to load test, ie http://localhost/
- users INT          set number of simulated users
- hatchrate FLOAT    set per-second rate users hatch
- runtime TIME       set how long to run test, ie 1h30m5s
- config             display load test configuration
- config-json        display load test configuration in json format
- metrics            display metrics for current load test
- metrics-json       display metrics for current load test in json format
-goose&gt;
+goose 0.16.1 controller commands:
+help               this help
+exit               exit controller
+
+start              start an idle load test
+stop               stop a running load test and return to idle state
+shutdown           shutdown load test and exit controller
+
+host HOST          set host to load test, (ie https://web.site/)
+hatchrate FLOAT    set per-second rate users hatch
+startup-time TIME  set total time to take starting users
+users INT          set number of simulated users
+runtime TIME       set how long to run test, (ie 1h30m5s)
+test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)
+
+config             display load test configuration
+config-json        display load test configuration in json format
+metrics            display metrics for current load test
+metrics-json       display metrics for current load test in json format
+goose&gt; q
+goodbye!
+goose&gt; Connection closed by foreign host.
+</code></pre>
+<h2 id="example-7"><a class="header" href="#example-7">Example</a></h2>
+<p>One possible use-case for the controller is to dynamically reconfigure the number of users being simulated by the load test. In the following example, the load test was launched with the following parameters:</p>
+<pre><code class="language-bash">% cargo run --release --example umami -- --no-autostart --host https://umami.ddev.site/ --hatch-rate 50 --report-file report.html
+</code></pre>
+<p>Then the telnet controller is invoked as follows:</p>
+<pre><code class="language-bash">% telnet loadtest 5116
+Trying loadtest...
+Connected to loadtest.
+Escape character is '^]'.
+goose&gt; start 
+load test started
+goose&gt; users 20
+users configured
+goose&gt; users 40
+users configured
+goose&gt; users 80
+users configured
+goose&gt; users 40 
+users configured
+goose&gt; users 20
+users configured
+goose&gt; users 160
+users configured
+goose&gt; users 20
+users configured
+goose&gt; hatch_rate 5
+hatch_rate configured
+goose&gt; users 80
+users configured
+goose&gt; users 20
+users configured
+goose&gt; shutdown
+load test shut down
+goose&gt; Connection closed by foreign host.
+</code></pre>
+<p>Initially the load test is configured with a hatch rate of 50, so goose increases and decreases the user count by 50 user threads per second. Later we reconfigure the hatch rate to 5, slowing down the rate that goose alters the number of user threads. The result is more clearly illustrated in the following graph generated at the end of the above example load test:</p>
+<p><img src="controller/controller-users.png" alt="Controller dynamic users and hatch rate" /></p>
+<p>The above commands are also summarized in the metrics overview:</p>
+<pre><code> === OVERVIEW ===
+ ------------------------------------------------------------------------------
+ Action       Started               Stopped             Elapsed    Users
+ ------------------------------------------------------------------------------
+ Increasing:  2022-05-05 07:09:34 - 2022-05-05 07:09:34 (00:00:00, 0 -&gt; 10)
+ Maintaining: 2022-05-05 07:09:34 - 2022-05-05 07:09:40 (00:00:06, 10)
+ Increasing:  2022-05-05 07:09:40 - 2022-05-05 07:09:40 (00:00:00, 10 -&gt; 20)
+ Maintaining: 2022-05-05 07:09:40 - 2022-05-05 07:09:46 (00:00:06, 20)
+ Increasing:  2022-05-05 07:09:46 - 2022-05-05 07:09:47 (00:00:01, 20 -&gt; 40)
+ Maintaining: 2022-05-05 07:09:47 - 2022-05-05 07:09:50 (00:00:03, 40)
+ Increasing:  2022-05-05 07:09:50 - 2022-05-05 07:09:51 (00:00:01, 40 -&gt; 80)
+ Maintaining: 2022-05-05 07:09:51 - 2022-05-05 07:09:59 (00:00:08, 80)
+ Decreasing:  2022-05-05 07:09:59 - 2022-05-05 07:10:00 (00:00:01, 40 &lt;- 80)
+ Maintaining: 2022-05-05 07:10:00 - 2022-05-05 07:10:05 (00:00:05, 40)
+ Decreasing:  2022-05-05 07:10:05 - 2022-05-05 07:10:06 (00:00:01, 20 &lt;- 40)
+ Maintaining: 2022-05-05 07:10:06 - 2022-05-05 07:10:12 (00:00:06, 20)
+ Increasing:  2022-05-05 07:10:12 - 2022-05-05 07:10:15 (00:00:03, 20 -&gt; 160)
+ Maintaining: 2022-05-05 07:10:15 - 2022-05-05 07:10:19 (00:00:04, 160)
+ Decreasing:  2022-05-05 07:10:19 - 2022-05-05 07:10:22 (00:00:03, 20 &lt;- 160)
+ Maintaining: 2022-05-05 07:10:22 - 2022-05-05 07:10:35 (00:00:13, 20)
+ Increasing:  2022-05-05 07:10:35 - 2022-05-05 07:10:50 (00:00:15, 20 -&gt; 80)
+ Maintaining: 2022-05-05 07:10:50 - 2022-05-05 07:10:54 (00:00:04, 80)
+ Decreasing:  2022-05-05 07:10:54 - 2022-05-05 07:11:07 (00:00:13, 20 &lt;- 80)
+ Maintaining: 2022-05-05 07:11:07 - 2022-05-05 07:11:13 (00:00:06, 20)
+ Canceling:   2022-05-05 07:11:13 - 2022-05-05 07:11:13 (00:00:00, 0 &lt;- 20)
+
+ Target host: https://umami.ddev.site/
+ goose v0.16.1
+ ------------------------------------------------------------------------------
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="websocket-controller"><a class="header" href="#websocket-controller">WebSocket Controller</a></h1>
 <p>The host and port that the WebSocket Controller listens on can be configured at start time with <code>--websocket-host</code> and <code>--websocket-port</code>. The WebSocket Controller can be completely disabled with the <code>--no-websocket</code> command line option. The defaults can be changed with <a href="https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.WebSocketHost"><code>GooseDefault::WebSocketHost</code></a>,<a href="https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.WebSocketPort"><code>GooseDefault::WebSocketPort</code></a>, and <a href="https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoWebSocket"><code>GooseDefault::NoWebSocket</code></a>.</p>
 <h2 id="details"><a class="header" href="#details">Details</a></h2>
 <p>The WebSocket Controller supports the same commands listed in the <a href="controller/telnet.html">telnet controller</a>. Requests and Responses are in JSON format.</p>
 <p>Requests must be made in the following format:</p>
-<pre><code class="language-json">{
-  &quot;request&quot;: String,
-}
+<pre><code class="language-json">{&quot;request&quot;:String}
 </code></pre>
 <p>For example, a client should send the follow json to request the current load test metrics:</p>
-<pre><code class="language-json">{
-  &quot;request&quot;: &quot;metrics&quot;,
-}
+<pre><code class="language-json">{&quot;request&quot;:&quot;metrics&quot;}
 </code></pre>
 <p>Responses will always be in the following format:</p>
-<pre><code class="language-json">{
-  &quot;response&quot;: String,
-  &quot;success&quot;: Boolean,
-}
+<pre><code class="language-json">{&quot;response&quot;:String,&quot;success&quot;:Boolean}
 </code></pre>
 <p>For example:</p>
 <pre><code class="language-bash">% websocat ws://127.0.0.1:5117
 foo
-{&quot;response&quot;:&quot;unable to parse json, see Goose README.md&quot;,&quot;success&quot;:false}
-{&quot;request&quot;: &quot;foo&quot;}
-{&quot;response&quot;:&quot;unrecognized command, see Goose README.md&quot;,&quot;success&quot;:false}
-{&quot;request&quot;: &quot;config&quot;}
-{&quot;response&quot;:&quot;{\&quot;help\&quot;:false,\&quot;version\&quot;:false,\&quot;list\&quot;:false,\&quot;host\&quot;:\&quot;http://apache/\&quot;,\&quot;users\&quot;:5,\&quot;hatch_rate\&quot;:\&quot;.5\&quot;,\&quot;run_time\&quot;:\&quot;\&quot;,\&quot;log_level\&quot;:0,\&quot;goose_log\&quot;:\&quot;\&quot;,\&quot;verbose\&quot;:1,\&quot;running_metrics\&quot;:null,\&quot;no_reset_metrics\&quot;:false,\&quot;no_metrics\&quot;:false,\&quot;no_transaction_metrics\&quot;:false,\&quot;no_error_summary\&quot;:false,\&quot;report_file\&quot;:\&quot;\&quot;,\&quot;request_log\&quot;:\&quot;\&quot;,\&quot;request_format\&quot;:\&quot;json\&quot;,\&quot;debug_log\&quot;:\&quot;\&quot;,\&quot;debug_format\&quot;:\&quot;json\&quot;,\&quot;no_debug_body\&quot;:false,\&quot;status_codes\&quot;:false,\&quot;no_telnet\&quot;:false,\&quot;telnet_host\&quot;:\&quot;0.0.0.0\&quot;,\&quot;telnet_port\&quot;:5116,\&quot;no_websocket\&quot;:false,\&quot;websocket_host\&quot;:\&quot;0.0.0.0\&quot;,\&quot;websocket_port\&quot;:5117,\&quot;no_autostart\&quot;:true,\&quot;throttle_requests\&quot;:0,\&quot;sticky_follow\&quot;:false,\&quot;manager\&quot;:false,\&quot;expect_workers\&quot;:null,\&quot;no_hash_check\&quot;:false,\&quot;manager_bind_host\&quot;:\&quot;\&quot;,\&quot;manager_bind_port\&quot;:0,\&quot;worker\&quot;:false,\&quot;manager_host\&quot;:\&quot;\&quot;,\&quot;manager_port\&quot;:0}&quot;,&quot;success&quot;:true}
-{&quot;request&quot;: &quot;stop&quot;}
+{&quot;response&quot;:&quot;invalid json, see Goose book https://book.goose.rs/controller/websocket.html&quot;,&quot;success&quot;:false}
+{&quot;request&quot;:&quot;foo&quot;}
+{&quot;response&quot;:&quot;unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html&quot;,&quot;success&quot;:false}
+{&quot;request&quot;:&quot;config&quot;}
+{&quot;response&quot;:&quot;{\&quot;help\&quot;:false,\&quot;version\&quot;:false,\&quot;list\&quot;:false,\&quot;host\&quot;:\&quot;\&quot;,\&quot;users\&quot;:10,\&quot;hatch_rate\&quot;:null,\&quot;startup_time\&quot;:\&quot;0\&quot;,\&quot;run_time\&quot;:\&quot;0\&quot;,\&quot;goose_log\&quot;:\&quot;\&quot;,\&quot;log_level\&quot;:0,\&quot;quiet\&quot;:0,\&quot;verbose\&quot;:0,\&quot;running_metrics\&quot;:null,\&quot;no_reset_metrics\&quot;:false,\&quot;no_metrics\&quot;:false,\&quot;no_transaction_metrics\&quot;:false,\&quot;no_print_metrics\&quot;:false,\&quot;no_error_summary\&quot;:false,\&quot;report_file\&quot;:\&quot;\&quot;,\&quot;no_granular_report\&quot;:false,\&quot;request_log\&quot;:\&quot;\&quot;,\&quot;request_format\&quot;:\&quot;Json\&quot;,\&quot;request_body\&quot;:false,\&quot;transaction_log\&quot;:\&quot;\&quot;,\&quot;transaction_format\&quot;:\&quot;Json\&quot;,\&quot;error_log\&quot;:\&quot;\&quot;,\&quot;error_format\&quot;:\&quot;Json\&quot;,\&quot;debug_log\&quot;:\&quot;\&quot;,\&quot;debug_format\&quot;:\&quot;Json\&quot;,\&quot;no_debug_body\&quot;:false,\&quot;no_status_codes\&quot;:false,\&quot;test_plan\&quot;:null,\&quot;no_telnet\&quot;:false,\&quot;telnet_host\&quot;:\&quot;0.0.0.0\&quot;,\&quot;telnet_port\&quot;:5116,\&quot;no_websocket\&quot;:false,\&quot;websocket_host\&quot;:\&quot;0.0.0.0\&quot;,\&quot;websocket_port\&quot;:5117,\&quot;no_autostart\&quot;:true,\&quot;no_gzip\&quot;:false,\&quot;timeout\&quot;:null,\&quot;co_mitigation\&quot;:\&quot;Disabled\&quot;,\&quot;throttle_requests\&quot;:0,\&quot;sticky_follow\&quot;:false,\&quot;manager\&quot;:false,\&quot;expect_workers\&quot;:null,\&quot;no_hash_check\&quot;:false,\&quot;manager_bind_host\&quot;:\&quot;\&quot;,\&quot;manager_bind_port\&quot;:0,\&quot;worker\&quot;:false,\&quot;manager_host\&quot;:\&quot;\&quot;,\&quot;manager_port\&quot;:0}&quot;,&quot;success&quot;:true}
+{&quot;request&quot;:&quot;stop&quot;}
 {&quot;response&quot;:&quot;load test not running, failed to stop&quot;,&quot;success&quot;:false}
-{&quot;request&quot;: &quot;exit&quot;}
-{&quot;response&quot;:&quot;goodbye!&quot;,&quot;success&quot;:true}
+{&quot;request&quot;:&quot;shutdown&quot;}
+{&quot;response&quot;:&quot;load test shut down&quot;,&quot;success&quot;:true}
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="gaggle-distributed-load-test"><a class="header" href="#gaggle-distributed-load-test">Gaggle: Distributed Load Test</a></h1>
 <p>Goose also supports distributed load testing. A Gaggle is one Goose process running in <a href="gaggle/manager.html">Manager mode</a>, and 1 or more Goose processes running in <a href="gaggle/worker.html">Worker mode</a>. The Manager coordinates starting and stopping the Workers, and collects aggregated metrics. Gaggle support is a <a href="gaggle/technical.html#compile-time-feature">cargo feature that must be enabled at compile-time</a>. To launch a Gaggle, you must copy your load test application to all servers from which you wish to generate load.</p>
@@ -914,7 +982,7 @@ foo
 <p>For full details and graphs, refer to the blog <a href="https://www.tag1consulting.com/blog/goose-clouds-load-testing-scale">A Goose In The Clouds: Load Testing At Scale</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="gaggle-manager"><a class="header" href="#gaggle-manager">Gaggle Manager</a></h1>
 <p>To launch a Gaggle, you first must start a Goose application in Manager mode. All configuration happens in the Manager. To start, add the <code>--manager</code> flag and <code>--expect-workers</code> option, the latter necessary to tell the Manager process how many Worker processes it will be coordinating.</p>
-<h2 id="example-7"><a class="header" href="#example-7">Example</a></h2>
+<h2 id="example-8"><a class="header" href="#example-8">Example</a></h2>
 <p><em>Configure a Goose Manager to listen on all interfaces on the default port (0.0.0.0:5115), waiting for 2 Goose Worker processes.</em></p>
 <pre><code class="language-bash">cargo run --features gaggle --example simple -- --manager --expect-workers 2 --host http://local.dev/
 </code></pre>
