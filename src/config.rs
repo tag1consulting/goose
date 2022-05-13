@@ -76,6 +76,7 @@ const DEFAULT_PORT: &str = "5115";
 ///
 /// Advanced:
 /// --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60s;0,30s")
+/// --iterations ITERATIONS     Sets how many times to run scenarios then exit
 /// --no-telnet                 Doesn't enable telnet Controller
 /// --telnet-host HOST          Sets telnet Controller host (default: 0.0.0.0)
 /// --telnet-port PORT          Sets telnet Controller TCP port (default: 5116)
@@ -210,6 +211,9 @@ pub struct GooseConfiguration {
     /// Defines a more complex test plan ("10,60s;0,30s")
     #[options(no_short, meta = "\"TESTPLAN\"")]
     pub(crate) test_plan: Option<TestPlan>,
+    /// Sets how many times to run scenarios then exit
+    #[options(no_short)]
+    pub iterations: usize,
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
@@ -293,6 +297,8 @@ pub(crate) struct GooseDefaults {
     pub run_time: Option<usize>,
     /// An optional default test plan.
     pub test_plan: Option<TestPlan>,
+    /// An optional default test plan.
+    pub iterations: Option<usize>,
     /// An optional default log level.
     pub log_level: Option<u8>,
     /// An optional default for the goose log file name.
@@ -399,6 +405,8 @@ pub enum GooseDefault {
     RunTime,
     /// An optional default test plan.
     TestPlan,
+    /// An optional default number of iterations to run scenarios then exit.
+    Iterations,
     /// An optional default log level.
     LogLevel,
     /// An optional default for the log file name.
@@ -538,6 +546,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::Users`]
 ///  - [`GooseDefault::StartupTime`]
 ///  - [`GooseDefault::RunTime`]
+///  - [`GooseDefault::Iterations`]
 ///  - [`GooseDefault::RunningMetrics`]
 ///  - [`GooseDefault::LogLevel`]
 ///  - [`GooseDefault::Quiet`]
@@ -629,6 +638,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::Users
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
+            | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
             | GooseDefault::Verbose
@@ -708,6 +718,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::Users => self.defaults.users = Some(value),
             GooseDefault::StartupTime => self.defaults.startup_time = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
+            GooseDefault::Iterations => self.defaults.iterations = Some(value),
             GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
             GooseDefault::Quiet => self.defaults.quiet = Some(value as u8),
@@ -846,6 +857,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
+            | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
             | GooseDefault::Verbose
@@ -954,6 +966,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
+            | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
             | GooseDefault::Verbose
@@ -1055,6 +1068,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
+            | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
             | GooseDefault::Verbose
