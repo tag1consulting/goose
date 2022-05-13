@@ -1,21 +1,21 @@
 # Validation
 
 ## Goose Eggs
-[Goose-eggs](https://github.com/tag1consulting/goose-eggs) is a validation library that can be used with Goose. 
+[Goose-eggs](https://github.com/tag1consulting/goose-eggs) are helpful in writing Goose load tests.
 
-Include the goose-eggs crate in the dependency section of your `Cargo.toml`. 
+To leverage Goose Eggs when writing your load test, include the crate in the dependency section of your `Cargo.toml.
 
 ```toml
 [dependencies]
-goose-eggs = "0.4.0"
+goose-eggs = "0.4"
 ```
 
-Bring the Validate structure and the validation function that the object is passed to, into the scope of your load test.
+For example, to use the Goose Eggs validation functions, bring the `Validate` structure and `validate_and_load_static_assets` function into scope:
 ```rust 
 use goose_eggs::{validate_and_load_static_assets, Validate};
 ```
 
-We'd probably want to verify the HTTP response status of a request and whether some text appears as we'd expect.
+Now, it is simple to verify that we received a `200` HTTP response status code, and that the text `Gander` appeared somewhere on the page as expected:
 
 ```rust
 let goose = user.get("/goose/").await?;
@@ -28,6 +28,6 @@ let validate = &Validate::builder()
 validate_and_load_static_assets(user, goose, &validate).await?;
 ```
 
-Both passes and fails of each validation will be presented by the given metrics. 
+Whether or not validation passed or failed will be visible in the Goose metrics when the load test finishes. You can enable the [debug log](https://book.goose.rs/logging/debug.html) to gain more insight into failures.
 
-The full `goose-eggs` documentation is located [here](https://docs.rs/goose-eggs/latest/goose_eggs/).
+Read [the goose-eggs documentation](https://docs.rs/goose-eggs/latest/goose_eggs) to learn about other helpful functions useful in writing load tests, as well as other validation helpers, such as [headers](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.header), [header values](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.header_value), [the page title](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.title), and [whether the request was redirected](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.redirect).
