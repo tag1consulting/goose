@@ -1657,6 +1657,24 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
+        // Configure `iterations`.
+        self.iterations = self
+            .get_value(vec![
+                // Use --iterations if set.
+                GooseValue {
+                    value: Some(self.iterations),
+                    filter: false,
+                    message: "iterations",
+                },
+                // Use GooseDefault if not already set and not Worker.
+                GooseValue {
+                    value: defaults.iterations,
+                    filter: defaults.iterations.is_none() || self.worker,
+                    message: "iterations",
+                },
+            ])
+            .unwrap_or(0);
+
         // Configure `no_debug_body`.
         self.no_debug_body = self
             .get_value(vec![
@@ -2253,6 +2271,12 @@ impl GooseConfiguration {
                     detail: "`configuration.no_hash_check` can not be set in Worker mode."
                         .to_string(),
                 });
+            } else if self.iterations > 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.iterations`".to_string(),
+                    value: self.iterations.to_string(),
+                    detail: "`configuration.iterations` can not be set in Worker mode.".to_string(),
+                });
             }
         }
 
@@ -2371,6 +2395,16 @@ impl GooseConfiguration {
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan`."
                         .to_string(),
+                });
+            }
+            // The --iterations option isn't compatible with --test-plan.
+            if self.no_reset_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.iterations".to_string(),
+                    value: self.iterations.to_string(),
+                    detail:
+                        "`configuration.iterations` can not be set with `configuration.test_plan`."
+                            .to_string(),
                 });
             }
             if self.manager {

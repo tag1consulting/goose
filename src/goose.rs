@@ -838,6 +838,8 @@ impl<T: Send + Sync + 'static> GooseUserData for T {}
 pub struct GooseUser {
     /// The Instant when this `GooseUser` client started.
     pub started: Instant,
+    /// How many iterations of the scenario this GooseUser has run.
+    pub(crate) iterations: usize,
     /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`
     /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
     pub scenarios_index: usize,
@@ -903,6 +905,7 @@ impl GooseUser {
 
         Ok(GooseUser {
             started: Instant::now(),
+            iterations: 0,
             scenarios_index,
             client,
             base_url,
@@ -931,6 +934,12 @@ impl GooseUser {
         single_user.is_throttled = false;
 
         Ok(single_user)
+    }
+
+    /// Returns the number of iterations this GooseUser has run through it's
+    /// assigned [`Scenario`].
+    pub fn get_iterations(&self) -> usize {
+        self.iterations
     }
 
     /// Returns an optional reference to per-[`GooseUser`] session data.

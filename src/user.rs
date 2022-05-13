@@ -117,6 +117,39 @@ pub(crate) async fn user_main(
                     thread_user.slept += (time::Instant::now() - sleep_timer).as_millis() as u64;
                 }
             }
+            // Record a complete iteration running this Scenario.
+            thread_user.iterations += 1;
+
+            // Check if configured to exit after a certain number of iterations, and exit if
+            // that number of iterations have run.
+            if thread_user.config.iterations > 0
+                && thread_user.iterations >= thread_user.config.iterations
+            {
+                // Pluralize the word "iteration" if more than one iteration completed.
+                let pluralize = if thread_user.iterations == 0 {
+                    "iteration"
+                } else {
+                    "iterations"
+                };
+                // Provide visual indication that a GooseUSer has completed the confifgured
+                // number of iterations.
+                if worker {
+                    info!(
+                        "[{}] user {} completed {} {} of {}...",
+                        get_worker_id(),
+                        thread_number,
+                        thread_user.iterations,
+                        pluralize,
+                        thread_scenario.name,
+                    );
+                } else {
+                    info!(
+                        "user {} completed {} {} of {}...",
+                        thread_number, thread_user.iterations, pluralize, thread_scenario.name,
+                    );
+                }
+                break 'launch_transactions;
+            }
         }
     }
 
