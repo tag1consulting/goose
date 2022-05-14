@@ -148,6 +148,10 @@ pub(crate) async fn user_main(
                         thread_number, thread_user.iterations, pluralize, thread_scenario.name,
                     );
                 }
+                // Attempt to notify the parent this thread is shutting down.
+                if let Some(shutdown_channel) = thread_user.shutdown_channel.clone() {
+                    let _ = shutdown_channel.send(thread_number);
+                }
                 break 'launch_transactions;
             }
         }
@@ -250,9 +254,9 @@ async fn invoke_transaction_function(
     }
 
     // Otherwise send metrics to parent.
-    if let Some(parent) = thread_user.channel_to_parent.clone() {
+    if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
         // Best effort metrics.
-        let _ = parent.send(GooseMetric::Transaction(raw_transaction));
+        let _ = metrics_channel.send(GooseMetric::Transaction(raw_transaction));
     }
 
     Ok(())

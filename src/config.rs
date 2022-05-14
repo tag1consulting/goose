@@ -2271,12 +2271,6 @@ impl GooseConfiguration {
                     detail: "`configuration.no_hash_check` can not be set in Worker mode."
                         .to_string(),
                 });
-            } else if self.iterations > 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.iterations`".to_string(),
-                    value: self.iterations.to_string(),
-                    detail: "`configuration.iterations` can not be set in Worker mode.".to_string(),
-                });
             }
         }
 
@@ -2397,16 +2391,6 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
-            // The --iterations option isn't compatible with --test-plan.
-            if self.no_reset_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.iterations".to_string(),
-                    value: self.iterations.to_string(),
-                    detail:
-                        "`configuration.iterations` can not be set with `configuration.test_plan`."
-                            .to_string(),
-                });
-            }
             if self.manager {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.test_plan".to_string(),
@@ -2419,6 +2403,36 @@ impl GooseConfiguration {
                     option: "`configuration.test_plan".to_string(),
                     value: format!("{:?}", self.test_plan),
                     detail: "`configuration.test_plan` can not be set in Worker mode.".to_string(),
+                });
+            }
+        }
+
+        // Validate `iterations`.
+        if self.iterations > 0 {
+            // The --run-time option isn't compatible with --iterations.
+            if self.run_time != "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.run_time`".to_string(),
+                    value: self.run_time.to_string(),
+                    detail:
+                        "`configuration.run_time` can not be set with `configuration.iterations`."
+                            .to_string(),
+                });
+            }
+            if self.test_plan.is_some() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.iterations`".to_string(),
+                    value: self.iterations.to_string(),
+                    detail:
+                        "`configuration.iteratoins` can not be set with `configuration.test_plan`."
+                            .to_string(),
+                });
+            }
+            if self.worker {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.iterations".to_string(),
+                    value: self.iterations.to_string(),
+                    detail: "`configuration.iterations` can not be set in Worker mode.".to_string(),
                 });
             }
         }
