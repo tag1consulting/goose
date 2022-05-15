@@ -1719,10 +1719,16 @@ impl GooseAttack {
                             );
                         }
                         Err(e) => {
-                            info!(
-                                "failed to tell user {} to exit: {}",
-                                goose_attack_run_state.completed_users, e
-                            );
+                            // Error is expected if this user already shut down.
+                            if !goose_attack_run_state
+                                .users_shutdown
+                                .contains(&goose_attack_run_state.completed_users)
+                            {
+                                info!(
+                                    "failed to tell user {} to exit: {}",
+                                    goose_attack_run_state.completed_users, e
+                                );
+                            }
                         }
                     }
                     goose_attack_run_state.completed_users += 1;
