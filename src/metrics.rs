@@ -2680,6 +2680,7 @@ impl GooseAttack {
                         vec![
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
                             GaggleMetrics::Transactions(self.metrics.transactions.clone()),
+                            GaggleMetrics::Scenarios(self.metrics.scenarios.clone()),
                         ],
                         true,
                     ) {
@@ -2690,13 +2691,13 @@ impl GooseAttack {
                     }
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();
+                    self.metrics
+                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
                     self.metrics.initialize_transaction_metrics(
                         &self.scenarios,
                         &self.configuration,
                         &self.defaults,
                     )?;
-                    self.metrics
-                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
                 }
             }
         }
@@ -2747,13 +2748,13 @@ impl GooseAttack {
                     }
 
                     self.metrics.requests = HashMap::new();
+                    self.metrics
+                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
                     self.metrics.initialize_transaction_metrics(
                         &self.scenarios,
                         &self.configuration,
                         &self.defaults,
                     )?;
-                    self.metrics
-                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
 
                     // Restart the timer now that all threads are launched.
                     self.started = Some(std::time::Instant::now());

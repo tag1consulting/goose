@@ -1636,6 +1636,7 @@ impl GooseAttack {
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
                             GaggleMetrics::Errors(self.metrics.errors.clone()),
                             GaggleMetrics::Transactions(self.metrics.transactions.clone()),
+                            GaggleMetrics::Scenarios(self.metrics.scenarios.clone()),
                         ],
                         true,
                     );
@@ -1953,9 +1954,22 @@ impl GooseAttack {
                 goose_attack_run_state
                     .users_shutdown
                     .insert(message.expect("failed to wrap OK message"));
+
+                // In Gaggle mode, the Worker starts a fraction of the users.
+                #[cfg(feature = "gaggle")]
+                if goose_attack_run_state.users_shutdown.len()
+                    == goose_attack_run_state.active_users
+                {
+                    // Pause to allow other Workers a chance to shut down cleanly as well.
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    self.cancel_attack(&mut goose_attack_run_state).await?;
+                }
+                // In Stand-alone mode, all users are started.
+                #[cfg(not(feature = "gaggle"))]
                 if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
                     self.cancel_attack(&mut goose_attack_run_state).await?;
                 }
+
                 message = goose_attack_run_state.shutdown_rx.try_recv();
             }
 

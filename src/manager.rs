@@ -357,7 +357,13 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         / goose_attack.test_plan.steps[0].1 as f32
         // Convert from milliseconds to seconds.
         * 1_000.0;
-    let maximum_hatched = hatch_rate * goose_attack.test_plan.steps[1].1 as f32;
+    // A test_plan has two steps if there is a run_time.
+    let maximum_hatched = if goose_attack.test_plan.steps.len() > 1 {
+        hatch_rate * goose_attack.test_plan.steps[1].1 as f32
+    // A test_plan has only one step if there is no run_time.
+    } else {
+        hatch_rate * goose_attack.test_plan.steps[0].1 as f32
+    };
     if maximum_hatched < goose_attack.configuration.users.unwrap() as f32 {
         goose_attack.metrics.maximum_users = maximum_hatched as usize;
         goose_attack.metrics.total_users = maximum_hatched as usize;
@@ -390,12 +396,17 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         }
         if load_test_running {
             if !load_test_finished {
+                let timer_expired = if goose_attack.test_plan.steps.len() > 1 {
+                    util::ms_timer_expired(
+                        goose_attack.started.unwrap(),
+                        goose_attack.test_plan.steps[1].1,
+                    )
+                } else {
+                    // This gaggle has no run_time configured.
+                    false
+                };
                 // Test ran to completion or was canceled with ctrl-c.
-                if util::ms_timer_expired(
-                    goose_attack.started.unwrap(),
-                    goose_attack.test_plan.steps[1].1,
-                ) || canceled.load(Ordering::SeqCst)
-                {
+                if timer_expired || canceled.load(Ordering::SeqCst) {
                     info!(
                         "stopping after {} seconds...",
                         goose_attack.started.unwrap().elapsed().as_secs()
