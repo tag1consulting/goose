@@ -10,7 +10,7 @@ const EMPTY_ARGS: Vec<&str> = vec![];
 
 use crate::goose::{GooseUser, GooseUserCommand};
 use crate::manager::GooseUserInitializer;
-use crate::metrics::{GooseErrorMetrics, GooseRequestMetrics, TransactionMetrics};
+use crate::metrics::{GooseErrorMetrics, GooseRequestMetrics, ScenarioMetrics, TransactionMetrics};
 use crate::test_plan::TestPlan;
 use crate::{get_worker_id, AttackMode, GooseAttack, GooseConfiguration, WORKER_ID};
 
@@ -23,6 +23,8 @@ pub enum GaggleMetrics {
     Requests(GooseRequestMetrics),
     /// Goose transaction metrics.
     Transactions(TransactionMetrics),
+    /// Goose scenario metrics.
+    Scenarios(ScenarioMetrics),
     /// Goose error metrics.
     Errors(GooseErrorMetrics),
 }
@@ -228,6 +230,12 @@ pub(crate) async fn worker_main(goose_attack: GooseAttack) -> GooseAttack {
     // The transaction_format option is configured on the Worker.
     worker_goose_attack.configuration.transaction_format =
         goose_attack.configuration.transaction_format.clone();
+    // The scenario_log option is configured on the Worker.
+    worker_goose_attack.configuration.scenario_log =
+        goose_attack.configuration.scenario_log.to_string();
+    // The scenario_format option is configured on the Worker.
+    worker_goose_attack.configuration.scenario_format =
+        goose_attack.configuration.scenario_format.clone();
     // The error_log option is configured on the Worker.
     worker_goose_attack.configuration.error_log = goose_attack.configuration.error_log.to_string();
     // The error_format option is configured on the Worker.

@@ -121,18 +121,13 @@ pub(crate) async fn user_main(
             // Record a complete iteration running this Scenario.
             thread_user.iterations += 1;
 
-            // Send scenario metric to parent, unless disabled
-            if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
-                if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
-                    // Best effort metrics.
-                    let _ = metrics_channel.send(GooseMetric::Scenario(ScenarioMetric::new(
-                        thread_user.started.elapsed().as_millis(),
-                        thread_user.scenarios_index,
-                        scenario_started.elapsed().as_millis(),
-                        thread_user.weighted_users_index,
-                    )));
-                }
-            }
+            // Send scenario metrics to parent and logger if enabled, ignoring errors.
+            let _ = record_scenario(
+                &thread_scenario,
+                &thread_user,
+                scenario_started.elapsed().as_millis(),
+            )
+            .await;
 
             // Check if configured to exit after a certain number of iterations, and exit if
             // that number of iterations have run.
@@ -227,6 +222,34 @@ fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
     }
     // GooseUserCommand::Exit not received.
     false
+}
+
+// Send scenario metric to parent and logger when enabled.
+async fn record_scenario(
+    thread_scenario: &Scenario,
+    thread_user: &GooseUser,
+    run_time: u128,
+) -> Result<(), flume::SendError<Option<GooseLog>>> {
+    if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
+        let raw_scenario = ScenarioMetric::new(
+            thread_user.started.elapsed().as_millis(),
+            &thread_scenario.name,
+            thread_user.scenarios_index,
+            run_time,
+            thread_user.weighted_users_index,
+        );
+        if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
+            // Best effort metrics.
+            let _ = metrics_channel.send(GooseMetric::Scenario(raw_scenario.clone()));
+        }
+        // If transaction-log is enabled, send a copy of the raw transaction metric to the logger thread.
+        if !thread_user.config.scenario_log.is_empty() {
+            if let Some(logger) = thread_user.logger.as_ref() {
+                logger.send(Some(GooseLog::Scenario(raw_scenario)))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 // Invoke the transaction function, collecting transaction metrics.

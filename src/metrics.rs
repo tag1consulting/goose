@@ -618,8 +618,10 @@ impl GooseRequestMetricTimingData {
 pub struct ScenarioMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
+    /// The name of the scenario.
+    pub name: String,
     /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
-    pub scenario_index: usize,
+    pub index: usize,
     /// How long scenario ran.
     pub run_time: u64,
     /// Which GooseUser thread processed the request.
@@ -627,10 +629,17 @@ pub struct ScenarioMetric {
 }
 impl ScenarioMetric {
     /// Create a new Scenario metric.
-    pub(crate) fn new(elapsed: u128, scenario_index: usize, run_time: u128, user: usize) -> Self {
+    pub(crate) fn new(
+        elapsed: u128,
+        scenario_name: &str,
+        index: usize,
+        run_time: u128,
+        user: usize,
+    ) -> Self {
         ScenarioMetric {
             elapsed: elapsed as u64,
-            scenario_index,
+            name: scenario_name.to_string(),
+            index,
             run_time: run_time as u64,
             user,
         }
@@ -796,9 +805,9 @@ impl TransactionMetricAggregate {
 pub struct ScenarioMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
     /// indicating which scenario this is.
-    pub scenario_index: usize,
+    pub index: usize,
     /// The scenario name.
-    pub scenario_name: String,
+    pub name: String,
     /// List of users running this scenario.
     pub users: HashSet<usize>,
     /// Per-run-time counters, tracking how often scenario takes a given time to complete.
@@ -814,10 +823,10 @@ pub struct ScenarioMetricAggregate {
 }
 impl ScenarioMetricAggregate {
     /// Create a new ScenarioMetricAggregate.
-    pub(crate) fn new(scenario_index: usize, scenario_name: &str) -> Self {
+    pub(crate) fn new(index: usize, name: &str) -> Self {
         ScenarioMetricAggregate {
-            scenario_index,
-            scenario_name: scenario_name.to_string(),
+            index,
+            name: name.to_string(),
             users: HashSet::new(),
             times: BTreeMap::new(),
             min_time: 0,
@@ -1585,14 +1594,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
-                util::truncate_string(
-                    &format!(
-                        "{}: {}",
-                        scenario.scenario_index + 1,
-                        &scenario.scenario_name,
-                    ),
-                    60
-                ),
+                util::truncate_string(&format!("{}: {}", scenario.index + 1, &scenario.name,), 60),
                 scenario.users.len(),
                 scenario.counter,
                 runs,
@@ -1684,14 +1686,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
-                util::truncate_string(
-                    &format!(
-                        "  {}: {}",
-                        scenario.scenario_index + 1,
-                        scenario.scenario_name
-                    ),
-                    24
-                ),
+                util::truncate_string(&format!("  {}: {}", scenario.index + 1, scenario.name), 24),
                 average,
                 format_number(scenario.min_time),
                 format_number(scenario.max_time),
@@ -2914,7 +2909,7 @@ impl GooseAttack {
                 }
                 GooseMetric::Scenario(raw_scenario) => {
                     // Store a new metric.
-                    self.metrics.scenarios[raw_scenario.scenario_index]
+                    self.metrics.scenarios[raw_scenario.index]
                         .update(raw_scenario.run_time, raw_scenario.user);
                 }
             }

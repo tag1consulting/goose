@@ -23,6 +23,8 @@ enum TestType {
     Requests,
     // Test with transaction log enabled.
     Transactions,
+    // Test with scenario log enabled.
+    Scenarios,
     // Test with error log enabled.
     Error,
     // Test with debug log enabled.
@@ -34,6 +36,7 @@ enum TestType {
 struct LogFiles<'a> {
     request_logs: &'a [String],
     transaction_logs: &'a [String],
+    scenario_logs: &'a [String],
     error_logs: &'a [String],
     debug_logs: &'a [String],
 }
@@ -45,6 +48,7 @@ impl fmt::Display for TestType {
         let printable = match *self {
             TestType::Requests => "requests",
             TestType::Transactions => "transactions",
+            TestType::Scenarios => "scenarios",
             TestType::Error => "error",
             TestType::Debug => "debug",
             TestType::All => "all",
@@ -157,6 +161,19 @@ fn validate_test(
             // Transaction file must not be empty.
             assert!(transactions_file_lines > 0);
         }
+        TestType::Scenarios => {
+            // Scenario log must exist.
+            assert!(!log_files.scenario_logs.is_empty());
+
+            // Confirm the scneario log files actually exist.
+            let mut scenarios_file_lines = 0;
+            for scenarios_file in log_files.scenario_logs {
+                assert!(std::path::Path::new(scenarios_file).exists());
+                scenarios_file_lines += common::file_length(scenarios_file);
+            }
+            // Scenario file must not be empty.
+            assert!(scenarios_file_lines > 0);
+        }
         TestType::Error => {
             // Error file must exist.
             assert!(!log_files.error_logs.is_empty());
@@ -179,6 +196,8 @@ fn validate_test(
             assert!(!log_files.request_logs.is_empty());
             // Transactions file must exist.
             assert!(!log_files.transaction_logs.is_empty());
+            // Scenarios file must exist.
+            assert!(!log_files.scenario_logs.is_empty());
 
             // Confirm the debug log files actually exist.
             let mut debug_file_lines = 0;
@@ -215,6 +234,15 @@ fn validate_test(
             }
             // Transaction file must not be empty.
             assert!(transactions_file_lines > 0);
+
+            // Confirm the scenario log files actually exist.
+            let mut scenarios_file_lines = 0;
+            for scenarios_log in log_files.scenario_logs {
+                assert!(std::path::Path::new(scenarios_log).exists());
+                scenarios_file_lines += common::file_length(scenarios_log);
+            }
+            // Scenario file must not be empty.
+            assert!(scenarios_file_lines > 0);
         }
     }
 }
@@ -223,6 +251,7 @@ fn validate_test(
 async fn run_standalone_test(test_type: TestType, format: &str) {
     let request_log = test_type.to_string() + "-request-log." + format;
     let transaction_log = test_type.to_string() + "-transaction-log." + format;
+    let scenario_log = test_type.to_string() + "-scenario-log." + format;
     let debug_log = test_type.to_string() + "-debug-log." + format;
     let error_log = test_type.to_string() + "-error-log." + format;
 
@@ -240,6 +269,7 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
             "--transaction-format",
             format,
         ],
+        TestType::Scenarios => vec!["--scenario-log", &scenario_log, "--scenario-format", format],
         TestType::All => vec![
             "--request-log",
             &request_log,
@@ -248,6 +278,10 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
             "--transaction-log",
             &transaction_log,
             "--transaction-format",
+            format,
+            "--scenario-log",
+            &scenario_log,
+            "--scenario-format",
             format,
             "--error-log",
             &error_log,
@@ -272,19 +306,27 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
     let log_files = LogFiles {
         request_logs: &[request_log.to_string()],
         transaction_logs: &[transaction_log.to_string()],
+        scenario_logs: &[scenario_log.to_string()],
         error_logs: &[error_log.to_string()],
         debug_logs: &[debug_log.to_string()],
     };
 
     validate_test(goose_metrics, &mock_endpoints, &test_type, &log_files);
 
-    common::cleanup_files(vec![&request_log, &transaction_log, &error_log, &debug_log]);
+    common::cleanup_files(vec![
+        &request_log,
+        &transaction_log,
+        &scenario_log,
+        &error_log,
+        &debug_log,
+    ]);
 }
 
 // Helper to run all gaggle tests.
 async fn run_gaggle_test(test_type: TestType, format: &str) {
     let requests_file = test_type.to_string() + "-gaggle-request-log." + format;
     let transactions_file = test_type.to_string() + "-gaggle-transaction-log." + format;
+    let scenarios_file = test_type.to_string() + "-gaggle-scenario-log." + format;
     let error_file = test_type.to_string() + "-gaggle-error-log." + format;
     let debug_file = test_type.to_string() + "-gaggle-debug-log." + format;
 
@@ -296,17 +338,20 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
     let mut worker_handles = Vec::new();
     let mut requests_files = Vec::new();
     let mut transactions_files = Vec::new();
+    let mut scenarios_files = Vec::new();
     let mut error_files = Vec::new();
     let mut debug_files = Vec::new();
     for i in 0..EXPECT_WORKERS {
         // Name files different per-Worker thread.
         let worker_requests_file = requests_file.clone() + &i.to_string();
         let worker_transactions_file = transactions_file.clone() + &i.to_string();
+        let worker_scenarios_file = scenarios_file.clone() + &i.to_string();
         let worker_error_file = error_file.clone() + &i.to_string();
         let worker_debug_file = debug_file.clone() + &i.to_string();
         // Store filenames to cleanup at end of test.
         requests_files.push(worker_requests_file.clone());
         transactions_files.push(worker_transactions_file.clone());
+        scenarios_files.push(worker_scenarios_file.clone());
         error_files.push(worker_error_file.clone());
         debug_files.push(worker_debug_file.clone());
         // Build appropriate configuration.
@@ -339,6 +384,13 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
                 "--transaction-format",
                 format,
             ],
+            TestType::Scenarios => vec![
+                "--worker",
+                "--scenario-log",
+                &worker_scenarios_file,
+                "--scenario-format",
+                format,
+            ],
             TestType::All => vec![
                 "--worker",
                 "--request-log",
@@ -348,6 +400,10 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
                 "--transaction-log",
                 &worker_transactions_file,
                 "--transaction-format",
+                format,
+                "--scenario-log",
+                &worker_scenarios_file,
+                "--scenario-format",
                 format,
                 "--error-log",
                 &worker_error_file,
@@ -398,6 +454,7 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
     let log_files = LogFiles {
         request_logs: &requests_files,
         transaction_logs: &transactions_files,
+        scenario_logs: &scenarios_files,
         error_logs: &error_files,
         debug_logs: &debug_files,
     };
@@ -410,6 +467,9 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
     for file in transactions_files {
         common::cleanup_files(vec![&file]);
     }
+    for file in scenarios_files {
+        common::cleanup_files(vec![&file]);
+    }
     for file in error_files {
         common::cleanup_files(vec![&file]);
     }
@@ -417,6 +477,8 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
         common::cleanup_files(vec![&file]);
     }
 }
+
+/* Request logs */
 
 #[tokio::test]
 // Enable json-formatted requests log.
@@ -474,6 +536,8 @@ async fn test_requests_logs_pretty_gaggle() {
     run_gaggle_test(TestType::Requests, "pretty").await;
 }
 
+/* Transaction logs */
+
 #[tokio::test]
 // Enable json-formatted transaction log.
 async fn test_transactions_logs_json() {
@@ -515,6 +579,52 @@ async fn test_transactions_logs_raw() {
 async fn test_transactions_logs_raw_gaggle() {
     run_gaggle_test(TestType::Transactions, "raw").await;
 }
+
+/* Scenario logs */
+
+#[tokio::test]
+// Enable json-formatted scenario log.
+async fn test_scenarios_logs_json() {
+    run_standalone_test(TestType::Scenarios, "json").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable json-formatted scenario log, in Gaggle mode.
+async fn test_scenarios_logs_json_gaggle() {
+    run_gaggle_test(TestType::Scenarios, "json").await;
+}
+
+#[tokio::test]
+// Enable csv-formatted scenario log.
+async fn test_scenarios_logs_csv() {
+    run_standalone_test(TestType::Scenarios, "csv").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable csv-formatted scenario log, in Gaggle mode.
+async fn test_scenarios_logs_csv_gaggle() {
+    run_gaggle_test(TestType::Scenarios, "csv").await;
+}
+
+#[tokio::test]
+// Enable raw-formatted scenario log.
+async fn test_scenarios_logs_raw() {
+    run_standalone_test(TestType::Scenarios, "raw").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+// Enable raw-formatted scenario log, in Gaggle mode.
+async fn test_scenarios_logs_raw_gaggle() {
+    run_gaggle_test(TestType::Scenarios, "raw").await;
+}
+
+/* Error logs */
 
 #[tokio::test]
 // Enable raw-formatted error log.
@@ -558,6 +668,8 @@ async fn test_error_logs_csv_gaggle() {
     run_gaggle_test(TestType::Error, "csv").await;
 }
 
+/* Debug logs */
+
 #[tokio::test]
 // Enable raw-formatted debug log.
 async fn test_debug_logs_raw() {
@@ -599,6 +711,8 @@ async fn test_debug_logs_csv() {
 async fn test_debug_logs_csv_gaggle() {
     run_gaggle_test(TestType::Debug, "csv").await;
 }
+
+/* All logs */
 
 #[tokio::test]
 // Enable raw-formatted logs.

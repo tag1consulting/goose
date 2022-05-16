@@ -191,6 +191,12 @@ pub struct GooseConfiguration {
     /// Sets log format (csv, json, raw, pretty)
     #[options(no_short, meta = "FORMAT")]
     pub transaction_format: Option<GooseLogFormat>,
+    /// Sets scenario log file name
+    #[options(short = "S", meta = "NAME")]
+    pub scenario_log: String,
+    /// Sets log format (csv, json, raw, pretty)
+    #[options(no_short, meta = "FORMAT")]
+    pub scenario_format: Option<GooseLogFormat>,
     /// Sets error log file name
     #[options(short = "E", meta = "NAME")]
     pub error_log: String,
@@ -338,6 +344,10 @@ pub(crate) struct GooseDefaults {
     pub transaction_log: Option<String>,
     /// An optional default for the transaction log file format.
     pub transaction_format: Option<GooseLogFormat>,
+    /// An optional default for the scenario log file name.
+    pub scenario_log: Option<String>,
+    /// An optional default for the scenario log file format.
+    pub scenario_format: Option<GooseLogFormat>,
     /// An optional default for the error log file name.
     pub error_log: Option<String>,
     /// An optional default for the error log format.
@@ -448,6 +458,10 @@ pub enum GooseDefault {
     TransactionLog,
     /// An optional default for the transaction log file format.
     TransactionFormat,
+    /// An optional default for the scenario log file name.
+    ScenarioLog,
+    /// An optional default for the scenario log file format.
+    ScenarioFormat,
     /// An optional default for the error log file name.
     ErrorLog,
     /// An optional default for the error log format.
@@ -540,6 +554,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::GooseLog`]
 ///  - [`GooseDefault::RequestLog`]
 ///  - [`GooseDefault::TransactionLog`]
+///  - [`GooseDefault::ScenarioLog`]
 ///  - [`GooseDefault::ErrorLog`]
 ///  - [`GooseDefault::DebugLog`]
 ///  - [`GooseDefault::TestPlan`]
@@ -590,6 +605,7 @@ pub enum GooseDefault {
 /// [`GooseLogFormat`].
 ///  - [`GooseDefault::RequestFormat`]
 ///  - [`GooseDefault::TransactionFormat`]
+///  - [`GooseDefault::ScenarioFormat`]
 ///  - [`GooseDefault::ErrorFormat`]
 ///  - [`GooseDefault::DebugFormat`]
 ///
@@ -631,6 +647,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
+            GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
             GooseDefault::ErrorLog => self.defaults.error_log = Some(value.to_string()),
             GooseDefault::DebugLog => self.defaults.debug_log = Some(value.to_string()),
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
@@ -696,6 +713,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
             | GooseDefault::TransactionFormat
+            | GooseDefault::ScenarioFormat
             | GooseDefault::RequestFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -747,6 +765,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::TransactionLog
+            | GooseDefault::ScenarioLog
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
             | GooseDefault::TelnetHost
@@ -792,6 +811,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
+            | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -847,6 +867,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::TransactionLog
+            | GooseDefault::ScenarioLog
             | GooseDefault::RunningMetrics
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
@@ -890,6 +911,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
+            | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -957,6 +979,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::TransactionLog
+            | GooseDefault::ScenarioLog
             | GooseDefault::RunningMetrics
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
@@ -1000,6 +1023,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
+            | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -1026,6 +1050,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value),
             GooseDefault::ErrorFormat => self.defaults.error_format = Some(value),
             GooseDefault::TransactionFormat => self.defaults.transaction_format = Some(value),
+            GooseDefault::ScenarioFormat => self.defaults.scenario_format = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
@@ -1060,6 +1085,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::TransactionLog
+            | GooseDefault::ScenarioLog
             | GooseDefault::RunningMetrics
             | GooseDefault::ErrorLog
             | GooseDefault::DebugLog
@@ -2047,8 +2073,15 @@ impl GooseConfiguration {
             } else if !self.transaction_log.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.transaction_log`".to_string(),
-                    value: self.request_log.clone(),
+                    value: self.transaction_log.clone(),
                     detail: "`configuration.transaction_log` can not be set on the Manager."
+                        .to_string(),
+                });
+            } else if !self.scenario_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.scenario_log`".to_string(),
+                    value: self.scenario_log.clone(),
+                    detail: "`configuration.scenario_log` can not be set on the Manager."
                         .to_string(),
                 });
             } else if self.no_autostart {
@@ -2494,6 +2527,15 @@ impl GooseConfiguration {
                         "`configuration.transaction_log` can not be set with `configuration.no_metrics`."
                             .to_string(),
                 });
+            // Scenario log can't be written if metrics are disabled.
+            } else if !self.scenario_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.scenario_log`".to_string(),
+                    value: self.scenario_log.to_string(),
+                    detail:
+                        "`configuration.scenario_log` can not be set with `configuration.no_metrics`."
+                            .to_string(),
+                });
             // Error log can't be written if metrics are disabled.
             } else if !self.error_log.is_empty() {
                 return Err(GooseError::InvalidOption {
@@ -2660,6 +2702,7 @@ mod test {
         let report_file = "custom-goose-report.html".to_string();
         let request_log = "custom-goose-request.log".to_string();
         let transaction_log = "custom-goose-transaction.log".to_string();
+        let scenario_log = "custom-goose-scenario.log".to_string();
         let debug_log = "custom-goose-debug.log".to_string();
         let error_log = "custom-goose-error.log".to_string();
         let throttle_requests: usize = 25;
@@ -2722,6 +2765,10 @@ mod test {
             .set_default(GooseDefault::TransactionLog, transaction_log.as_str())
             .unwrap()
             .set_default(GooseDefault::TransactionFormat, GooseLogFormat::Raw)
+            .unwrap()
+            .set_default(GooseDefault::ScenarioLog, scenario_log.as_str())
+            .unwrap()
+            .set_default(GooseDefault::ScenarioFormat, GooseLogFormat::Raw)
             .unwrap()
             .set_default(GooseDefault::ErrorLog, error_log.as_str())
             .unwrap()
