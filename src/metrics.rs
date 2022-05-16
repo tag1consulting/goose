@@ -2911,6 +2911,11 @@ impl GooseAttack {
                     // Store a new metric.
                     self.metrics.scenarios[raw_scenario.index]
                         .update(raw_scenario.run_time, raw_scenario.user);
+
+                    if !self.configuration.report_file.is_empty() {
+                        self.graph_data
+                            .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
+                    }
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
@@ -3387,6 +3392,70 @@ impl GooseAttack {
                 transactions_template = "".to_string();
             }
 
+            // Only build the scenarios template if --no-senario-metrics isn't enabled.
+            let scenarios_template: String;
+            if !self.configuration.no_scenario_metrics {
+                let mut scenario_metrics = Vec::new();
+                let mut aggregate_count = 0;
+                let mut aggregate_scenario_time_counter: usize = 0;
+                let mut aggregate_scenario_time_minimum: usize = 0;
+                let mut aggregate_scenario_time_maximum: usize = 0;
+                let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
+                for scenario in &self.metrics.scenarios {
+                    let (count_per_second, _failures_per_second) =
+                        per_second_calculations(self.metrics.duration, scenario.counter, 0);
+                    let average = match scenario.counter {
+                        0 => 0.00,
+                        _ => scenario.total_time as f32 / scenario.counter as f32,
+                    };
+                    scenario_metrics.push(report::ScenarioMetric {
+                        name: scenario.name.to_string(),
+                        count: scenario.counter,
+                        response_time_average: format!("{:.2}", average),
+                        response_time_minimum: scenario.min_time,
+                        response_time_maximum: scenario.max_time,
+                        count_per_second: format!("{:.2}", count_per_second),
+                    });
+
+                    aggregate_count += scenario.counter;
+                    aggregate_scenario_times =
+                        merge_times(aggregate_scenario_times, scenario.times.clone());
+                    aggregate_scenario_time_counter += &scenario.counter;
+                    aggregate_scenario_time_minimum =
+                        update_min_time(aggregate_scenario_time_minimum, scenario.min_time);
+                    aggregate_scenario_time_maximum =
+                        update_max_time(aggregate_scenario_time_maximum, scenario.max_time);
+                }
+
+                let (aggregate_count_per_second, _aggregate_failures_per_second) =
+                    per_second_calculations(self.metrics.duration, aggregate_count, 0);
+                scenario_metrics.push(report::ScenarioMetric {
+                    name: "Aggregated".to_string(),
+                    count: aggregate_count,
+                    response_time_average: format!(
+                        "{:.2}",
+                        raw_aggregate_response_time_counter as f32 / aggregate_count as f32
+                    ),
+                    response_time_minimum: aggregate_scenario_time_minimum,
+                    response_time_maximum: aggregate_scenario_time_maximum,
+                    count_per_second: format!("{:.2}", aggregate_count_per_second),
+                });
+                let mut scenarios_rows = Vec::new();
+                // Compile the scenario metrics template.
+                for metric in scenario_metrics {
+                    scenarios_rows.push(report::scenario_metrics_row(metric));
+                }
+
+                scenarios_template = report::scenario_metrics_template(
+                    &scenarios_rows.join("\n"),
+                    self.graph_data
+                        .get_scenarios_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                );
+            } else {
+                scenarios_template = "".to_string();
+            }
+
             // Only build the transactions template if --no-transaction-metrics isn't enabled.
             let errors_template: String = if !self.metrics.errors.is_empty() {
                 let mut error_rows = Vec::new();
@@ -3466,6 +3535,7 @@ impl GooseAttack {
                     co_requests_template: &co_requests_template,
                     co_responses_template: &co_responses_template,
                     transactions_template: &transactions_template,
+                    scenarios_template: &scenarios_template,
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
                     graph_rps_template: &self
