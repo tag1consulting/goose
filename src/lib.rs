@@ -1814,6 +1814,8 @@ impl GooseAttack {
                 &self.configuration,
                 &self.defaults,
             )?;
+            self.metrics
+                .initialize_scenario_metrics(&self.scenarios, &self.configuration);
             if !self.configuration.no_print_metrics {
                 self.metrics.display_metrics = true;
             }

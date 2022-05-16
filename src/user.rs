@@ -4,7 +4,7 @@ use std::time::{self, Duration};
 use crate::get_worker_id;
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, TransactionFunction};
 use crate::logger::GooseLog;
-use crate::metrics::{GooseMetric, TransactionMetric};
+use crate::metrics::{GooseMetric, ScenarioMetric, TransactionMetric};
 
 pub(crate) async fn user_main(
     thread_number: usize,
@@ -56,6 +56,7 @@ pub(crate) async fn user_main(
             // Tracks the time it takes to loop through all Transactions when Coordinated Omission
             // Mitigation is enabled.
             thread_user.update_request_cadence(thread_number).await;
+            let scenario_started = time::Instant::now();
 
             for (thread_transaction_index, thread_transaction_name) in
                 &thread_scenario.weighted_transactions
@@ -119,6 +120,19 @@ pub(crate) async fn user_main(
             }
             // Record a complete iteration running this Scenario.
             thread_user.iterations += 1;
+
+            // Send scenario metric to parent, unless disabled
+            if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
+                if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
+                    // Best effort metrics.
+                    let _ = metrics_channel.send(GooseMetric::Scenario(ScenarioMetric::new(
+                        thread_user.started.elapsed().as_millis(),
+                        thread_user.scenarios_index,
+                        scenario_started.elapsed().as_millis(),
+                        thread_user.weighted_users_index,
+                    )));
+                }
+            }
 
             // Check if configured to exit after a certain number of iterations, and exit if
             // that number of iterations have run.

@@ -161,6 +161,9 @@ pub struct GooseConfiguration {
     /// Doesn't track transaction metrics
     #[options(no_short)]
     pub no_transaction_metrics: bool,
+    /// Doesn't track scenario metrics
+    #[options(no_short)]
+    pub no_scenario_metrics: bool,
     /// Doesn't display metrics at end of load test
     #[options(no_short)]
     pub no_print_metrics: bool,
@@ -315,6 +318,8 @@ pub(crate) struct GooseDefaults {
     pub no_metrics: Option<bool>,
     /// An optional default for not tracking transaction metrics.
     pub no_transaction_metrics: Option<bool>,
+    /// An optional default for not tracking scenario metrics.
+    pub no_scenario_metrics: Option<bool>,
     /// An optional default for not displaying metrics at the end of the load test.
     pub no_print_metrics: Option<bool>,
     /// An optional default for not displaying an error summary.
@@ -423,6 +428,8 @@ pub enum GooseDefault {
     NoMetrics,
     /// An optional default for not tracking transaction metrics.
     NoTransactionMetrics,
+    /// An optional default for not tracking scneario metrics.
+    NoScenarioMetrics,
     /// An optional default for not displaying metrics at end of load test.
     NoPrintMetrics,
     /// An optional default for not displaying an error summary.
@@ -564,6 +571,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoPrintMetrics`]
 ///  - [`GooseDefault::NoMetrics`]
 ///  - [`GooseDefault::NoTransactionMetrics`]
+///  - [`GooseDefault::NoScenarioMetrics`]
 ///  - [`GooseDefault::RequestBody`]
 ///  - [`GooseDefault::NoErrorSummary`]
 ///  - [`GooseDefault::NoDebugBody`]
@@ -661,6 +669,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTransactionMetrics
+            | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -756,6 +765,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTransactionMetrics
+            | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -815,6 +825,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoTransactionMetrics => {
                 self.defaults.no_transaction_metrics = Some(value)
             }
+            GooseDefault::NoScenarioMetrics => self.defaults.no_scenario_metrics = Some(value),
             GooseDefault::RequestBody => self.defaults.request_body = Some(value),
             GooseDefault::NoPrintMetrics => self.defaults.no_print_metrics = Some(value),
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
@@ -916,6 +927,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTransactionMetrics
+            | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -1018,6 +1030,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoTransactionMetrics
+            | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
             | GooseDefault::NoPrintMetrics
             | GooseDefault::NoErrorSummary
@@ -1580,6 +1593,24 @@ impl GooseConfiguration {
                     value: defaults.no_transaction_metrics,
                     filter: defaults.no_transaction_metrics.is_none() || self.worker,
                     message: "no_transaction_metrics",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `no_scenario_metrics`.
+        self.no_scenario_metrics = self
+            .get_value(vec![
+                // Use --no-scenario-metrics if set.
+                GooseValue {
+                    value: Some(self.no_scenario_metrics),
+                    filter: !self.no_scenario_metrics,
+                    message: "no_scenario_metrics",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.no_scenario_metrics,
+                    filter: defaults.no_scenario_metrics.is_none() || self.worker,
+                    message: "no_scenario_metrics",
                 },
             ])
             .unwrap_or(false);
@@ -2172,6 +2203,14 @@ impl GooseConfiguration {
                     detail: "`configuration.no_transaction_metrics` can not be set in Worker mode."
                         .to_string(),
                 });
+            // Can't set `no_scenario_metrics` on Worker.
+            } else if self.no_scenario_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_scenario_metrics".to_string(),
+                    value: self.no_scenario_metrics.to_string(),
+                    detail: "`configuration.no_scenario_metrics` can not be set in Worker mode."
+                        .to_string(),
+                });
             // Can't set `no_print_metrics` on Worker.
             } else if self.no_print_metrics {
                 return Err(GooseError::InvalidOption {
@@ -2658,6 +2697,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::NoTransactionMetrics, true)
             .unwrap()
+            .set_default(GooseDefault::NoScenarioMetrics, true)
+            .unwrap()
             .set_default(GooseDefault::NoPrintMetrics, true)
             .unwrap()
             .set_default(GooseDefault::NoErrorSummary, true)
@@ -2734,6 +2775,7 @@ mod test {
         assert!(goose_attack.defaults.no_reset_metrics == Some(true));
         assert!(goose_attack.defaults.no_metrics == Some(true));
         assert!(goose_attack.defaults.no_transaction_metrics == Some(true));
+        assert!(goose_attack.defaults.no_scenario_metrics == Some(true));
         assert!(goose_attack.defaults.no_print_metrics == Some(true));
         assert!(goose_attack.defaults.no_error_summary == Some(true));
         assert!(goose_attack.defaults.no_telnet == Some(true));
