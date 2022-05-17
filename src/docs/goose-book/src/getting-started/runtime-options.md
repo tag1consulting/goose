@@ -19,7 +19,7 @@ Optional arguments:
   -s, --startup-time TIME     Starts users for up to (30s, 20m, 3h, 1h30m, etc)
   -t, --run-time TIME         Stops load test after (30s, 20m, 3h, 1h30m, etc)
   -G, --goose-log NAME        Enables Goose log file and sets name
-  -g, --log-level             Inreases Goose log level (-g, -gg, etc)
+  -g, --log-level             Increases Goose log level (-g, -gg, etc)
   -q, --quiet                 Decreases Goose verbosity (-q, -qq, etc)
   -v, --verbose               Increases Goose verbosity (-v, -vv, etc)
 
@@ -28,6 +28,7 @@ Metrics:
   --no-reset-metrics          Doesn't reset metrics after all users have started
   --no-metrics                Doesn't track metrics
   --no-transaction-metrics    Doesn't track transaction metrics
+  --no-scenario-metrics       Doesn't track scenario metrics
   --no-print-metrics          Doesn't display metrics at end of load test
   --no-error-summary          Doesn't display an error summary
   --report-file NAME          Create an html-formatted report
@@ -37,6 +38,8 @@ Metrics:
   --request-body              Include the request body in the request log
   -T, --transaction-log NAME  Sets transaction log file name
   --transaction-format FORMAT Sets log format (csv, json, raw, pretty)
+  -S, --scenario-log NAME     Sets scenario log file name
+  --scenario-format FORMAT    Sets log format (csv, json, raw, pretty)
   -E, --error-log NAME        Sets error log file name
   --error-format FORMAT       Sets error log format (csv, json, raw, pretty)
   -D, --debug-log NAME        Sets debug log file name

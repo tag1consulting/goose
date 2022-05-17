@@ -81,11 +81,13 @@ pub(crate) struct TransactionMetric {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ScenarioMetric {
     pub name: String,
+    pub users: usize,
     pub count: usize,
     pub response_time_average: String,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
     pub count_per_second: String,
+    pub iterations: String,
 }
 
 /// Defines the metrics reported about status codes.
@@ -402,11 +404,13 @@ pub(crate) fn scenario_metrics_template(scenario_rows: &str, graph: String) -> S
             <thead>
                 <tr>
                     <th colspan="2">Scenario</th>
+                    <th># Users</th>
                     <th># Times Run</th>
                     <th>Average (ms)</th>
                     <th>Min (ms)</th>
                     <th>Max (ms)</th>
-                    <th>RPS</th>
+                    <th>scenarios/s</th>
+                    <th>iterations</th>
                 </tr>
             </thead>
             <tbody>
@@ -424,18 +428,22 @@ pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
     format!(
         r#"<tr>
             <td colspan="2">{name}</strong></td>
+            <td>{users}</td>
             <td>{count}</td>
             <td>{response_time_average}</td>
             <td>{response_time_minimum}</td>
             <td>{response_time_maximum}</td>
             <td>{count_per_second}</td>
+            <td>{iterations}</td>
         </tr>"#,
         name = metric.name,
+        users = metrics::format_number(metric.users),
         count = metrics::format_number(metric.count),
         response_time_average = metric.response_time_average,
         response_time_minimum = metric.response_time_minimum,
         response_time_maximum = metric.response_time_maximum,
         count_per_second = metric.count_per_second,
+        iterations = metric.iterations,
     )
 }
 

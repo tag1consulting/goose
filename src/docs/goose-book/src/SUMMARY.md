@@ -18,6 +18,7 @@
 - [Logging](logging/overview.md)
     - [Request Log](logging/requests.md)
     - [Transaction Log](logging/transactions.md)
+    - [Scenario Log](logging/scenarios.md)
     - [Error Log](logging/errors.md)
     - [Debug Log](logging/debug.md)
 

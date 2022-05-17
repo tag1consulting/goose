@@ -1304,7 +1304,7 @@ impl GooseMetrics {
                 if !displayed_scenario {
                     writeln!(
                         fmt,
-                        " {:24 } |",
+                        " {:24 }",
                         util::truncate_string(
                             &format!(
                                 "{}: {}",
@@ -1463,7 +1463,7 @@ impl GooseMetrics {
                 if !displayed_scenario {
                     writeln!(
                         fmt,
-                        " {:24 } |",
+                        " {:24}",
                         util::truncate_string(
                             &format!(
                                 "{}: {}",
@@ -1594,7 +1594,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
-                util::truncate_string(&format!("{}: {}", scenario.index + 1, &scenario.name,), 60),
+                util::truncate_string(&format!("{}: {}", scenario.index + 1, &scenario.name,), 24),
                 scenario.users.len(),
                 scenario.counter,
                 runs,
@@ -3397,11 +3397,14 @@ impl GooseAttack {
             let scenarios_template: String;
             if !self.configuration.no_scenario_metrics {
                 let mut scenario_metrics = Vec::new();
+                let mut aggregate_users = 0;
                 let mut aggregate_count = 0;
                 let mut aggregate_scenario_time_counter: usize = 0;
                 let mut aggregate_scenario_time_minimum: usize = 0;
                 let mut aggregate_scenario_time_maximum: usize = 0;
                 let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut aggregate_iterations = 0.0;
+                let mut aggregate_response_time_counter = 0.0;
                 for scenario in &self.metrics.scenarios {
                     let (count_per_second, _failures_per_second) =
                         per_second_calculations(self.metrics.duration, scenario.counter, 0);
@@ -3409,15 +3412,19 @@ impl GooseAttack {
                         0 => 0.00,
                         _ => scenario.total_time as f32 / scenario.counter as f32,
                     };
+                    let iterations = scenario.counter as f32 / scenario.users.len() as f32;
                     scenario_metrics.push(report::ScenarioMetric {
                         name: scenario.name.to_string(),
+                        users: scenario.users.len(),
                         count: scenario.counter,
                         response_time_average: format!("{:.2}", average),
                         response_time_minimum: scenario.min_time,
                         response_time_maximum: scenario.max_time,
                         count_per_second: format!("{:.2}", count_per_second),
+                        iterations: format!("{:.2}", iterations),
                     });
 
+                    aggregate_users += scenario.users.len();
                     aggregate_count += scenario.counter;
                     aggregate_scenario_times =
                         merge_times(aggregate_scenario_times, scenario.times.clone());
@@ -3426,20 +3433,24 @@ impl GooseAttack {
                         update_min_time(aggregate_scenario_time_minimum, scenario.min_time);
                     aggregate_scenario_time_maximum =
                         update_max_time(aggregate_scenario_time_maximum, scenario.max_time);
+                    aggregate_iterations += iterations;
+                    aggregate_response_time_counter += scenario.total_time as f32;
                 }
 
                 let (aggregate_count_per_second, _aggregate_failures_per_second) =
                     per_second_calculations(self.metrics.duration, aggregate_count, 0);
                 scenario_metrics.push(report::ScenarioMetric {
                     name: "Aggregated".to_string(),
+                    users: aggregate_users,
                     count: aggregate_count,
                     response_time_average: format!(
                         "{:.2}",
-                        raw_aggregate_response_time_counter as f32 / aggregate_count as f32
+                        aggregate_response_time_counter as f32 / aggregate_count as f32
                     ),
                     response_time_minimum: aggregate_scenario_time_minimum,
                     response_time_maximum: aggregate_scenario_time_maximum,
                     count_per_second: format!("{:.2}", aggregate_count_per_second),
+                    iterations: format!("{:.2}", aggregate_iterations),
                 });
                 let mut scenarios_rows = Vec::new();
                 // Compile the scenario metrics template.
