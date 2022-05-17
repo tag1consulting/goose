@@ -1,5 +1,7 @@
 # Creating A Load Test
 
+## Cargo
+
 [Cargo](https://doc.rust-lang.org/cargo/) is the Rust package manager. To create a new load test, use Cargo to create a new application (you can name your application anything, we've generically selected `loadtest`):
 
 ```bash
@@ -29,6 +31,8 @@ $ cargo run
      Running `target/debug/loadtest`
 Hello, world!
 ```
+
+## Creating the load test
 
 To create an actual load test, you first have to add the following boilerplate to the top of `src/main.rs` to make Goose's functionality available to your code:
 

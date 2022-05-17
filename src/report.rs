@@ -409,8 +409,8 @@ pub(crate) fn scenario_metrics_template(scenario_rows: &str, graph: String) -> S
                     <th>Average (ms)</th>
                     <th>Min (ms)</th>
                     <th>Max (ms)</th>
-                    <th>scenarios/s</th>
-                    <th>iterations</th>
+                    <th>Scenarios/s</th>
+                    <th>Iterations</th>
                 </tr>
             </thead>
             <tbody>
