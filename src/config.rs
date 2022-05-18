@@ -2462,7 +2462,7 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.no_reset_metrics".to_string(),
                     value: self.no_reset_metrics.to_string(),
-                    detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan`."
+                    detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan` (metrics are not reset)."
                         .to_string(),
                 });
             }
@@ -2494,6 +2494,7 @@ impl GooseConfiguration {
                             .to_string(),
                 });
             }
+            // The --test-plan option isn't compatible with --iterations.
             if self.test_plan.is_some() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.iterations`".to_string(),
@@ -2503,11 +2504,21 @@ impl GooseConfiguration {
                             .to_string(),
                 });
             }
+            // The --worker flag isn't compatible with --iterations.
             if self.worker {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.iterations".to_string(),
                     value: self.iterations.to_string(),
                     detail: "`configuration.iterations` can not be set in Worker mode.".to_string(),
+                });
+            }
+            // The --no-reset-metrics option isn't compatible with --iterations.
+            if self.no_reset_metrics {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_reset_metrics".to_string(),
+                    value: self.no_reset_metrics.to_string(),
+                    detail: "`configuration.no_reset_metrics` can not be set with `configuration.iterations` (metrics are not reset)."
+                        .to_string(),
                 });
             }
         }
