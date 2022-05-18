@@ -294,8 +294,10 @@ async fn run_standalone_test(test_type: &TestType, scheduler: &GooseScheduler) {
     // If limiting the number of iterations, adjust the configuration accordingly.
     if test_type == &TestType::ScenariosLimitIterations {
         configuration.iterations = ITERATIONS;
-        // Must disable --run-time in this case.
+        // The --run-time option isn't compatible with --iterations.
         configuration.run_time = "".to_string();
+        // The --no-reset-metrics option isn't compatible with --iterations.
+        configuration.no_reset_metrics = false;
     }
 
     let goose_attack = match test_type {
@@ -377,8 +379,10 @@ async fn run_gaggle_test(test_type: &TestType, scheduler: &GooseScheduler) {
     // If limiting the number of iterations, adjust the configuration accordingly.
     if test_type == &TestType::ScenariosLimitIterations {
         manager_configuration.iterations = ITERATIONS;
-        // Must disable --run-time in this case.
+        // The --run-time option isn't compatible with --iterations.
         manager_configuration.run_time = "".to_string();
+        // The --no-reset-metrics option isn't compatible with --iterations.
+        manager_configuration.no_reset_metrics = false;
     }
 
     let manager_goose_attack = match test_type {
