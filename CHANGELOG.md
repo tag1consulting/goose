@@ -2,6 +2,7 @@
 
 ## 0.16.2-dev
  - [#477](https://github.com/tag1consulting/goose/pull/477) introduce `--iterations` (and `GooseDefault::Iterations`) which configures each GooseUser to run a configurable number of iterations of the assigned Scenario then exit; introduces Scenario metrics which can be disabled with `--no-scenario-metrics` (`GooseDefault::NoScenarioMetrics`); introduces `--scenario-log` and `--scenario-format` (and `GooseDefault::ScenarioLog` and `GooseDefault::ScenarioFormat`)
+ - [#483](https://github.com/tag1consulting/goose/pull/483) remove duplicate help (-h) output
 
 ## 0.16.1 May 12, 2022
  - [#464](https://github.com/tag1consulting/goose/pull/464) add `startuptime` (and `startup_time`) TIME to controllers, setting how long the load test should spend starting configured number of users
