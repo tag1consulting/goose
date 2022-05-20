@@ -6,7 +6,7 @@
 
 - [Getting Started](getting-started/overview.md)
     - [Creating A Load test](getting-started/creating.md)
-    - [Validating requests](getting-started/validation.md)
+    - [Validating Requests](getting-started/validation.md)
     - [Running A Load Test](getting-started/running.md)
     - [Run-Time Options](getting-started/runtime-options.md)
         - [Common Options](getting-started/common.md)
@@ -18,6 +18,7 @@
 - [Logging](logging/overview.md)
     - [Request Log](logging/requests.md)
     - [Transaction Log](logging/transactions.md)
+    - [Scenario Log](logging/scenarios.md)
     - [Error Log](logging/errors.md)
     - [Debug Log](logging/debug.md)
 

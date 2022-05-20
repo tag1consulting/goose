@@ -15,6 +15,7 @@ pub(crate) struct GooseReportTemplates<'a> {
     pub co_requests_template: &'a str,
     pub co_responses_template: &'a str,
     pub transactions_template: &'a str,
+    pub scenarios_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
     pub graph_rps_template: &'a str,
@@ -74,6 +75,19 @@ pub(crate) struct TransactionMetric {
     pub response_time_maximum: usize,
     pub requests_per_second: String,
     pub failures_per_second: String,
+}
+
+/// Defines the metrics reported about scenarios.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScenarioMetric {
+    pub name: String,
+    pub users: usize,
+    pub count: usize,
+    pub response_time_average: String,
+    pub response_time_minimum: usize,
+    pub response_time_maximum: usize,
+    pub count_per_second: String,
+    pub iterations: String,
 }
 
 /// Defines the metrics reported about status codes.
@@ -378,6 +392,61 @@ pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
     }
 }
 
+/// If scenario metrics are enabled, add a scenario metrics table to the html report.
+pub(crate) fn scenario_metrics_template(scenario_rows: &str, graph: String) -> String {
+    format!(
+        r#"<div class="scenarios">
+        <h2>Scenario Metrics</h2>
+
+        {graph}
+
+        <table>
+            <thead>
+                <tr>
+                    <th colspan="2">Scenario</th>
+                    <th># Users</th>
+                    <th># Times Run</th>
+                    <th>Average (ms)</th>
+                    <th>Min (ms)</th>
+                    <th>Max (ms)</th>
+                    <th>Scenarios/s</th>
+                    <th>Iterations</th>
+                </tr>
+            </thead>
+            <tbody>
+                {scenario_rows}
+            </tbody>
+        </table>
+    </div>"#,
+        scenario_rows = scenario_rows,
+        graph = graph,
+    )
+}
+
+/// Build an individual row of scenario metrics in the html report.
+pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
+    format!(
+        r#"<tr>
+            <td colspan="2">{name}</strong></td>
+            <td>{users}</td>
+            <td>{count}</td>
+            <td>{response_time_average}</td>
+            <td>{response_time_minimum}</td>
+            <td>{response_time_maximum}</td>
+            <td>{count_per_second}</td>
+            <td>{iterations}</td>
+        </tr>"#,
+        name = metric.name,
+        users = metrics::format_number(metric.users),
+        count = metrics::format_number(metric.count),
+        response_time_average = metric.response_time_average,
+        response_time_minimum = metric.response_time_minimum,
+        response_time_maximum = metric.response_time_maximum,
+        count_per_second = metric.count_per_second,
+        iterations = metric.iterations,
+    )
+}
+
 /// If there are errors, add an errors table to the html report.
 pub(crate) fn errors_template(error_rows: &str, graph: String) -> String {
     format!(
@@ -574,6 +643,8 @@ pub(crate) fn build_report(
 
         {transactions_template}
 
+        {scenarios_template}
+
         <div class="users">
         <h2>User Metrics</h2>
             {graph_users_per_second}
@@ -594,6 +665,7 @@ pub(crate) fn build_report(
         co_requests_template = templates.co_requests_template,
         co_responses_template = templates.co_responses_template,
         transactions_template = templates.transactions_template,
+        scenarios_template = templates.scenarios_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
         graph_rps_template = templates.graph_rps_template,

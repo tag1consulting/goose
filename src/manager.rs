@@ -9,7 +9,8 @@ use std::time;
 
 use crate::metrics::{
     self, GooseErrorMetricAggregate, GooseErrorMetrics, GooseRequestMetricAggregate,
-    GooseRequestMetrics, TransactionMetricAggregate, TransactionMetrics,
+    GooseRequestMetrics, ScenarioMetricAggregate, ScenarioMetrics, TransactionMetricAggregate,
+    TransactionMetrics,
 };
 use crate::util;
 use crate::worker::GaggleMetrics;
@@ -92,6 +93,29 @@ fn merge_transactions_from_worker(
     // Increment total fail counter.
     merged_transaction.fail_count += &user_transaction.fail_count;
     merged_transaction
+}
+
+/// Merge per-user scenario metrics from user thread into global parent metrics
+fn merge_scenarios_from_worker(
+    parent_scenario: &ScenarioMetricAggregate,
+    user_scenario: &ScenarioMetricAggregate,
+) -> ScenarioMetricAggregate {
+    // Make a mutable copy where we can merge things
+    let mut merged_scenario = parent_scenario.clone();
+    // Iterate over user times, and merge into global time
+    merged_scenario.times =
+        metrics::merge_times(merged_scenario.times, user_scenario.times.clone());
+    // Increment total scenario time counter.
+    merged_scenario.total_time += &user_scenario.total_time;
+    // Increment count of how many scenario counters we've seen.
+    merged_scenario.counter += &user_scenario.counter;
+    // If user had new fastest scenario time, update global fastest scenario time.
+    merged_scenario.min_time =
+        metrics::update_min_time(merged_scenario.min_time, user_scenario.min_time);
+    // If user had new slowest scenario time, update global slowest scenario time.
+    merged_scenario.max_time =
+        metrics::update_max_time(merged_scenario.max_time, user_scenario.max_time);
+    merged_scenario
 }
 
 /// Merge per-user request metrics from user thread into global parent metrics
@@ -227,6 +251,15 @@ fn merge_transaction_metrics(goose_attack: &mut GooseAttack, transactions: Trans
     }
 }
 
+/// Helper to merge in scenario metrics from Worker.
+fn merge_scenario_metrics(goose_attack: &mut GooseAttack, scenarios: ScenarioMetrics) {
+    for scenario in scenarios {
+        let merged_scenario =
+            merge_scenarios_from_worker(&goose_attack.metrics.scenarios[scenario.index], &scenario);
+        goose_attack.metrics.scenarios[scenario.index] = merged_scenario;
+    }
+}
+
 /// Helper to merge in errors from the Worker.
 fn merge_error_metrics(goose_attack: &mut GooseAttack, errors: GooseErrorMetrics) {
     if !errors.is_empty() {
@@ -311,6 +344,11 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         )
         .expect("failed to initialize transaction metrics");
 
+    // Initialize the optional scenario metrics.
+    goose_attack
+        .metrics
+        .initialize_scenario_metrics(&goose_attack.scenarios, &goose_attack.configuration);
+
     // Update metrics, which doesn't happen automatically on the Master as we don't
     // invoke start_attack. Hatch rate is required here so unwrap() is safe.
     // Divide the number of new users to launch by the time configured to launch them.
@@ -319,7 +357,13 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         / goose_attack.test_plan.steps[0].1 as f32
         // Convert from milliseconds to seconds.
         * 1_000.0;
-    let maximum_hatched = hatch_rate * goose_attack.test_plan.steps[1].1 as f32;
+    // A test_plan has two steps if there is a run_time.
+    let maximum_hatched = if goose_attack.test_plan.steps.len() > 1 {
+        hatch_rate * goose_attack.test_plan.steps[1].1 as f32
+    // A test_plan has only one step if there is no run_time.
+    } else {
+        hatch_rate * goose_attack.test_plan.steps[0].1 as f32
+    };
     if maximum_hatched < goose_attack.configuration.users.unwrap() as f32 {
         goose_attack.metrics.maximum_users = maximum_hatched as usize;
         goose_attack.metrics.total_users = maximum_hatched as usize;
@@ -352,12 +396,17 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
         }
         if load_test_running {
             if !load_test_finished {
+                let timer_expired = if goose_attack.test_plan.steps.len() > 1 {
+                    util::ms_timer_expired(
+                        goose_attack.started.unwrap(),
+                        goose_attack.test_plan.steps[1].1,
+                    )
+                } else {
+                    // This gaggle has no run_time configured.
+                    false
+                };
                 // Test ran to completion or was canceled with ctrl-c.
-                if util::ms_timer_expired(
-                    goose_attack.started.unwrap(),
-                    goose_attack.test_plan.steps[1].1,
-                ) || canceled.load(Ordering::SeqCst)
-                {
+                if timer_expired || canceled.load(Ordering::SeqCst) {
                     info!(
                         "stopping after {} seconds...",
                         goose_attack.started.unwrap().elapsed().as_secs()
@@ -551,6 +600,10 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                             // Merge in transaction metrics from Worker.
                             GaggleMetrics::Transactions(transactions) => {
                                 merge_transaction_metrics(&mut goose_attack, transactions)
+                            }
+                            // Merge in scenario metrics from Worker.
+                            GaggleMetrics::Scenarios(scenarios) => {
+                                merge_scenario_metrics(&mut goose_attack, scenarios)
                             }
                             // Merge in error metrics from Worker.
                             GaggleMetrics::Errors(errors) => {

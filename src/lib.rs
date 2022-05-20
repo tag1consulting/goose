@@ -65,6 +65,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -322,6 +323,12 @@ struct GooseAttackRunState {
     /// Unbounded receiver used by Goose parent to receive metrics from
     /// [`GooseUser`](./goose/struct.GooseUser.html)s.
     metrics_rx: flume::Receiver<GooseMetric>,
+    /// Unbounded sender used by all [`GooseUser`](./goose/struct.GooseUser.html)
+    /// threads to alert the parent when they shutdown.
+    all_threads_shutdown_tx: flume::Sender<usize>,
+    /// Unbounded receiver used by [`GooseUser`](./goose.GooseUser.html) threads to notify
+    /// the parent if they shut themselves down (for example if `--iterations` is reached).
+    shutdown_rx: flume::Receiver<usize>,
     /// Optional unbounded receiver for logger thread, if enabled.
     logger_handle: GooseLoggerJoinHandle,
     /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
@@ -354,6 +361,8 @@ struct GooseAttackRunState {
     /// Boolean flag indicating if all [`GooseUser`](./goose/struct.GooseUser.html)s
     /// have been spawned.
     all_users_spawned: bool,
+    /// Set of users that have shut themselves down.
+    users_shutdown: HashSet<usize>,
     /// Boolean flag indicating of Goose should shutdown after stopping a running load test.
     shutdown_after_stop: bool,
     /// Thread-safe boolean flag indicating if the [`GooseAttack`](./struct.GooseAttack.html)
@@ -1277,6 +1286,11 @@ impl GooseAttack {
             flume::Receiver<GooseMetric>,
         ) = flume::unbounded();
 
+        // Create a single channel to allow GooseUser threads to notify the
+        // parent thread when they exit.
+        let (all_threads_shutdown_tx, shutdown_rx): (flume::Sender<usize>, flume::Receiver<usize>) =
+            flume::unbounded();
+
         // Optionally spawn a telnet and/or Websocket Controller thread.
         let controller_channel_rx = self.setup_controllers().await;
 
@@ -1291,7 +1305,9 @@ impl GooseAttack {
             completed_users: 0,
             drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
+            all_threads_shutdown_tx,
             metrics_rx,
+            shutdown_rx,
             logger_handle: None,
             all_threads_logger_tx: None,
             throttle_threads_tx: None,
@@ -1304,6 +1320,7 @@ impl GooseAttack {
             user_channels: Vec::new(),
             running_metrics_timer: std_now,
             display_running_metrics: false,
+            users_shutdown: HashSet::new(),
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceled: Arc::new(AtomicBool::new(false)),
@@ -1457,9 +1474,13 @@ impl GooseAttack {
                     None
                 };
 
-                // Copy the GooseUser-to-parent sender channel, used by all threads.
-                thread_user.channel_to_parent =
+                // Copy the GooseUser-metrics sender channel, used by all threads.
+                thread_user.metrics_channel =
                     Some(goose_attack_run_state.all_threads_metrics_tx.clone());
+
+                // Copy the GooseUser-shutdown sender channel, used by all threads.
+                thread_user.shutdown_channel =
+                    Some(goose_attack_run_state.all_threads_shutdown_tx.clone());
 
                 // Copy the appropriate task_set into the thread.
                 let thread_scenario = self.scenarios[thread_user.scenarios_index].clone();
@@ -1615,6 +1636,7 @@ impl GooseAttack {
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
                             GaggleMetrics::Errors(self.metrics.errors.clone()),
                             GaggleMetrics::Transactions(self.metrics.transactions.clone()),
+                            GaggleMetrics::Scenarios(self.metrics.scenarios.clone()),
                         ],
                         true,
                     );
@@ -1698,10 +1720,16 @@ impl GooseAttack {
                             );
                         }
                         Err(e) => {
-                            info!(
-                                "failed to tell user {} to exit: {}",
-                                goose_attack_run_state.completed_users, e
-                            );
+                            // Error is expected if this user already shut down.
+                            if !goose_attack_run_state
+                                .users_shutdown
+                                .contains(&goose_attack_run_state.completed_users)
+                            {
+                                info!(
+                                    "failed to tell user {} to exit: {}",
+                                    goose_attack_run_state.completed_users, e
+                                );
+                            }
                         }
                     }
                     goose_attack_run_state.completed_users += 1;
@@ -1787,6 +1815,8 @@ impl GooseAttack {
                 &self.configuration,
                 &self.defaults,
             )?;
+            self.metrics
+                .initialize_scenario_metrics(&self.scenarios, &self.configuration);
             if !self.configuration.no_print_metrics {
                 self.metrics.display_metrics = true;
             }
@@ -1918,6 +1948,30 @@ impl GooseAttack {
             // Check if a Controller has made a request.
             self.handle_controller_requests(&mut goose_attack_run_state)
                 .await?;
+
+            let mut message = goose_attack_run_state.shutdown_rx.try_recv();
+            while message.is_ok() {
+                goose_attack_run_state
+                    .users_shutdown
+                    .insert(message.expect("failed to wrap OK message"));
+
+                // In Gaggle mode, the Worker starts a fraction of the users.
+                #[cfg(feature = "gaggle")]
+                if goose_attack_run_state.users_shutdown.len()
+                    == goose_attack_run_state.active_users
+                {
+                    // Pause to allow other Workers a chance to shut down cleanly as well.
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    self.cancel_attack(&mut goose_attack_run_state).await?;
+                }
+                // In Stand-alone mode, all users are started.
+                #[cfg(not(feature = "gaggle"))]
+                if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
+                    self.cancel_attack(&mut goose_attack_run_state).await?;
+                }
+
+                message = goose_attack_run_state.shutdown_rx.try_recv();
+            }
 
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown

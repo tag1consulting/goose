@@ -1,4 +1,4 @@
-# Validation
+# Validating Requests
 
 ## Goose Eggs
 [Goose-eggs](https://github.com/tag1consulting/goose-eggs) are helpful in writing Goose load tests.
@@ -11,13 +11,13 @@ goose-eggs = "0.4"
 ```
 
 For example, to use the Goose Eggs validation functions, bring the `Validate` structure and `validate_and_load_static_assets` function into scope:
-```rust 
+```rust,ignore
 use goose_eggs::{validate_and_load_static_assets, Validate};
 ```
 
 Now, it is simple to verify that we received a `200` HTTP response status code, and that the text `Gander` appeared somewhere on the page as expected:
 
-```rust
+```rust,ignore
 let goose = user.get("/goose/").await?;
 
 let validate = &Validate::builder()

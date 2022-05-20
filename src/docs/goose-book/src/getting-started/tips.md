@@ -39,7 +39,7 @@ Each row in the debug log defaults to a JSON object and we can use [jq](https://
 
 To extract the HTML response from the first log entry, for example, you could use the following commands:
 
-```
+```bash,ignore
 cat debug.log | head -n 1 | jaq -r .body > page.html
 ```
 

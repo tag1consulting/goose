@@ -49,7 +49,9 @@ All 10 users hatched.
 
 As of Goose 0.16.0, by default all `INFO` and higher level log messages are displayed on the console while the load test runs. You can disable these messages with the `-q` (`--quiet`) flag. Or, you can display low-level debug with the `-v` (`--verbose`) flag.
 
-When the load tests finishes shutting down, it will display some ASCII metrics on the CLI and an HTML report will be created in the local directory named `report.html` as was configured above. The graphs and tables found in the HTML report are what are demonstrated below:
+## HTML report
+
+When the load tests finishes shutting down, it will display some [ASCII metrics](metrics.html#ascii-metrics) on the CLI and an HTML report will be created in the local directory named `report.html` as was configured above. The graphs and tables found in the HTML report are what are demonstrated below:
 
 ![HTML report header section](report-header.png)
 
@@ -57,27 +59,41 @@ By default, Goose will hatch 1 `GooseUser` per second, up to the number of CPU c
 
 By default, after all users are launched Goose will flush all metrics collected during the launching process (we used the `--no-reset-metrics` flag to disable this behavior) so the summary metrics are collected with all users running. If we'd not used `--no-reset-metrics`, before flushing the metrics they would have been displayed to the console so the data is not lost.
 
+## Request metrics
+
 ![HTML report request metrics section](report-requests.png)
 
-The per-request metrics are displayed first. Our single transaction makes a `GET` request for the empty `""` path, so it shows up in the metrics as simply `GET  `. The table in this section displays shows the total number of requests made (8,490), the average number of requests per second (229.46), and the average number of failed requests per second (0). 
+The per-request metrics are displayed first. Our single transaction makes a `GET` request for the empty `""` path, so it shows up in the metrics as simply `GET  `. The table in this section displays the total number of requests made (8,490), the average number of requests per second (229.46), and the average number of failed requests per second (0). 
 
 Additionally it shows the average time required to load a page (37.85 milliseconds), the minimum time to load a page (12 ms) and the maximum time to load a page (115 ms).
 
 If our load test made multiple requests, the Aggregated line at the bottom of this section would show totals and averages of all requests together. Because we only make a single request, this row is identical to the per-request metrics.
 
+## Response time metrics
+
 ![HTML report response times metrics section](report-responses.png)
 
 The second section displays the average time required to load a page. The table in this section is showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 37 ms. In the 70% fastest page loads, the slowest page loaded in 42 ms, etc. The graph, on the other hand, is displaying the average response time aggregated across all requests. 
 
+## Status code metrics
+
 ![HTML report status code metrics section](report-status-codes.png)
 
 The third section is a table showing all response codes received for each request. In this simple example, all 8,490 requests received a `200 OK` response.
+
+## Transaction metrics
 
 ![HTML report transaction metrics section](report-transactions.png)
 
 Next comes per-transaction metrics, starting with the name of our Scenario, `LoadtestTransactions`. Individual transactions in the Scenario are then listed in the order they are defined in our load test. We did not name our transaction, so it simply shows up as `0.0`. All defined transactions will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected. Comparing the transaction metrics metrics collected for `0.0` to the per-request metrics collected for `GET /`, you can see that they are the same. This is because in our simple example, our single transaction only makes one request.
 
 In real load tests, you'll most likely have multiple scenarios each with multiple transactions, and Goose will show you metrics for each along with an aggregate of them all together.
+
+## Scenario metrics
+
+[Per-scenario metrics](metrics.html#scenarios) follow the per-transaction metrics. This page has has not yet been updated to include a proper example of Scenario metrics.
+
+## User metrics
 
 ![HTML report user metrics section](report-users.png)
 

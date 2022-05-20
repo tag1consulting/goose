@@ -4,7 +4,7 @@ use std::time::{self, Duration};
 use crate::get_worker_id;
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, TransactionFunction};
 use crate::logger::GooseLog;
-use crate::metrics::{GooseMetric, TransactionMetric};
+use crate::metrics::{GooseMetric, ScenarioMetric, TransactionMetric};
 
 pub(crate) async fn user_main(
     thread_number: usize,
@@ -56,6 +56,7 @@ pub(crate) async fn user_main(
             // Tracks the time it takes to loop through all Transactions when Coordinated Omission
             // Mitigation is enabled.
             thread_user.update_request_cadence(thread_number).await;
+            let scenario_started = time::Instant::now();
 
             for (thread_transaction_index, thread_transaction_name) in
                 &thread_scenario.weighted_transactions
@@ -116,6 +117,51 @@ pub(crate) async fn user_main(
                     // used by Coordinated Omission Mitigation.
                     thread_user.slept += (time::Instant::now() - sleep_timer).as_millis() as u64;
                 }
+            }
+            // Record a complete iteration running this Scenario.
+            thread_user.iterations += 1;
+
+            // Send scenario metrics to parent and logger if enabled, ignoring errors.
+            let _ = record_scenario(
+                &thread_scenario,
+                &thread_user,
+                scenario_started.elapsed().as_millis(),
+            )
+            .await;
+
+            // Check if configured to exit after a certain number of iterations, and exit if
+            // that number of iterations have run.
+            if thread_user.config.iterations > 0
+                && thread_user.iterations >= thread_user.config.iterations
+            {
+                // Pluralize the word "iteration" if more than one iteration completed.
+                let pluralize = if thread_user.iterations == 0 {
+                    "iteration"
+                } else {
+                    "iterations"
+                };
+                // Provide visual indication that a GooseUSer has completed the confifgured
+                // number of iterations.
+                if worker {
+                    info!(
+                        "[{}] user {} completed {} {} of {}...",
+                        get_worker_id(),
+                        thread_number,
+                        thread_user.iterations,
+                        pluralize,
+                        thread_scenario.name,
+                    );
+                } else {
+                    info!(
+                        "user {} completed {} {} of {}...",
+                        thread_number, thread_user.iterations, pluralize, thread_scenario.name,
+                    );
+                }
+                // Attempt to notify the parent this thread is shutting down.
+                if let Some(shutdown_channel) = thread_user.shutdown_channel.clone() {
+                    let _ = shutdown_channel.send(thread_number);
+                }
+                break 'launch_transactions;
             }
         }
     }
@@ -178,6 +224,34 @@ fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
     false
 }
 
+// Send scenario metric to parent and logger when enabled.
+async fn record_scenario(
+    thread_scenario: &Scenario,
+    thread_user: &GooseUser,
+    run_time: u128,
+) -> Result<(), flume::SendError<Option<GooseLog>>> {
+    if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
+        let raw_scenario = ScenarioMetric::new(
+            thread_user.started.elapsed().as_millis(),
+            &thread_scenario.name,
+            thread_user.scenarios_index,
+            run_time,
+            thread_user.weighted_users_index,
+        );
+        if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
+            // Best effort metrics.
+            let _ = metrics_channel.send(GooseMetric::Scenario(raw_scenario.clone()));
+        }
+        // If transaction-log is enabled, send a copy of the raw transaction metric to the logger thread.
+        if !thread_user.config.scenario_log.is_empty() {
+            if let Some(logger) = thread_user.logger.as_ref() {
+                logger.send(Some(GooseLog::Scenario(raw_scenario)))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 // Invoke the transaction function, collecting transaction metrics.
 async fn invoke_transaction_function(
     function: &TransactionFunction,
@@ -217,9 +291,9 @@ async fn invoke_transaction_function(
     }
 
     // Otherwise send metrics to parent.
-    if let Some(parent) = thread_user.channel_to_parent.clone() {
+    if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
         // Best effort metrics.
-        let _ = parent.send(GooseMetric::Transaction(raw_transaction));
+        let _ = metrics_channel.send(GooseMetric::Transaction(raw_transaction));
     }
 
     Ok(())

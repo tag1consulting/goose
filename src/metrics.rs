@@ -47,6 +47,7 @@ use tokio::io::AsyncWriteExt;
 pub enum GooseMetric {
     Request(GooseRequestMetric),
     Transaction(TransactionMetric),
+    Scenario(ScenarioMetric),
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -225,6 +226,39 @@ pub type GooseRequestMetrics = HashMap<String, GooseRequestMetricAggregate>;
 /// Aggregated               |       76.78 |          3 |         307 |         74
 /// ```
 pub type TransactionMetrics = Vec<Vec<TransactionMetricAggregate>>;
+
+/// All scenarios executed during a load test.
+///
+/// Goose optionally tracks metrics about scenarios executed during a load test. The
+/// metrics can be disabled with either the `--no-scenario-metrics` or the `--no-metrics`
+/// run-time option, or with either
+/// [`GooseDefault::NoScenarioMetrics`](../config/enum.GooseDefault.html#variant.NoScenarioMetrics) or
+/// [`GooseDefault::NoMetrics`](../config/enum.GooseDefault.html#variant.NoMetrics).
+///
+/// Aggregated scenarios ([`ScenarioMetricAggregate`]) are stored in a Vector keyed to the order the
+/// scenario is created in the load test.
+///
+/// # Example
+/// When viewed with [`std::fmt::Display`], [`TransactionMetrics`] are displayed in
+/// a table:
+/// ```text
+///  === PER SCENARIO METRICS ===
+/// ------------------------------------------------------------------------------
+/// Name                     |  # users |  # times run | scenarios/s | iterations
+/// ------------------------------------------------------------------------------
+/// 1: AnonBrowsingUser      |        9 |          224 |        6.40 |      24.89
+/// 2: AuthBrowsingUser      |        3 |           51 |        1.46 |      17.00
+/// -------------------------+----------+--------------+-------------+------------
+/// Aggregated               |       12 |          275 |        7.86 |      22.92
+/// ------------------------------------------------------------------------------
+/// Name                     |    Avg (ms) |        Min |         Max |     Median
+/// ------------------------------------------------------------------------------
+/// 1: AnonBrowsingUser    |        1293 |      1,067 |       1,672 |      1,067
+/// 2: AuthBrowsingUser    |        1895 |      1,505 |       2,235 |      1,505
+/// -------------------------+-------------+------------+-------------+-----------
+/// Aggregated               |        1405 |      1,067 |       2,235 |      1,067
+/// ```
+pub type ScenarioMetrics = Vec<ScenarioMetricAggregate>;
 
 /// All errors detected during a load test.
 ///
@@ -579,6 +613,38 @@ impl GooseRequestMetricTimingData {
         self.times.insert(rounded_time, counter);
     }
 }
+/// The per-scenario metrics collected each time a scenario is run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioMetric {
+    /// How many milliseconds the load test has been running.
+    pub elapsed: u64,
+    /// The name of the scenario.
+    pub name: String,
+    /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
+    pub index: usize,
+    /// How long scenario ran.
+    pub run_time: u64,
+    /// Which GooseUser thread processed the request.
+    pub user: usize,
+}
+impl ScenarioMetric {
+    /// Create a new Scenario metric.
+    pub(crate) fn new(
+        elapsed: u128,
+        scenario_name: &str,
+        index: usize,
+        run_time: u128,
+        user: usize,
+    ) -> Self {
+        ScenarioMetric {
+            elapsed: elapsed as u64,
+            name: scenario_name.to_string(),
+            index,
+            run_time: run_time as u64,
+            user,
+        }
+    }
+}
 
 /// The per-transaction metrics collected each time a transaction is invoked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -706,6 +772,93 @@ impl TransactionMetricAggregate {
         } else {
             self.fail_count += 1;
         }
+
+        // Round the time so we can combine similar times together and
+        // minimize required memory to store and push upstream to the parent.
+        let rounded_time = match time {
+            // No rounding for times 0-100 ms.
+            0..=100 => time_usize,
+            // Round to nearest 10 for times 100-500 ms.
+            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
+            // Round to nearest 100 for times 500-1000 ms.
+            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
+            // Round to nearest 1000 for larger times.
+            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
+        };
+
+        let counter = match self.times.get(&rounded_time) {
+            // We've seen this time before, increment counter.
+            Some(c) => *c + 1,
+            // First time we've seen this time, initialize counter.
+            None => 1,
+        };
+        self.times.insert(rounded_time, counter);
+        debug!("incremented {} counter: {}", rounded_time, counter);
+    }
+}
+/// Aggregated per-scenario metrics updated each time a scenario is run.
+///
+/// [`ScenarioMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
+/// threads to the Goose parent process where they are aggregated together into this
+/// structure, and stored in [`GooseMetrics::transactions`].
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ScenarioMetricAggregate {
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
+    /// indicating which scenario this is.
+    pub index: usize,
+    /// The scenario name.
+    pub name: String,
+    /// List of users running this scenario.
+    pub users: HashSet<usize>,
+    /// Per-run-time counters, tracking how often scenario takes a given time to complete.
+    pub times: BTreeMap<usize, usize>,
+    /// The shortest run-time for this scenario.
+    pub min_time: usize,
+    /// The longest run-time for this scenario.
+    pub max_time: usize,
+    /// Total combined run-times for this scenario.
+    pub total_time: usize,
+    /// Total number of times scenario has run.
+    pub counter: usize,
+}
+impl ScenarioMetricAggregate {
+    /// Create a new ScenarioMetricAggregate.
+    pub(crate) fn new(index: usize, name: &str) -> Self {
+        ScenarioMetricAggregate {
+            index,
+            name: name.to_string(),
+            users: HashSet::new(),
+            times: BTreeMap::new(),
+            min_time: 0,
+            max_time: 0,
+            total_time: 0,
+            counter: 0,
+        }
+    }
+
+    /// Track scenario function elapsed time in milliseconds.
+    pub(crate) fn update(&mut self, time: u64, user: usize) {
+        // Record each different user running this scenario.
+        self.users.insert(user);
+
+        // Perform this conversion only once, then re-use throughout this function.
+        let time_usize = time as usize;
+
+        // Update minimum if this one is fastest yet.
+        if self.min_time == 0 || time_usize < self.min_time {
+            self.min_time = time_usize;
+        }
+
+        // Update maximum if this one is slowest yet.
+        if time_usize > self.max_time {
+            self.max_time = time_usize;
+        }
+
+        // Update total_time, adding in this one.
+        self.total_time += time_usize;
+
+        // Each time we store a new time, increment counter by one.
+        self.counter += 1;
 
         // Round the time so we can combine similar times together and
         // minimize required memory to store and push upstream to the parent.
@@ -861,6 +1014,13 @@ pub struct GooseMetrics {
     /// [GooseDefault::NoTransactionMetrics](../config/enum.GooseDefault.html#variant.NoTransactionMetrics) or
     /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub transactions: TransactionMetrics,
+    /// Transactions details about each scenario that is invoked during the load test.
+    ///
+    /// Can be disabled with either the `--no-scenario-metrics` or `--no-metrics` run-time options,
+    /// or with either the
+    /// [GooseDefault::NoTransactionMetrics](../config/enum.GooseDefault.html#variant.NoTransactionMetrics) or
+    /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
+    pub scenarios: ScenarioMetrics,
     /// Tracks and counts each time an error is detected during the load test.
     ///
     /// Can be disabled with either the `--no-error-summary` or `--no-metrics` run-time options,
@@ -889,9 +1049,9 @@ impl GooseMetrics {
         defaults: &GooseDefaults,
     ) -> Result<(), GooseError> {
         self.transactions = Vec::new();
-        for scenario in scenarios {
-            // Don't initialize transaction metrics if metrics or transaction_metrics are disabled.
-            if !config.no_metrics {
+        // Don't initialize transaction metrics if metrics or transaction_metrics are disabled.
+        if !config.no_metrics {
+            for scenario in scenarios {
                 if !config.no_transaction_metrics {
                     let mut transaction_vector = Vec::new();
                     for transaction in &scenario.transactions {
@@ -930,6 +1090,23 @@ impl GooseMetrics {
         }
 
         Ok(())
+    }
+
+    /// Initialize the scenario_metrics vector.
+    pub(crate) fn initialize_scenario_metrics(
+        &mut self,
+        scenarios: &[Scenario],
+        config: &GooseConfiguration,
+    ) {
+        if !config.no_metrics && !config.no_scenario_metrics {
+            self.scenarios = Vec::new();
+            for scenario in scenarios {
+                self.scenarios.push(ScenarioMetricAggregate::new(
+                    scenario.scenarios_index,
+                    &scenario.name,
+                ));
+            }
+        }
     }
 
     /// Displays metrics while a load test is running.
@@ -1127,7 +1304,7 @@ impl GooseMetrics {
                 if !displayed_scenario {
                     writeln!(
                         fmt,
-                        " {:24 } |",
+                        " {:24 }",
                         util::truncate_string(
                             &format!(
                                 "{}: {}",
@@ -1286,7 +1463,7 @@ impl GooseMetrics {
                 if !displayed_scenario {
                     writeln!(
                         fmt,
-                        " {:24 } |",
+                        " {:24}",
                         util::truncate_string(
                             &format!(
                                 "{}: {}",
@@ -1373,6 +1550,178 @@ impl GooseMetrics {
                     aggregate_transaction_time_counter,
                     aggregate_min_transaction_time,
                     aggregate_max_transaction_time
+                )),
+                avg_precision = average_precision,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Optionally prepares a table of scenarios.
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_scenarios(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // If there's nothing to display, exit immediately.
+        if self.scenarios.is_empty() || !self.display_metrics {
+            return Ok(());
+        }
+
+        // Display metrics from scenarios Vector
+        writeln!(
+            fmt,
+            "\n === PER SCENARIO METRICS ===\n ------------------------------------------------------------------------------"
+        )?;
+        writeln!(
+            fmt,
+            " {:<24} | {:>8} | {:>12} | {:>11} | {:10}",
+            "Name", "# users", "# times run", "scenarios/s", "iterations"
+        )?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        let mut aggregate_users = 0;
+        let mut aggregate_counter = 0;
+        for scenario in &self.scenarios {
+            aggregate_users += scenario.users.len();
+            aggregate_counter += scenario.counter;
+            let (runs, _fails) = per_second_calculations(self.duration, scenario.counter, 0);
+            let runs_precision = determine_precision(runs);
+            let iterations = scenario.counter as f32 / scenario.users.len() as f32;
+            let iterations_precision = determine_precision(iterations);
+            writeln!(
+                fmt,
+                " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
+                util::truncate_string(&format!("{}: {}", scenario.index + 1, &scenario.name,), 24),
+                scenario.users.len(),
+                scenario.counter,
+                runs,
+                iterations,
+                runs_p = runs_precision,
+                iterations_p = iterations_precision,
+            )?;
+        }
+        // If more than 1 scenario is defined, also display aggregated metrics.
+        if self.scenarios.len() > 1 {
+            let (aggregate_runs, _fails) =
+                per_second_calculations(self.duration, aggregate_counter, 0);
+            let aggregate_runs_precision = determine_precision(aggregate_runs);
+            let aggregate_iterations = aggregate_counter as f32 / aggregate_users as f32;
+            let aggregate_iterations_precision = determine_precision(aggregate_iterations);
+            writeln!(
+                fmt,
+                " -------------------------+----------+--------------+-------------+------------"
+            )?;
+            writeln!(
+                fmt,
+                " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
+                "Aggregated",
+                aggregate_users,
+                aggregate_counter,
+                aggregate_runs,
+                aggregate_iterations,
+                runs_p = aggregate_runs_precision,
+                iterations_p = aggregate_iterations_precision,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Optionally prepares a table of scenario times.
+    ///
+    /// This function is invoked by `GooseMetrics::print()` and
+    /// `GooseMetrics::print_running()`.
+    pub(crate) fn fmt_scenario_times(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // If there's nothing to display, exit immediately.
+        if self.scenarios.is_empty() || !self.display_metrics {
+            return Ok(());
+        }
+
+        let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut aggregate_total_scenario_time: usize = 0;
+        let mut aggregate_scenario_time_counter: usize = 0;
+        let mut aggregate_min_scenario_time: usize = 0;
+        let mut aggregate_max_scenario_time: usize = 0;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        writeln!(
+            fmt,
+            " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
+            "Name", "Avg (ms)", "Min", "Max", "Median"
+        )?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        for scenario in &self.scenarios {
+            // Iterate over user transaction times, and merge into global transaction times.
+            aggregate_scenario_times =
+                merge_times(aggregate_scenario_times, scenario.times.clone());
+
+            // Increment total scenario time counter.
+            aggregate_total_scenario_time += &scenario.total_time;
+
+            // Increment counter tracking individual scenario times seen.
+            aggregate_scenario_time_counter += &scenario.counter;
+
+            // If user had new fastest scenario time, update global fastest scenario time.
+            aggregate_min_scenario_time =
+                update_min_time(aggregate_min_scenario_time, scenario.min_time);
+
+            // If user had new slowest scenario time, update global slowest scenario time.
+            aggregate_max_scenario_time =
+                update_max_time(aggregate_max_scenario_time, scenario.max_time);
+
+            let average = match scenario.counter {
+                0 => 0.00,
+                _ => scenario.total_time as f32 / scenario.counter as f32,
+            };
+            let average_precision = determine_precision(average);
+
+            writeln!(
+                fmt,
+                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
+                util::truncate_string(&format!("  {}: {}", scenario.index + 1, scenario.name), 24),
+                average,
+                format_number(scenario.min_time),
+                format_number(scenario.max_time),
+                format_number(util::median(
+                    &scenario.times,
+                    scenario.counter,
+                    scenario.min_time,
+                    scenario.max_time
+                )),
+                avg_precision = average_precision,
+            )?;
+        }
+        if self.scenarios.len() > 1 {
+            let average = match aggregate_scenario_time_counter {
+                0 => 0.00,
+                _ => aggregate_total_scenario_time as f32 / aggregate_scenario_time_counter as f32,
+            };
+            let average_precision = determine_precision(average);
+
+            writeln!(
+                fmt,
+                " -------------------------+-------------+------------+-------------+-----------"
+            )?;
+            writeln!(
+                fmt,
+                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
+                "Aggregated",
+                average,
+                format_number(aggregate_min_scenario_time),
+                format_number(aggregate_max_scenario_time),
+                format_number(util::median(
+                    &aggregate_scenario_times,
+                    aggregate_scenario_time_counter,
+                    aggregate_min_scenario_time,
+                    aggregate_max_scenario_time
                 )),
                 avg_precision = average_precision,
             )?;
@@ -2203,6 +2552,8 @@ impl fmt::Display for GooseMetrics {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         // Formats metrics data in tables, depending on what data is contained and which
         // flags are set.
+        self.fmt_scenarios(fmt)?;
+        self.fmt_scenario_times(fmt)?;
         self.fmt_transactions(fmt)?;
         self.fmt_transaction_times(fmt)?;
         self.fmt_requests(fmt)?;
@@ -2329,6 +2680,7 @@ impl GooseAttack {
                         vec![
                             GaggleMetrics::Requests(self.metrics.requests.clone()),
                             GaggleMetrics::Transactions(self.metrics.transactions.clone()),
+                            GaggleMetrics::Scenarios(self.metrics.scenarios.clone()),
                         ],
                         true,
                     ) {
@@ -2339,6 +2691,8 @@ impl GooseAttack {
                     }
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();
+                    self.metrics
+                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
                     self.metrics.initialize_transaction_metrics(
                         &self.scenarios,
                         &self.configuration,
@@ -2370,9 +2724,10 @@ impl GooseAttack {
             self.sync_metrics(goose_attack_run_state, true).await?;
 
             goose_attack_run_state.all_users_spawned = true;
-            // Only reset metrics on startup if not using `--test-plan`.
-            if self.configuration.test_plan.is_none() {
+            // Only reset metrics on startup if not using `--test-plan` or `--iterations`.
+            if self.configuration.test_plan.is_none() && self.configuration.iterations == 0 {
                 let users = self.configuration.users.unwrap();
+                // Only reset metrics on startup if not using `--no-reset-metrics`.
                 if !self.configuration.no_reset_metrics {
                     // Display the running metrics collected so far, before resetting them.
                     self.update_duration();
@@ -2394,6 +2749,8 @@ impl GooseAttack {
                     }
 
                     self.metrics.requests = HashMap::new();
+                    self.metrics
+                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
                     self.metrics.initialize_transaction_metrics(
                         &self.scenarios,
                         &self.configuration,
@@ -2550,6 +2907,16 @@ impl GooseAttack {
                         self.graph_data.record_transactions_per_second(
                             (raw_transaction.elapsed / 1000) as usize,
                         );
+                    }
+                }
+                GooseMetric::Scenario(raw_scenario) => {
+                    // Store a new metric.
+                    self.metrics.scenarios[raw_scenario.index]
+                        .update(raw_scenario.run_time, raw_scenario.user);
+
+                    if !self.configuration.report_file.is_empty() {
+                        self.graph_data
+                            .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
                     }
                 }
             }
@@ -3027,6 +3394,81 @@ impl GooseAttack {
                 transactions_template = "".to_string();
             }
 
+            // Only build the scenarios template if --no-senario-metrics isn't enabled.
+            let scenarios_template: String;
+            if !self.configuration.no_scenario_metrics {
+                let mut scenario_metrics = Vec::new();
+                let mut aggregate_users = 0;
+                let mut aggregate_count = 0;
+                let mut aggregate_scenario_time_counter: usize = 0;
+                let mut aggregate_scenario_time_minimum: usize = 0;
+                let mut aggregate_scenario_time_maximum: usize = 0;
+                let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut aggregate_iterations = 0.0;
+                let mut aggregate_response_time_counter = 0.0;
+                for scenario in &self.metrics.scenarios {
+                    let (count_per_second, _failures_per_second) =
+                        per_second_calculations(self.metrics.duration, scenario.counter, 0);
+                    let average = match scenario.counter {
+                        0 => 0.00,
+                        _ => scenario.total_time as f32 / scenario.counter as f32,
+                    };
+                    let iterations = scenario.counter as f32 / scenario.users.len() as f32;
+                    scenario_metrics.push(report::ScenarioMetric {
+                        name: scenario.name.to_string(),
+                        users: scenario.users.len(),
+                        count: scenario.counter,
+                        response_time_average: format!("{:.2}", average),
+                        response_time_minimum: scenario.min_time,
+                        response_time_maximum: scenario.max_time,
+                        count_per_second: format!("{:.2}", count_per_second),
+                        iterations: format!("{:.2}", iterations),
+                    });
+
+                    aggregate_users += scenario.users.len();
+                    aggregate_count += scenario.counter;
+                    aggregate_scenario_times =
+                        merge_times(aggregate_scenario_times, scenario.times.clone());
+                    aggregate_scenario_time_counter += &scenario.counter;
+                    aggregate_scenario_time_minimum =
+                        update_min_time(aggregate_scenario_time_minimum, scenario.min_time);
+                    aggregate_scenario_time_maximum =
+                        update_max_time(aggregate_scenario_time_maximum, scenario.max_time);
+                    aggregate_iterations += iterations;
+                    aggregate_response_time_counter += scenario.total_time as f32;
+                }
+
+                let (aggregate_count_per_second, _aggregate_failures_per_second) =
+                    per_second_calculations(self.metrics.duration, aggregate_count, 0);
+                scenario_metrics.push(report::ScenarioMetric {
+                    name: "Aggregated".to_string(),
+                    users: aggregate_users,
+                    count: aggregate_count,
+                    response_time_average: format!(
+                        "{:.2}",
+                        aggregate_response_time_counter as f32 / aggregate_count as f32
+                    ),
+                    response_time_minimum: aggregate_scenario_time_minimum,
+                    response_time_maximum: aggregate_scenario_time_maximum,
+                    count_per_second: format!("{:.2}", aggregate_count_per_second),
+                    iterations: format!("{:.2}", aggregate_iterations),
+                });
+                let mut scenarios_rows = Vec::new();
+                // Compile the scenario metrics template.
+                for metric in scenario_metrics {
+                    scenarios_rows.push(report::scenario_metrics_row(metric));
+                }
+
+                scenarios_template = report::scenario_metrics_template(
+                    &scenarios_rows.join("\n"),
+                    self.graph_data
+                        .get_scenarios_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                );
+            } else {
+                scenarios_template = "".to_string();
+            }
+
             // Only build the transactions template if --no-transaction-metrics isn't enabled.
             let errors_template: String = if !self.metrics.errors.is_empty() {
                 let mut error_rows = Vec::new();
@@ -3106,6 +3548,7 @@ impl GooseAttack {
                     co_requests_template: &co_requests_template,
                     co_responses_template: &co_responses_template,
                     transactions_template: &transactions_template,
+                    scenarios_template: &scenarios_template,
                     status_codes_template: &status_code_template,
                     errors_template: &errors_template,
                     graph_rps_template: &self

@@ -82,7 +82,7 @@ Initially the load test is configured with a hatch rate of 50, so goose increase
 
 The above commands are also summarized in the metrics overview:
 
-```
+```ignore
  === OVERVIEW ===
  ------------------------------------------------------------------------------
  Action       Started               Stopped             Elapsed    Users

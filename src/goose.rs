@@ -838,6 +838,8 @@ impl<T: Send + Sync + 'static> GooseUserData for T {}
 pub struct GooseUser {
     /// The Instant when this `GooseUser` client started.
     pub started: Instant,
+    /// How many iterations of the scenario this GooseUser has run.
+    pub(crate) iterations: usize,
     /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`
     /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
     pub scenarios_index: usize,
@@ -855,8 +857,10 @@ pub struct GooseUser {
     /// [`test_start`](../struct.GooseAttack.html#method.test_start) and
     /// [`test_stop`](../struct.GooseAttack.html#method.test_stop) transactions are not.
     pub is_throttled: bool,
-    /// Channel to parent.
-    pub channel_to_parent: Option<flume::Sender<GooseMetric>>,
+    /// Channel for sending metrics to the parent for aggregation.
+    pub metrics_channel: Option<flume::Sender<GooseMetric>>,
+    /// Channel for notifying the parent when thread shuts down.
+    pub shutdown_channel: Option<flume::Sender<usize>>,
     /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.weighted_users`
     /// vector, indicating which weighted `GooseUser` is running.
     pub weighted_users_index: usize,
@@ -903,6 +907,7 @@ impl GooseUser {
 
         Ok(GooseUser {
             started: Instant::now(),
+            iterations: 0,
             scenarios_index,
             client,
             base_url,
@@ -910,7 +915,8 @@ impl GooseUser {
             logger: None,
             throttle: None,
             is_throttled: true,
-            channel_to_parent: None,
+            metrics_channel: None,
+            shutdown_channel: None,
             // A value of max_value() indicates this user isn't fully initialized yet.
             weighted_users_index: usize::max_value(),
             load_test_hash,
@@ -931,6 +937,12 @@ impl GooseUser {
         single_user.is_throttled = false;
 
         Ok(single_user)
+    }
+
+    /// Returns the number of iterations this GooseUser has run through it's
+    /// assigned [`Scenario`].
+    pub fn get_iterations(&self) -> usize {
+        self.iterations
     }
 
     /// Returns an optional reference to per-[`GooseUser`] session data.
@@ -1795,8 +1807,8 @@ impl GooseUser {
         // Parent is not defined when running
         // [`test_start`](../struct.GooseAttack.html#method.test_start),
         // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
-        if let Some(parent) = self.channel_to_parent.clone() {
-            parent.send(GooseMetric::Request(request_metric))?;
+        if let Some(metrics_channel) = self.metrics_channel.clone() {
+            metrics_channel.send(GooseMetric::Request(request_metric))?;
         }
 
         Ok(())

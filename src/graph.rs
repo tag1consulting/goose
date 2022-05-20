@@ -24,6 +24,8 @@ pub(crate) struct GraphData {
     average_response_time_per_second: HashMap<String, TimeSeries<MovingAverage, f32>>,
     /// Number of transactions at the end of each second of the test.
     transactions_per_second: TimeSeries<usize, usize>,
+    /// Number of scenarios at the end of each second of the test.
+    scenarios_per_second: TimeSeries<usize, usize>,
     /// Number of users at the end of each second of the test.
     users_per_second: TimeSeries<usize, usize>,
 }
@@ -37,6 +39,7 @@ impl GraphData {
             errors_per_second: HashMap::new(),
             average_response_time_per_second: HashMap::new(),
             transactions_per_second: TimeSeries::new(),
+            scenarios_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
         }
     }
@@ -105,8 +108,18 @@ impl GraphData {
         );
     }
 
-    /// Records number of users for a current second.
+    /// Record scenarios per second metric.
+    pub(crate) fn record_scenarios_per_second(&mut self, second: usize) {
+        self.scenarios_per_second.increase_value(second, 1);
 
+        debug!(
+            "incremented second {} for scenarios per second counter: {}",
+            second,
+            self.scenarios_per_second.get(second)
+        );
+    }
+
+    /// Records number of users for a current second.
     pub(crate) fn record_users_per_second(&mut self, users: usize, second: usize) {
         self.users_per_second.set_and_maintain_last(second, users);
     }
@@ -154,6 +167,19 @@ impl GraphData {
             "Transactions #",
             granular_data,
             self.transactions_per_second.clone(),
+        )
+    }
+
+    /// Generate active scenarios graph.
+    pub(crate) fn get_scenarios_per_second_graph(
+        &self,
+        granular_data: bool,
+    ) -> Graph<usize, usize> {
+        self.create_graph_from_single_data(
+            "graph-sps",
+            "Scenarios #",
+            granular_data,
+            self.scenarios_per_second.clone(),
         )
     }
 
@@ -827,6 +853,12 @@ mod test {
             total: 0,
         };
 
+        graph.scenarios_per_second = TimeSeries {
+            data: vec![345, 123, 234, 456, 567],
+            phantom: PhantomData,
+            total: 0,
+        };
+
         graph.errors_per_second.insert(
             "GET /".to_string(),
             TimeSeries {
@@ -911,6 +943,19 @@ mod test {
         );
         assert_eq!(transactions_graph.html_id, "graph-tps");
         assert_eq!(transactions_graph.y_axis_label, "Transactions #");
+
+        let scenarios_graph = graph.get_scenarios_per_second_graph(true);
+        let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
+            data: vec![345, 123, 234, 456, 567],
+            phantom: PhantomData,
+            total: 0,
+        };
+        assert_eq!(
+            scenarios_graph.data.get("Total").unwrap().clone(),
+            expected_time_series
+        );
+        assert_eq!(scenarios_graph.html_id, "graph-sps");
+        assert_eq!(scenarios_graph.y_axis_label, "Scenarios #");
 
         let errors_graph = graph.get_errors_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
