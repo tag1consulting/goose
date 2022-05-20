@@ -5,8 +5,10 @@ The `-h` flag will show all run-time configuration options available to Goose lo
 ```ignore
 Usage: target/release/loadtest [OPTIONS]
 
-Runtime options available when launching a Goose load test.
+Goose is a modern, high-performance, distributed HTTP(S) load testing tool,
+written in Rust. Visit https://book.goose.rs/ for more information.
 
+The following runtime options are available when launching a Goose load test:
 
 Optional arguments:
   -h, --help                  Displays this help
