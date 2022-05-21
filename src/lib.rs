@@ -68,8 +68,8 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
 };
 use std::time::{self, Duration};
 use std::{fmt, io};
@@ -94,6 +94,7 @@ const DEFAULT_WEBSOCKET_PORT: &str = "5117";
 // WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
+    static ref CANCELED: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 }
 
 /// Internal representation of a weighted transaction list.
@@ -365,9 +366,6 @@ struct GooseAttackRunState {
     users_shutdown: HashSet<usize>,
     /// Boolean flag indicating of Goose should shutdown after stopping a running load test.
     shutdown_after_stop: bool,
-    /// Thread-safe boolean flag indicating if the [`GooseAttack`](./struct.GooseAttack.html)
-    /// has been canceled.
-    canceled: Arc<AtomicBool>,
     /// Whether or not the load test is currently canceling.
     canceling: bool,
     /// Optional socket used to coordinate a distributed Gaggle.
@@ -1323,7 +1321,6 @@ impl GooseAttack {
             users_shutdown: HashSet::new(),
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
-            canceled: Arc::new(AtomicBool::new(false)),
             canceling: false,
             socket,
         };
@@ -1332,7 +1329,7 @@ impl GooseAttack {
         trace!("socket: {:?}", &goose_attack_run_state.socket);
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
-        util::setup_ctrlc_handler(&goose_attack_run_state.canceled);
+        util::setup_ctrlc_handler();
 
         Ok(goose_attack_run_state)
     }
@@ -1976,7 +1973,7 @@ impl GooseAttack {
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
                 && !goose_attack_run_state.canceling
-                && goose_attack_run_state.canceled.load(Ordering::SeqCst)
+                && *CANCELED.lock().unwrap()
             {
                 // Shutdown after stopping as the load test was canceled.
                 goose_attack_run_state.shutdown_after_stop = true;

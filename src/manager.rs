@@ -3,8 +3,7 @@ use nng::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::BufWriter;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time;
 
 use crate::metrics::{
@@ -14,7 +13,7 @@ use crate::metrics::{
 };
 use crate::util;
 use crate::worker::GaggleMetrics;
-use crate::{GooseAttack, GooseConfiguration, GooseUserCommand};
+use crate::{GooseAttack, GooseConfiguration, GooseUserCommand, CANCELED};
 
 /// How long the manager will wait for all workers to stop after the load test ends.
 const GRACEFUL_SHUTDOWN_TIMEOUT: usize = 30;
@@ -331,8 +330,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
     let mut load_test_finished = false;
 
     // Catch ctrl-c to allow clean shutdown to display metrics.
-    let canceled = Arc::new(AtomicBool::new(false));
-    util::setup_ctrlc_handler(&canceled);
+    util::setup_ctrlc_handler();
 
     // Initialize the optional transaction metrics.
     goose_attack
@@ -406,7 +404,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     false
                 };
                 // Test ran to completion or was canceled with ctrl-c.
-                if timer_expired || canceled.load(Ordering::SeqCst) {
+                if timer_expired || *CANCELED.lock().unwrap() {
                     info!(
                         "stopping after {} seconds...",
                         goose_attack.started.unwrap().elapsed().as_secs()
@@ -434,7 +432,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     goose_attack.metrics.print_running();
                 }
             }
-        } else if canceled.load(Ordering::SeqCst) {
+        } else if *CANCELED.lock().unwrap() {
             info!("load test canceled, exiting");
             std::process::exit(1);
         }
