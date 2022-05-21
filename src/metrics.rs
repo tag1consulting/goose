@@ -15,7 +15,10 @@ use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 #[cfg(feature = "gaggle")]
-use crate::{CANCELED, worker::{self, GaggleMetrics}};
+use crate::{
+    worker::{self, GaggleMetrics},
+    CANCELED,
+};
 use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
 use http::StatusCode;
