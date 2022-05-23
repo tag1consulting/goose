@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.16.3-dev
+ - [#487](https://github.com/tag1consulting/goose/pull/487) add dev-dependency on (nix)[https://docs.rs/nix] to provide test coverage confirming proper shutdown from SIGINT (ctrl-c); capture ctrl-c in a lazy_static wrapped in a RwLock so it can be reset
 
 ## 0.16.2 May 20, 2022
  - [#477](https://github.com/tag1consulting/goose/pull/477) introduce `--iterations` (and `GooseDefault::Iterations`) which configures each GooseUser to run a configurable number of iterations of the assigned Scenario then exit; introduces Scenario metrics which can be disabled with `--no-scenario-metrics` (`GooseDefault::NoScenarioMetrics`); introduces `--scenario-log` and `--scenario-format` (and `GooseDefault::ScenarioLog` and `GooseDefault::ScenarioFormat`)
