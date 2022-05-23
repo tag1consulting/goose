@@ -1,4 +1,5 @@
 use httpmock::{Method::GET, Mock, MockServer};
+use serial_test::serial;
 
 mod common;
 
@@ -155,6 +156,7 @@ fn get_transactions() -> Scenario {
 }
 
 #[tokio::test]
+#[serial]
 // Enable throttle to confirm it limits the number of request per second.
 // Increase the throttle and confirm it increases the number of requests
 // per second.
@@ -224,6 +226,7 @@ async fn test_throttle() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
+#[serial]
 // Enable throttle to confirm it limits the number of request per second, in
 // Gaggle mode. Increase the throttle and confirm it increases the number of
 // requests per second, in Gaggle mode.

@@ -22,13 +22,17 @@ const EXPECT_WORKERS: usize = 2;
 
 // There are multiple test variations in this file.
 enum TestType {
-    // Runs until canceled.
+    // Cancel a load test that would otherwise run forever.
     NoRunTime,
-    // Runs a set amount of time (with --run-time) then exits.
+    // Cancel a load test that would otherwise shut down automatically (with --run-time).
     RunTime,
-    // Run time is optionally configured through a test plan.
-    TestPlan,
-    // Runs a set number of iterations (with --iterations) then exits.
+    // Cancel a load test while the test plan is increasing the users.
+    TestPlanIncrease,
+    // Cancel a load test while the test plan is decreasing the users.
+    TestPlanDecrease,
+    // Cancel a load test while the test plan is maintaining the users.
+    TestPlanMaintain,
+    // Cancel a load test while running a finite number of iterations (--with iterations).
     Iterations,
 }
 
@@ -50,24 +54,21 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
 }
 
 // Build appropriate configuration for these tests.
-fn common_build_configuration(
-    server: &MockServer,
-    test_type: &TestType,
-    custom: &mut Vec<&str>,
-) -> GooseConfiguration {
+fn common_build_configuration(server: &MockServer, test_type: &TestType) -> GooseConfiguration {
     // In all cases throttle requests to allow asserting metrics precisely.
-    let mut configuration = match test_type {
+    let configuration = match test_type {
         TestType::RunTime => {
             // Hatch 3 users a second for 2 seconds, then run for 2 more seconds.
             vec![
                 "--throttle-requests",
                 "5",
                 "--users",
-                "6",
+                "10",
                 "--hatch-rate",
-                "3",
+                "5",
                 "--run-time",
                 "10",
+                "--no-reset-metrics",
             ]
         }
         TestType::NoRunTime => {
@@ -76,14 +77,24 @@ fn common_build_configuration(
                 "--throttle-requests",
                 "5",
                 "--users",
-                "6",
+                "10",
                 "--hatch-rate",
-                "3",
+                "5",
+                "--no-reset-metrics",
             ]
         }
-        TestType::TestPlan => {
-            // Common configuration is the throttle, test-plan defined through `custom`.
-            vec!["--throttle-requests", "5"]
+        TestType::TestPlanIncrease => {
+            // Launch 10 users in 1 minute, then run until cannceled.
+            vec!["--throttle-requests", "5", "--test-plan", "10,1m"]
+        }
+        TestType::TestPlanDecrease => {
+            // Launch 10 users in 1 minute, spend 1 minute reducing to 1 user, then run
+            // until canceled.
+            vec!["--throttle-requests", "5", "--test-plan", "10,1s;1,1m"]
+        }
+        TestType::TestPlanMaintain => {
+            // Launch 10 users in 1 second, then maintain until canceled.
+            vec!["--throttle-requests", "5", "--test-plan", "10,1s"]
         }
         TestType::Iterations => {
             // Hatch 3 users a second for 2 seconds, runing each for 5 iterations complete iterations then cancel.
@@ -91,20 +102,39 @@ fn common_build_configuration(
                 "--throttle-requests",
                 "5",
                 "--users",
-                "6",
+                "10",
                 "--hatch-rate",
-                "3",
-                "iterations",
+                "5",
+                "--iterations",
                 "5",
             ]
         }
     };
 
-    // Custom elements in some tests.
-    configuration.append(custom);
+    // Build the resulting configuration.
+    let mut configuration = common::build_configuration(server, configuration);
 
-    // Return the resulting configuration.
-    common::build_configuration(server, configuration)
+    // The common::build_configuration() function sets a few default options which have to be unset in
+    // some the following configurations.
+    match test_type {
+        TestType::Iterations | TestType::NoRunTime => {
+            // Do not set --run-time with --iterations or when testing not setting run time.
+            configuration.run_time = "".to_string();
+        }
+        TestType::TestPlanIncrease | TestType::TestPlanDecrease | TestType::TestPlanMaintain => {
+            // Do not set --run-time with --test-plan.
+            configuration.run_time = "".to_string();
+            // Do not set --hatch-rate with --test-plan.
+            configuration.hatch_rate = None;
+            // Do not set --users with --test-plan.
+            configuration.users = None;
+        }
+        TestType::RunTime => {
+            // No changes reuired for this test.
+        }
+    }
+
+    configuration
 }
 
 // Helper to confirm all variations generate appropriate results.
@@ -115,8 +145,13 @@ fn validate_one_scenario(
     test_type: TestType,
     is_gaggle: bool,
 ) {
-    // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    // The throttle limits how many hits are registered.
+    if is_gaggle {
+        assert!(mock_endpoints[INDEX_KEY].hits() <= 40);
+    } else {
+        assert!(mock_endpoints[INDEX_KEY].hits() <= 20);
+    }
+    assert!(mock_endpoints[INDEX_KEY].hits() > 10);
 
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics
@@ -131,21 +166,50 @@ fn validate_one_scenario(
     // There should not have been any failures during this test.
     assert!(index_metrics.fail_count == 0);
 
+    // The load test should run for 3 seconds before being canceled.
+    if !is_gaggle {
+        assert!(goose_metrics.duration == 3);
+    }
+
     match test_type {
         TestType::RunTime => {
             assert!(goose_metrics.total_users == configuration.users.unwrap());
             if !is_gaggle {
                 assert!(goose_metrics.history.len() == 4);
             }
+            assert!(goose_metrics.maximum_users == 10);
+            assert!(goose_metrics.total_users == 10);
         }
         TestType::NoRunTime => {
             assert!(goose_metrics.total_users == configuration.users.unwrap());
             if !is_gaggle {
                 assert!(goose_metrics.history.len() == 4);
             }
+            assert!(goose_metrics.maximum_users == 10);
+            assert!(goose_metrics.total_users == 10);
         }
-        TestType::TestPlan => {}
-        TestType::Iterations => {}
+        TestType::TestPlanIncrease => {
+            assert!(goose_metrics.history.len() == 3);
+            assert!(goose_metrics.maximum_users < 10);
+            assert!(goose_metrics.total_users < 10);
+        }
+        TestType::TestPlanDecrease => {
+            assert!(goose_metrics.history.len() == 4);
+            assert!(goose_metrics.maximum_users == 10);
+            assert!(goose_metrics.total_users == 10);
+        }
+        TestType::TestPlanMaintain => {
+            assert!(goose_metrics.history.len() == 4);
+            assert!(goose_metrics.maximum_users == 10);
+            assert!(goose_metrics.total_users == 10);
+        }
+        TestType::Iterations => {
+            if !is_gaggle {
+                assert!(goose_metrics.history.len() == 4);
+            }
+            assert!(goose_metrics.maximum_users == 10);
+            assert!(goose_metrics.total_users == 10);
+        }
     }
 }
 
@@ -154,6 +218,7 @@ fn get_transactions() -> Scenario {
     scenario!("LoadTest").register_transaction(transaction!(get_index).set_weight(9).unwrap())
 }
 
+// Sleeps for Duration then sends SIGINT (ctrl-c) to the load test process.
 async fn cancel_load_test(duration: Duration) {
     sleep(duration).await;
     kill(getpid(), SIGINT).expect("failed to send SIGNINT");
@@ -167,25 +232,11 @@ async fn run_standalone_test(test_type: TestType) {
     // Setup the endpoints needed for this test on the mock server.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    let mut configuration_flags = match test_type {
-        TestType::RunTime => vec!["--no-reset-metrics"],
-        TestType::NoRunTime => vec!["--no-reset-metrics"],
-        TestType::TestPlan => vec![],
-        TestType::Iterations => vec![],
-    };
-
     // Build common configuration elements.
-    let configuration = common_build_configuration(&server, &test_type, &mut configuration_flags);
-
-    let cancel_delay = match test_type {
-        TestType::RunTime => Duration::from_secs(3),
-        TestType::NoRunTime => Duration::from_secs(2),
-        TestType::TestPlan => Duration::from_secs(2),
-        TestType::Iterations => Duration::from_secs(2),
-    };
+    let configuration = common_build_configuration(&server, &test_type);
 
     // Start a thread that will send a SIGINT to the running load test.
-    let _ = tokio::spawn(cancel_load_test(cancel_delay));
+    let _ = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(
@@ -236,9 +287,9 @@ async fn run_gaggle_test(test_type: TestType) {
                 &EXPECT_WORKERS.to_string(),
                 "--no-reset-metrics",
                 "--users",
-                "6",
+                "10",
                 "--hatch-rate",
-                "3",
+                "5",
                 "--run-time",
                 "10",
             ],
@@ -251,16 +302,26 @@ async fn run_gaggle_test(test_type: TestType) {
                 &EXPECT_WORKERS.to_string(),
                 "--no-reset-metrics",
                 "--users",
-                "6",
+                "10",
                 "--hatch-rate",
-                "3",
+                "5",
             ],
         ),
         TestType::Iterations => common::build_configuration(
             &server,
-            vec!["--manager", "--expect-workers", &EXPECT_WORKERS.to_string()],
+            vec![
+                "--manager",
+                "--expect-workers",
+                &EXPECT_WORKERS.to_string(),
+                "--users",
+                "10",
+                "--hatch-rate",
+                "5",
+            ],
         ),
-        TestType::TestPlan => panic!("test plan configuration not supported in gaggle mode"),
+        TestType::TestPlanIncrease | TestType::TestPlanDecrease | TestType::TestPlanMaintain => {
+            panic!("test plan configuration not supported in gaggle mode")
+        }
     };
 
     // Build the load test for the Manager.
@@ -271,15 +332,8 @@ async fn run_gaggle_test(test_type: TestType) {
         None,
     );
 
-    let cancel_delay = match test_type {
-        TestType::RunTime => Duration::from_secs(3),
-        TestType::NoRunTime => Duration::from_secs(2),
-        TestType::TestPlan => Duration::from_secs(2),
-        TestType::Iterations => Duration::from_secs(2),
-    };
-
     // Start a thread that will send a SIGINT to the running load test.
-    let _ = tokio::spawn(cancel_load_test(cancel_delay));
+    let _ = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
@@ -326,4 +380,44 @@ async fn test_cancel_noruntime() {
 // Cancel a scenario without --run-time configured, in Gaggle mode.
 async fn test_cancel_noruntime_gaggle() {
     run_gaggle_test(TestType::NoRunTime).await;
+}
+
+/* With --iterations */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+// Cancel a scenario with --iterations configured.
+async fn test_cancel_iterations() {
+    run_standalone_test(TestType::Iterations).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[cfg_attr(not(feature = "gaggle"), ignore)]
+#[serial]
+// Cancel a scenario with --iterations configured, in Gaggle mode.
+async fn test_cancel_iterations_gaggle() {
+    run_gaggle_test(TestType::Iterations).await;
+}
+
+/* With --test--plan */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+// Cancel a scenario with --iterations configured.
+async fn test_cancel_testplan_increase() {
+    run_standalone_test(TestType::TestPlanIncrease).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+// Cancel a scenario with --iterations configured.
+async fn test_cancel_testplan_decrease() {
+    run_standalone_test(TestType::TestPlanDecrease).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+// Cancel a scenario with --iterations configured.
+async fn test_cancel_testplan_maintain() {
+    run_standalone_test(TestType::TestPlanMaintain).await;
 }
