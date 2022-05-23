@@ -15,7 +15,10 @@ use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 #[cfg(feature = "gaggle")]
-use crate::worker::{self, GaggleMetrics};
+use crate::{
+    worker::{self, GaggleMetrics},
+    SHUTDOWN_GAGGLE,
+};
 use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
 use http::StatusCode;
@@ -2684,10 +2687,9 @@ impl GooseAttack {
                         ],
                         true,
                     ) {
-                        // GooseUserCommand::Exit received, cancel.
-                        goose_attack_run_state
-                            .canceled
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        // GooseUserCommand::Exit received, shutdown the Gaggle.
+                        let mut shutdown_gaggle = SHUTDOWN_GAGGLE.write().unwrap();
+                        *shutdown_gaggle = true;
                     }
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();

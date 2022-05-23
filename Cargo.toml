@@ -66,6 +66,7 @@ rustc_version = "0.4"
 
 [dev-dependencies]
 httpmock = "0.6"
-serial_test = "0.5"
 native-tls = "0.2"
+nix = "0.24"
 rustls = "0.19"
+serial_test = "0.5"
