@@ -17,7 +17,7 @@ use crate::util;
 #[cfg(feature = "gaggle")]
 use crate::{
     worker::{self, GaggleMetrics},
-    CANCELED,
+    SHUTDOWN_GAGGLE,
 };
 use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
@@ -2687,9 +2687,9 @@ impl GooseAttack {
                         ],
                         true,
                     ) {
-                        // GooseUserCommand::Exit received, cancel.
-                        let mut canceled = CANCELED.lock().unwrap();
-                        *canceled = true;
+                        // GooseUserCommand::Exit received, shutdown the Gaggle.
+                        let mut shutdown_gaggle = SHUTDOWN_GAGGLE.write().unwrap();
+                        *shutdown_gaggle = true;
                     }
                     // The manager has all our metrics, reset locally.
                     self.metrics.requests = HashMap::new();

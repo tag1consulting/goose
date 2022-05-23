@@ -13,7 +13,7 @@ use crate::metrics::{
 };
 use crate::util;
 use crate::worker::GaggleMetrics;
-use crate::{GooseAttack, GooseConfiguration, GooseUserCommand, CANCELED};
+use crate::{GooseAttack, GooseConfiguration, GooseUserCommand, CANCELED, SHUTDOWN_GAGGLE};
 
 /// How long the manager will wait for all workers to stop after the load test ends.
 const GRACEFUL_SHUTDOWN_TIMEOUT: usize = 30;
@@ -404,7 +404,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     false
                 };
                 // Test ran to completion or was canceled with ctrl-c.
-                if timer_expired || *CANCELED.lock().unwrap() {
+                if timer_expired || *SHUTDOWN_GAGGLE.read().unwrap() || *CANCELED.read().unwrap() {
                     info!(
                         "stopping after {} seconds...",
                         goose_attack.started.unwrap().elapsed().as_secs()
@@ -432,7 +432,7 @@ pub(crate) async fn manager_main(mut goose_attack: GooseAttack) -> GooseAttack {
                     goose_attack.metrics.print_running();
                 }
             }
-        } else if *CANCELED.lock().unwrap() {
+        } else if *CANCELED.read().unwrap() {
             info!("load test canceled, exiting");
             std::process::exit(1);
         }

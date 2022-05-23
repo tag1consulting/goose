@@ -69,7 +69,7 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
+    Arc, RwLock,
 };
 use std::time::{self, Duration};
 use std::{fmt, io};
@@ -91,10 +91,15 @@ const DEFAULT_TELNET_PORT: &str = "5116";
 /// Constant defining Goose's default WebSocket Controller port.
 const DEFAULT_WEBSOCKET_PORT: &str = "5117";
 
-// WORKER_ID is only used when running a gaggle (a distributed load test).
 lazy_static! {
+    // WORKER_ID is used to identify different works when running a gaggle.
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
-    static ref CANCELED: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    // Global used to count how many times ctrl-c has been pressed, reset each time a
+    // load test starts.
+    static ref CANCELED: Arc<RwLock<bool>> = Arc::new(RwLock::new(false));
+    // Global used to detect when to shut down Gaggle across threads for reasons other than
+    // ctrl-c being pressed, reset each time a load test starts.
+    static ref SHUTDOWN_GAGGLE: Arc<RwLock<bool>> = Arc::new(RwLock::new(false));
 }
 
 /// Internal representation of a weighted transaction list.
@@ -1973,7 +1978,7 @@ impl GooseAttack {
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
                 && !goose_attack_run_state.canceling
-                && *CANCELED.lock().unwrap()
+                && *CANCELED.read().unwrap()
             {
                 // Shutdown after stopping as the load test was canceled.
                 goose_attack_run_state.shutdown_after_stop = true;

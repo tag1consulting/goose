@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time;
 use url::Url;
 
-use crate::{GooseError, CANCELED};
+use crate::{GooseError, CANCELED, SHUTDOWN_GAGGLE};
 
 /// Parse a string representing a time span and return the number of seconds.
 ///
@@ -426,12 +426,12 @@ pub fn is_valid_host(host: &str) -> Result<bool, GooseError> {
 pub(crate) fn setup_ctrlc_handler() {
     match ctrlc::set_handler(move || {
         // We've caught a ctrl-c, determine if it's the first time or an additional time.
-        if *CANCELED.lock().unwrap() {
+        if *CANCELED.read().unwrap() {
             warn!("caught another ctrl-c, exiting immediately...");
             std::process::exit(1);
         } else {
             warn!("caught ctrl-c, stopping...");
-            let mut canceled = CANCELED.lock().unwrap();
+            let mut canceled = CANCELED.write().unwrap();
             *canceled = true;
         }
     }) {
@@ -439,9 +439,13 @@ pub(crate) fn setup_ctrlc_handler() {
         Err(e) => {
             // When running in tests, reset CANCELED with each new test allowing testing
             // of the ctrl-c handler.
-            let mut canceled = CANCELED.lock().unwrap();
+            let mut canceled = CANCELED.write().unwrap();
             *canceled = false;
             info!("reset ctrl-c handler: {}", e);
+
+            // Also reset SHUTDOWN_GAGGLE with each new test, allowing testing of gaggles.
+            let mut shutdown_gaggle = SHUTDOWN_GAGGLE.write().unwrap();
+            *shutdown_gaggle = false;
         }
     }
 }
