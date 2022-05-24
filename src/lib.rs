@@ -1668,6 +1668,9 @@ impl GooseAttack {
                 if !self.configuration.no_metrics {
                     println!("{}", self.metrics);
                 }
+                // Write an html report, if enabled.
+                self.write_html_report().await?;
+                // Return to an Idle state.
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Idle);
             }
         // If this is not the last step of the load test and sufficient users decreased, move to next step.

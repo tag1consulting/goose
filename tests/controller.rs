@@ -17,6 +17,9 @@ mod common;
 const INDEX_PATH: &str = "/";
 const ABOUT_PATH: &str = "/about.html";
 
+// Files generated during tests.
+const REPORT_FILE: &str = "test-controller-report.html";
+
 // Indexes to the above paths.
 const INDEX_KEY: usize = 0;
 const ABOUT_KEY: usize = 1;
@@ -29,7 +32,7 @@ const RUN_TIME: usize = 10;
 const STARTUP_TIME: usize = 1;
 
 // There are multiple test variations in this file.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum TestType {
     // Enable --no-telnet.
     WebSocket,
@@ -117,7 +120,7 @@ fn validate_one_scenario(
     goose_metrics: &GooseMetrics,
     mock_endpoints: &[Mock],
     configuration: &GooseConfiguration,
-    _test_type: TestType,
+    test_type: TestType,
 ) {
     //println!("goose_metrics: {:#?}", goose_metrics);
     //println!("configuration: {:#?}", configuration);
@@ -154,6 +157,16 @@ fn validate_one_scenario(
     // Finished is logged twice because `stop` puts the test to Idle, and then `shutdown`
     // actually shuts down the test, and both are logged as "Finished".
     assert!(goose_metrics.history.len() == 9);
+
+    // The Telnet test should create a report-file.
+    if test_type == TestType::Telnet {
+        // The report file must exist.
+        assert!(std::path::Path::new(REPORT_FILE).exists());
+        // The report file must not be empty.
+        assert!(common::file_length(REPORT_FILE) > 0);
+        // Now clean up the file.
+        common::cleanup_files(vec![REPORT_FILE]);
+    }
 }
 
 // Returns the appropriate scenario needed to build these tests.
@@ -175,11 +188,7 @@ async fn run_standalone_test(test_type: TestType) {
     let mut configuration_flags = match &test_type {
         TestType::WebSocket => vec!["--no-telnet"],
         // Also test writing a report-file when stopping load test through controller.
-        TestType::Telnet => vec![
-            "--no-websocket",
-            "--report-file",
-            "controller-test-report.html",
-        ],
+        TestType::Telnet => vec!["--no-websocket", "--report-file", REPORT_FILE],
     };
 
     // Keep a copy for validation.
@@ -686,8 +695,6 @@ async fn run_standalone_test(test_type: TestType) {
         &configuration,
         validate_test_type,
     );
-
-    // @TODO: clean up report file.
 }
 
 // Update (or create) the current testing state. A simple state maching for
