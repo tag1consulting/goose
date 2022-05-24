@@ -347,8 +347,6 @@ struct GooseAttackRunState {
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
     /// Optional channel allowing controller thread to make requests, if not disabled.
     controller_channel_rx: Option<flume::Receiver<ControllerRequest>>,
-    /// Optional unbuffered writer for html-formatted report file, if enabled.
-    report_file: Option<File>,
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
@@ -991,6 +989,9 @@ impl GooseAttack {
                 self.metrics.duration
             );
             print!("{}", self.metrics);
+
+            // Write an html report, if enabled.
+            self.write_html_report().await?;
         }
 
         Ok(self.metrics)
@@ -1316,7 +1317,6 @@ impl GooseAttack {
             throttle_threads_tx: None,
             parent_to_throttle_tx: None,
             controller_channel_rx,
-            report_file: None,
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
@@ -1660,8 +1660,6 @@ impl GooseAttack {
             self.metrics
                 .history
                 .push(TestPlanHistory::step(TestPlanStepAction::Finished, 0));
-            // Write an html report, if enabled.
-            self.write_html_report(goose_attack_run_state).await?;
             // Shutdown Goose or go into an idle waiting state.
             if goose_attack_run_state.shutdown_after_stop {
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Shutdown);
@@ -1670,6 +1668,9 @@ impl GooseAttack {
                 if !self.configuration.no_metrics {
                     println!("{}", self.metrics);
                 }
+                // Write an html report, if enabled.
+                self.write_html_report().await?;
+                // Return to an Idle state.
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Idle);
             }
         // If this is not the last step of the load test and sufficient users decreased, move to next step.
@@ -1852,8 +1853,8 @@ impl GooseAttack {
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
-        // If enabled, create an report file and confirm access.
-        goose_attack_run_state.report_file = match self.prepare_report_file().await {
+        // If enabled, try to create the report file to confirm access.
+        let _report_file = match self.prepare_report_file().await {
             Ok(f) => f,
             Err(e) => {
                 return Err(GooseError::InvalidOption {
