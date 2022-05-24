@@ -174,7 +174,12 @@ async fn run_standalone_test(test_type: TestType) {
 
     let mut configuration_flags = match &test_type {
         TestType::WebSocket => vec!["--no-telnet"],
-        TestType::Telnet => vec!["--no-websocket"],
+        // Also test writing a report-file when stopping load test through controller.
+        TestType::Telnet => vec![
+            "--no-websocket",
+            "--report-file",
+            "controller-test-report.html",
+        ],
     };
 
     // Keep a copy for validation.
@@ -681,6 +686,8 @@ async fn run_standalone_test(test_type: TestType) {
         &configuration,
         validate_test_type,
     );
+
+    // @TODO: clean up report file.
 }
 
 // Update (or create) the current testing state. A simple state maching for

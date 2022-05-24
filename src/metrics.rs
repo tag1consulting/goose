@@ -2994,12 +2994,21 @@ impl GooseAttack {
     }
 
     // Write an HTML-formatted report, if enabled.
-    pub(crate) async fn write_html_report(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) -> Result<(), GooseError> {
+    pub(crate) async fn write_html_report(&mut self) -> Result<(), GooseError> {
+        // If enabled, try to create the report file to confirm access.
+        let report_file = match self.prepare_report_file().await {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: self.get_report_file_path().unwrap(),
+                    detail: format!("Failed to create report file: {}", e),
+                })
+            }
+        };
+
         // Only write the report if enabled.
-        if let Some(report_file) = goose_attack_run_state.report_file.as_mut() {
+        if let Some(mut report_file) = report_file {
             let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
             // Prepare report summary variables.
@@ -3580,7 +3589,7 @@ impl GooseAttack {
             report_file.flush().await?;
 
             info!(
-                "wrote html report file to: {}",
+                "html report file written to: {}",
                 self.get_report_file_path().unwrap()
             );
         }
