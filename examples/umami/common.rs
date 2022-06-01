@@ -15,7 +15,7 @@ pub enum ContentType {
 /// Details tracked about individual nodes used to run load test and validate
 /// that pages are being correctly loaded.
 pub struct Node<'a> {
-    pub nid: u8,
+    pub nid: u32,
     pub url_en: &'a str,
     pub url_es: &'a str,
     pub title_en: &'a str,
