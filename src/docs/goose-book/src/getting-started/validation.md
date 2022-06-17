@@ -10,7 +10,7 @@ To leverage Goose Eggs when writing your load test, include the crate in the dep
 goose-eggs = "0.4"
 ```
 
-For example, to use the Goose Eggs validation functions, bring the `Validate` structure and `validate_and_load_static_assets` function into scope:
+For example, to use the Goose Eggs validation functions, bring the `Validate` structure and either the `validate_page` or the `validate_and_load_static_assets` function into scope:
 ```rust,ignore
 use goose_eggs::{validate_and_load_static_assets, Validate};
 ```
