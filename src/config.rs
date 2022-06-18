@@ -574,7 +574,13 @@ impl GooseDefaultType<&str> for GooseAttack {
             // Set valid defaults.
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
             GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
-            GooseDefault::Host => self.defaults.host = Some(value.to_string()),
+            GooseDefault::Host => {
+                self.defaults.host = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                }
+            }
             GooseDefault::GooseLog => self.defaults.goose_log = Some(value.to_string()),
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),

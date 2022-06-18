@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.16.3-dev
+ - [#498](https://github.com/tag1consulting/goose/issues/498) ignore `GooseDefault::Host` if set to an empty string
  - [#487](https://github.com/tag1consulting/goose/pull/487) add dev-dependency on (nix)[https://docs.rs/nix] to provide test coverage confirming proper shutdown from SIGINT (ctrl-c); capture ctrl-c in a lazy_static wrapped in a RwLock so it can be reset
  - [#489](https://github.com/tag1consulting/goose/pull/489) don't panic when writing report file and shutting down with controller
 
