@@ -931,15 +931,14 @@ impl GooseAttack {
         };
 
         // Confirm there's either a global host, or each scenario has a host defined.
-        if let Err(e) = self.validate_host() {
-            if self.configuration.no_autostart {
-                info!("host must be configured via Controller before starting load test");
-            } else {
-                // If auto-starting, host must be valid.
-                return Err(e);
-            }
+        if self.configuration.no_autostart && self.validate_host().is_err() {
+            info!("host must be configured via Controller before starting load test");
         } else {
-            info!("global host configured: {}", self.configuration.host);
+            // If configuration.host is empty, then it will fall back to per-scenario
+            // defaults if set.
+            if !self.configuration.host.is_empty() {
+                info!("global host configured: {}", self.configuration.host);
+            }
             self.prepare_load_test()?;
         }
 
