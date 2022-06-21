@@ -63,6 +63,7 @@ use lazy_static::lazy_static;
 use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use report::ReportFile;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{
@@ -71,7 +72,6 @@ use std::sync::{
 };
 use std::time::{self, Duration};
 use std::{fmt, io};
-use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
@@ -878,10 +878,13 @@ impl GooseAttack {
     }
 
     // If enabled, returns the path of the report_file, otherwise returns None.
-    fn get_report_file_path(&mut self) -> Option<String> {
+    fn get_report_file(&mut self) -> Option<ReportFile> {
         // Return if enabled.
         if !self.configuration.report_file.is_empty() {
-            Some(self.configuration.report_file.to_string())
+            Some(ReportFile {
+                path: self.configuration.report_file.to_string(),
+                command_line_option: "--report-file".to_string(),
+            })
         // Otherwise there is no report file.
         } else {
             None
@@ -1288,9 +1291,10 @@ impl GooseAttack {
     }
 
     // Prepare an asynchronous file writer for `report_file` (if enabled).
-    async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
-        if let Some(report_file_path) = self.get_report_file_path() {
-            Ok(Some(File::create(&report_file_path).await?))
+    async fn prepare_report_file(&mut self) -> Result<Option<ReportFile>, GooseError> {
+        if let Some(mut report_file) = self.get_report_file() {
+            report_file.create().await?;
+            Ok(Some(report_file))
         } else {
             Ok(None)
         }
@@ -1927,16 +1931,7 @@ impl GooseAttack {
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
         // If enabled, try to create the report file to confirm access.
-        let _report_file = match self.prepare_report_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                })
-            }
-        };
+        self.prepare_report_file().await?;
 
         // Record when the GooseAttack officially started.
         self.started = Some(time::Instant::now());

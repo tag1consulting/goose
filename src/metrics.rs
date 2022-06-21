@@ -32,7 +32,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::str::FromStr;
 use std::{f32, fmt};
-use tokio::io::AsyncWriteExt;
 
 /// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
 /// to the parent Goose process.
@@ -2997,16 +2996,7 @@ impl GooseAttack {
     // Write an HTML-formatted report, if enabled.
     pub(crate) async fn write_html_report(&mut self) -> Result<(), GooseError> {
         // If enabled, try to create the report file to confirm access.
-        let report_file = match self.prepare_report_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                })
-            }
-        };
+        let report_file = self.prepare_report_file().await?;
 
         // Only write the report if enabled.
         if let Some(mut report_file) = report_file {
@@ -3578,21 +3568,9 @@ impl GooseAttack {
                 },
             );
 
-            // Write the report to file.
-            if let Err(e) = report_file.write_all(report.as_ref()).await {
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                });
-            };
-            // Be sure the file flushes to disk.
-            report_file.flush().await?;
+            report_file.write_all_and_flush(report.as_ref()).await?;
 
-            info!(
-                "html report file written to: {}",
-                self.get_report_file_path().unwrap()
-            );
+            info!("html report file written to: {}", report_file.path);
         }
 
         Ok(())

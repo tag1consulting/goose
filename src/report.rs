@@ -1,11 +1,49 @@
 //! Optionally writes an html-formatted summary report after running a load test.
 
-use crate::metrics;
+use crate::{metrics, GooseError};
 
 use std::collections::BTreeMap;
 use std::mem;
 
 use serde::Serialize;
+
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+
+/// Wrapper over File object that contains context for errors
+pub(crate) struct ReportFile {
+    pub(crate) path: String,
+    pub(crate) command_line_option: String,
+}
+
+impl ReportFile {
+    pub(crate) async fn create(&mut self) -> Result<File, GooseError> {
+        let file = File::create(&self.path)
+            .await
+            .map_err(|e| GooseError::InvalidOption {
+                option: self.command_line_option.clone(),
+                value: self.path.clone(),
+                detail: format!("Failed to create report file: {}", e),
+            })?;
+        Ok(file)
+    }
+
+    pub(crate) async fn write_all_and_flush(&mut self, report: &[u8]) -> Result<(), GooseError> {
+        let mut file = self.create().await?;
+        let path = self.path.clone();
+        let cmd = self.command_line_option.clone();
+
+        let error_context = |e| GooseError::InvalidOption {
+            option: cmd.clone(),
+            value: path.clone(),
+            detail: format!("Failed to write to report file: {}", e),
+        };
+
+        file.write_all(report).await.map_err(&error_context)?;
+        file.flush().await.map_err(error_context)?;
+        Ok(())
+    }
+}
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
