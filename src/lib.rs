@@ -63,9 +63,7 @@ use lazy_static::lazy_static;
 use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::BTreeMap;
-use std::collections::HashSet;
+use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -383,6 +381,8 @@ pub struct GooseAttack {
     test_stop_transaction: Option<Transaction>,
     /// A vector containing one copy of each Scenario defined by this load test.
     scenarios: Vec<Scenario>,
+    /// A set of all registered scenario names.
+    scenario_machine_names: HashSet<String>,
     /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
     /// A weighted vector containing a lightweight GaggleUser object that is sent to all Workers if running in Gaggle mode.
@@ -426,6 +426,7 @@ impl GooseAttack {
             test_start_transaction: None,
             test_stop_transaction: None,
             scenarios: Vec::new(),
+            scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
@@ -462,6 +463,7 @@ impl GooseAttack {
             test_start_transaction: None,
             test_stop_transaction: None,
             scenarios: Vec::new(),
+            scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
             weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
@@ -575,6 +577,22 @@ impl GooseAttack {
     /// ```
     pub fn register_scenario(mut self, mut scenario: Scenario) -> Self {
         scenario.scenarios_index = self.scenarios.len();
+        // Machine names must be unique. If this machine name has already been seen, add an
+        // integer at the end to differentiate.
+        let mut conflicts: u32 = 0;
+        let mut machine_name = scenario.machine_name.to_string();
+        // Inserting into the scenario_machine_names hashset will fail if this is name was
+        // already seen.
+        while !self.scenario_machine_names.insert(machine_name) {
+            // For each conflict increase the counter and try again.
+            conflicts += 1;
+            machine_name = format!("{}_{}", scenario.machine_name, conflicts);
+        }
+        // If there was a conflict, also update the scenario itself.
+        if conflicts > 0 {
+            scenario.machine_name = format!("{}_{}", scenario.machine_name, conflicts);
+        }
+        // Finally, register the scenario.
         self.scenarios.push(scenario);
         self
     }
@@ -895,6 +913,20 @@ impl GooseAttack {
             return Err(GooseError::NoScenarios {
                 detail: "No scenarios are defined.".to_string(),
             });
+        }
+
+        // Display scenarios, then exit.
+        if self.configuration.list_scenarios {
+            let mut scenarios = BTreeMap::new();
+            println!("Sorted scenarios:");
+            for scenario in self.scenarios {
+                scenarios.insert(scenario.machine_name.clone(), scenario.clone());
+            }
+            // Display sorted by machine_name.
+            for (key, scenario) in scenarios {
+                println!(r#" - {}: ("{}")"#, key, scenario.name);
+            }
+            std::process::exit(0);
         }
 
         // Display scenarios and transactions, then exit.

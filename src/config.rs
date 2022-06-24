@@ -43,6 +43,9 @@ pub struct GooseConfiguration {
     /// Prints version information
     #[options(short = "V")]
     pub version: bool,
+    /// Lists all scenarios and exits
+    #[options(no_short)]
+    pub list_scenarios: bool,
     /// Lists all transactions and exits
     // Add a blank line after this option
     #[options(short = "l", help = "Lists all transactions and exits\n")]
