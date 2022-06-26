@@ -43,9 +43,6 @@ pub struct GooseConfiguration {
     /// Prints version information
     #[options(short = "V")]
     pub version: bool,
-    /// Lists all scenarios and exits
-    #[options(no_short)]
-    pub list_scenarios: bool,
     /// Lists all transactions and exits
     // Add a blank line after this option
     #[options(short = "l", help = "Lists all transactions and exits\n")]
@@ -158,6 +155,12 @@ pub struct GooseConfiguration {
     /// Sets how many times to run scenarios then exit
     #[options(no_short)]
     pub iterations: usize,
+    /// Displays internal names of scenarios and exits
+    #[options(no_short)]
+    pub list_scenarios: bool,
+    /// Limits load test to only specified scenarios
+    #[options(no_short, meta = "\"SCENARIO\"")]
+    pub scenarios: String,
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,

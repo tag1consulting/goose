@@ -664,6 +664,23 @@ impl GooseAttack {
         self
     }
 
+    /// Internal helper to determine if the scenario is currently active.
+    fn scenario_is_active(&self, scenario: &Scenario) -> bool {
+        // All scenarios are enabled by default, return early if scnearios is empty.
+        if self.configuration.scenarios.is_empty() {
+            return true;
+        }
+
+        if scenario
+            .machine_name
+            .contains(&self.configuration.scenarios)
+        {
+            true
+        } else {
+            false
+        }
+    }
+
     /// Use configured GooseScheduler to build out a properly weighted list of
     /// [`Scenario`](./goose/struct.Scenario.html)s to be assigned to
     /// [`GooseUser`](./goose/struct.GooseUser.html)s
@@ -673,13 +690,15 @@ impl GooseAttack {
         let mut u: usize = 0;
         let mut v: usize;
         for scenario in &self.scenarios {
-            if u == 0 {
-                u = scenario.weight;
-            } else {
-                v = scenario.weight;
-                trace!("calculating greatest common denominator of {} and {}", u, v);
-                u = util::gcd(u, v);
-                trace!("inner gcd: {}", u);
+            if self.scenario_is_active(&scenario) {
+                if u == 0 {
+                    u = scenario.weight;
+                } else {
+                    v = scenario.weight;
+                    trace!("calculating greatest common denominator of {} and {}", u, v);
+                    u = util::gcd(u, v);
+                    trace!("inner gcd: {}", u);
+                }
             }
         }
         // 'u' will always be the greatest common divisor
@@ -689,18 +708,20 @@ impl GooseAttack {
         let mut available_scenarios = Vec::with_capacity(self.scenarios.len());
         let mut total_scenarios = 0;
         for (index, scenario) in self.scenarios.iter().enumerate() {
-            // divide by greatest common divisor so vector is as short as possible
-            let weight = scenario.weight / u;
-            trace!(
-                "{}: {} has weight of {} (reduced with gcd to {})",
-                index,
-                scenario.name,
-                scenario.weight,
-                weight
-            );
-            let weighted_sets = vec![index; weight];
-            total_scenarios += weight;
-            available_scenarios.push(weighted_sets);
+            if self.scenario_is_active(&scenario) {
+                // divide by greatest common divisor so vector is as short as possible
+                let weight = scenario.weight / u;
+                trace!(
+                    "{}: {} has weight of {} (reduced with gcd to {})",
+                    index,
+                    scenario.name,
+                    scenario.weight,
+                    weight
+                );
+                let weighted_sets = vec![index; weight];
+                total_scenarios += weight;
+                available_scenarios.push(weighted_sets);
+            }
         }
 
         info!(
