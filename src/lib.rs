@@ -671,14 +671,11 @@ impl GooseAttack {
             return true;
         }
 
-        if scenario
+        // Returns true or false depending on if the machine name is included in the
+        // configured `--scenarios`.
+        scenario
             .machine_name
             .contains(&self.configuration.scenarios)
-        {
-            true
-        } else {
-            false
-        }
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
@@ -690,7 +687,7 @@ impl GooseAttack {
         let mut u: usize = 0;
         let mut v: usize;
         for scenario in &self.scenarios {
-            if self.scenario_is_active(&scenario) {
+            if self.scenario_is_active(scenario) {
                 if u == 0 {
                     u = scenario.weight;
                 } else {
@@ -708,7 +705,7 @@ impl GooseAttack {
         let mut available_scenarios = Vec::with_capacity(self.scenarios.len());
         let mut total_scenarios = 0;
         for (index, scenario) in self.scenarios.iter().enumerate() {
-            if self.scenario_is_active(&scenario) {
+            if self.scenario_is_active(scenario) {
                 // divide by greatest common divisor so vector is as short as possible
                 let weight = scenario.weight / u;
                 trace!(
