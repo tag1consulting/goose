@@ -587,7 +587,6 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::ErrorLog => self.defaults.error_log = Some(value.to_string()),
             GooseDefault::GooseLog => self.defaults.goose_log = Some(value.to_string()),
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
-            GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
             GooseDefault::Host => {
                 self.defaults.host = if value.is_empty() {
                     None
@@ -595,15 +594,6 @@ impl GooseDefaultType<&str> for GooseAttack {
                     Some(value.to_string())
                 }
             }
-            GooseDefault::GooseLog => self.defaults.goose_log = Some(value.to_string()),
-            GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
-            GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
-            GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
-            GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
-            GooseDefault::ErrorLog => self.defaults.error_log = Some(value.to_string()),
-            GooseDefault::DebugLog => self.defaults.debug_log = Some(value.to_string()),
-            GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
-            GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
             GooseDefault::ManagerBindHost => {
                 self.defaults.manager_bind_host = Some(value.to_string())
             }

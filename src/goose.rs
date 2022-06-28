@@ -527,7 +527,7 @@ impl Scenario {
     }
 
     /// An internal helper to convert a Scenario name to a machine name which is only
-    /// alphanumberics.
+    /// alphanumerics.
     fn get_machine_name(name: &str) -> String {
         // Remove all non-alphanumeric characters.
         let re = Regex::new("[^a-zA-Z0-9]+").unwrap();
