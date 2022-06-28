@@ -666,16 +666,16 @@ impl GooseAttack {
 
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
-        // All scenarios are enabled by default, return early if scnearios is empty.
+        // All scenarios are enabled by default.
         if self.configuration.scenarios.is_empty() {
-            return true;
-        }
-
+            true
         // Returns true or false depending on if the machine name is included in the
         // configured `--scenarios`.
-        scenario
-            .machine_name
-            .contains(&self.configuration.scenarios)
+        } else {
+            scenario
+                .machine_name
+                .contains(&self.configuration.scenarios)
+        }
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
@@ -884,6 +884,19 @@ impl GooseAttack {
         }
     }
 
+    // Display all scenarios (sorted by machine name).
+    fn print_scenarios(&self) {
+        let mut scenarios = BTreeMap::new();
+        println!("Scenarios:");
+        for scenario in &self.scenarios {
+            scenarios.insert(scenario.machine_name.clone(), scenario.clone());
+        }
+        // Display sorted by machine_name.
+        for (key, scenario) in scenarios {
+            println!(r#" - {}: ("{}")"#, key, scenario.name);
+        }
+    }
+
     /// Execute the [`GooseAttack`](./struct.GooseAttack.html) load test.
     ///
     /// # Example
@@ -934,17 +947,24 @@ impl GooseAttack {
         }
 
         // Display scenarios, then exit.
-        if self.configuration.list_scenarios {
-            let mut scenarios = BTreeMap::new();
-            println!("Sorted scenarios:");
-            for scenario in self.scenarios {
-                scenarios.insert(scenario.machine_name.clone(), scenario.clone());
-            }
-            // Display sorted by machine_name.
-            for (key, scenario) in scenarios {
-                println!(r#" - {}: ("{}")"#, key, scenario.name);
-            }
+        if self.configuration.scenarios_list {
+            self.print_scenarios();
             std::process::exit(0);
+        }
+
+        // At least one scenario must be active.
+        let mut active_scenario: bool = false;
+        for scenario in &self.scenarios {
+            if self.scenario_is_active(scenario) {
+                active_scenario = true;
+                break;
+            }
+        }
+        if !active_scenario {
+            self.print_scenarios();
+            return Err(GooseError::NoScenarios {
+                detail: "No scenarios are enabled.".to_string(),
+            });
         }
 
         // Display scenarios and transactions, then exit.

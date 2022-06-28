@@ -155,12 +155,12 @@ pub struct GooseConfiguration {
     /// Sets how many times to run scenarios then exit
     #[options(no_short)]
     pub iterations: usize,
-    /// Displays internal names of scenarios and exits
-    #[options(no_short)]
-    pub list_scenarios: bool,
     /// Limits load test to only specified scenarios
     #[options(no_short, meta = "\"SCENARIO\"")]
     pub scenarios: String,
+    /// Lists all scenarios and exits
+    #[options(no_short)]
+    pub scenarios_list: bool,
     /// Doesn't enable telnet Controller
     #[options(no_short)]
     pub no_telnet: bool,
@@ -246,6 +246,8 @@ pub(crate) struct GooseDefaults {
     pub test_plan: Option<TestPlan>,
     /// An optional default test plan.
     pub iterations: Option<usize>,
+    /// Optional default scenarios.
+    pub scenarios: Option<String>,
     /// An optional default log level.
     pub log_level: Option<u8>,
     /// An optional default for the goose log file name.
@@ -360,6 +362,8 @@ pub enum GooseDefault {
     TestPlan,
     /// An optional default number of iterations to run scenarios then exit.
     Iterations,
+    /// Optional default list of scenarios to run.
+    Scenarios,
     /// An optional default log level.
     LogLevel,
     /// An optional default for the log file name.
@@ -485,21 +489,22 @@ pub enum GooseDefault {
 ///
 /// The following run-time options can be configured with a custom default using a
 /// borrowed string slice ([`&str`]):
-///  - [`GooseDefault::Host`]
-///  - [`GooseDefault::Timeout`]
-///  - [`GooseDefault::HatchRate`]
-///  - [`GooseDefault::ReportFile`]
-///  - [`GooseDefault::GooseLog`]
-///  - [`GooseDefault::RequestLog`]
-///  - [`GooseDefault::TransactionLog`]
-///  - [`GooseDefault::ScenarioLog`]
-///  - [`GooseDefault::ErrorLog`]
 ///  - [`GooseDefault::DebugLog`]
-///  - [`GooseDefault::TestPlan`]
-///  - [`GooseDefault::TelnetHost`]
-///  - [`GooseDefault::WebSocketHost`]
+///  - [`GooseDefault::ErrorLog`]
+///  - [`GooseDefault::GooseLog`]
+///  - [`GooseDefault::HatchRate`]
+///  - [`GooseDefault::Host`]
 ///  - [`GooseDefault::ManagerBindHost`]
 ///  - [`GooseDefault::ManagerHost`]
+///  - [`GooseDefault::ReportFile`]
+///  - [`GooseDefault::RequestLog`]
+///  - [`GooseDefault::ScenarioLog`]
+///  - [`GooseDefault::Scenarios`]
+///  - [`GooseDefault::TelnetHost`]
+///  - [`GooseDefault::TestPlan`]
+///  - [`GooseDefault::Timeout`]
+///  - [`GooseDefault::TransactionLog`]
+///  - [`GooseDefault::WebSocketHost`]
 ///
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
@@ -578,6 +583,9 @@ impl GooseDefaultType<&str> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: &str) -> Result<Box<Self>, GooseError> {
         match key {
             // Set valid defaults.
+            GooseDefault::DebugLog => self.defaults.debug_log = Some(value.to_string()),
+            GooseDefault::ErrorLog => self.defaults.error_log = Some(value.to_string()),
+            GooseDefault::GooseLog => self.defaults.goose_log = Some(value.to_string()),
             GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
             GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
             GooseDefault::Host => {
@@ -600,9 +608,17 @@ impl GooseDefaultType<&str> for GooseAttack {
                 self.defaults.manager_bind_host = Some(value.to_string())
             }
             GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
+            GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
+            GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
+            GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
+            GooseDefault::Scenarios => self.defaults.scenarios = Some(value.to_string()),
+            GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
             GooseDefault::TestPlan => {
                 self.defaults.test_plan = Some(value.parse::<TestPlan>().unwrap())
             }
+            GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
+            GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
+            GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
             | GooseDefault::StartupTime
@@ -701,21 +717,22 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ManagerBindPort => self.defaults.manager_bind_port = Some(value as u16),
             GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
-            GooseDefault::Host
-            | GooseDefault::TestPlan
-            | GooseDefault::HatchRate
-            | GooseDefault::Timeout
+            GooseDefault::DebugLog
+            | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
+            | GooseDefault::HatchRate
+            | GooseDefault::Host
+            | GooseDefault::ManagerBindHost
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TransactionLog
             | GooseDefault::ScenarioLog
-            | GooseDefault::ErrorLog
-            | GooseDefault::DebugLog
+            | GooseDefault::Scenarios
             | GooseDefault::TelnetHost
-            | GooseDefault::WebSocketHost
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost => {
+            | GooseDefault::TestPlan
+            | GooseDefault::Timeout
+            | GooseDefault::TransactionLog
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{}", value),
@@ -805,20 +822,22 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
             GooseDefault::Worker => self.defaults.worker = Some(value),
             // Otherwise display a helpful and explicit error.
-            GooseDefault::Host
-            | GooseDefault::TestPlan
+            GooseDefault::DebugLog
+            | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
+            | GooseDefault::HatchRate
+            | GooseDefault::Host
+            | GooseDefault::ManagerBindHost
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TransactionLog
             | GooseDefault::ScenarioLog
-            | GooseDefault::RunningMetrics
-            | GooseDefault::ErrorLog
-            | GooseDefault::DebugLog
+            | GooseDefault::Scenarios
             | GooseDefault::TelnetHost
-            | GooseDefault::WebSocketHost
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost => {
+            | GooseDefault::TestPlan
+            | GooseDefault::Timeout
+            | GooseDefault::TransactionLog
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{}", value),
@@ -829,10 +848,9 @@ impl GooseDefaultType<bool> for GooseAttack {
                 })
             }
             GooseDefault::Users
-            | GooseDefault::HatchRate
-            | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
+            | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
@@ -917,20 +935,23 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::Host
-            | GooseDefault::TestPlan
+            // Otherwise display a helpful and explicit error.
+            GooseDefault::DebugLog
+            | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
+            | GooseDefault::HatchRate
+            | GooseDefault::Host
+            | GooseDefault::ManagerBindHost
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TransactionLog
             | GooseDefault::ScenarioLog
-            | GooseDefault::RunningMetrics
-            | GooseDefault::ErrorLog
-            | GooseDefault::DebugLog
+            | GooseDefault::Scenarios
             | GooseDefault::TelnetHost
-            | GooseDefault::WebSocketHost
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost => {
+            | GooseDefault::TestPlan
+            | GooseDefault::Timeout
+            | GooseDefault::TransactionLog
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -941,10 +962,9 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                 })
             }
             GooseDefault::Users
-            | GooseDefault::HatchRate
-            | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
+            | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
@@ -1023,20 +1043,23 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::Host
-            | GooseDefault::TestPlan
+            // Otherwise display a helpful and explicit error.
+            GooseDefault::DebugLog
+            | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
+            | GooseDefault::HatchRate
+            | GooseDefault::Host
+            | GooseDefault::ManagerBindHost
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
-            | GooseDefault::TransactionLog
             | GooseDefault::ScenarioLog
-            | GooseDefault::RunningMetrics
-            | GooseDefault::ErrorLog
-            | GooseDefault::DebugLog
+            | GooseDefault::Scenarios
             | GooseDefault::TelnetHost
-            | GooseDefault::WebSocketHost
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost => {
+            | GooseDefault::TestPlan
+            | GooseDefault::Timeout
+            | GooseDefault::TransactionLog
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -1047,10 +1070,9 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                 })
             }
             GooseDefault::Users
-            | GooseDefault::HatchRate
-            | GooseDefault::Timeout
             | GooseDefault::StartupTime
             | GooseDefault::RunTime
+            | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
@@ -1121,7 +1143,7 @@ impl GooseConfigure<usize> for GooseConfiguration {
     }
 }
 impl GooseConfigure<u16> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`usize`] value.
+    /// Use [`GooseValue`] to set a [`u16`] value.
     fn get_value(&self, values: Vec<GooseValue<u16>>) -> Option<u16> {
         for value in values {
             if let Some(v) = value.value {
@@ -1675,6 +1697,24 @@ impl GooseConfiguration {
                 },
             ])
             .unwrap_or(0);
+
+        // Configure `scenarios`.
+        self.scenarios = self
+            .get_value(vec![
+                // Use --scenarios if set.
+                GooseValue {
+                    value: Some(self.scenarios.clone()),
+                    filter: false,
+                    message: "scenarios",
+                },
+                // Use GooseDefault if not already set and not Worker.
+                GooseValue {
+                    value: defaults.scenarios.clone(),
+                    filter: defaults.scenarios.is_none() || self.worker,
+                    message: "scenarios",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
 
         // Configure `no_debug_body`.
         self.no_debug_body = self
