@@ -683,7 +683,7 @@ async fn run_standalone_test(test_type: TestType) {
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration.clone(), &get_transactions(), None, None),
+        common::build_load_test(configuration.clone(), vec![get_transactions()], None, None),
         None,
     )
     .await;

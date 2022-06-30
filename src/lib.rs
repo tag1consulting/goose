@@ -946,27 +946,6 @@ impl GooseAttack {
             });
         }
 
-        // Display scenarios, then exit.
-        if self.configuration.scenarios_list {
-            self.print_scenarios();
-            std::process::exit(0);
-        }
-
-        // At least one scenario must be active.
-        let mut active_scenario: bool = false;
-        for scenario in &self.scenarios {
-            if self.scenario_is_active(scenario) {
-                active_scenario = true;
-                break;
-            }
-        }
-        if !active_scenario {
-            self.print_scenarios();
-            return Err(GooseError::NoScenarios {
-                detail: "No scenarios are enabled.".to_string(),
-            });
-        }
-
         // Display scenarios and transactions, then exit.
         if self.configuration.list {
             println!("Available transactions:");
@@ -987,6 +966,27 @@ impl GooseAttack {
 
         // Validate GooseConfiguration.
         self.configuration.validate()?;
+
+        // Display scenarios, then exit.
+        if self.configuration.scenarios_list {
+            self.print_scenarios();
+            std::process::exit(0);
+        }
+
+        // At least one scenario must be active.
+        let mut active_scenario: bool = false;
+        for scenario in &self.scenarios {
+            if self.scenario_is_active(scenario) {
+                active_scenario = true;
+                break;
+            }
+        }
+        if !active_scenario {
+            self.print_scenarios();
+            return Err(GooseError::NoScenarios {
+                detail: "No scenarios are enabled.".to_string(),
+            });
+        }
 
         // Build TestPlan.
         self.test_plan = TestPlan::build(&self.configuration);

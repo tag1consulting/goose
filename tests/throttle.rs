@@ -180,7 +180,7 @@ async fn test_throttle() {
 
     // Run the Goose Attack.
     common::run_load_test(
-        common::build_load_test(configuration, &get_transactions(), None, None),
+        common::build_load_test(configuration, vec![get_transactions()], None, None),
         None,
     )
     .await;
@@ -210,7 +210,7 @@ async fn test_throttle() {
 
     // Run the Goose Attack.
     common::run_load_test(
-        common::build_load_test(configuration, &get_transactions(), None, None),
+        common::build_load_test(configuration, vec![get_transactions()], None, None),
         None,
     )
     .await;
@@ -254,7 +254,7 @@ async fn test_throttle_gaggle() {
         request_logs.push(worker_configuration.request_log.clone());
         let worker_goose_attack = common::build_load_test(
             worker_configuration.clone(),
-            &get_transactions(),
+            vec![get_transactions()],
             None,
             None,
         );
@@ -279,7 +279,7 @@ async fn test_throttle_gaggle() {
     // Build the load test for the Manager.
     let manager_goose_attack = common::build_load_test(
         manager_configuration.clone(),
-        &get_transactions(),
+        vec![get_transactions()],
         None,
         None,
     );
@@ -314,7 +314,7 @@ async fn test_throttle_gaggle() {
         request_logs.push(worker_configuration.request_log.clone());
         let worker_goose_attack = common::build_load_test(
             worker_configuration.clone(),
-            &get_transactions(),
+            vec![get_transactions()],
             None,
             None,
         );
@@ -327,7 +327,7 @@ async fn test_throttle_gaggle() {
 
     // Build the load test for the Manager.
     let manager_goose_attack =
-        common::build_load_test(manager_configuration, &get_transactions(), None, None);
+        common::build_load_test(manager_configuration, vec![get_transactions()], None, None);
 
     // Run the Goose Attack.
     common::run_load_test(manager_goose_attack, Some(worker_handles)).await;

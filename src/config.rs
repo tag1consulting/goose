@@ -1694,7 +1694,7 @@ impl GooseConfiguration {
                 // Use --scenarios if set.
                 GooseValue {
                     value: Some(self.scenarios.clone()),
-                    filter: false,
+                    filter: self.scenarios.is_empty(),
                     message: "scenarios",
                 },
                 // Use GooseDefault if not already set and not Worker.
