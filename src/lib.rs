@@ -667,14 +667,18 @@ impl GooseAttack {
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
         // All scenarios are enabled by default.
-        if self.configuration.scenarios.is_empty() {
+        if self.configuration.scenarios.active.is_empty() {
             true
         // Returns true or false depending on if the machine name is included in the
         // configured `--scenarios`.
         } else {
-            scenario
-                .machine_name
-                .contains(&self.configuration.scenarios)
+            for active in &self.configuration.scenarios.active {
+                if scenario.machine_name.contains(active) {
+                    return true;
+                }
+            }
+            // No matches found, this scenario is not active.
+            false
         }
     }
 

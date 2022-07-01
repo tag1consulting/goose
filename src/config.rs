@@ -9,6 +9,7 @@ use gumdrop::Options;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use crate::logger::GooseLogFormat;
 use crate::metrics::GooseCoordinatedOmissionMitigation;
@@ -157,7 +158,7 @@ pub struct GooseConfiguration {
     pub iterations: usize,
     /// Limits load test to only specified scenarios
     #[options(no_short, meta = "\"SCENARIO\"")]
-    pub scenarios: String,
+    pub scenarios: Scenarios,
     /// Lists all scenarios and exits
     #[options(no_short)]
     pub scenarios_list: bool,
@@ -227,6 +228,44 @@ pub struct GooseConfiguration {
     pub manager_port: u16,
 }
 
+/// Optionally defines a subset of active Scenarios to run during a load test.
+#[derive(Options, Default, Debug, Clone, Serialize, Deserialize)]
+pub struct Scenarios {
+    pub active: Vec<String>,
+}
+/// Implement [`FromStr`] to convert `"foo,bar"` comma separated string to a vector of strings.
+impl FromStr for Scenarios {
+    type Err = GooseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Convert string into a vector of string.
+        let mut active: Vec<String> = Vec::new();
+        // Multiple Scenarios can be defined as a comma separated list.
+        let lines = s.split(',');
+        for line in lines {
+            // Ignore white space an case.
+            let scenario = line.trim().to_lowercase();
+            // Valid scenario names are alphanumeric only.
+            if scenario.chars().all(char::is_alphanumeric) {
+                active.push(scenario);
+            } else {
+                // Logger isn't initialized yet, provide helpful debug output.
+                eprintln!("ERROR: invalid `configuration.scenarios` value: '{}'", line);
+                eprintln!("  Expected format: --scenarios \"{{one}},{{two}},{{three}}\"");
+                eprintln!("    {{one}}, {{two}}, {{three}}, etc must be alphanumeric");
+                eprintln!("    To view valid scenario names invoke `--scenarios-list`");
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.scenarios".to_string(),
+                    value: line.to_string(),
+                    detail: "invalid `configuration.scenarios` value.".to_string(),
+                });
+            }
+        }
+        // The listed scenarios are only valid if the logic gets this far.
+        Ok(Scenarios { active })
+    }
+}
+
 /// Optional default values for Goose run-time options.
 ///
 /// These custom defaults can be configured using [`GooseDefaultType::set_default()`].
@@ -247,7 +286,7 @@ pub(crate) struct GooseDefaults {
     /// An optional default test plan.
     pub iterations: Option<usize>,
     /// Optional default scenarios.
-    pub scenarios: Option<String>,
+    pub scenarios: Option<Scenarios>,
     /// An optional default log level.
     pub log_level: Option<u8>,
     /// An optional default for the goose log file name.
@@ -601,7 +640,9 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
-            GooseDefault::Scenarios => self.defaults.scenarios = Some(value.to_string()),
+            GooseDefault::Scenarios => {
+                self.defaults.scenarios = Some(value.parse::<Scenarios>().unwrap())
+            }
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
             GooseDefault::TestPlan => {
                 self.defaults.test_plan = Some(value.parse::<TestPlan>().unwrap())
@@ -1091,7 +1132,6 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                         key, value
                     ),
                 })
-
             }
         }
         Ok(Box::new(self))
@@ -1264,6 +1304,24 @@ impl GooseConfigure<GooseCoordinatedOmissionMitigation> for GooseConfiguration {
         &self,
         values: Vec<GooseValue<GooseCoordinatedOmissionMitigation>>,
     ) -> Option<GooseCoordinatedOmissionMitigation> {
+        for value in values {
+            if let Some(v) = value.value {
+                if value.filter {
+                    continue;
+                } else {
+                    if !value.message.is_empty() {
+                        info!("{} = {:?}", value.message, v)
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+}
+impl GooseConfigure<Scenarios> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`Scenarios`] value.
+    fn get_value(&self, values: Vec<GooseValue<Scenarios>>) -> Option<Scenarios> {
         for value in values {
             if let Some(v) = value.value {
                 if value.filter {
@@ -1694,7 +1752,7 @@ impl GooseConfiguration {
                 // Use --scenarios if set.
                 GooseValue {
                     value: Some(self.scenarios.clone()),
-                    filter: self.scenarios.is_empty(),
+                    filter: self.scenarios.active.is_empty(),
                     message: "scenarios",
                 },
                 // Use GooseDefault if not already set and not Worker.
@@ -1704,7 +1762,7 @@ impl GooseConfiguration {
                     message: "scenarios",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_else(|| Scenarios { active: Vec::new() });
 
         // Configure `no_debug_body`.
         self.no_debug_body = self
