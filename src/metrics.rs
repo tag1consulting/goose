@@ -29,6 +29,7 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write;
 use std::str::FromStr;
 use std::{f32, fmt};
 use tokio::io::AsyncWriteExt;
@@ -3024,7 +3025,7 @@ impl GooseAttack {
                 match &step[0].action {
                     // For maintaining just show the current number of users.
                     TestPlanStepAction::Maintaining => {
-                        steps_overview.push_str(&format!(
+                        let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
                             step[0].action,
                             started,
@@ -3033,11 +3034,11 @@ impl GooseAttack {
                             minutes,
                             seconds,
                             step[0].users,
-                        ));
+                        );
                     }
                     // For increasing show the current number of users to the new number of users.
                     TestPlanStepAction::Increasing => {
-                        steps_overview.push_str(&format!(
+                        let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
                             step[0].action,
                             started,
@@ -3047,11 +3048,11 @@ impl GooseAttack {
                             seconds,
                             step[0].users,
                             step[1].users,
-                        ));
+                        );
                     }
                     // For decreasing show the new number of users from the current number of users.
                     TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
-                        steps_overview.push_str(&format!(
+                        let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
                             step[0].action,
                             started,
@@ -3061,7 +3062,7 @@ impl GooseAttack {
                             seconds,
                             step[1].users,
                             step[0].users,
-                        ));
+                        );
                     }
                     TestPlanStepAction::Finished => {
                         unreachable!("there shouldn't be a step after finished");
