@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::marker::PhantomData;
 
 /// Used to collect graph data during a load test.
@@ -279,7 +280,8 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             match &step[0].action {
                 // For increasing show the current number of users to the new number of users.
                 TestPlanStepAction::Increasing => {
-                    steps.push_str(&format!(
+                    let _ = write!(
+                        steps,
                         r#"[
                             {{
                                 xAxis: '{started}',
@@ -309,11 +311,12 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         ],"#,
                         started = started,
                         stopped = stopped,
-                    ));
+                    );
                 }
                 // For decreasing show the new number of users from the current number of users.
                 TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
-                    steps.push_str(&format!(
+                    let _ = write!(
+                        steps,
                         r#"[
                             {{
                                 xAxis: '{started}',
@@ -343,7 +346,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                         ],"#,
                         started = started,
                         stopped = stopped,
-                    ));
+                    );
                 }
                 _ => {}
             }
