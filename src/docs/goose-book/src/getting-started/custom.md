@@ -6,7 +6,7 @@ Instead, you can use environment variables. One example of this can be found in 
 
 Alternatively, you can use this method to set configurable custom defaults. The [earlier example](./custom.md) can be enhanced to use an environment variable to set a custom default hostname:
 
-```rust
+```rust,ignore
 use goose::prelude::*;
 
 async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {

@@ -12,6 +12,7 @@
         - [Common Options](getting-started/common.md)
         - [Test Plan](getting-started/test-plan.md)
         - [Throttle](getting-started/throttle.md)
+        - [Limiting Scenarios](getting-started/scenarios.md)
         - [Custom Options](getting-started/custom.md)
     - [Metrics](getting-started/metrics.md)
     - [Tips](getting-started/tips.md)
