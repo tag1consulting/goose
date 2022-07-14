@@ -121,7 +121,7 @@ async fn run_load_test(is_gaggle: bool) {
 
             // Run the Goose Attack.
             common::run_load_test(
-                common::build_load_test(configuration, &get_transactions(), None, None),
+                common::build_load_test(configuration, vec![get_transactions()], None, None),
                 None,
             )
             .await;
@@ -134,7 +134,7 @@ async fn run_load_test(is_gaggle: bool) {
             let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
                 common::build_load_test(
                     worker_configuration.clone(),
-                    &get_transactions(),
+                    vec![get_transactions()],
                     None,
                     None,
                 )
@@ -146,7 +146,12 @@ async fn run_load_test(is_gaggle: bool) {
 
             // Run the Goose Attack.
             common::run_load_test(
-                common::build_load_test(manager_configuration, &get_transactions(), None, None),
+                common::build_load_test(
+                    manager_configuration,
+                    vec![get_transactions()],
+                    None,
+                    None,
+                ),
                 Some(worker_handles),
             )
             .await;

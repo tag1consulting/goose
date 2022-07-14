@@ -289,6 +289,7 @@
 
 use downcast_rs::{impl_downcast, Downcast};
 use http::method::Method;
+use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -470,6 +471,8 @@ impl From<flume::SendError<Option<GooseLog>>> for TransactionError {
 pub struct Scenario {
     /// The name of the scenario.
     pub name: String,
+    /// Auto-generated machine name of the scenario.
+    pub machine_name: String,
     /// An integer reflecting where this scenario lives in the internal
     /// [`GooseAttack`](../struct.GooseAttack.html)`.scenarios` vector.
     pub scenarios_index: usize,
@@ -511,6 +514,7 @@ impl Scenario {
         trace!("new scenario: name: {}", &name);
         Scenario {
             name: name.to_string(),
+            machine_name: Scenario::get_machine_name(name),
             scenarios_index: usize::max_value(),
             weight: 1,
             transaction_wait: None,
@@ -520,6 +524,16 @@ impl Scenario {
             weighted_on_stop_transactions: Vec::new(),
             host: None,
         }
+    }
+
+    /// An internal helper to convert a Scenario name to a machine name which is only
+    /// alphanumerics.
+    fn get_machine_name(name: &str) -> String {
+        // Remove all non-alphanumeric characters.
+        let re = Regex::new("[^a-zA-Z0-9]+").unwrap();
+        let alphanumeric = re.replace_all(name, "");
+        // Convert to lower case.
+        alphanumeric.to_lowercase()
     }
 
     /// Registers a [`Transaction`](./struct.Transaction.html) with a

@@ -85,19 +85,21 @@ pub fn launch_gaggle_workers<F: Fn() -> GooseAttack>(
     worker_handles
 }
 
-// Create a GooseAttack object from the configuration, Scenario, and optional start and
+// Create a GooseAttack object from the configuration, Scenarios, and optional start and
 // stop Transactions.
 #[allow(dead_code)]
 pub fn build_load_test(
     configuration: GooseConfiguration,
-    scenario: &Scenario,
+    scenarios: Vec<Scenario>,
     start_transaction: Option<&Transaction>,
     stop_transaction: Option<&Transaction>,
 ) -> GooseAttack {
     // First set up the common base configuration.
-    let mut goose = crate::GooseAttack::initialize_with_config(configuration)
-        .unwrap()
-        .register_scenario(scenario.clone());
+    let mut goose = crate::GooseAttack::initialize_with_config(configuration).unwrap();
+
+    for scenario in scenarios {
+        goose = goose.register_scenario(scenario.clone());
+    }
 
     if let Some(transaction) = start_transaction {
         goose = goose.test_start(transaction.clone());

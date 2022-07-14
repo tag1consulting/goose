@@ -298,7 +298,7 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(
-        common::build_load_test(configuration, &get_transactions(), None, None),
+        common::build_load_test(configuration, vec![get_transactions()], None, None),
         None,
     )
     .await;
@@ -418,7 +418,7 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
         let worker_configuration = common::build_configuration(&server, worker_configuration_flags);
         let worker_goose_attack = common::build_load_test(
             worker_configuration.clone(),
-            &get_transactions(),
+            vec![get_transactions()],
             None,
             None,
         );
@@ -446,7 +446,7 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
 
     // Build the load test for the Manager.
     let manager_goose_attack =
-        common::build_load_test(manager_configuration, &get_transactions(), None, None);
+        common::build_load_test(manager_configuration, vec![get_transactions()], None, None);
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;

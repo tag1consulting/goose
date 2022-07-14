@@ -232,7 +232,7 @@ async fn run_load_test(is_gaggle: bool) {
 
             // Run the Goose Attack.
             let goose_metrics = common::run_load_test(
-                common::build_load_test(configuration.clone(), &build_scenario(), None, None),
+                common::build_load_test(configuration.clone(), vec![build_scenario()], None, None),
                 None,
             )
             .await;
@@ -246,7 +246,12 @@ async fn run_load_test(is_gaggle: bool) {
 
             // Workers launched in own threads, store thread handles.
             let worker_handles = common::launch_gaggle_workers(EXPECT_WORKERS, || {
-                common::build_load_test(worker_configuration.clone(), &build_scenario(), None, None)
+                common::build_load_test(
+                    worker_configuration.clone(),
+                    vec![build_scenario()],
+                    None,
+                    None,
+                )
             });
 
             // Build Manager configuration.
@@ -261,7 +266,7 @@ async fn run_load_test(is_gaggle: bool) {
             let goose_metrics = common::run_load_test(
                 common::build_load_test(
                     manager_configuration.clone(),
-                    &build_scenario(),
+                    vec![build_scenario()],
                     None,
                     None,
                 ),

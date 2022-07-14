@@ -52,6 +52,8 @@ Metrics:
 Advanced:
   --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60s;0,30s")
   --iterations ITERATIONS     Sets how many times to run scenarios then exit
+  --scenarios "SCENARIO"      Limits load test to only specified scenarios
+  --scenarios-list            Lists all scenarios and exits
   --no-telnet                 Doesn't enable telnet Controller
   --telnet-host HOST          Sets telnet Controller host (default: 0.0.0.0)
   --telnet-port PORT          Sets telnet Controller TCP port (default: 5116)

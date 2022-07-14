@@ -136,15 +136,18 @@ fn build_goose_attack(test_type: &TestType, configuration: GooseConfiguration) -
     let start_transaction = transaction!(setup);
     let stop_transaction = transaction!(teardown);
     match test_type {
-        TestType::Start => {
-            common::build_load_test(configuration, &scenario, Some(&start_transaction), None)
-        }
+        TestType::Start => common::build_load_test(
+            configuration,
+            vec![scenario],
+            Some(&start_transaction),
+            None,
+        ),
         TestType::Stop => {
-            common::build_load_test(configuration, &scenario, None, Some(&stop_transaction))
+            common::build_load_test(configuration, vec![scenario], None, Some(&stop_transaction))
         }
         TestType::StartAndStop => common::build_load_test(
             configuration,
-            &scenario,
+            vec![scenario],
             Some(&start_transaction),
             Some(&stop_transaction),
         ),
