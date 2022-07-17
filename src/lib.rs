@@ -57,6 +57,11 @@ pub mod util;
 #[cfg(feature = "gaggle")]
 mod worker;
 
+pub mod gaggle {
+    pub mod common;
+    pub mod manager;
+}
+
 use gumdrop::Options;
 use lazy_static::lazy_static;
 #[cfg(feature = "gaggle")]
@@ -75,6 +80,7 @@ use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
+use crate::gaggle::manager::ManagerTx;
 use crate::goose::{GaggleUser, GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
@@ -116,11 +122,6 @@ type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
 pub fn get_worker_id() -> usize {
     WORKER_ID.load(Ordering::Relaxed)
 }
-
-#[cfg(not(feature = "gaggle"))]
-#[derive(Debug, Clone)]
-/// Socket used for coordinating a Gaggle distributed load test.
-pub(crate) struct Socket {}
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
 #[derive(Debug)]
@@ -333,6 +334,8 @@ struct GooseAttackRunState {
     /// Unbounded receiver used by [`GooseUser`](./goose.GooseUser.html) threads to notify
     /// the parent if they shut themselves down (for example if `--iterations` is reached).
     shutdown_rx: flume::Receiver<usize>,
+    /// Optional unbounded receiver for manager thread, if enabled.
+    manager_tx: ManagerTx,
     /// Optional unbounded receiver for logger thread, if enabled.
     logger_handle: GooseLoggerJoinHandle,
     /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
@@ -369,8 +372,6 @@ struct GooseAttackRunState {
     shutdown_after_stop: bool,
     /// Whether or not the load test is currently canceling.
     canceling: bool,
-    /// Optional socket used to coordinate a distributed Gaggle.
-    socket: Option<Socket>,
 }
 
 /// Global internal state for the load test.
@@ -967,6 +968,7 @@ impl GooseAttack {
 
         // Configure GooseConfiguration.
         self.configuration.configure(&self.defaults);
+        self.configuration.configure_gaggle(&self.defaults);
 
         // Validate GooseConfiguration.
         self.configuration.validate()?;
@@ -1053,7 +1055,7 @@ impl GooseAttack {
         }
         // Start goose in single-process mode.
         else {
-            self = self.start_attack(None).await?;
+            self = self.start_attack().await?;
         }
 
         if self.metrics.display_metrics {
@@ -1350,10 +1352,7 @@ impl GooseAttack {
 
     // Create a GooseAttackRunState object and do all initialization required
     // to start a [`GooseAttack`](./struct.GooseAttack.html).
-    async fn initialize_attack(
-        &mut self,
-        socket: Option<Socket>,
-    ) -> Result<GooseAttackRunState, GooseError> {
+    async fn initialize_attack(&mut self) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
         // Create a single channel used to send metrics from GooseUser threads
@@ -1385,6 +1384,7 @@ impl GooseAttack {
             all_threads_shutdown_tx,
             metrics_rx,
             shutdown_rx,
+            manager_tx: None,
             logger_handle: None,
             all_threads_logger_tx: None,
             throttle_threads_tx: None,
@@ -1400,11 +1400,7 @@ impl GooseAttack {
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
-            socket,
         };
-
-        // Access socket to avoid errors.
-        trace!("socket: {:?}", &goose_attack_run_state.socket);
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
         util::setup_ctrlc_handler();
@@ -1921,6 +1917,9 @@ impl GooseAttack {
         goose_attack_run_state.logger_handle = logger_handle;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
 
+        // If enabled, spawn a manager thread.
+        let (manager_handle, manager_tx) = self.configuration.setup_manager(&self.defaults).await?;
+
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
@@ -1945,13 +1944,11 @@ impl GooseAttack {
     }
 
     // Called internally in local-mode and gaggle-mode.
-    async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
-        trace!("start_attack: socket({:?})", socket);
-
+    async fn start_attack(mut self) -> Result<GooseAttack, GooseError> {
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
         let mut goose_attack_run_state = self
-            .initialize_attack(socket)
+            .initialize_attack()
             .await
             .expect("failed to initialize GooseAttackRunState");
 

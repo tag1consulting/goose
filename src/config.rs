@@ -18,7 +18,10 @@ use crate::util;
 use crate::{GooseAttack, GooseError};
 
 /// Constant defining Goose's default port when running a Gaggle.
-const DEFAULT_PORT: &str = "5115";
+const DEFAULT_GAGGLE_PORT: &str = "5115";
+
+/// Constant defining Goose's default manager_host when running a Gaggle.
+const DEFAULT_GAGGLE_HOST: &str = "127.0.0.1";
 
 /// Runtime options available when launching a Goose load test.
 ///
@@ -1940,7 +1943,30 @@ impl GooseConfiguration {
                 },
             ])
             .unwrap_or(false);
+    }
 
+    pub(crate) fn configure_gaggle(&mut self, defaults: &GooseDefaults) {
+        // Re-configure `users`, in case the AttackMode was changed.
+        self.users = self.get_value(vec![
+            // Use --users if set and not on Worker.
+            GooseValue {
+                value: self.users,
+                filter: self.worker,
+                message: "--users",
+            },
+            // Otherwise use GooseDefault if set and not on Worker.
+            GooseValue {
+                value: defaults.users,
+                filter: defaults.users.is_none() || self.worker,
+                message: "default users",
+            },
+            // Otherwise use detected number of CPUs if not on Worker.
+            GooseValue {
+                value: Some(num_cpus::get()),
+                filter: self.worker || self.test_plan.is_some(),
+                message: "users defaulted to number of CPUs",
+            },
+        ]);
         // Configure `expect_workers`.
         self.expect_workers = self.get_value(vec![
             // Use --expect-workers if configured.
@@ -2014,9 +2040,9 @@ impl GooseConfiguration {
                     filter: defaults.manager_bind_port.is_none() || !self.manager,
                     message: "manager_bind_port",
                 },
-                // Otherwise default to DEFAULT_PORT if on Manager.
+                // Otherwise default to DEFAULT_GAGGLE_PORT if on Manager.
                 GooseValue {
-                    value: Some(DEFAULT_PORT.to_string().parse().unwrap()),
+                    value: Some(DEFAULT_GAGGLE_PORT.to_string().parse().unwrap()),
                     filter: !self.manager,
                     message: "manager_bind_port",
                 },
@@ -2040,7 +2066,7 @@ impl GooseConfiguration {
                 },
                 // Otherwise default to 127.0.0.1 if on Worker.
                 GooseValue {
-                    value: Some("127.0.0.1".to_string()),
+                    value: Some(DEFAULT_GAGGLE_HOST.to_string()),
                     filter: !self.worker,
                     message: "manager_host",
                 },
@@ -2062,9 +2088,9 @@ impl GooseConfiguration {
                     filter: defaults.manager_port.is_none() || !self.worker,
                     message: "manager_port",
                 },
-                // Otherwise default to DEFAULT_PORT if on Worker.
+                // Otherwise default to DEFAULT_GAGGLE_PORT if on Worker.
                 GooseValue {
-                    value: Some(DEFAULT_PORT.to_string().parse().unwrap()),
+                    value: Some(DEFAULT_GAGGLE_PORT.to_string().parse().unwrap()),
                     filter: !self.worker,
                     message: "manager_port",
                 },
@@ -2114,13 +2140,6 @@ impl GooseConfiguration {
                     option: "`configuration.scenario_log`".to_string(),
                     value: self.scenario_log.clone(),
                     detail: "`configuration.scenario_log` can not be set on the Manager."
-                        .to_string(),
-                });
-            } else if self.no_autostart {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_autostart`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_autostart` can not be set on the Manager."
                         .to_string(),
                 });
             } else if !self.report_file.is_empty() {
@@ -2298,14 +2317,6 @@ impl GooseConfiguration {
                     option: "`configuration.no_status_codes".to_string(),
                     value: self.no_status_codes.to_string(),
                     detail: "`configuration.no_status_codes` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_autostart` on Worker.
-            } else if self.no_autostart {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_autostart`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_autostart` can not be set in Worker mode."
                         .to_string(),
                 });
             // Can't set `no_gzip` on Worker.

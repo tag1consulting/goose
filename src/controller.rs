@@ -7,7 +7,7 @@ use crate::config::GooseConfiguration;
 use crate::metrics::GooseMetrics;
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 use crate::util;
-use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
+use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
@@ -154,6 +154,38 @@ pub enum ControllerCommand {
     ///
     /// Can be configured on an idle or running load test.
     TestPlan,
+    /// Taggles Gaggle Manager-mode.
+    ///
+    /// # Example
+    /// Enables Gaggle Manager-mode.
+    /// ```notest
+    /// manager
+    /// ```
+    Manager,
+    /// Configures the number of Gaggle Workers to expect before starting the load test.
+    ///
+    /// # Example
+    /// Tells Gaggle Manager to wait for 4 Workers to connect.
+    /// ```notest
+    /// expect-workers 4
+    /// ```
+    ExpectWorkers,
+    /// Configures the number of Gaggle Workers to expect before starting the load test.
+    ///
+    /// # Example
+    /// Tells Gaggle Manager to wait for 4 Workers to connect.
+    /// ```notest
+    /// expect-workers 4
+    /// ```
+    NoHashCheck,
+    /// Taggles no-hash-check when in Manager-mode.
+    ///
+    /// # Example
+    /// Enables no-hash-check.
+    /// ```notest
+    /// no-hash-check
+    /// ```
+    Worker,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -283,6 +315,68 @@ impl ControllerCommand {
                         Ok("host configured".to_string())
                     } else {
                         Err("failed to reconfigure host, be sure host is valid and load test is idle".to_string())
+                    }
+                }),
+            },
+            ControllerCommand::Manager => ControllerCommandDetails {
+                help: ControllerHelp {
+                    name: "manager",
+                    description: "toggle Manager mode\n",
+                },
+                regex: r"(?i)^manager$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("manager mode toggled".to_string())
+                    } else {
+                        Err("failed to toggle manager mode, be sure load test is idle".to_string())
+                    }
+                }),
+            },
+            ControllerCommand::ExpectWorkers => ControllerCommandDetails {
+                help: ControllerHelp {
+                    name: "expect-workers INT",
+                    description: "set number of Workers to expect\n",
+                },
+                regex: r"(?i)^(expect|expectworkers|expect_workers|expect-workers) ([0-9]+)$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("expect-workers configured".to_string())
+                    } else {
+                        Err(
+                            "failed to configure expect-workers, be sure load test is idle and in Manager mode"
+                                .to_string(),
+                        )
+                    }
+                }),
+            },
+            ControllerCommand::NoHashCheck => ControllerCommandDetails {
+                help: ControllerHelp {
+                    name: "no-hash-check",
+                    description: "toggle no-hash-check\n",
+                },
+                regex: r"(?i)^(no-hash-check|no_hash_check|nohashcheck)$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("no-hash-check toggled".to_string())
+                    } else {
+                        Err(
+                            "failed to toggle no-hash-check, be sure load test is idle and in Manager mode"
+                                .to_string(),
+                        )
+                    }
+                }),
+            },
+            ControllerCommand::Worker => ControllerCommandDetails {
+                help: ControllerHelp {
+                    name: "worker",
+                    description: "toggle Worker mode\n\n",
+                },
+                regex: r"(?i)^worker$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("worker mode toggled".to_string())
+                    } else {
+                        Err("failed to toggle worker mode, be sure load test is idle".to_string())
                     }
                 }),
             },
@@ -469,7 +563,7 @@ impl ControllerCommand {
         for command in ControllerCommand::iter() {
             write!(
                 &mut help_text,
-                "{:<18} {}",
+                "{:<19} {}",
                 command.details().help.name,
                 command.details().help.description
             )
@@ -517,29 +611,53 @@ impl GooseAttack {
                         ControllerCommand::Start => {
                             // We can only start an idle load test.
                             if self.attack_phase == AttackPhase::Idle {
-                                self.test_plan = TestPlan::build(&self.configuration);
-                                if self.prepare_load_test().is_ok() {
-                                    // Rebuild test plan in case any parameters have been changed.
-                                    self.set_attack_phase(
-                                        goose_attack_run_state,
-                                        AttackPhase::Increase,
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(true),
-                                    );
-                                    // Reset the run state when starting a new load test.
-                                    self.reset_run_state(goose_attack_run_state).await?;
-                                    self.metrics.history.push(TestPlanHistory::step(
-                                        TestPlanStepAction::Increasing,
-                                        0,
-                                    ));
-                                } else {
-                                    // Do not move to Starting phase if unable to prepare load test.
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(false),
-                                    );
+                                // Validate GooseConfiguration.
+                                match self.configuration.validate() {
+                                    Err(e) => {
+                                        println!("Failed to start: {:?}", e);
+                                        self.reply_to_controller(
+                                            message,
+                                            ControllerResponseMessage::Bool(false),
+                                        );
+                                    }
+                                    Ok(_) => {
+                                        // Update test plan in case configuration changed.
+                                        self.test_plan = TestPlan::build(&self.configuration);
+
+                                        // Update attack_mode in case configuration changed.
+                                        self.attack_mode = if self.configuration.manager {
+                                            AttackMode::Manager
+                                        } else if self.configuration.worker {
+                                            AttackMode::Worker
+                                        } else {
+                                            AttackMode::StandAlone
+                                        };
+
+                                        // @TODO: Enforce waiting for Workers to connect.
+                                        if self.prepare_load_test().is_ok() {
+                                            // Rebuild test plan in case any parameters have been changed.
+                                            self.set_attack_phase(
+                                                goose_attack_run_state,
+                                                AttackPhase::Increase,
+                                            );
+                                            self.reply_to_controller(
+                                                message,
+                                                ControllerResponseMessage::Bool(true),
+                                            );
+                                            // Reset the run state when starting a new load test.
+                                            self.reset_run_state(goose_attack_run_state).await?;
+                                            self.metrics.history.push(TestPlanHistory::step(
+                                                TestPlanStepAction::Increasing,
+                                                0,
+                                            ));
+                                        } else {
+                                            // Do not move to Starting phase if unable to prepare load test.
+                                            self.reply_to_controller(
+                                                message,
+                                                ControllerResponseMessage::Bool(false),
+                                            );
+                                        }
+                                    }
                                 }
                             } else {
                                 self.reply_to_controller(
@@ -890,6 +1008,140 @@ impl GooseAttack {
                                     "Controller didn't provide test_plan: {:#?}",
                                     &message.request
                                 );
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                            }
+                        }
+                        ControllerCommand::Manager => {
+                            if self.attack_phase == AttackPhase::Idle {
+                                // Toggle Manager mode.
+                                self.configuration.manager = if self.configuration.manager {
+                                    info!("manager mode disabled");
+                                    false
+                                } else {
+                                    // Alset disable Worker mode if enabled.
+                                    if self.configuration.worker {
+                                        info!("worker mode disabled");
+                                        self.configuration.worker = false;
+                                    }
+                                    info!("manager mode enabled");
+                                    true
+                                };
+                                // Update Gaggle configuration options.
+                                self.configuration.configure_gaggle(&self.defaults);
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                            }
+                        }
+                        ControllerCommand::ExpectWorkers => {
+                            // The controller uses a regular expression to validate that
+                            // this is a valid run time, so simply use it with further
+                            // validation.
+                            if let Some(expect_workers) = &message.request.value {
+                                // Can only change expect_workers when the load test is idle and in Manager mode.
+                                if self.attack_phase == AttackPhase::Idle
+                                    && self.configuration.manager
+                                {
+                                    // Use expect() as Controller uses regex to validate this is an integer.
+                                    let expect_workers = usize::from_str(expect_workers)
+                                        .expect("failed to convert string to usize");
+                                    if expect_workers == 0 {
+                                        info!(
+                                            "changing expect_workers from {:?} to None",
+                                            self.configuration.expect_workers
+                                        );
+                                        self.configuration.expect_workers = None;
+                                    } else {
+                                        info!(
+                                            "changing expect_workers from {:?} to {}",
+                                            self.configuration.expect_workers, expect_workers
+                                        );
+                                        self.configuration.expect_workers = Some(expect_workers);
+                                    }
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(true),
+                                    );
+                                } else {
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(false),
+                                    );
+                                    if self.configuration.manager {
+                                        info!("unable to configure expect_workers when load test is not idle");
+                                    } else {
+                                        info!("unable to configure expect_workers when not in manager mode");
+                                    }
+                                }
+                            } else {
+                                warn!(
+                                    "Controller didn't provide expect_workers: {:#?}",
+                                    &message.request
+                                );
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                            }
+                        }
+                        ControllerCommand::NoHashCheck => {
+                            if self.attack_phase == AttackPhase::Idle && self.configuration.manager
+                            {
+                                self.configuration.no_hash_check =
+                                    if self.configuration.no_hash_check {
+                                        info!("disabled no_hash_check");
+                                        false
+                                    } else {
+                                        info!("enabled no_hash_check");
+                                        true
+                                    };
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                                if self.configuration.manager {
+                                    info!("unable to configure expect_workers when load test is not idle");
+                                } else {
+                                    info!("unable to configure expect_workers when not in manager mode");
+                                }
+                            }
+                        }
+                        ControllerCommand::Worker => {
+                            if self.attack_phase == AttackPhase::Idle {
+                                // Toggle Worker mode.
+                                self.configuration.worker = if self.configuration.worker {
+                                    info!("worker mode disabled");
+                                    false
+                                } else {
+                                    // Disable Manager mode if enabled.
+                                    if self.configuration.manager {
+                                        info!("manager mode disabled");
+                                        self.configuration.manager = false;
+                                    }
+                                    info!("worker mode enabled");
+                                    true
+                                };
+                                // Update Gaggle configuration options.
+                                self.configuration.configure_gaggle(&self.defaults);
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(true),
+                                );
+                            } else {
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(false),
