@@ -60,6 +60,7 @@ mod worker;
 pub mod gaggle {
     pub mod common;
     pub mod manager;
+    pub mod worker;
 }
 
 use gumdrop::Options;
@@ -1919,6 +1920,9 @@ impl GooseAttack {
 
         // If enabled, spawn a manager thread.
         let (manager_handle, manager_tx) = self.configuration.setup_manager(&self.defaults).await?;
+
+        // If enabled, spawn a worker thread.
+        let (worker_handle, worker_tx) = self.configuration.setup_worker(&self.defaults).await?;
 
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;

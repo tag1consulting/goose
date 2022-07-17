@@ -34,16 +34,15 @@ impl GooseConfiguration {
         &mut self,
         defaults: &GooseDefaults,
     ) -> Result<(ManagerJoinHandle, ManagerTx), GooseError> {
-        //) -> Result<(GooseLoggerJoinHandle, GooseLoggerTx), GooseError> {
+        // Update the manager configuration, loading defaults if necessasry.
+        self.configure_manager(defaults);
+
         // There's no setup necessary if Manager mode is not enabled.
         if !self.manager {
             return Ok((None, None));
         }
 
-        // Update the manager configuration, loading defaults if necessasry.
-        self.configure_manager(defaults);
-
-        // Create an unbounded channel to allow the controller to manage the manager thread.
+        // Create an unbounded channel to allow the controller to manage the Manager thread.
         let (manager_tx, manager_rx): (
             flume::Sender<Option<ManagerMessage>>,
             flume::Receiver<Option<ManagerMessage>>,
