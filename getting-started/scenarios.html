@@ -1,0 +1,281 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Limiting Scenarios - The Goose Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../title-page.html">What Is Goose?</a></li><li class="chapter-item expanded affix "><a href="../requirements.html">Requirements</a></li><li class="chapter-item expanded affix "><a href="../glossary.html">Glossary</a></li><li class="chapter-item expanded "><a href="../getting-started/overview.html"><strong aria-hidden="true">1.</strong> Getting Started</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/creating.html"><strong aria-hidden="true">1.1.</strong> Creating A Load test</a></li><li class="chapter-item expanded "><a href="../getting-started/validation.html"><strong aria-hidden="true">1.2.</strong> Validating Requests</a></li><li class="chapter-item expanded "><a href="../getting-started/running.html"><strong aria-hidden="true">1.3.</strong> Running A Load Test</a></li><li class="chapter-item expanded "><a href="../getting-started/runtime-options.html"><strong aria-hidden="true">1.4.</strong> Run-Time Options</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/common.html"><strong aria-hidden="true">1.4.1.</strong> Common Options</a></li><li class="chapter-item expanded "><a href="../getting-started/test-plan.html"><strong aria-hidden="true">1.4.2.</strong> Test Plan</a></li><li class="chapter-item expanded "><a href="../getting-started/throttle.html"><strong aria-hidden="true">1.4.3.</strong> Throttle</a></li><li class="chapter-item expanded "><a href="../getting-started/scenarios.html" class="active"><strong aria-hidden="true">1.4.4.</strong> Limiting Scenarios</a></li><li class="chapter-item expanded "><a href="../getting-started/custom.html"><strong aria-hidden="true">1.4.5.</strong> Custom Options</a></li></ol></li><li class="chapter-item expanded "><a href="../getting-started/metrics.html"><strong aria-hidden="true">1.5.</strong> Metrics</a></li><li class="chapter-item expanded "><a href="../getting-started/tips.html"><strong aria-hidden="true">1.6.</strong> Tips</a></li></ol></li><li class="chapter-item expanded "><a href="../logging/overview.html"><strong aria-hidden="true">2.</strong> Logging</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../logging/requests.html"><strong aria-hidden="true">2.1.</strong> Request Log</a></li><li class="chapter-item expanded "><a href="../logging/transactions.html"><strong aria-hidden="true">2.2.</strong> Transaction Log</a></li><li class="chapter-item expanded "><a href="../logging/scenarios.html"><strong aria-hidden="true">2.3.</strong> Scenario Log</a></li><li class="chapter-item expanded "><a href="../logging/errors.html"><strong aria-hidden="true">2.4.</strong> Error Log</a></li><li class="chapter-item expanded "><a href="../logging/debug.html"><strong aria-hidden="true">2.5.</strong> Debug Log</a></li></ol></li><li class="chapter-item expanded "><a href="../controller/overview.html"><strong aria-hidden="true">3.</strong> Controllers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../controller/telnet.html"><strong aria-hidden="true">3.1.</strong> Telnet Controller</a></li><li class="chapter-item expanded "><a href="../controller/websocket.html"><strong aria-hidden="true">3.2.</strong> WebSocket Controller</a></li></ol></li><li class="chapter-item expanded "><a href="../gaggle/overview.html"><strong aria-hidden="true">4.</strong> Gaggle: Distributed Load Test</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../gaggle/manager.html"><strong aria-hidden="true">4.1.</strong> Manager</a></li><li class="chapter-item expanded "><a href="../gaggle/worker.html"><strong aria-hidden="true">4.2.</strong> Worker</a></li><li class="chapter-item expanded "><a href="../gaggle/config.html"><strong aria-hidden="true">4.3.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../gaggle/technical.html"><strong aria-hidden="true">4.4.</strong> Technical details</a></li></ol></li><li class="chapter-item expanded "><a href="../coordinated-omission/overview.html"><strong aria-hidden="true">5.</strong> Coordinated Omission</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../coordinated-omission/mitigation.html"><strong aria-hidden="true">5.1.</strong> Mitigation</a></li><li class="chapter-item expanded "><a href="../coordinated-omission/metrics.html"><strong aria-hidden="true">5.2.</strong> Metrics</a></li></ol></li><li class="chapter-item expanded "><a href="../config/overview.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../config/defaults.html"><strong aria-hidden="true">6.1.</strong> Defaults</a></li><li class="chapter-item expanded "><a href="../config/scheduler.html"><strong aria-hidden="true">6.2.</strong> Scheduling Scenarios And Transactions</a></li><li class="chapter-item expanded "><a href="../config/rustls.html"><strong aria-hidden="true">6.3.</strong> RustLS</a></li></ol></li><li class="chapter-item expanded "><a href="../example/overview.html"><strong aria-hidden="true">7.</strong> Examples</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../example/simple.html"><strong aria-hidden="true">7.1.</strong> Simple</a></li><li class="chapter-item expanded "><a href="../example/closure.html"><strong aria-hidden="true">7.2.</strong> Closure</a></li><li class="chapter-item expanded "><a href="../example/session.html"><strong aria-hidden="true">7.3.</strong> Session</a></li><li class="chapter-item expanded "><a href="../example/drupal-memcache.html"><strong aria-hidden="true">7.4.</strong> Drupal Memcache</a></li><li class="chapter-item expanded "><a href="../example/umami.html"><strong aria-hidden="true">7.5.</strong> Umami</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="limiting-which-scenarios-run"><a class="header" href="#limiting-which-scenarios-run">Limiting Which Scenarios Run</a></h1>
+<p>It can often be useful to run only a subset of the <a href="../glossary.html#scenario">Scenarios</a> defined by a load test. Instead of commenting them out in the source code and recompiling, the <code>--scenarios</code> run-time option allows you to dynamically control which Scenarios are running.</p>
+<h2 id="listing-scenarios-by-machine-name"><a class="header" href="#listing-scenarios-by-machine-name">Listing Scenarios By Machine Name</a></h2>
+<p>To ensure that each scenario has a unique name, you must use the machine name of the scenario when filtering which are running. For example, using the <a href="../example/umami.html">Umami example</a> enable the <code>--scenarios-list</code> flag:</p>
+<pre><code class="language-bash ignore">% cargo run --release --example umami -- --scenarios-list
+    Finished release [optimized] target(s) in 0.15s
+     Running `target/release/examples/umami --scenarios-list`
+05:24:03 [INFO] Output verbosity level: INFO
+05:24:03 [INFO] Logfile verbosity level: WARN
+05:24:03 [INFO] users defaulted to number of CPUs = 10
+05:24:03 [INFO] iterations = 0
+Scenarios:
+ - adminuser: (&quot;Admin user&quot;)
+ - anonymousenglishuser: (&quot;Anonymous English user&quot;)
+ - anonymousspanishuser: (&quot;Anonymous Spanish user&quot;)
+</code></pre>
+<blockquote>
+<p><strong>What Is A Machine Name:</strong> It is possible to name your Scenarios pretty much anything you want in your load test, including even using the same identical name for multiple Scenarios. A machine name ensures that you can still identify each Scenario uniquely, and without any special characters that can be difficult or insecure to pass through the command line. A machine name is made up of only the alphanumeric characters found in your Scenario's full name, and optionally with a number appended to differentiate between multiple Scenarios that would otherwise have the same name.</p>
+<p>In the following example, we have three very similarly named Scenarios. One simply has an extra white space between words. The second has an airplane emoticon in the name. Both the extra space and the airplane symbol are stripped away from the machine name as they are not alphanumerics, and instead <code>_1</code> and <code>_2</code> are appended to the end to differentiate:</p>
+<pre><code class="language-ignore">Scenarios:
+- loadtesttransactions: (&quot;LoadtestTransactions&quot;)
+- loadtesttransactions_1: (&quot;Loadtest Transactions&quot;)
+- loadtesttransactions_2: (&quot;LoadtestTransactions ✈️&quot;)
+
+</code></pre>
+</blockquote>
+<h2 id="running-scenarios-by-machine-name"><a class="header" href="#running-scenarios-by-machine-name">Running Scenarios By Machine Name</a></h2>
+<p>It is now possible to run any subset of the above scenarios by passing a comma separated list of machine names with the <code>--scenarios</code> run time option. Goose will match what you have typed against any machine name containing all or some of the typed text, so you do not have to type the full name. For example, to run only the two anonymous Scenarios, you could add <code>--scenarios anon</code>:</p>
+<pre><code class="language-bash ignore">% cargo run --release --example umami -- --hatch-rate 10 --scenarios anon
+    Finished release [optimized] target(s) in 0.15s
+     Running `target/release/examples/umami --hatch-rate 10 --scenarios anon`
+05:50:17 [INFO] Output verbosity level: INFO
+05:50:17 [INFO] Logfile verbosity level: WARN
+05:50:17 [INFO] users defaulted to number of CPUs = 10
+05:50:17 [INFO] hatch_rate = 10
+05:50:17 [INFO] iterations = 0
+05:50:17 [INFO] scenarios = Scenarios { active: [&quot;anon&quot;] }
+05:50:17 [INFO] host for Anonymous English user configured: https://drupal-9.ddev.site/
+05:50:17 [INFO] host for Anonymous Spanish user configured: https://drupal-9.ddev.site/
+05:50:17 [INFO] host for Admin user configured: https://drupal-9.ddev.site/
+05:50:17 [INFO] allocating transactions and scenarios with RoundRobin scheduler
+05:50:17 [INFO] initializing 10 user states...
+05:50:17 [INFO] WebSocket controller listening on: 0.0.0.0:5117
+05:50:17 [INFO] Telnet controller listening on: 0.0.0.0:5116
+05:50:17 [INFO] entering GooseAttack phase: Increase
+05:50:17 [INFO] launching user 1 from Anonymous Spanish user...
+05:50:18 [INFO] launching user 2 from Anonymous English user...
+05:50:18 [INFO] launching user 3 from Anonymous Spanish user...
+05:50:18 [INFO] launching user 4 from Anonymous English user...
+05:50:18 [INFO] launching user 5 from Anonymous Spanish user...
+05:50:18 [INFO] launching user 6 from Anonymous English user...
+05:50:18 [INFO] launching user 7 from Anonymous Spanish user...
+^C05:50:18 [WARN] caught ctrl-c, stopping...
+</code></pre>
+<p>Or, to run only the &quot;Anonymous Spanish user&quot; and &quot;Admin user&quot; Scenarios, you could add <code>--senarios &quot;spanish,admin&quot;</code>:</p>
+<pre><code class="language-bash ignore">% cargo run --release --example umami -- --hatch-rate 10 --scenarios &quot;spanish,admin&quot;
+   Compiling goose v0.16.3-dev (/Users/jandrews/devel/goose)
+    Finished release [optimized] target(s) in 11.79s
+     Running `target/release/examples/umami --hatch-rate 10 --scenarios spanish,admin`
+05:53:45 [INFO] Output verbosity level: INFO
+05:53:45 [INFO] Logfile verbosity level: WARN
+05:53:45 [INFO] users defaulted to number of CPUs = 10
+05:53:45 [INFO] hatch_rate = 10
+05:53:45 [INFO] iterations = 0
+05:53:45 [INFO] scenarios = Scenarios { active: [&quot;spanish&quot;, &quot;admin&quot;] }
+05:53:45 [INFO] host for Anonymous English user configured: https://drupal-9.ddev.site/
+05:53:45 [INFO] host for Anonymous Spanish user configured: https://drupal-9.ddev.site/
+05:53:45 [INFO] host for Admin user configured: https://drupal-9.ddev.site/
+05:53:45 [INFO] allocating transactions and scenarios with RoundRobin scheduler
+05:53:45 [INFO] initializing 10 user states...
+05:53:45 [INFO] Telnet controller listening on: 0.0.0.0:5116
+05:53:45 [INFO] WebSocket controller listening on: 0.0.0.0:5117
+05:53:45 [INFO] entering GooseAttack phase: Increase
+05:53:45 [INFO] launching user 1 from Anonymous Spanish user...
+05:53:45 [INFO] launching user 2 from Admin user...
+05:53:45 [INFO] launching user 3 from Anonymous Spanish user...
+05:53:45 [INFO] launching user 4 from Anonymous Spanish user...
+05:53:45 [INFO] launching user 5 from Anonymous Spanish user...
+05:53:45 [INFO] launching user 6 from Anonymous Spanish user...
+05:53:45 [INFO] launching user 7 from Anonymous Spanish user...
+05:53:45 [INFO] launching user 8 from Anonymous Spanish user...
+05:53:45 [INFO] launching user 9 from Anonymous Spanish user...
+05:53:46 [INFO] launching user 10 from Anonymous Spanish user...
+^C05:53:46 [WARN] caught ctrl-c, stopping...
+</code></pre>
+<p>When the load test completes, you can refer to the <a href="./metrics.html#scenarios">Scenario metrics</a> to confirm which Scenarios were enabled, and which were not.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../getting-started/throttle.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next" href="../getting-started/custom.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../getting-started/throttle.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next" href="../getting-started/custom.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../searcher.js" type="text/javascript" charset="utf-8"></script>
+
+        <script src="../clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </body>
+</html>
