@@ -1,7 +1,4 @@
 /// Worker-specific code.
-use std::time::Duration;
-use tokio::time::sleep;
-
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
 /// Optional join handle for worker thread, if enabled.
@@ -17,14 +14,14 @@ pub(crate) enum WorkerCommand {}
 #[derive(Debug)]
 pub(crate) struct WorkerMessage {
     /// The command that is being sent to the Worker.
-    pub command: WorkerCommand,
+    pub _command: WorkerCommand,
     /// An optional value that is being sent to the Worker.
-    pub value: Option<String>,
+    pub _value: Option<String>,
 }
 
 impl GooseConfiguration {
     // @TODO: move Worker configuration here.
-    pub(crate) fn configure_worker(&mut self, defaults: &GooseDefaults) {
+    pub(crate) fn configure_worker(&mut self, _defaults: &GooseDefaults) {
         //
     }
 
@@ -57,12 +54,14 @@ impl GooseConfiguration {
     /// Worker thread, coordiantes with Manager instanec.
     pub(crate) async fn worker_main(
         self: GooseConfiguration,
-        receiver: flume::Receiver<Option<WorkerMessage>>,
+        _receiver: flume::Receiver<Option<WorkerMessage>>,
     ) -> Result<(), GooseError> {
+        /*
         loop {
             debug!("top of worker loop...");
             sleep(Duration::from_millis(250)).await;
         }
+        */
 
         Ok(())
     }

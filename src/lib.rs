@@ -81,7 +81,7 @@ use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
-use crate::gaggle::manager::ManagerTx;
+use crate::gaggle::manager::{ManagerCommand, ManagerMessage, ManagerTx};
 use crate::goose::{GaggleUser, GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
@@ -336,7 +336,7 @@ struct GooseAttackRunState {
     /// the parent if they shut themselves down (for example if `--iterations` is reached).
     shutdown_rx: flume::Receiver<usize>,
     /// Optional unbounded receiver for manager thread, if enabled.
-    manager_tx: ManagerTx,
+    _manager_tx: ManagerTx,
     /// Optional unbounded receiver for logger thread, if enabled.
     logger_handle: GooseLoggerJoinHandle,
     /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
@@ -1025,39 +1025,35 @@ impl GooseAttack {
         self.metrics.hash = s.finish();
         debug!("hash: {}", self.metrics.hash);
 
-        // Start goose in manager mode.
-        if self.attack_mode == AttackMode::Manager {
-            #[cfg(feature = "gaggle")]
-            {
-                self = manager::manager_main(self).await;
-            }
+        // Setup Gaggle if enabled.
+        self.configuration.configure_manager(&self.defaults);
+        self.configuration.configure_worker(&self.defaults);
 
-            #[cfg(not(feature = "gaggle"))]
-            {
-                return Err(GooseError::FeatureNotEnabled {
-                    feature: "gaggle".to_string(), detail: "Load test must be recompiled with `--features gaggle` to start in manager mode.".to_string()
-                });
-            }
-        }
-        // Start goose in worker mode.
-        else if self.attack_mode == AttackMode::Worker {
-            #[cfg(feature = "gaggle")]
-            {
-                self = worker::worker_main(self).await;
-            }
+        // Launch manager thread if enabled.
+        let (_manager_join_handle, manager_tx) =
+            match self.configuration.setup_manager(&self.defaults).await {
+                Ok((h, t)) => (h, t),
+                Err(_) => (None, None),
+            };
 
-            #[cfg(not(feature = "gaggle"))]
-            {
-                return Err(GooseError::FeatureNotEnabled {
-                    feature: "gaggle".to_string(),
-                    detail: "Load test must be recompiled with `--features gaggle` to start in worker mode.".to_string(),
+        // Launch worker thread if enabled.
+        let _ = self.configuration.setup_worker(&self.defaults).await;
+
+        // --no-autostart not enabled, automatically start waiting for Worker instances.
+        if self.configuration.manager && !self.configuration.no_autostart {
+            if let Some(manager_tx) = manager_tx {
+                let _ = manager_tx.send(ManagerMessage {
+                    command: ManagerCommand::WaitForWorkers,
+                    _value: None,
                 });
+            } else {
+                // @TODO: Review how this is possible, provide better error handling.
+                panic!("Failed to start in Manager mode.")
             }
         }
-        // Start goose in single-process mode.
-        else {
-            self = self.start_attack().await?;
-        }
+
+        // Launch load test (@TODO: But what if this is a manger only?)
+        self = self.start_attack().await?;
 
         if self.metrics.display_metrics {
             info!(
@@ -1385,7 +1381,7 @@ impl GooseAttack {
             all_threads_shutdown_tx,
             metrics_rx,
             shutdown_rx,
-            manager_tx: None,
+            _manager_tx: None,
             logger_handle: None,
             all_threads_logger_tx: None,
             throttle_threads_tx: None,
@@ -1917,12 +1913,6 @@ impl GooseAttack {
             self.configuration.setup_loggers(&self.defaults).await?;
         goose_attack_run_state.logger_handle = logger_handle;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
-
-        // If enabled, spawn a manager thread.
-        let (manager_handle, manager_tx) = self.configuration.setup_manager(&self.defaults).await?;
-
-        // If enabled, spawn a worker thread.
-        let (worker_handle, worker_tx) = self.configuration.setup_worker(&self.defaults).await?;
 
         // If enabled, spawn a throttle thread.
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
