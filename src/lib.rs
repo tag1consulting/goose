@@ -45,8 +45,6 @@ pub mod controller;
 pub mod goose;
 mod graph;
 pub mod logger;
-#[cfg(feature = "gaggle")]
-mod manager;
 pub mod metrics;
 pub mod prelude;
 mod report;
@@ -54,8 +52,6 @@ mod test_plan;
 mod throttle;
 mod user;
 pub mod util;
-#[cfg(feature = "gaggle")]
-mod worker;
 
 pub mod gaggle {
     pub mod common;
@@ -65,8 +61,6 @@ pub mod gaggle {
 
 use gumdrop::Options;
 use lazy_static::lazy_static;
-#[cfg(feature = "gaggle")]
-use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
@@ -87,8 +81,6 @@ use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
-#[cfg(feature = "gaggle")]
-use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
 /// Constant defining Goose's default telnet Controller port.
 const DEFAULT_TELNET_PORT: &str = "5116";
@@ -1652,14 +1644,6 @@ impl GooseAttack {
             // Subtract 1 from len() as it starts at 1 while current starts at 0.
             && self.test_plan.current >= self.test_plan.steps.len() - 1
         {
-            // Load test is shutting down, update pipe handler so there is no panic
-            // when the Manager goes away.
-            #[cfg(feature = "gaggle")]
-            if self.attack_mode == AttackMode::Worker || self.attack_mode == AttackMode::Manager {
-                let manager = goose_attack_run_state.socket.clone().unwrap();
-                register_shutdown_pipe_handler(&manager);
-            }
-
             // If throttle is enabled, tell throttle thread the load test is over.
             if let Some(throttle_tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
                 let _ = throttle_tx.send(false);
@@ -1694,6 +1678,8 @@ impl GooseAttack {
                 let _received_message = self.receive_metrics(goose_attack_run_state, true).await?;
             }
 
+            /*
+            // @TODO: Replace with no feature.
             #[cfg(feature = "gaggle")]
             {
                 // As worker, push metrics up to manager.
@@ -1711,6 +1697,7 @@ impl GooseAttack {
                     // No need to reset local metrics, the worker is exiting.
                 }
             }
+            */
             // Stop any running GooseUser threads.
             self.stop_attack().await?;
             // Collect all metrics sent by GooseUser threads.

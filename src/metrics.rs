@@ -14,11 +14,6 @@ use crate::logger::GooseLog;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
-#[cfg(feature = "gaggle")]
-use crate::{
-    worker::{self, GaggleMetrics},
-    SHUTDOWN_GAGGLE,
-};
 use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
 use http::StatusCode;
@@ -2655,7 +2650,7 @@ impl GooseAttack {
     pub(crate) async fn sync_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
-        flush: bool,
+        _flush: bool,
     ) -> Result<(), GooseError> {
         if !self.configuration.no_metrics {
             // Check if we're displaying running metrics.
@@ -2671,6 +2666,7 @@ impl GooseAttack {
                 }
             }
 
+            /*
             // Load messages from user threads until the receiver queue is empty.
             let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
 
@@ -2703,6 +2699,7 @@ impl GooseAttack {
                     )?;
                 }
             }
+            */
         }
 
         // If enabled, display running metrics after sync
