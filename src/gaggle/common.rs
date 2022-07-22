@@ -21,3 +21,9 @@ pub enum GaggleCommands {
     //Scenario(ScenarioMetrics),
     //Transaction(TransactionMetrics),
 }
+
+/// Constant defining Goose's default port when running a Gaggle.
+pub(crate) const DEFAULT_GAGGLE_PORT: &str = "5115";
+
+/// Constant defining Goose's default manager_host when running a Gaggle.
+pub(crate) const DEFAULT_GAGGLE_HOST: &str = "127.0.0.1";

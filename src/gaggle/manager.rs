@@ -1,6 +1,7 @@
 /// Manager-specific code.
 use std::time::Duration;
 
+use crate::config::{GooseConfigure, GooseValue};
 use crate::util;
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
@@ -61,20 +62,243 @@ enum ManagerPhase {
 }
 
 impl GooseConfiguration {
-    // @TODO: move Manager configuration here.
-    pub(crate) fn configure_manager(&mut self, _defaults: &GooseDefaults) {
-        //
+    pub(crate) fn configure_manager(&mut self, defaults: &GooseDefaults) {
+        // Re-configure `users`, in case the AttackMode was changed.
+        self.users = self.get_value(vec![
+            // Use --users if set and not on Worker.
+            GooseValue {
+                value: self.users,
+                filter: self.worker,
+                message: "--users",
+            },
+            // Otherwise use GooseDefault if set and not on Worker.
+            GooseValue {
+                value: defaults.users,
+                filter: defaults.users.is_none() || self.worker,
+                message: "default users",
+            },
+            // Otherwise use detected number of CPUs if not on Worker.
+            GooseValue {
+                value: Some(num_cpus::get()),
+                filter: self.worker || self.test_plan.is_some(),
+                message: "users defaulted to number of CPUs",
+            },
+        ]);
+        // Configure `expect_workers`.
+        self.expect_workers = self.get_value(vec![
+            // Use --expect-workers if configured.
+            GooseValue {
+                value: self.expect_workers,
+                filter: self.expect_workers.is_none(),
+                message: "expect_workers",
+            },
+            // Use GooseDefault if not already set and not Worker.
+            GooseValue {
+                value: defaults.expect_workers,
+                filter: self.expect_workers.is_none() && self.worker,
+                message: "expect_workers",
+            },
+        ]);
+
+        // Configure `no_hash_check`.
+        self.no_hash_check = self
+            .get_value(vec![
+                // Use --no-hash_check if set.
+                GooseValue {
+                    value: Some(self.no_hash_check),
+                    filter: !self.no_hash_check,
+                    message: "no_hash_check",
+                },
+                // Use GooseDefault if not already set and not Worker.
+                GooseValue {
+                    value: defaults.no_hash_check,
+                    filter: defaults.no_hash_check.is_none() || self.worker,
+                    message: "no_hash_check",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Set `manager_bind_host` on Manager.
+        self.manager_bind_host = self
+            .get_value(vec![
+                // Use --manager-bind-host if configured.
+                GooseValue {
+                    value: Some(self.manager_bind_host.to_string()),
+                    filter: self.manager_bind_host.is_empty(),
+                    message: "manager_bind_host",
+                },
+                // Otherwise use default if set and on Manager.
+                GooseValue {
+                    value: defaults.manager_bind_host.clone(),
+                    filter: defaults.manager_bind_host.is_none() || !self.manager,
+                    message: "manager_bind_host",
+                },
+                // Otherwise default to 0.0.0.0 if on Manager.
+                GooseValue {
+                    value: Some("0.0.0.0".to_string()),
+                    filter: !self.manager,
+                    message: "manager_bind_host",
+                },
+            ])
+            .unwrap_or_else(|| "".to_string());
+
+        // Set `manager_bind_port` on Manager.
+        self.manager_bind_port = self
+            .get_value(vec![
+                // Use --manager-bind-port if configured.
+                GooseValue {
+                    value: Some(self.manager_bind_port),
+                    filter: self.manager_bind_port == 0,
+                    message: "manager_bind_port",
+                },
+                // Otherwise use default if set and on Manager.
+                GooseValue {
+                    value: defaults.manager_bind_port,
+                    filter: defaults.manager_bind_port.is_none() || !self.manager,
+                    message: "manager_bind_port",
+                },
+                // Otherwise default to DEFAULT_GAGGLE_PORT if on Manager.
+                GooseValue {
+                    value: Some(
+                        crate::gaggle::common::DEFAULT_GAGGLE_PORT
+                            .to_string()
+                            .parse()
+                            .unwrap(),
+                    ),
+                    filter: !self.manager,
+                    message: "manager_bind_port",
+                },
+            ])
+            .unwrap_or(0);
     }
 
-    // @TODO: it should be possible for the controller to reconfigure / make changes before load test starts.
-    // @TODO: This needs to be its own thread, allowing the controller to end it.
+    /// Validate configured [`GooseConfiguration`] values.
+    pub(crate) fn validate_manager(&self) -> Result<(), GooseError> {
+        // Validate nothing incompatible is enabled with --manager.
+        if self.manager {
+            // Don't allow --manager and --worker together.
+            if self.worker {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.manager` && `configuration.worker`".to_string(),
+                    value: "true".to_string(),
+                    detail: "Goose can not run as both Manager and Worker".to_string(),
+                });
+            } else if !self.debug_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.debug_log`".to_string(),
+                    value: self.debug_log.clone(),
+                    detail: "`configuration.debug_log` can not be set on the Manager.".to_string(),
+                });
+            } else if !self.error_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.error_log`".to_string(),
+                    value: self.error_log.clone(),
+                    detail: "`configuration.error_log` can not be set on the Manager.".to_string(),
+                });
+            } else if !self.request_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.request_log`".to_string(),
+                    value: self.request_log.clone(),
+                    detail: "`configuration.request_log` can not be set on the Manager."
+                        .to_string(),
+                });
+            } else if !self.transaction_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.transaction_log`".to_string(),
+                    value: self.transaction_log.clone(),
+                    detail: "`configuration.transaction_log` can not be set on the Manager."
+                        .to_string(),
+                });
+            } else if !self.scenario_log.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.scenario_log`".to_string(),
+                    value: self.scenario_log.clone(),
+                    detail: "`configuration.scenario_log` can not be set on the Manager."
+                        .to_string(),
+                });
+            } else if !self.report_file.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.report_file`".to_string(),
+                    value: self.report_file.to_string(),
+                    detail: "`configuration.report_file` can not be set on the Manager."
+                        .to_string(),
+                });
+            } else if self.no_granular_report {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_granular_report`".to_string(),
+                    value: true.to_string(),
+                    detail: "`configuration.no_granular_report` can not be set on the Manager."
+                        .to_string(),
+                });
+            } else if self.no_debug_body {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.no_debug_body`".to_string(),
+                    value: true.to_string(),
+                    detail: "`configuration.no_debug_body` can not be set on the Manager."
+                        .to_string(),
+                });
+            // Can not set `throttle_requests` on Manager.
+            } else if self.throttle_requests > 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.throttle_requests`".to_string(),
+                    value: self.throttle_requests.to_string(),
+                    detail: "`configuration.throttle_requests` can not be set on the Manager."
+                        .to_string(),
+                });
+            }
+            if let Some(expect_workers) = self.expect_workers.as_ref() {
+                // Must expect at least 1 Worker when running as Manager.
+                if expect_workers == &0 {
+                    return Err(GooseError::InvalidOption {
+                        option: "`configuration.expect_workers`".to_string(),
+                        value: expect_workers.to_string(),
+                        detail: "`configuration.expect_workers must be set to at least 1."
+                            .to_string(),
+                    });
+                }
+
+                // Must be at least 1 user per worker.
+                if let Some(users) = self.users.as_ref() {
+                    if expect_workers > users {
+                        return Err(GooseError::InvalidOption {
+                            option: "`configuration.expect_workers`".to_string(),
+                            value: expect_workers.to_string(),
+                            detail: "`configuration.expect_workers can not be set to a value larger than `configuration.users`.".to_string(),
+                        });
+                    }
+                } else {
+                    return Err(GooseError::InvalidOption {
+                        option: "`configuration.expect_workers`".to_string(),
+                        value: expect_workers.to_string(),
+                        detail: "`configuration.expect_workers can not be set without setting `configuration.users`.".to_string(),
+                    });
+                }
+            } else {
+                return Err(GooseError::InvalidOption {
+                    option: "configuration.manager".to_string(),
+                    value: true.to_string(),
+                    detail: "Manager mode requires --expect-workers be configured".to_string(),
+                });
+            }
+        } else {
+            // Don't allow `expect_workers` if not running as Manager.
+            if let Some(expect_workers) = self.expect_workers.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.expect_workers`".to_string(),
+                    value: expect_workers.to_string(),
+                    detail: "`configuration.expect_workers` can not be set unless on the Manager."
+                        .to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    // Spawn a Manager thread, provide a channel so it can be controlled by parent and/or Control;er thread.
     pub(crate) async fn setup_manager(
         &mut self,
-        defaults: &GooseDefaults,
     ) -> Result<(ManagerJoinHandle, ManagerTx), GooseError> {
-        // Update the manager configuration, loading defaults if necessasry.
-        self.configure_manager(defaults);
-
         // There's no setup necessary if Manager mode is not enabled.
         if !self.manager {
             return Ok((None, None));

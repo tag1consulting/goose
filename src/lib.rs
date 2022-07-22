@@ -961,7 +961,6 @@ impl GooseAttack {
 
         // Configure GooseConfiguration.
         self.configuration.configure(&self.defaults);
-        self.configuration.configure_gaggle(&self.defaults);
 
         // Validate GooseConfiguration.
         self.configuration.validate()?;
@@ -1017,19 +1016,14 @@ impl GooseAttack {
         self.metrics.hash = s.finish();
         debug!("hash: {}", self.metrics.hash);
 
-        // Setup Gaggle if enabled.
-        self.configuration.configure_manager(&self.defaults);
-        self.configuration.configure_worker(&self.defaults);
-
         // Launch manager thread if enabled.
-        let (_manager_join_handle, manager_tx) =
-            match self.configuration.setup_manager(&self.defaults).await {
-                Ok((h, t)) => (h, t),
-                Err(_) => (None, None),
-            };
+        let (_manager_join_handle, manager_tx) = match self.configuration.setup_manager().await {
+            Ok((h, t)) => (h, t),
+            Err(_) => (None, None),
+        };
 
         // Launch worker thread if enabled.
-        let _ = self.configuration.setup_worker(&self.defaults).await;
+        let _ = self.configuration.setup_worker().await;
 
         // --no-autostart not enabled, automatically start waiting for Worker instances.
         if self.configuration.manager && !self.configuration.no_autostart {

@@ -1021,7 +1021,7 @@ impl GooseAttack {
                                     info!("manager mode disabled");
                                     false
                                 } else {
-                                    // Alset disable Worker mode if enabled.
+                                    // Also disable Worker mode if enabled.
                                     if self.configuration.worker {
                                         info!("worker mode disabled");
                                         self.configuration.worker = false;
@@ -1030,7 +1030,8 @@ impl GooseAttack {
                                     true
                                 };
                                 // Update Gaggle configuration options.
-                                self.configuration.configure_gaggle(&self.defaults);
+                                self.configuration.configure_manager(&self.defaults);
+                                self.configuration.configure_worker(&self.defaults);
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(true),
@@ -1136,7 +1137,8 @@ impl GooseAttack {
                                     true
                                 };
                                 // Update Gaggle configuration options.
-                                self.configuration.configure_gaggle(&self.defaults);
+                                self.configuration.configure_manager(&self.defaults);
+                                self.configuration.configure_worker(&self.defaults);
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(true),
