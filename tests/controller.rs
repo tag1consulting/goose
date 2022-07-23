@@ -672,6 +672,18 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
+                ControllerCommand::Manager => {
+                    log::warn!("TODO: ControllerCommand::Manager");
+                }
+                ControllerCommand::ExpectWorkers => {
+                    log::warn!("TODO: ControllerCommand::ExpectWorkers");
+                }
+                ControllerCommand::NoHashCheck => {
+                    log::warn!("TODO: ControllerCommand::NoHashCheck");
+                }
+                ControllerCommand::Worker => {
+                    log::warn!("TODO: ControllerCommand::Worker");
+                }
             }
             // Flush the buffer.
             test_state.buf = [0; 2048];

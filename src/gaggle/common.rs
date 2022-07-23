@@ -12,6 +12,10 @@ pub enum GaggleCommand {
     WorkerIsReady,
 }
 
+pub enum GagglePhase {
+    WaitingForWorkers,
+}
+
 pub enum GaggleCommands {
     Control(GaggleCommand),
     Echo(GaggleEcho),

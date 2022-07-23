@@ -75,6 +75,7 @@ use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
+use crate::gaggle::common::GagglePhase;
 use crate::gaggle::manager::{ManagerCommand, ManagerMessage, ManagerTx};
 use crate::goose::{GaggleUser, GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
@@ -389,6 +390,8 @@ pub struct GooseAttack {
     attack_mode: AttackMode,
     /// Which phase the load test is currently operating in.
     attack_phase: AttackPhase,
+    // If running in a Gaggle, which phase the load test is currently operating in.
+    gaggle_phase: Option<GagglePhase>,
     /// Defines the order [`Scenario`](./goose/struct.Scenario.html)s and
     /// [`Transaction`](./goose/struct.Transaction.html)s are allocated.
     scheduler: GooseScheduler,
@@ -427,6 +430,7 @@ impl GooseAttack {
             configuration,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Idle,
+            gaggle_phase: None,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
             test_plan: TestPlan::new(),
@@ -464,6 +468,7 @@ impl GooseAttack {
             configuration,
             attack_mode: AttackMode::Undefined,
             attack_phase: AttackPhase::Idle,
+            gaggle_phase: None,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
             test_plan: TestPlan::new(),
@@ -993,6 +998,7 @@ impl GooseAttack {
         self.attack_mode = if self.configuration.manager {
             AttackMode::Manager
         } else if self.configuration.worker {
+            // @TODO: How to represent an instance running both Manager and Worker?
             AttackMode::Worker
         } else {
             AttackMode::StandAlone
@@ -1018,11 +1024,16 @@ impl GooseAttack {
 
         // Launch manager thread if enabled.
         let (_manager_join_handle, manager_tx) = match self.configuration.setup_manager().await {
-            Ok((h, t)) => (h, t),
+            Ok((h, t)) => {
+                // Initialize the Gaggle Phase we're currently in.
+                self.gaggle_phase = Some(GagglePhase::WaitingForWorkers);
+                (h, t)
+            }
             Err(_) => (None, None),
         };
 
         // Launch worker thread if enabled.
+        // @TODO: What if we're running as both Manager and Worker?
         let _ = self.configuration.setup_worker().await;
 
         // --no-autostart not enabled, automatically start waiting for Worker instances.
@@ -1812,12 +1823,19 @@ impl GooseAttack {
         let elapsed = self.step_elapsed() as usize;
 
         // Reset the test_plan to stop all users quickly.
-        self.test_plan.steps = vec![
-            // Record how many active users there are currently.
-            (goose_attack_run_state.active_users, elapsed),
-            // Record how long the attack ran in this step.
-            (0, 0),
-        ];
+        self.test_plan.steps = if goose_attack_run_state.active_users > 0 {
+            // There is an active load test running.
+            vec![
+                // Record how many active users there are currently.
+                (goose_attack_run_state.active_users, elapsed),
+                // Record how long the attack ran in this step.
+                (0, 0),
+            ]
+        } else {
+            // There is no active load test running.
+            vec![(0, 0)]
+        };
+
         // Reset the current step to what was happening when canceled.
         self.test_plan.current = 0;
 
@@ -1826,6 +1844,9 @@ impl GooseAttack {
 
         // Advance to the final decrease phase.
         self.advance_test_plan(goose_attack_run_state);
+
+        // @TODO: Special handling for a running Gaggle.
+        self.gaggle_phase = None;
 
         // Load test isn't just decreasing, it's canceling.
         self.metrics
@@ -1930,6 +1951,32 @@ impl GooseAttack {
         // The Goose parent process GooseAttack loop runs until Goose shuts down. Goose enters
         // the loop in AttackPhase::Idle, and exits in AttackPhase::Shutdown.
         loop {
+            // Check if running in Gaggle mode.
+            if let Some(gaggle_phase) = self.gaggle_phase.as_ref() {
+                match gaggle_phase {
+                    GagglePhase::WaitingForWorkers => {
+                        debug!("WAITING FOR WORKERS ...");
+
+                        // Gracefully exit loop if ctrl-c is caught.
+                        self.exit_gracefully(&mut goose_attack_run_state).await?;
+
+                        // Check if a Controller has made a request.
+                        self.handle_controller_requests(&mut goose_attack_run_state)
+                            .await?;
+
+                        // @TODO: determine if enough Workers have connected.
+
+                        // Wake up twice a second to check for events, and otherwise keep
+                        // waiting for workers.
+                        goose_attack_run_state.drift_timer = util::sleep_minus_drift(
+                            time::Duration::from_millis(500),
+                            goose_attack_run_state.drift_timer,
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+            }
             match self.attack_phase {
                 // In the Idle phase the Goose configuration can be changed by a Controller,
                 // and otherwise nothing happens but sleeping an checking for messages.
@@ -1997,52 +2044,61 @@ impl GooseAttack {
             self.handle_controller_requests(&mut goose_attack_run_state)
                 .await?;
 
-            let mut message = goose_attack_run_state.shutdown_rx.try_recv();
-            while message.is_ok() {
-                goose_attack_run_state
-                    .users_shutdown
-                    .insert(message.expect("failed to wrap OK message"));
-
-                // In Gaggle mode, the Worker starts a fraction of the users.
-                #[cfg(feature = "gaggle")]
-                if goose_attack_run_state.users_shutdown.len()
-                    == goose_attack_run_state.active_users
-                {
-                    // Pause to allow other Workers a chance to shut down cleanly as well.
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-                    self.cancel_attack(&mut goose_attack_run_state).await?;
-                }
-                // In Stand-alone mode, all users are started.
-                #[cfg(not(feature = "gaggle"))]
-                if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
-                    self.cancel_attack(&mut goose_attack_run_state).await?;
-                }
-
-                message = goose_attack_run_state.shutdown_rx.try_recv();
-            }
-
             // Gracefully exit loop if ctrl-c is caught.
-            if self.attack_phase != AttackPhase::Shutdown
-                && !goose_attack_run_state.canceling
-                && *CANCELED.read().unwrap()
-            {
-                // Shutdown after stopping as the load test was canceled.
-                goose_attack_run_state.shutdown_after_stop = true;
-
-                // No metrics to display when sitting idle, so disable.
-                if self.attack_phase == AttackPhase::Idle {
-                    self.metrics.display_metrics = false;
-                }
-
-                // Cleanly stop the load test.
-                self.cancel_attack(&mut goose_attack_run_state).await?;
-
-                // Load test is actively canceling.
-                goose_attack_run_state.canceling = true;
-            }
+            self.exit_gracefully(&mut goose_attack_run_state).await?;
         }
 
         Ok(self)
+    }
+
+    // Check if ctrl-c was caught or shutdown message was received, and if so exit gracefully.
+    async fn exit_gracefully(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        let mut message = goose_attack_run_state.shutdown_rx.try_recv();
+        while message.is_ok() {
+            goose_attack_run_state
+                .users_shutdown
+                .insert(message.expect("failed to wrap OK message"));
+
+            /*
+            // In Gaggle mode, the Worker starts a fraction of the users.
+            #[cfg(feature = "gaggle")]
+            if goose_attack_run_state.users_shutdown.len() == goose_attack_run_state.active_users {
+                // Pause to allow other Workers a chance to shut down cleanly as well.
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                self.cancel_attack(&mut goose_attack_run_state).await?;
+            }
+                 */
+            // In Stand-alone mode, all users are started.
+            if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
+                self.cancel_attack(goose_attack_run_state).await?;
+            }
+
+            message = goose_attack_run_state.shutdown_rx.try_recv();
+        }
+
+        if self.attack_phase != AttackPhase::Shutdown
+            && !goose_attack_run_state.canceling
+            && *CANCELED.read().unwrap()
+        {
+            // Shutdown after stopping as the load test was canceled.
+            goose_attack_run_state.shutdown_after_stop = true;
+
+            // No metrics to display when sitting idle, so disable.
+            if self.attack_phase == AttackPhase::Idle {
+                self.metrics.display_metrics = false;
+            }
+
+            // Cleanly stop the load test.
+            self.cancel_attack(goose_attack_run_state).await?;
+
+            // Load test is actively canceling.
+            goose_attack_run_state.canceling = true;
+        }
+
+        Ok(())
     }
 }
 
