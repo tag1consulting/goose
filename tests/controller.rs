@@ -684,6 +684,9 @@ async fn run_standalone_test(test_type: TestType) {
                 ControllerCommand::Worker => {
                     log::warn!("TODO: ControllerCommand::Worker");
                 }
+                ControllerCommand::WorkerConnect => {
+                    log::warn!("TODO: ControllerCommand::WorkerConnect");
+                }
             }
             // Flush the buffer.
             test_state.buf = [0; 2048];

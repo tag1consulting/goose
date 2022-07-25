@@ -4,6 +4,7 @@
 //! real-time control of the running load test.
 
 use crate::config::GooseConfiguration;
+use crate::gaggle::manager::{ManagerCommand, ManagerMessage};
 use crate::metrics::GooseMetrics;
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 use crate::util;
@@ -224,6 +225,8 @@ pub enum ControllerCommand {
     ///
     /// This command can be run at any time.
     MetricsJson,
+    /// Used by Worker instances to connect to a Manager instance.
+    WorkerConnect,
 }
 
 /// Defines details around identifying and processing ControllerCommands.
@@ -239,10 +242,10 @@ impl ControllerCommand {
     fn details(&self) -> ControllerCommandDetails {
         match self {
             ControllerCommand::Config => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "config",
                     description: "display load test configuration\n",
-                },
+                }),
                 regex: r"(?i)^config$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Config(config) = response {
@@ -253,10 +256,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::ConfigJson => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "config-json",
                     description: "display load test configuration in json format\n",
-                },
+                }),
                 regex: r"(?i)^(configjson|config-json)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Config(config) = response {
@@ -267,10 +270,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Exit => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "exit",
                     description: "exit controller\n\n",
-                },
+                }),
                 regex: r"(?i)^(exit|quit|q)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible EXIT command";
@@ -279,10 +282,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::HatchRate => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "hatchrate FLOAT",
                     description: "set per-second rate users hatch\n",
-                },
+                }),
                 regex: r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -293,10 +296,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Help => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "help",
                     description: "this help\n",
-                },
+                }),
                 regex: r"(?i)^(help|\?)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible HELP command";
@@ -305,10 +308,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Host => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "host HOST",
                     description: "set host to load test, (ie https://web.site/)\n",
-                },
+                }),
                 regex: r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -319,10 +322,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Manager => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "manager",
                     description: "toggle Manager mode\n",
-                },
+                }),
                 regex: r"(?i)^manager$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -333,10 +336,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::ExpectWorkers => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "expect-workers INT",
                     description: "set number of Workers to expect\n",
-                },
+                }),
                 regex: r"(?i)^(expect|expectworkers|expect_workers|expect-workers) ([0-9]+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -350,10 +353,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::NoHashCheck => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "no-hash-check",
                     description: "toggle no-hash-check\n",
-                },
+                }),
                 regex: r"(?i)^(no-hash-check|no_hash_check|nohashcheck)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -367,10 +370,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Worker => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "worker",
                     description: "toggle Worker mode\n\n",
-                },
+                }),
                 regex: r"(?i)^worker$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -381,10 +384,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Metrics => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "metrics",
                     description: "display metrics for current load test\n",
-                },
+                }),
                 regex: r"(?i)^(metrics|stats)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Metrics(metrics) = response {
@@ -396,11 +399,11 @@ impl ControllerCommand {
             },
             ControllerCommand::MetricsJson => {
                 ControllerCommandDetails {
-                    help: ControllerHelp {
+                    help: Some(ControllerHelp {
                         name: "metrics-json",
                         // No new-line as this is the last line of the help screen.
                         description: "display metrics for current load test in json format",
-                    },
+                    }),
                     regex: r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$",
                     process_response: Box::new(|response| {
                         if let ControllerResponseMessage::Metrics(metrics) = response {
@@ -412,10 +415,10 @@ impl ControllerCommand {
                 }
             }
             ControllerCommand::RunTime => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "runtime TIME",
                     description: "set how long to run test, (ie 1h30m5s)\n",
-                },
+                }),
                 regex: r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -426,10 +429,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Shutdown => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "shutdown",
                     description: "shutdown load test and exit controller\n\n",
-                },
+                }),
                 regex: r"(?i)^shutdown$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -441,10 +444,10 @@ impl ControllerCommand {
             },
             ControllerCommand::Start => {
                 ControllerCommandDetails {
-                    help: ControllerHelp {
+                    help: Some(ControllerHelp {
                         name: "start",
                         description: "start an idle load test\n",
-                    },
+                    }),
                     regex: r"(?i)^start$",
                     process_response: Box::new(|response| {
                         if let ControllerResponseMessage::Bool(true) = response {
@@ -456,10 +459,10 @@ impl ControllerCommand {
                 }
             }
             ControllerCommand::StartupTime => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "startup-time TIME",
                     description: "set total time to take starting users\n",
-                },
+                }),
                 regex: r"(?i)^(starttime|start_time|start-time|startup|startuptime|startup_time|startup-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -473,10 +476,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Stop => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "stop",
                     description: "stop a running load test and return to idle state\n",
-                },
+                }),
                 regex: r"(?i)^stop$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -487,10 +490,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::TestPlan => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "test-plan PLAN",
                     description: "define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
-                },
+                }),
                 regex: r"(?i)^(testplan|test_plan|test-plan|plan) (((\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)*;*)+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -501,16 +504,27 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Users => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "users INT",
                     description: "set number of simulated users\n",
-                },
+                }),
                 regex: r"(?i)^(users?) (\d+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
                         Ok("users configured".to_string())
                     } else {
                         Err("load test not idle, failed to reconfigure users".to_string())
+                    }
+                }),
+            },
+            ControllerCommand::WorkerConnect => ControllerCommandDetails {
+                help: None,
+                regex: r"^WORKER-CONNECT$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("worker connected".to_string())
+                    } else {
+                        Err("failed to connect worker".to_string())
                     }
                 }),
             },
@@ -561,13 +575,15 @@ impl ControllerCommand {
         .expect("failed to write to buffer");
         // Builds help screen in the order commands are defined in the ControllerCommand enum.
         for command in ControllerCommand::iter() {
-            write!(
-                &mut help_text,
-                "{:<19} {}",
-                command.details().help.name,
-                command.details().help.description
-            )
-            .expect("failed to write to buffer");
+            if command.details().help.is_some() {
+                write!(
+                    &mut help_text,
+                    "{:<19} {}",
+                    command.details().help.unwrap().name,
+                    command.details().help.unwrap().description,
+                )
+                .expect("failed to write to buffer");
+            }
         }
         String::from_utf8(help_text).expect("invalid utf-8 in help text")
     }
@@ -580,8 +596,7 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        // If the controller is enabled, check if we've received any
-        // messages.
+        // If the controller is enabled, check if we've received any messages.
         if let Some(c) = goose_attack_run_state.controller_channel_rx.as_ref() {
             match c.try_recv() {
                 Ok(message) => {
@@ -700,6 +715,9 @@ impl GooseAttack {
                             } else {
                                 self.cancel_attack(goose_attack_run_state).await?;
                             }
+
+                            // @TODO: Special handling for a running Gaggle?
+                            self.gaggle_phase = None;
 
                             // Shutdown after stopping.
                             goose_attack_run_state.shutdown_after_stop = true;
@@ -1150,6 +1168,38 @@ impl GooseAttack {
                                 );
                             }
                         }
+                        ControllerCommand::WorkerConnect => {
+                            // Verify running in Manager mode.
+                            if self.configuration.manager {
+                                // Verify expecting more Workers to connect.
+                                // @TODO: Validate connection before sending to the Manager.
+                                if goose_attack_run_state.gaggle_workers
+                                    < self.configuration.expect_workers.unwrap_or(0)
+                                {
+                                    if let Some(manager_tx) =
+                                        goose_attack_run_state.manager_tx.as_ref()
+                                    {
+                                        goose_attack_run_state.gaggle_workers += 1;
+                                        info!(
+                                            "Worker {} of {} connected.",
+                                            goose_attack_run_state.gaggle_workers,
+                                            self.configuration.expect_workers.unwrap_or(0)
+                                        );
+                                        let _ = manager_tx.send(ManagerMessage {
+                                            command: ManagerCommand::WorkerJoinRequest,
+                                            _value: None,
+                                            socket_for_manager: message.request.socket_for_manager,
+                                        });
+                                    } else {
+                                        panic!("WorkerConnect failure, failed to reference manager_tx.")
+                                    }
+                                } else {
+                                    warn!("WorkerConnect request ignored, all expected Workers already connected.")
+                                }
+                            } else {
+                                warn!("WorkerConnect request ignored, not in --manager mode.")
+                            }
+                        }
                         // These messages shouldn't be received here.
                         ControllerCommand::Help | ControllerCommand::Exit => {
                             warn!("Unexpected command: {:?}", &message.request);
@@ -1323,7 +1373,7 @@ pub(crate) struct ControllerHelp<'a> {
 /// recognized command worked correctly.
 pub(crate) struct ControllerCommandDetails<'a> {
     // The name and description of the controller command.
-    help: ControllerHelp<'a>,
+    help: Option<ControllerHelp<'a>>,
     // A [regular expression](https://docs.rs/regex/1.5.5/regex/struct.Regex.html) for
     // matching the command and option value.
     regex: &'a str,
@@ -1339,6 +1389,8 @@ pub(crate) struct ControllerRequestMessage {
     pub command: ControllerCommand,
     /// An optional value that is being sent to the parent.
     pub value: Option<String>,
+    /// An optional socket if this is a Worker connecting to a Manager.
+    pub socket_for_manager: Option<tokio::net::TcpStream>,
 }
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
@@ -1503,6 +1555,31 @@ impl ControllerState {
                     if let Ok(command_string) = self.get_command_string(buf).await {
                         // Extract the command and value in a generic way.
                         if let Ok(request_message) = self.get_match(command_string.trim()).await {
+                            // Workers using Telnet socket to connect to the Manager.
+                            if request_message.command == ControllerCommand::WorkerConnect {
+                                info!("Worker instance connecting ...");
+                                if request_message.command == ControllerCommand::WorkerConnect {
+                                    // A Worker is trying to connect, send the connection to the Parent.
+                                    if self
+                                        .channel_tx
+                                        .try_send(ControllerRequest {
+                                            response_channel: None,
+                                            client_id: self.thread_id,
+                                            request: ControllerRequestMessage {
+                                                command: ControllerCommand::WorkerConnect,
+                                                value: None,
+                                                socket_for_manager: Some(socket),
+                                            },
+                                        })
+                                        .is_err()
+                                    {
+                                        warn!("failed to send Worker socket to parent");
+                                    };
+                                    break;
+                                    // ELSE?
+                                }
+                            }
+
                             // Act on the commmand received.
                             if self.execute_command(&mut socket, request_message).await {
                                 // If execute_command returns true, it's time to exit.
@@ -1600,7 +1677,11 @@ impl ControllerState {
         // Extract value if there is one, otherwise will be None.
         let value: Option<String> = command.get_value(command_string);
 
-        Ok(ControllerRequestMessage { command, value })
+        Ok(ControllerRequestMessage {
+            command,
+            value,
+            socket_for_manager: None,
+        })
     }
 
     /// Process a request entirely within the Controller thread, without sending a message

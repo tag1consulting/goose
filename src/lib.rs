@@ -329,7 +329,7 @@ struct GooseAttackRunState {
     /// the parent if they shut themselves down (for example if `--iterations` is reached).
     shutdown_rx: flume::Receiver<usize>,
     /// Optional unbounded receiver for manager thread, if enabled.
-    _manager_tx: ManagerTx,
+    manager_tx: ManagerTx,
     /// Optional unbounded receiver for logger thread, if enabled.
     logger_handle: GooseLoggerJoinHandle,
     /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
@@ -366,6 +366,8 @@ struct GooseAttackRunState {
     shutdown_after_stop: bool,
     /// Whether or not the load test is currently canceling.
     canceling: bool,
+    /// If running in Manager mode, counts how many Workers are connected.
+    gaggle_workers: usize,
 }
 
 /// Global internal state for the load test.
@@ -1038,10 +1040,11 @@ impl GooseAttack {
 
         // --no-autostart not enabled, automatically start waiting for Worker instances.
         if self.configuration.manager && !self.configuration.no_autostart {
-            if let Some(manager_tx) = manager_tx {
+            if let Some(manager_tx) = manager_tx.as_ref() {
                 let _ = manager_tx.send(ManagerMessage {
                     command: ManagerCommand::WaitForWorkers,
                     _value: None,
+                    socket_for_manager: None,
                 });
             } else {
                 // @TODO: Review how this is possible, provide better error handling.
@@ -1050,7 +1053,7 @@ impl GooseAttack {
         }
 
         // Launch load test (@TODO: But what if this is a manger only?)
-        self = self.start_attack().await?;
+        self = self.start_attack(manager_tx).await?;
 
         if self.metrics.display_metrics {
             info!(
@@ -1346,7 +1349,10 @@ impl GooseAttack {
 
     // Create a GooseAttackRunState object and do all initialization required
     // to start a [`GooseAttack`](./struct.GooseAttack.html).
-    async fn initialize_attack(&mut self) -> Result<GooseAttackRunState, GooseError> {
+    async fn initialize_attack(
+        &mut self,
+        manager_tx: ManagerTx,
+    ) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
         // Create a single channel used to send metrics from GooseUser threads
@@ -1378,7 +1384,7 @@ impl GooseAttack {
             all_threads_shutdown_tx,
             metrics_rx,
             shutdown_rx,
-            _manager_tx: None,
+            manager_tx,
             logger_handle: None,
             all_threads_logger_tx: None,
             throttle_threads_tx: None,
@@ -1394,6 +1400,7 @@ impl GooseAttack {
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
+            gaggle_workers: 0,
         };
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
@@ -1845,7 +1852,7 @@ impl GooseAttack {
         // Advance to the final decrease phase.
         self.advance_test_plan(goose_attack_run_state);
 
-        // @TODO: Special handling for a running Gaggle.
+        // @TODO: Special handling for a running Gaggle?
         self.gaggle_phase = None;
 
         // Load test isn't just decreasing, it's canceling.
@@ -1940,11 +1947,11 @@ impl GooseAttack {
     }
 
     // Called internally in local-mode and gaggle-mode.
-    async fn start_attack(mut self) -> Result<GooseAttack, GooseError> {
+    async fn start_attack(mut self, manager_tx: ManagerTx) -> Result<GooseAttack, GooseError> {
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
         let mut goose_attack_run_state = self
-            .initialize_attack()
+            .initialize_attack(manager_tx)
             .await
             .expect("failed to initialize GooseAttackRunState");
 

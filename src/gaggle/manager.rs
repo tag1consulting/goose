@@ -1,5 +1,6 @@
 /// Manager-specific code.
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 
 use crate::config::{GooseConfigure, GooseValue};
 use crate::util;
@@ -15,6 +16,8 @@ pub(crate) type ManagerTx = Option<flume::Sender<ManagerMessage>>;
 pub(crate) enum ManagerCommand {
     // Gaggle is starting, wait for all Worker instances to connect.
     WaitForWorkers,
+    // Worker is requesting to join the Gaggle.
+    WorkerJoinRequest,
     // Exit
     _Exit,
 }
@@ -26,6 +29,8 @@ pub(crate) struct ManagerMessage {
     pub(crate) command: ManagerCommand,
     /// An optional value that is being sent to the Manager.
     pub(crate) _value: Option<String>,
+    /// An optional socket if this is a Worker connecting to a Manager.
+    pub socket_for_manager: Option<tokio::net::TcpStream>,
 }
 
 struct ManagerRunState {
@@ -313,6 +318,7 @@ impl GooseConfiguration {
         let configuration = self.clone();
         let manager_handle =
             tokio::spawn(async move { configuration.manager_main(manager_rx).await });
+
         // @TODO: return manager_tx thread to the controller (if there is a controller)
         Ok((Some(manager_handle), Some(manager_tx)))
     }
@@ -353,6 +359,19 @@ impl GooseConfiguration {
                                 info!("Manager is waiting for {} Workers.", expect_workers);
                             }
                             manager_run_state.phase = ManagerPhase::WaitForWorkers;
+                        }
+                        ManagerCommand::WorkerJoinRequest => {
+                            println!("MESSAGE: {:#?}", message);
+
+                            if message
+                                .socket_for_manager
+                                .unwrap()
+                                .write_all("WORKER CONNECTED, RESPONSE FROM MANAGER".as_bytes())
+                                .await
+                                .is_err()
+                            {
+                                warn!("failed to write data to socker");
+                            };
                         }
                         ManagerCommand::_Exit => {
                             info!("Manager is exiting.");
