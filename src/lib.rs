@@ -1043,8 +1043,7 @@ impl GooseAttack {
             if let Some(manager_tx) = manager_tx.as_ref() {
                 let _ = manager_tx.send(ManagerMessage {
                     command: ManagerCommand::WaitForWorkers,
-                    _value: None,
-                    socket_for_manager: None,
+                    value: None,
                 });
             } else {
                 // @TODO: Review how this is possible, provide better error handling.

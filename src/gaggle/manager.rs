@@ -27,10 +27,8 @@ pub(crate) enum ManagerCommand {
 pub(crate) struct ManagerMessage {
     /// The command that is being sent to the Manager.
     pub(crate) command: ManagerCommand,
-    /// An optional value that is being sent to the Manager.
-    pub(crate) _value: Option<String>,
     /// An optional socket if this is a Worker connecting to a Manager.
-    pub socket_for_manager: Option<tokio::net::TcpStream>,
+    pub(crate) value: Option<tokio::net::TcpStream>,
 }
 
 struct ManagerRunState {
@@ -364,7 +362,7 @@ impl GooseConfiguration {
                             println!("MESSAGE: {:#?}", message);
 
                             if message
-                                .socket_for_manager
+                                .value
                                 .unwrap()
                                 .write_all("WORKER CONNECTED, RESPONSE FROM MANAGER".as_bytes())
                                 .await

@@ -555,12 +555,12 @@ impl ControllerCommand {
     // the value.
     //
     // Returns Some(value) if the value is valid, otherwise returns None.
-    fn get_value(&self, command_string: &str) -> Option<String> {
+    fn get_value(&self, command_string: &str) -> Option<ControllerValue> {
         let regex = Regex::new(self.details().regex)
             .expect("ControllerCommand::details().regex returned invalid regex [2]");
         let caps = regex.captures(command_string).unwrap();
         let value = caps.get(2).map_or("", |m| m.as_str());
-        self.validate_value(value)
+        self.validate_value(value).map(ControllerValue::Text)
     }
 
     // Builds a help screen displayed when a controller receives the `help` command.
@@ -735,7 +735,7 @@ impl GooseAttack {
                                 // The controller uses a regular expression to validate that
                                 // this is a valid hostname, so simply use it with further
                                 // validation.
-                                if let Some(host) = &message.request.value {
+                                if let Some(ControllerValue::Text(host)) = &message.request.value {
                                     info!(
                                         "changing host from {:?} to {}",
                                         self.configuration.host, host
@@ -766,7 +766,7 @@ impl GooseAttack {
                             // The controller uses a regular expression to validate that
                             // this is a valid integer, so simply use it with further
                             // validation.
-                            if let Some(users) = &message.request.value {
+                            if let Some(ControllerValue::Text(users)) = &message.request.value {
                                 // Use expect() as Controller uses regex to validate this is an integer.
                                 let new_users = usize::from_str(users)
                                     .expect("failed to convert string to usize");
@@ -871,7 +871,8 @@ impl GooseAttack {
                             // The controller uses a regular expression to validate that
                             // this is a valid float, so simply use it with further
                             // validation.
-                            if let Some(hatch_rate) = &message.request.value {
+                            if let Some(ControllerValue::Text(hatch_rate)) = &message.request.value
+                            {
                                 // If startup_time was already set, unset it first.
                                 if !self.configuration.startup_time.is_empty() {
                                     info!(
@@ -903,7 +904,9 @@ impl GooseAttack {
                                 // The controller uses a regular expression to validate that
                                 // this is a valid startup time, so simply use it with further
                                 // validation.
-                                if let Some(startup_time) = &message.request.value {
+                                if let Some(ControllerValue::Text(startup_time)) =
+                                    &message.request.value
+                                {
                                     // If hatch_rate was already set, unset it first.
                                     if let Some(hatch_rate) = &self.configuration.hatch_rate {
                                         info!("resetting hatch_rate from {} to None", hatch_rate);
@@ -941,7 +944,7 @@ impl GooseAttack {
                             // The controller uses a regular expression to validate that
                             // this is a valid run time, so simply use it with further
                             // validation.
-                            if let Some(run_time) = &message.request.value {
+                            if let Some(ControllerValue::Text(run_time)) = &message.request.value {
                                 info!(
                                     "changing run_time from {:?} to {}",
                                     self.configuration.run_time, run_time
@@ -961,7 +964,7 @@ impl GooseAttack {
                             }
                         }
                         ControllerCommand::TestPlan => {
-                            if let Some(value) = &message.request.value {
+                            if let Some(ControllerValue::Text(value)) = &message.request.value {
                                 match value.parse::<TestPlan>() {
                                     Ok(t) => {
                                         // Switch the configuration to use the test plan.
@@ -1065,7 +1068,9 @@ impl GooseAttack {
                             // The controller uses a regular expression to validate that
                             // this is a valid run time, so simply use it with further
                             // validation.
-                            if let Some(expect_workers) = &message.request.value {
+                            if let Some(ControllerValue::Text(expect_workers)) =
+                                &message.request.value
+                            {
                                 // Can only change expect_workers when the load test is idle and in Manager mode.
                                 if self.attack_phase == AttackPhase::Idle
                                     && self.configuration.manager
@@ -1185,11 +1190,16 @@ impl GooseAttack {
                                             goose_attack_run_state.gaggle_workers,
                                             self.configuration.expect_workers.unwrap_or(0)
                                         );
-                                        let _ = manager_tx.send(ManagerMessage {
-                                            command: ManagerCommand::WorkerJoinRequest,
-                                            _value: None,
-                                            socket_for_manager: message.request.socket_for_manager,
-                                        });
+                                        if let Some(ControllerValue::Socket(socket)) =
+                                            message.request.value
+                                        {
+                                            let _ = manager_tx.send(ManagerMessage {
+                                                command: ManagerCommand::WorkerJoinRequest,
+                                                value: Some(socket),
+                                            });
+                                        } else {
+                                            panic!("WorkerConnect falure, failed to move telnet socket.");
+                                        }
                                     } else {
                                         panic!("WorkerConnect failure, failed to reference manager_tx.")
                                     }
@@ -1388,9 +1398,14 @@ pub(crate) struct ControllerRequestMessage {
     /// The command that is being sent to the parent.
     pub command: ControllerCommand,
     /// An optional value that is being sent to the parent.
-    pub value: Option<String>,
-    /// An optional socket if this is a Worker connecting to a Manager.
-    pub socket_for_manager: Option<tokio::net::TcpStream>,
+    pub value: Option<ControllerValue>,
+}
+
+/// Allows multiple types to be sent to the parent process.
+#[derive(Debug)]
+pub(crate) enum ControllerValue {
+    Text(String),
+    Socket(tokio::net::TcpStream),
 }
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
@@ -1567,8 +1582,7 @@ impl ControllerState {
                                             client_id: self.thread_id,
                                             request: ControllerRequestMessage {
                                                 command: ControllerCommand::WorkerConnect,
-                                                value: None,
-                                                socket_for_manager: Some(socket),
+                                                value: Some(ControllerValue::Socket(socket)),
                                             },
                                         })
                                         .is_err()
@@ -1675,13 +1689,9 @@ impl ControllerState {
         // Use FromStr to convert &str to ControllerCommand.
         let command: ControllerCommand = ControllerCommand::from_str(command_string)?;
         // Extract value if there is one, otherwise will be None.
-        let value: Option<String> = command.get_value(command_string);
+        let value: Option<ControllerValue> = command.get_value(command_string);
 
-        Ok(ControllerRequestMessage {
-            command,
-            value,
-            socket_for_manager: None,
-        })
+        Ok(ControllerRequestMessage { command, value })
     }
 
     /// Process a request entirely within the Controller thread, without sending a message
