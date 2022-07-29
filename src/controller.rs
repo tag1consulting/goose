@@ -5,6 +5,7 @@
 
 use crate::config::GooseConfiguration;
 use crate::gaggle::manager::{ManagerCommand, ManagerMessage};
+use crate::gaggle::worker::{WorkerCommand, WorkerMessage};
 use crate::metrics::GooseMetrics;
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 use crate::util;
@@ -705,6 +706,21 @@ impl GooseAttack {
                         }
                         // Stop the load test, and acknowledge request.
                         ControllerCommand::Shutdown => {
+                            // @TODO: Properly implement shutdown logic, also for Manager.
+                            if self.configuration.worker {
+                                if let Some(worker_tx) = goose_attack_run_state.worker_tx.as_ref() {
+                                    info!("Telling Worker to stop.",);
+                                    let _ = worker_tx.send(WorkerMessage {
+                                        command: WorkerCommand::Stop,
+                                        _value: None,
+                                    });
+                                } else {
+                                    warn!(
+                                        "Failed to unwrap worker_tx, unable to send Stop message."
+                                    )
+                                }
+                            }
+
                             // If load test is Idle, there are no metrics to display.
                             if self.attack_phase == AttackPhase::Idle {
                                 self.metrics.display_metrics = false;
@@ -1193,6 +1209,7 @@ impl GooseAttack {
                                         if let Some(ControllerValue::Socket(socket)) =
                                             message.request.value
                                         {
+                                            // Pass the Telnet socket to the Manager thread.
                                             let _ = manager_tx.send(ManagerMessage {
                                                 command: ManagerCommand::WorkerJoinRequest,
                                                 value: Some(socket),

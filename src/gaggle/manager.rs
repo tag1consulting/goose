@@ -32,6 +32,8 @@ pub(crate) struct ManagerMessage {
 }
 
 struct ManagerRunState {
+    /// Workers
+    workers: Vec<tokio::net::TcpStream>,
     /// Whether or not a message has been displayed indicating the Manager is currently idle.
     idle_status_displayed: bool,
     /// Which phase the Manager is currently operating in.
@@ -46,6 +48,7 @@ struct ManagerRunState {
 impl ManagerRunState {
     fn new(controller_rx: flume::Receiver<ManagerMessage>) -> ManagerRunState {
         ManagerRunState {
+            workers: Vec::new(),
             idle_status_displayed: false,
             phase: ManagerPhase::Idle,
             drift_timer: tokio::time::Instant::now(),
@@ -54,7 +57,6 @@ impl ManagerRunState {
     }
 }
 
-/// @TODO: Actually, remove the AttackPhase duplication: that shouldn't be handled differently.
 enum ManagerPhase {
     /// No Workers are connected, Gaggle can be configured.
     Idle,
@@ -317,7 +319,7 @@ impl GooseConfiguration {
         let manager_handle =
             tokio::spawn(async move { configuration.manager_main(manager_rx).await });
 
-        // @TODO: return manager_tx thread to the controller (if there is a controller)
+        // Return manager_tx thread for the (optional) controller thread.
         Ok((Some(manager_handle), Some(manager_tx)))
     }
 
@@ -359,17 +361,12 @@ impl GooseConfiguration {
                             manager_run_state.phase = ManagerPhase::WaitForWorkers;
                         }
                         ManagerCommand::WorkerJoinRequest => {
-                            println!("MESSAGE: {:#?}", message);
-
-                            if message
-                                .value
-                                .unwrap()
-                                .write_all("WORKER CONNECTED, RESPONSE FROM MANAGER".as_bytes())
-                                .await
-                                .is_err()
-                            {
+                            let mut socket = message.value.expect("failed to unwrap TcpSocket");
+                            if socket.write_all("OK\r\n".as_bytes()).await.is_err() {
                                 warn!("failed to write data to socker");
-                            };
+                            }
+                            // Store Worker socket for ongoing communications.
+                            manager_run_state.workers.push(socket);
                         }
                         ManagerCommand::_Exit => {
                             info!("Manager is exiting.");

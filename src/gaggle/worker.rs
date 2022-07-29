@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use crate::config::{GooseConfigure, GooseValue};
 use crate::metrics::GooseCoordinatedOmissionMitigation;
+use crate::util;
 /// Worker-specific code.
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
@@ -7,22 +10,62 @@ use crate::{GooseConfiguration, GooseDefaults, GooseError};
 pub(crate) type WorkerJoinHandle =
     Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
 /// Optional unbounded sender to worker thread, if enabled.
-pub(crate) type WorkerTx = Option<flume::Sender<Option<WorkerMessage>>>;
+pub(crate) type WorkerTx = Option<flume::Sender<WorkerMessage>>;
 
 #[derive(Debug)]
-pub(crate) enum WorkerCommand {}
+pub(crate) enum WorkerCommand {
+    ConnectToManager,
+    Stop,
+}
 
 /// This structure is used to control the Worker process.
 #[derive(Debug)]
 pub(crate) struct WorkerMessage {
     /// The command that is being sent to the Worker.
-    pub _command: WorkerCommand,
+    pub command: WorkerCommand,
     /// An optional value that is being sent to the Worker.
     pub _value: Option<String>,
 }
 
+struct WorkerRunState {
+    /// Whether or not a message has been displayed indicating the Worker is currently idle.
+    idle_status_displayed: bool,
+    /// Whether or not a message has been displayed indicating the Worker is currently connecting.
+    connecting_status_displayed: bool,
+    /// Which phase the Worker is currently operating in.
+    phase: WorkerPhase,
+    /// This variable accounts for time spent doing things which is then subtracted from
+    /// the time sleeping to avoid an unintentional drift in events that are supposed to
+    /// happen regularly.
+    drift_timer: tokio::time::Instant,
+    /// Receive messages from the Controller.
+    controller_rx: flume::Receiver<WorkerMessage>,
+}
+impl WorkerRunState {
+    fn new(controller_rx: flume::Receiver<WorkerMessage>) -> WorkerRunState {
+        WorkerRunState {
+            idle_status_displayed: false,
+            connecting_status_displayed: false,
+            phase: WorkerPhase::Idle,
+            drift_timer: tokio::time::Instant::now(),
+            controller_rx,
+        }
+    }
+}
+
+enum WorkerPhase {
+    /// Not connected to Manager, Worker instance is stand-alone and idle.
+    Idle,
+    /// Trying to connect to the Manager instance.
+    ConnectingToManager,
+    /// Connected to Manager instance, waiting for the go-ahead to start load test.
+    _WaitingForManager,
+    /// Active load test.
+    _Active,
+    Exit,
+}
+
 impl GooseConfiguration {
-    // @TODO: move Worker configuration here.
     pub(crate) fn configure_worker(&mut self, defaults: &GooseDefaults) {
         // Set `manager_host` on Worker.
         self.manager_host = self
@@ -264,28 +307,74 @@ impl GooseConfiguration {
         }
 
         // Create an unbounded channel to allow the controller to manage the Worker thread.
-        let (worker_tx, worker_rx): (
-            flume::Sender<Option<WorkerMessage>>,
-            flume::Receiver<Option<WorkerMessage>>,
-        ) = flume::unbounded();
+        let (worker_tx, worker_rx): (flume::Sender<WorkerMessage>, flume::Receiver<WorkerMessage>) =
+            flume::unbounded();
 
         let configuration = self.clone();
         let worker_handle = tokio::spawn(async move { configuration.worker_main(worker_rx).await });
-        // @TODO: return worker_tx thread to the controller (if there is a controller)
+
+        // Return worker_tx thread for the (optional) controller thread.
         Ok((Some(worker_handle), Some(worker_tx)))
     }
 
     /// Worker thread, coordiantes with Manager instanec.
     pub(crate) async fn worker_main(
         self: GooseConfiguration,
-        _receiver: flume::Receiver<Option<WorkerMessage>>,
+        receiver: flume::Receiver<WorkerMessage>,
     ) -> Result<(), GooseError> {
-        /*
+        // Initialze the Worker run state, used for the lifetime of this Worker instance.
+        let mut worker_run_state = WorkerRunState::new(receiver);
+
         loop {
-            debug!("top of worker loop...");
-            sleep(Duration::from_millis(250)).await;
+            info!("top of worker loop...");
+
+            match worker_run_state.phase {
+                // Display message when entering WorkerPhase::Idle, otherwise sleep waiting for a
+                // message from Parent or Controller thread.
+                WorkerPhase::Idle => {
+                    if !worker_run_state.idle_status_displayed {
+                        info!("Gaggle mode enabled, Worker is idle.");
+                        worker_run_state.idle_status_displayed = true;
+                    }
+                }
+                WorkerPhase::ConnectingToManager => {
+                    if !worker_run_state.connecting_status_displayed {
+                        info!("Worker is trying to connect.");
+                        worker_run_state.connecting_status_displayed = true;
+                    }
+                }
+                WorkerPhase::_WaitingForManager => {}
+                WorkerPhase::_Active => {}
+                WorkerPhase::Exit => {
+                    info!("Worker is exiting.");
+                    break;
+                }
+            }
+
+            // Process messages received from parent or Controller thread.
+            let sleep_duration = match worker_run_state.controller_rx.try_recv() {
+                Ok(message) => {
+                    match message.command {
+                        WorkerCommand::ConnectToManager => {
+                            worker_run_state.phase = WorkerPhase::ConnectingToManager;
+                        }
+                        WorkerCommand::Stop => {
+                            worker_run_state.phase = WorkerPhase::Exit;
+                        }
+                    }
+                    // Message received, fall through but do not sleep.
+                    Duration::ZERO
+                }
+                // No message, fall through and sleep to try again later.
+                Err(_) => Duration::from_millis(500),
+            };
+
+            // Wake up twice a second to handle messages and allow for a quick shutdown if the
+            // load test is canceled during startup.
+            debug!("sleeping {:?}...", sleep_duration);
+            worker_run_state.drift_timer =
+                util::sleep_minus_drift(sleep_duration, worker_run_state.drift_timer).await;
         }
-        */
 
         Ok(())
     }
