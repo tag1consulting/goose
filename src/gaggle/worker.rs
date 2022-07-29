@@ -7,10 +7,9 @@ use crate::util;
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
 /// Optional join handle for worker thread, if enabled.
-pub(crate) type WorkerJoinHandle =
-    Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
+pub(crate) type WorkerJoinHandle = tokio::task::JoinHandle<std::result::Result<(), GooseError>>;
 /// Optional unbounded sender to worker thread, if enabled.
-pub(crate) type WorkerTx = Option<flume::Sender<WorkerMessage>>;
+pub(crate) type WorkerTx = flume::Sender<WorkerMessage>;
 
 #[derive(Debug)]
 pub(crate) enum WorkerCommand {
@@ -22,9 +21,16 @@ pub(crate) enum WorkerCommand {
 #[derive(Debug)]
 pub(crate) struct WorkerMessage {
     /// The command that is being sent to the Worker.
-    pub command: WorkerCommand,
+    pub(crate) command: WorkerCommand,
     /// An optional value that is being sent to the Worker.
-    pub _value: Option<String>,
+    pub(crate) _value: Option<String>,
+}
+
+// Tracks the join_handle and send socket for Worker instance.
+#[derive(Debug)]
+pub(crate) struct WorkerConnection {
+    pub(crate) _join_handle: WorkerJoinHandle,
+    pub(crate) tx: WorkerTx,
 }
 
 struct WorkerRunState {
@@ -298,12 +304,10 @@ impl GooseConfiguration {
     }
 
     // Spawn a Worker thread, provide a channel so it can be controlled by parent and/or Control;er thread.
-    pub(crate) async fn setup_worker(
-        &mut self,
-    ) -> Result<(WorkerJoinHandle, WorkerTx), GooseError> {
+    pub(crate) async fn setup_worker(&mut self) -> Option<(WorkerJoinHandle, WorkerTx)> {
         // There's no setup necessary if Worker mode is not enabled.
         if !self.worker {
-            return Ok((None, None));
+            return None;
         }
 
         // Create an unbounded channel to allow the controller to manage the Worker thread.
@@ -314,7 +318,7 @@ impl GooseConfiguration {
         let worker_handle = tokio::spawn(async move { configuration.worker_main(worker_rx).await });
 
         // Return worker_tx thread for the (optional) controller thread.
-        Ok((Some(worker_handle), Some(worker_tx)))
+        Some((worker_handle, worker_tx))
     }
 
     /// Worker thread, coordiantes with Manager instanec.
@@ -326,7 +330,7 @@ impl GooseConfiguration {
         let mut worker_run_state = WorkerRunState::new(receiver);
 
         loop {
-            info!("top of worker loop...");
+            debug!("top of worker loop...");
 
             match worker_run_state.phase {
                 // Display message when entering WorkerPhase::Idle, otherwise sleep waiting for a

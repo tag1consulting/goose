@@ -7,10 +7,16 @@ use crate::util;
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
 /// Optional join handle for manager thread, if enabled.
-pub(crate) type ManagerJoinHandle =
-    Option<tokio::task::JoinHandle<std::result::Result<(), GooseError>>>;
+pub(crate) type ManagerJoinHandle = tokio::task::JoinHandle<std::result::Result<(), GooseError>>;
 /// Optional unbounded sender to manager thread, if enabled.
-pub(crate) type ManagerTx = Option<flume::Sender<ManagerMessage>>;
+pub(crate) type ManagerTx = flume::Sender<ManagerMessage>;
+
+// Tracks the join_handle and send socket for Worker instance.
+#[derive(Debug)]
+pub(crate) struct ManagerConnection {
+    pub(crate) _join_handle: ManagerJoinHandle,
+    pub(crate) tx: ManagerTx,
+}
 
 #[derive(Debug)]
 pub(crate) enum ManagerCommand {
@@ -301,12 +307,10 @@ impl GooseConfiguration {
     }
 
     // Spawn a Manager thread, provide a channel so it can be controlled by parent and/or Control;er thread.
-    pub(crate) async fn setup_manager(
-        &mut self,
-    ) -> Result<(ManagerJoinHandle, ManagerTx), GooseError> {
+    pub(crate) async fn setup_manager(&mut self) -> Option<(ManagerJoinHandle, ManagerTx)> {
         // There's no setup necessary if Manager mode is not enabled.
         if !self.manager {
-            return Ok((None, None));
+            return None;
         }
 
         // Create an unbounded channel to allow the controller to manage the Manager thread.
@@ -320,7 +324,7 @@ impl GooseConfiguration {
             tokio::spawn(async move { configuration.manager_main(manager_rx).await });
 
         // Return manager_tx thread for the (optional) controller thread.
-        Ok((Some(manager_handle), Some(manager_tx)))
+        Some((manager_handle, manager_tx))
     }
 
     /// Manager thread, coordinates Worker threads.

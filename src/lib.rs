@@ -76,8 +76,8 @@ use tokio::fs::File;
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
 use crate::gaggle::common::GagglePhase;
-use crate::gaggle::manager::{ManagerCommand, ManagerMessage, ManagerTx};
-use crate::gaggle::worker::{WorkerCommand, WorkerMessage, WorkerTx};
+use crate::gaggle::manager::{ManagerCommand, ManagerConnection, ManagerMessage};
+use crate::gaggle::worker::{WorkerCommand, WorkerConnection, WorkerMessage};
 use crate::goose::{GaggleUser, GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
@@ -330,9 +330,9 @@ struct GooseAttackRunState {
     /// the parent if they shut themselves down (for example if `--iterations` is reached).
     shutdown_rx: flume::Receiver<usize>,
     /// Optional unbounded sender for Manager thread, if enabled.
-    manager_tx: ManagerTx,
+    manager: Option<ManagerConnection>,
     /// Optional unbounded sender for Worker thread, if enabled.
-    worker_tx: WorkerTx,
+    worker: Option<WorkerConnection>,
     /// Optional handle for logger thread, to ensure clean shutdown includes writing all logs.
     logger_handle: GooseLoggerJoinHandle,
     /// Optional unbounded sender from all [`GooseUser`](./goose/struct.GooseUser.html)s
@@ -1028,30 +1028,35 @@ impl GooseAttack {
         debug!("hash: {}", self.metrics.hash);
 
         // Launch manager thread if enabled.
-        let (_manager_join_handle, manager_tx) = match self.configuration.setup_manager().await {
-            Ok((h, t)) => {
-                // Initialize the Gaggle Phase we're currently in.
+        let manager = match self.configuration.setup_manager().await {
+            Some((h, t)) => {
                 self.gaggle_phase = Some(GagglePhase::WaitingForWorkers);
-                (h, t)
+                Some(ManagerConnection {
+                    _join_handle: h,
+                    tx: t,
+                })
             }
-            Err(_) => (None, None),
+            None => None,
         };
 
         // Launch worker thread if enabled.
-        let (_worker_join_handle, worker_tx) = match self.configuration.setup_worker().await {
-            Ok((h, t)) => {
+        let worker = match self.configuration.setup_worker().await {
+            Some((h, t)) => {
                 self.gaggle_phase = Some(GagglePhase::WaitingForWorkers);
-                (h, t)
+                Some(WorkerConnection {
+                    _join_handle: h,
+                    tx: t,
+                })
             }
-            Err(_) => (None, None),
+            None => None,
         };
 
         // When --no-autostart not enabled, automatically start ...
         if !self.configuration.no_autostart {
             // Autostart Manager.
             if self.configuration.manager {
-                if let Some(manager_tx) = manager_tx.as_ref() {
-                    let _ = manager_tx.send(ManagerMessage {
+                if let Some(manager) = manager.as_ref() {
+                    let _ = manager.tx.send(ManagerMessage {
                         command: ManagerCommand::WaitForWorkers,
                         value: None,
                     });
@@ -1063,8 +1068,8 @@ impl GooseAttack {
 
             // Autostart Worker.
             if self.configuration.worker {
-                if let Some(worker_tx) = worker_tx.as_ref() {
-                    let _ = worker_tx.send(WorkerMessage {
+                if let Some(connection) = worker.as_ref() {
+                    let _ = connection.tx.send(WorkerMessage {
                         command: WorkerCommand::ConnectToManager,
                         _value: None,
                     });
@@ -1076,7 +1081,7 @@ impl GooseAttack {
         }
 
         // Launch load test.
-        self = self.start_attack(manager_tx, worker_tx).await?;
+        self = self.start_attack(manager, worker).await?;
 
         if self.metrics.display_metrics {
             info!(
@@ -1374,8 +1379,8 @@ impl GooseAttack {
     // to start a [`GooseAttack`](./struct.GooseAttack.html).
     async fn initialize_attack(
         &mut self,
-        manager_tx: ManagerTx,
-        worker_tx: WorkerTx,
+        manager: Option<ManagerConnection>,
+        worker: Option<WorkerConnection>,
     ) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
@@ -1408,8 +1413,8 @@ impl GooseAttack {
             all_threads_shutdown_tx,
             metrics_rx,
             shutdown_rx,
-            manager_tx,
-            worker_tx,
+            manager,
+            worker,
             logger_handle: None,
             all_threads_logger_tx: None,
             throttle_threads_tx: None,
@@ -1974,13 +1979,13 @@ impl GooseAttack {
     // Called internally in local-mode and gaggle-mode.
     async fn start_attack(
         mut self,
-        manager_tx: ManagerTx,
-        worker_tx: WorkerTx,
+        manager: Option<ManagerConnection>,
+        worker: Option<WorkerConnection>,
     ) -> Result<GooseAttack, GooseError> {
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
         let mut goose_attack_run_state = self
-            .initialize_attack(manager_tx, worker_tx)
+            .initialize_attack(manager, worker)
             .await
             .expect("failed to initialize GooseAttackRunState");
 

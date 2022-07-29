@@ -708,9 +708,9 @@ impl GooseAttack {
                         ControllerCommand::Shutdown => {
                             // @TODO: Properly implement shutdown logic, also for Manager.
                             if self.configuration.worker {
-                                if let Some(worker_tx) = goose_attack_run_state.worker_tx.as_ref() {
+                                if let Some(worker) = goose_attack_run_state.worker.as_ref() {
                                     info!("Telling Worker to stop.",);
-                                    let _ = worker_tx.send(WorkerMessage {
+                                    let _ = worker.tx.send(WorkerMessage {
                                         command: WorkerCommand::Stop,
                                         _value: None,
                                     });
@@ -1197,9 +1197,7 @@ impl GooseAttack {
                                 if goose_attack_run_state.gaggle_workers
                                     < self.configuration.expect_workers.unwrap_or(0)
                                 {
-                                    if let Some(manager_tx) =
-                                        goose_attack_run_state.manager_tx.as_ref()
-                                    {
+                                    if let Some(manager) = goose_attack_run_state.manager.as_ref() {
                                         goose_attack_run_state.gaggle_workers += 1;
                                         info!(
                                             "Worker {} of {} connected.",
@@ -1210,7 +1208,7 @@ impl GooseAttack {
                                             message.request.value
                                         {
                                             // Pass the Telnet socket to the Manager thread.
-                                            let _ = manager_tx.send(ManagerMessage {
+                                            let _ = manager.tx.send(ManagerMessage {
                                                 command: ManagerCommand::WorkerJoinRequest,
                                                 value: Some(socket),
                                             });
