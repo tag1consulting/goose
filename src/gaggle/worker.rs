@@ -1,4 +1,7 @@
-use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio::time::{sleep, Duration};
+//use tokio::io::AsyncWriteExt;
+use std::io;
 
 use crate::config::{GooseConfigure, GooseValue};
 use crate::metrics::GooseCoordinatedOmissionMitigation;
@@ -10,6 +13,10 @@ use crate::{GooseConfiguration, GooseDefaults, GooseError};
 pub(crate) type WorkerJoinHandle = tokio::task::JoinHandle<std::result::Result<(), GooseError>>;
 /// Optional unbounded sender to worker thread, if enabled.
 pub(crate) type WorkerTx = flume::Sender<WorkerMessage>;
+
+type SocketBuffer = [u8; 1024];
+
+const MAX_CONNECTION_ATTEMPTS: u8 = 25;
 
 #[derive(Debug)]
 pub(crate) enum WorkerCommand {
@@ -36,8 +43,10 @@ pub(crate) struct WorkerConnection {
 struct WorkerRunState {
     /// Whether or not a message has been displayed indicating the Worker is currently idle.
     idle_status_displayed: bool,
-    /// Whether or not a message has been displayed indicating the Worker is currently connecting.
-    connecting_status_displayed: bool,
+    /// Whether or Worker has successfully connected to Manager instance.
+    connected_to_manager: bool,
+    /// @TODO How many times
+    connection_attempts: u8,
     /// Which phase the Worker is currently operating in.
     phase: WorkerPhase,
     /// This variable accounts for time spent doing things which is then subtracted from
@@ -46,15 +55,19 @@ struct WorkerRunState {
     drift_timer: tokio::time::Instant,
     /// Receive messages from the Controller.
     controller_rx: flume::Receiver<WorkerMessage>,
+    /// Connection to Manager.
+    stream: Option<TcpStream>,
 }
 impl WorkerRunState {
     fn new(controller_rx: flume::Receiver<WorkerMessage>) -> WorkerRunState {
         WorkerRunState {
             idle_status_displayed: false,
-            connecting_status_displayed: false,
+            connected_to_manager: false,
+            connection_attempts: 0,
             phase: WorkerPhase::Idle,
             drift_timer: tokio::time::Instant::now(),
             controller_rx,
+            stream: None,
         }
     }
 }
@@ -329,6 +342,9 @@ impl GooseConfiguration {
         // Initialze the Worker run state, used for the lifetime of this Worker instance.
         let mut worker_run_state = WorkerRunState::new(receiver);
 
+        // Sleep 1 second to give Manager time to start, if started at the same time.
+        sleep(Duration::from_secs(1)).await;
+
         loop {
             debug!("top of worker loop...");
 
@@ -342,10 +358,49 @@ impl GooseConfiguration {
                     }
                 }
                 WorkerPhase::ConnectingToManager => {
-                    if !worker_run_state.connecting_status_displayed {
-                        info!("Worker is trying to connect.");
-                        worker_run_state.connecting_status_displayed = true;
+                    if !worker_run_state.connected_to_manager {
+                        if worker_run_state.connection_attempts == 0
+                            || worker_run_state.connection_attempts % 5 == 0
+                        {
+                            info!("Worker connecting to {{}}.");
+                        }
+
+                        if worker_run_state.connection_attempts >= MAX_CONNECTION_ATTEMPTS {
+                            // @TODO: If --no-autostart go back to idle mode.
+                            warn!("failed to connect to Manager");
+                            break;
+                        }
+
+                        // Only try so many times before giving up.
+                        worker_run_state.connection_attempts += 1;
+
+                        // Actually try to connect.
+                        worker_run_state.stream = match TcpStream::connect("127.0.0.1:5116").await {
+                            Ok(s) => {
+                                worker_run_state.connected_to_manager = true;
+                                Some(s)
+                            }
+                            Err(e) => {
+                                if worker_run_state.connection_attempts % 5 == 0 {
+                                    warn!(
+                                        "Worker failed to connect to Manager ({} of {} attempts): {}",
+                                        worker_run_state.connection_attempts,
+                                        MAX_CONNECTION_ATTEMPTS,
+                                        e
+                                    );
+                                }
+                                None
+                            }
+                        };
                     }
+                    if let Some(stream) = worker_run_state.stream.as_ref() {
+                        if let Ok(Some(message)) = read_buffer(stream) {
+                            if message.starts_with("goose>") {
+                                info!("Got `goose>` prompt!");
+                            }
+                            println!("{}", message);
+                        }
+                    };
                 }
                 WorkerPhase::_WaitingForManager => {}
                 WorkerPhase::_Active => {}
@@ -381,5 +436,38 @@ impl GooseConfiguration {
         }
 
         Ok(())
+    }
+}
+
+fn read_buffer(stream: &TcpStream) -> Result<Option<String>, &str> {
+    let mut socket_buffer: SocketBuffer = [0; 1024];
+
+    match stream.try_read(&mut socket_buffer) {
+        Ok(n) => {
+            if n == 0 {
+                return Err("Worker disconnected");
+            }
+            let message = match std::str::from_utf8(&socket_buffer) {
+                Ok(m) => {
+                    if let Some(c) = m.lines().next() {
+                        c
+                    } else {
+                        ""
+                    }
+                }
+                Err(e) => {
+                    info!("ignoring unexpected input from Manager: {}", e);
+                    ""
+                }
+            };
+            Ok(Some(message.to_string()))
+        }
+        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+            Err("io::ErrorKind::WouldBlock - @TODO wtf is this?")
+        }
+        Err(e) => {
+            warn!("unexpected read error: {}", e);
+            Ok(None)
+        }
     }
 }
