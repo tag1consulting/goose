@@ -12,35 +12,35 @@ keywords = ["loadtesting", "performance", "web", "framework", "tool"]
 license = "Apache-2.0"
 
 [dependencies]
-async-trait = "0.1"
-chrono = "0.4"
-ctrlc = "3.1"
+async-trait = "0.1.57"
+chrono = "0.4.19"
+ctrlc = "3.2.2"
 downcast-rs = "1.2.0"
-flume = "0.10"
-futures = "0.3"
-gumdrop = "0.8"
-http = "0.2"
-itertools = "0.10"
-lazy_static = "1.4"
-log = "0.4"
-num_cpus = "1.0"
-num-format = "0.4"
-rand = "0.8"
-regex = "1"
-reqwest = { version = "0.11",  default-features = false, features = [
+flume = "0.10.14"
+futures = "0.3.21"
+gumdrop = "0.8.1"
+http = "0.2.8"
+itertools = "0.10.3"
+lazy_static = "1.4.0"
+log = "0.4.17"
+num_cpus = "1.13.1"
+num-format = "0.4.0"
+rand = "0.8.5"
+regex = "1.6.0"
+reqwest = { version = "0.11.11", default-features = false, features = [
     "cookies",
     "gzip",
     "json",
 ] }
-serde = { version = "1.0", features = [
+serde = { version = "1.0.141", features = [
     "derive",
 ] }
-serde_cbor = "0.11"
-serde_json = "1.0"
-simplelog = "0.10"
-strum = "0.24"
-strum_macros = "0.24"
-tokio = { version = "~1.15.0", features = [
+serde_cbor = "0.11.2"
+serde_json = "1.0.82"
+simplelog = "0.12.0"
+strum = "0.24.1"
+strum_macros = "0.24.2"
+tokio = { version = "1.15.0", features = [
     "fs",
     "io-util",
     "macros",
@@ -49,24 +49,24 @@ tokio = { version = "~1.15.0", features = [
     "time",
     "sync",
 ] }
-tokio-tungstenite = "0.15"
-tungstenite = "0.15"
-url = "2"
+tokio-tungstenite = "0.17.2"
+tungstenite = "0.17.3"
+url = "2.2.2"
 
 # optional dependencies
-nng = { version = "1.0", optional = true }
+nng = { version = "1.0.1", optional = true }
 
 [features]
 default = ["reqwest/default-tls"]
 gaggle = ["nng"]
-rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls-tls"]
+rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls-tls-native-roots"]
 
 [build-dependencies]
-rustc_version = "0.4"
+rustc_version = "0.4.0"
 
 [dev-dependencies]
-httpmock = "0.6"
-native-tls = "0.2"
-nix = "0.24"
-rustls = "0.19"
-serial_test = "0.5"
+httpmock = "0.6.6"
+native-tls = "0.2.10"
+nix = "0.24.2"
+rustls = "0.20.6"
+serial_test = "0.8.0"
