@@ -375,7 +375,12 @@ impl GooseConfiguration {
                         worker_run_state.connection_attempts += 1;
 
                         // Actually try to connect.
-                        worker_run_state.stream = match TcpStream::connect("127.0.0.1:5116").await {
+                        worker_run_state.stream = match TcpStream::connect(format!(
+                            "{}:{}",
+                            self.manager_host, self.manager_port
+                        ))
+                        .await
+                        {
                             Ok(s) => {
                                 worker_run_state.connected_to_manager = true;
                                 Some(s)
@@ -396,9 +401,8 @@ impl GooseConfiguration {
                     if let Some(stream) = worker_run_state.stream.as_ref() {
                         if let Ok(Some(message)) = read_buffer(stream) {
                             if message.starts_with("goose>") {
-                                info!("Got `goose>` prompt!");
+                                info!("Got `goose>` prompt.");
                             }
-                            println!("{}", message);
                         }
                     };
                 }

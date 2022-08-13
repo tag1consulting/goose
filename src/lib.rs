@@ -85,10 +85,22 @@ use crate::metrics::{GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 
 /// Constant defining Goose's default telnet Controller port.
-const DEFAULT_TELNET_PORT: &str = "5116";
+const DEFAULT_TELNET_PORT: &str = "5115";
+
+/// Constant defining Goose's default Worker telnet Controller port.
+///
+/// A Manager instance and a Worker instance may be run on the same server, so use a
+/// different port.
+const DEFAULT_WORKER_TELNET_PORT: &str = "5116";
 
 /// Constant defining Goose's default WebSocket Controller port.
 const DEFAULT_WEBSOCKET_PORT: &str = "5117";
+
+/// Constant defining Goose's default Worker WebSocket Controller port.
+///
+/// A Manager instance and a Worker instance may be run on the same server, so use a
+/// different port.
+const DEFAULT_WORKER_WEBSOCKET_PORT: &str = "5118";
 
 lazy_static! {
     // WORKER_ID is used to identify different works when running a gaggle.
@@ -1265,8 +1277,11 @@ impl GooseAttack {
             if self.configuration.telnet_port == 0 {
                 self.configuration.telnet_port = if let Some(port) = self.defaults.telnet_port {
                     port
-                } else {
+                } else if self.attack_mode != AttackMode::Worker {
                     DEFAULT_TELNET_PORT.to_string().parse().unwrap()
+                } else {
+                    // Start Worker on an alternative port.
+                    DEFAULT_WORKER_TELNET_PORT.to_string().parse().unwrap()
                 };
             }
 
@@ -1296,8 +1311,11 @@ impl GooseAttack {
                 self.configuration.websocket_port = if let Some(port) = self.defaults.websocket_port
                 {
                     port
-                } else {
+                } else if self.attack_mode != AttackMode::Worker {
                     DEFAULT_WEBSOCKET_PORT.to_string().parse().unwrap()
+                } else {
+                    // Start Worker on an alternative port.
+                    DEFAULT_WORKER_WEBSOCKET_PORT.to_string().parse().unwrap()
                 };
             }
 
