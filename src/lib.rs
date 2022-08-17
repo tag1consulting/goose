@@ -257,7 +257,7 @@ impl From<tokio::task::JoinError> for GooseError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// A [`GooseAttack`](./struct.GooseAttack.html) load test operates in one (and only one)
 /// of the following modes.
 pub enum AttackMode {
@@ -271,7 +271,7 @@ pub enum AttackMode {
     Worker,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// A [`GooseAttack`](./struct.GooseAttack.html) load test moves through each of the following
 /// phases during a complete load test.
 pub enum AttackPhase {
@@ -287,7 +287,7 @@ pub enum AttackPhase {
     Shutdown,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Used to define the order [`Scenario`](./goose/struct.Scenario.html)s and
 /// [`Transaction`](./goose/struct.Transaction.html)s are allocated.
 ///
