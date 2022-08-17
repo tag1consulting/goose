@@ -41,7 +41,7 @@ use tokio_tungstenite::tungstenite::Message;
 ///  3. Add any necessary parent process logic for the command to
 ///    `GooseAttack::handle_controller_requests` (also in this file).
 ///  4. Add a test for the new command in tests/controller.rs.
-#[derive(Clone, Debug, EnumIter, PartialEq)]
+#[derive(Clone, Debug, EnumIter, PartialEq, Eq)]
 pub enum ControllerCommand {
     /// Displays a list of all commands supported by the Controller.
     ///
@@ -1012,21 +1012,21 @@ impl FromStr for ControllerCommand {
         let matches: Vec<_> = commands.matches(s).into_iter().collect();
         // This happens any time the controller receives an invalid command.
         if matches.is_empty() {
-            return Err(GooseError::InvalidControllerCommand {
+            Err(GooseError::InvalidControllerCommand {
                 detail: format!("unrecognized controller command: '{}'.", s),
-            });
+            })
         // This shouldn't ever happen, but if it does report all available information.
         } else if matches.len() > 1 {
             let mut matched_commands = Vec::new();
             for index in matches {
                 matched_commands.push(keys[index].clone())
             }
-            return Err(GooseError::InvalidControllerCommand {
+            Err(GooseError::InvalidControllerCommand {
                 detail: format!(
                     "matched multiple controller commands: '{}' ({:?}).",
                     s, matched_commands
                 ),
-            });
+            })
         // Only one command matched.
         } else {
             Ok(keys[*matches.first().unwrap()].clone())

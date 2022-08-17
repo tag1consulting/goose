@@ -81,7 +81,7 @@ fn validate_one_scenario(
     // Confirm that we loaded the index roughly three times as much as the about page.
     let one_third_index = mock_endpoints[INDEX_KEY].hits() / 3;
     let difference = mock_endpoints[ABOUT_KEY].hits() as i32 - one_third_index as i32;
-    assert!(difference >= -2 && difference <= 2);
+    assert!((-2..=2).contains(&difference));
 
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics

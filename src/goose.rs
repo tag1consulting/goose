@@ -652,7 +652,7 @@ impl Scenario {
 
 /// Commands sent from the parent thread to the user threads, and from the manager to the
 /// worker processes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GooseUserCommand {
     /// Tell worker process to pause load test.
     Wait,
@@ -663,7 +663,7 @@ pub enum GooseUserCommand {
 }
 
 /// Supported HTTP methods.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Ord, PartialOrd)]
 pub enum GooseMethod {
     Delete,
     Get,
@@ -3293,7 +3293,7 @@ mod tests {
 
     #[test]
     fn test_set_session_data() {
-        #[derive(Debug, PartialEq, Clone)]
+        #[derive(Debug, PartialEq, Eq, Clone)]
         struct CustomSessionData {
             data: String,
         }

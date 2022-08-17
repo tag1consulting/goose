@@ -206,7 +206,7 @@ fn validate_closer_test(
     // Confirm that we loaded the index roughly three times as much as the about page.
     let one_third_index = index.hits() / 3;
     let difference = about.hits() as i32 - one_third_index as i32;
-    assert!(difference >= -2 && difference <= 2);
+    assert!((-2..=2).contains(&difference));
 
     // Verify that Goose started the correct number of users.
     assert!(goose_metrics.total_users == configuration.users.unwrap());
