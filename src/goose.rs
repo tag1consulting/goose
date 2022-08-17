@@ -1572,7 +1572,7 @@ impl GooseUser {
 
         // Record the complete client request, included in the request log and the debug log.
         let raw_request = GooseRawRequest::new(
-            request.method.clone(),
+            goose_method_from_method(built_request.method().clone())?,
             built_request.url().as_str(),
             headers,
             body,
