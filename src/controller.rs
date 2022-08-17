@@ -520,7 +520,7 @@ impl ControllerCommand {
             },
             ControllerCommand::WorkerConnect => ControllerCommandDetails {
                 help: None,
-                regex: r"^WORKER-CONNECT$",
+                regex: r"^(WORKER-CONNECT) (\d+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
                         Ok("worker connected".to_string())
@@ -1193,32 +1193,58 @@ impl GooseAttack {
                             // Verify running in Manager mode.
                             if self.configuration.manager {
                                 // Verify expecting more Workers to connect.
-                                // @TODO: Validate connection before sending to the Manager.
                                 if goose_attack_run_state.gaggle_workers
                                     < self.configuration.expect_workers.unwrap_or(0)
                                 {
                                     if let Some(manager) = goose_attack_run_state.manager.as_ref() {
-                                        goose_attack_run_state.gaggle_workers += 1;
-                                        info!(
-                                            "Worker {} of {} connected.",
-                                            goose_attack_run_state.gaggle_workers,
-                                            self.configuration.expect_workers.unwrap_or(0)
-                                        );
-                                        if let Some(ControllerValue::Socket(socket)) =
+                                        if let Some(ControllerValue::Socket(worker_connection)) =
                                             message.request.value
                                         {
-                                            // Pass the Telnet socket to the Manager thread.
-                                            let _ = manager.tx.send(ManagerMessage {
-                                                command: ManagerCommand::WorkerJoinRequest,
-                                                value: Some(socket),
-                                            });
+                                            // Use expect() as Controller uses regex to validate this is an integer.
+                                            let worker_hash =
+                                                u64::from_str(&worker_connection.hash)
+                                                    .expect("failed to convert string to usize");
+                                            if worker_hash != self.metrics.hash
+                                                && !self.configuration.no_hash_check
+                                            {
+                                                /*
+                                                self.reply_to_controller(
+                                                    message,
+                                                    ControllerResponseMessage::Bool(false),
+                                                );
+                                                 */
+                                                warn!("WorkerConnect request ignored, Worker hash {} does not match Manager hash {}, enable --no-hash-check to ignore.", worker_hash, self.metrics.hash)
+                                            } else {
+                                                if worker_hash != self.metrics.hash {
+                                                    warn!("Ignoring that Worker hash {} does not match Manager hash {} because --no-hash-check is enabled.", worker_hash, self.metrics.hash)
+                                                } else {
+                                                    warn!("Valid hash: {}", worker_hash);
+                                                }
+                                                goose_attack_run_state.gaggle_workers += 1;
+                                                info!(
+                                                    "Worker {} of {} connected.",
+                                                    goose_attack_run_state.gaggle_workers,
+                                                    self.configuration.expect_workers.unwrap_or(0)
+                                                );
+                                                // Pass the Telnet socket to the Manager thread.
+                                                let _ = manager.tx.send(ManagerMessage {
+                                                    command: ManagerCommand::WorkerJoinRequest,
+                                                    value: Some(worker_connection.socket),
+                                                });
+                                            }
                                         } else {
-                                            panic!("WorkerConnect falure, failed to move telnet socket.");
+                                            warn!("Whoops !?");
+                                            //panic!("Whoops!?");
                                         }
                                     } else {
                                         panic!("WorkerConnect failure, failed to reference manager_tx.")
                                     }
                                 } else {
+                                    // @TODO: Can we return a helpful error?
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(false),
+                                    );
                                     warn!("WorkerConnect request ignored, all expected Workers already connected.")
                                 }
                             } else {
@@ -1416,11 +1442,17 @@ pub(crate) struct ControllerRequestMessage {
     pub value: Option<ControllerValue>,
 }
 
+#[derive(Debug)]
+pub(crate) struct WorkerConnection {
+    hash: String,
+    socket: tokio::net::TcpStream,
+}
+
 /// Allows multiple types to be sent to the parent process.
 #[derive(Debug)]
 pub(crate) enum ControllerValue {
     Text(String),
-    Socket(tokio::net::TcpStream),
+    Socket(WorkerConnection),
 }
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
@@ -1585,6 +1617,14 @@ impl ControllerState {
                     if let Ok(command_string) = self.get_command_string(buf).await {
                         // Extract the command and value in a generic way.
                         if let Ok(request_message) = self.get_match(command_string.trim()).await {
+                            let hash = if let Some(ControllerValue::Text(hash)) =
+                                request_message.value.as_ref()
+                            {
+                                // Clone the value.
+                                hash.to_string()
+                            } else {
+                                unreachable!("Hash must exist, enforced by regex");
+                            };
                             // Workers using Telnet socket to connect to the Manager.
                             if request_message.command == ControllerCommand::WorkerConnect {
                                 info!("Worker instance connecting ...");
@@ -1597,7 +1637,9 @@ impl ControllerState {
                                             client_id: self.thread_id,
                                             request: ControllerRequestMessage {
                                                 command: ControllerCommand::WorkerConnect,
-                                                value: Some(ControllerValue::Socket(socket)),
+                                                value: Some(ControllerValue::Socket(
+                                                    WorkerConnection { hash, socket },
+                                                )),
                                             },
                                         })
                                         .is_err()

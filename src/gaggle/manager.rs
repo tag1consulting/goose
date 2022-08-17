@@ -69,7 +69,7 @@ enum ManagerPhase {
     /// Workers are connecting to the Manager, Gaggle can not be reconfigured.
     WaitForWorkers,
     /// All Workers are connected and the load test is ready.
-    _Active,
+    Active,
 }
 
 impl GooseConfiguration {
@@ -347,8 +347,12 @@ impl GooseConfiguration {
                         manager_run_state.idle_status_displayed = true;
                     }
                 }
-                ManagerPhase::WaitForWorkers => {}
-                ManagerPhase::_Active => {}
+                ManagerPhase::WaitForWorkers => {
+                    // @TODO: Keepalive? Timeout?
+                }
+                ManagerPhase::Active => {
+                    // @TODO: Actually start the load test.
+                }
             }
 
             // Process messages received from parent or Controller thread.
@@ -358,7 +362,7 @@ impl GooseConfiguration {
                         ManagerCommand::WaitForWorkers => {
                             let expect_workers = self.expect_workers.unwrap_or(0);
                             if expect_workers == 1 {
-                                info!("Manager is waiting for {} Worker.", expect_workers);
+                                info!("Manager is waiting for 1 Worker.");
                             } else {
                                 info!("Manager is waiting for {} Workers.", expect_workers);
                             }
@@ -371,6 +375,16 @@ impl GooseConfiguration {
                             }
                             // Store Worker socket for ongoing communications.
                             manager_run_state.workers.push(socket);
+
+                            if let Some(expect_workers) = self.expect_workers {
+                                if manager_run_state.workers.len() == self.expect_workers.unwrap() {
+                                    info!(
+                                        "All {} Workers have connected, starting the load test.",
+                                        expect_workers
+                                    );
+                                    manager_run_state.phase = ManagerPhase::Active;
+                                }
+                            }
                         }
                         ManagerCommand::_Exit => {
                             info!("Manager is exiting.");

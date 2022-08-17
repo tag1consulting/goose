@@ -1,7 +1,7 @@
+use std::io;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::time::{sleep, Duration};
-//use tokio::io::AsyncWriteExt;
-use std::io;
 
 use crate::config::{GooseConfigure, GooseValue};
 use crate::metrics::GooseCoordinatedOmissionMitigation;
@@ -40,15 +40,25 @@ pub(crate) struct WorkerConnection {
     pub(crate) tx: WorkerTx,
 }
 
+enum ConnectionState {
+    WaitForPrompt,
+    WaitForOk,
+    Connected,
+}
+
 struct WorkerRunState {
     /// Whether or not a message has been displayed indicating the Worker is currently idle.
     idle_status_displayed: bool,
     /// Whether or Worker has successfully connected to Manager instance.
     connected_to_manager: bool,
-    /// @TODO How many times
+    /// @TODO: Connection status
+    connection_state: Option<ConnectionState>,
+    /// A counter tracking how many times the Worker has attempted to connect to the Manager.
     connection_attempts: u8,
     /// Which phase the Worker is currently operating in.
     phase: WorkerPhase,
+    /// Whether or not a message has been displayed indicating the Worker is ready and waiting.
+    waiting_status_displayed: bool,
     /// This variable accounts for time spent doing things which is then subtracted from
     /// the time sleeping to avoid an unintentional drift in events that are supposed to
     /// happen regularly.
@@ -63,8 +73,10 @@ impl WorkerRunState {
         WorkerRunState {
             idle_status_displayed: false,
             connected_to_manager: false,
+            connection_state: None,
             connection_attempts: 0,
             phase: WorkerPhase::Idle,
+            waiting_status_displayed: false,
             drift_timer: tokio::time::Instant::now(),
             controller_rx,
             stream: None,
@@ -78,7 +90,7 @@ enum WorkerPhase {
     /// Trying to connect to the Manager instance.
     ConnectingToManager,
     /// Connected to Manager instance, waiting for the go-ahead to start load test.
-    _WaitingForManager,
+    WaitingForManager,
     /// Active load test.
     _Active,
     Exit,
@@ -317,7 +329,7 @@ impl GooseConfiguration {
     }
 
     // Spawn a Worker thread, provide a channel so it can be controlled by parent and/or Control;er thread.
-    pub(crate) async fn setup_worker(&mut self) -> Option<(WorkerJoinHandle, WorkerTx)> {
+    pub(crate) async fn setup_worker(&mut self, hash: u64) -> Option<(WorkerJoinHandle, WorkerTx)> {
         // There's no setup necessary if Worker mode is not enabled.
         if !self.worker {
             return None;
@@ -328,7 +340,8 @@ impl GooseConfiguration {
             flume::unbounded();
 
         let configuration = self.clone();
-        let worker_handle = tokio::spawn(async move { configuration.worker_main(worker_rx).await });
+        let worker_handle =
+            tokio::spawn(async move { configuration.worker_main(worker_rx, hash).await });
 
         // Return worker_tx thread for the (optional) controller thread.
         Some((worker_handle, worker_tx))
@@ -338,6 +351,7 @@ impl GooseConfiguration {
     pub(crate) async fn worker_main(
         self: GooseConfiguration,
         receiver: flume::Receiver<WorkerMessage>,
+        hash: u64,
     ) -> Result<(), GooseError> {
         // Initialze the Worker run state, used for the lifetime of this Worker instance.
         let mut worker_run_state = WorkerRunState::new(receiver);
@@ -347,6 +361,9 @@ impl GooseConfiguration {
 
         loop {
             debug!("top of worker loop...");
+
+            // @TODO: How to detect that the socket is dropped?
+            // @TODO: Add a timeout.
 
             match worker_run_state.phase {
                 // Display message when entering WorkerPhase::Idle, otherwise sleep waiting for a
@@ -362,7 +379,10 @@ impl GooseConfiguration {
                         if worker_run_state.connection_attempts == 0
                             || worker_run_state.connection_attempts % 5 == 0
                         {
-                            info!("Worker connecting to {{}}.");
+                            info!(
+                                "Worker connecting to {}:{}.",
+                                self.manager_host, self.manager_port
+                            );
                         }
 
                         if worker_run_state.connection_attempts >= MAX_CONNECTION_ATTEMPTS {
@@ -383,6 +403,8 @@ impl GooseConfiguration {
                         {
                             Ok(s) => {
                                 worker_run_state.connected_to_manager = true;
+                                worker_run_state.connection_state =
+                                    Some(ConnectionState::WaitForPrompt);
                                 Some(s)
                             }
                             Err(e) => {
@@ -398,16 +420,53 @@ impl GooseConfiguration {
                             }
                         };
                     }
-                    if let Some(stream) = worker_run_state.stream.as_ref() {
+                    if let Some(stream) = worker_run_state.stream.as_mut() {
                         if let Ok(Some(message)) = read_buffer(stream) {
-                            if message.starts_with("goose>") {
-                                info!("Got `goose>` prompt.");
+                            if let Some(connection_state) =
+                                worker_run_state.connection_state.as_ref()
+                            {
+                                match connection_state {
+                                    ConnectionState::WaitForPrompt => {
+                                        if message.starts_with("goose>") {
+                                            info!("Got `goose>` prompt.");
+                                            worker_run_state.connection_state =
+                                                Some(ConnectionState::WaitForOk);
+                                            stream
+                                                .write_all(
+                                                    format!("WORKER-CONNECT {}\n", hash).as_bytes(),
+                                                )
+                                                .await?;
+                                        } else {
+                                            panic!("Failed to get `goose>` prompt: @TODO: handle this more gracefully.");
+                                        }
+                                    }
+                                    ConnectionState::WaitForOk => {
+                                        if message.starts_with("OK") {
+                                            info!("Got OK.");
+                                            worker_run_state.connection_state =
+                                                Some(ConnectionState::Connected);
+                                            worker_run_state.phase = WorkerPhase::WaitingForManager;
+                                        } else {
+                                            panic!("Failed to get OK: @TODO: handle this more gracefully.");
+                                        }
+                                    }
+                                    _ => {
+                                        unreachable!("We should not be here.");
+                                    }
+                                }
                             }
                         }
                     };
                 }
-                WorkerPhase::_WaitingForManager => {}
-                WorkerPhase::_Active => {}
+                WorkerPhase::WaitingForManager => {
+                    if !worker_run_state.waiting_status_displayed {
+                        info!("Standing by, waiting for Manager to start the load test...");
+                        worker_run_state.waiting_status_displayed = true;
+                    }
+                }
+                WorkerPhase::_Active => {
+                    info!("Let's get this party started!");
+                }
                 WorkerPhase::Exit => {
                     info!("Worker is exiting.");
                     break;

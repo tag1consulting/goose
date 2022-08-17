@@ -1052,7 +1052,7 @@ impl GooseAttack {
         };
 
         // Launch worker thread if enabled.
-        let worker = match self.configuration.setup_worker().await {
+        let worker = match self.configuration.setup_worker(self.metrics.hash).await {
             Some((h, t)) => {
                 self.gaggle_phase = Some(GagglePhase::WaitingForWorkers);
                 Some(WorkerConnection {
