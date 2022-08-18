@@ -1245,6 +1245,7 @@ impl GooseUser {
         // POST request.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Post)
+            .path(path)
             .set_request_builder(reqwest_request_builder.body(body))
             .build();
 
@@ -1290,6 +1291,7 @@ impl GooseUser {
         // POST form request.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Post)
+            .path(path)
             .set_request_builder(reqwest_request_builder.form(&form))
             .build();
 
@@ -1338,6 +1340,7 @@ impl GooseUser {
         // POST json request.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Post)
+            .path(path)
             .set_request_builder(reqwest_request_builder.json(&json))
             .build();
 
