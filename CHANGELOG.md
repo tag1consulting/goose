@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.16.4-dev
+ - [#512](https://github.com/tag1consulting/goose/pull/512) include proper HTTP method and path in logs and html report when using `GooseRequest::builder()`
 
 ## 0.16.3 July 17, 2022
  - [#498](https://github.com/tag1consulting/goose/issues/498) ignore `GooseDefault::Host` if set to an empty string
