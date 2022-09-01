@@ -59,14 +59,14 @@
 //! scenario, the user will pause for a random number of milliseconds inclusively between
 //! the low and high wait times. In the following example, users loading `foo` transactions will
 //! sleep 0 to 2.5 seconds after each transaction completes, and users loading `bar` transactions will
-//! sleep 5 to 10 seconds after each transaction completes.
+//! always sleep 5 seconds after each transaction completes.
 //!
 //! ```rust
 //! use goose::prelude::*;
 //! use std::time::Duration;
 //!
 //! let mut foo_transactions = scenario!("FooTransactions").set_wait_time(Duration::from_secs(0), Duration::from_millis(2500)).unwrap();
-//! let mut bar_transactions = scenario!("BarTransactions").set_wait_time(Duration::from_secs(5), Duration::from_secs(10)).unwrap();
+//! let mut bar_transactions = scenario!("BarTransactions").set_wait_time(Duration::from_secs(5), Duration::from_secs(5)).unwrap();
 //! ```
 //! ## Creating Transactions
 //!
