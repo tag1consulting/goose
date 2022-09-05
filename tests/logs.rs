@@ -741,3 +741,12 @@ async fn test_all_logs_pretty() {
 async fn test_all_logs_pretty_gaggle() {
     run_gaggle_test(TestType::All, "pretty").await;
 }
+
+#[test]
+fn test_csv_row_macro() {
+    let row = goose::logger::format_csv_row!(1, '"', "hello , ");
+    assert_eq!(r#"1,"""","hello , ""#, row);
+
+    let row = goose::logger::format_csv_row!(format!("{:?}", (1, 2)), "你好", "A\nNew Day",);
+    assert_eq!("\"(1, 2)\",你好,\"A\nNew Day\"", row);
+}

@@ -160,6 +160,31 @@ pub(crate) type GooseLoggerJoinHandle =
 /// Optional unbounded sender from all GooseUsers to logger thread, if enabled.
 pub(crate) type GooseLoggerTx = Option<flume::Sender<Option<GooseLog>>>;
 
+/// Formats comma separated arguments into a csv row according to RFC 4180. Every argument has to be `Display`.
+///
+/// Specifically, this encloses all values with double quotes `"` which contain a comma, a quote or a new line.
+/// Inner quotes are doubled according to RFC 4180 2.7.
+/// The fields are joined by commas `,`, but *not* terminated with a line ending.
+#[macro_export]
+macro_rules! format_csv_row {
+    ($( $field:expr ),+ $(,)?) => {{
+        [$( $field.to_string() ),*]
+            .iter()
+            .map(|s| {
+                if s.contains('"') || s.contains(',') || s.contains('\n') {
+                    // Enclose in quotes and escape inner quotes
+                    format!("\"{}\"", s.replace('"', "\"\""))
+                } else {
+                    // Because into_iter is not available in edition 2018
+                    s.clone()
+                }
+            })
+            .collect::<Vec<String>>()
+            .join(",")
+    }};
+}
+pub use format_csv_row;
+
 /// If enabled, the logger thread can accept any of the following types of messages, and will
 /// write them to the correct log file.
 #[derive(Debug, Deserialize, Serialize)]
@@ -214,15 +239,12 @@ impl FromStr for GooseLogFormat {
 
 // @TODO this should be automatically derived from the structure.
 fn debug_csv_header() -> String {
-    // No quotes needed in header.
-    format!("{},{},{},{}", "tag", "request", "header", "body")
+    format_csv_row!("tag", "request", "header", "body")
 }
 
 // @TODO this should be automatically derived from the structure.
 fn error_csv_header() -> String {
-    // No quotes needed in header.
-    format!(
-        "{},{},{},{},{},{},{},{},{}",
+    format_csv_row!(
         "elapsed",
         "raw",
         "name",
@@ -237,9 +259,7 @@ fn error_csv_header() -> String {
 
 // @TODO this should be automatically derived from the structure.
 fn requests_csv_header() -> String {
-    // No quotes needed in header.
-    format!(
-        "{},{},{},{},{},{},{},{},{},{},{},{},{}",
+    format_csv_row!(
         "elapsed",
         "raw",
         "name",
@@ -258,20 +278,20 @@ fn requests_csv_header() -> String {
 
 // @TODO this should be automatically derived from the structure.
 fn transactions_csv_header() -> String {
-    format!(
-        // No quotes needed in header.
-        "{},{},{},{},{},{},{}",
-        "elapsed", "scenario_index", "transaction_index", "name", "run_time", "success", "user",
+    format_csv_row!(
+        "elapsed",
+        "scenario_index",
+        "transaction_index",
+        "name",
+        "run_time",
+        "success",
+        "user",
     )
 }
 
 // @TODO this should be automatically derived from the structure.
 fn scenarios_csv_header() -> String {
-    format!(
-        // No quotes needed in header.
-        "{},{},{},{},{}",
-        "elapsed", "name", "index", "run_time", "user",
-    )
+    format_csv_row!("elapsed", "name", "index", "run_time", "user",)
 }
 
 /// Two traits that must be implemented by all loggers provided through this thread.
@@ -279,8 +299,6 @@ pub(crate) trait GooseLogger<T> {
     /// Converts a rust structure to a formatted string.
     /// @TODO: rework with .to_string()
     fn format_message(&self, message: T) -> String;
-    /// Helper that makes a best-effort to convert a supported rust structure to a CSV row.
-    fn prepare_csv(&self, message: &T) -> String;
 }
 /// Traits for GooseDebug logs.
 impl GooseLogger<GooseDebug> for GooseConfiguration {
@@ -294,23 +312,21 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Pretty format is Debug Pretty output for GooseRawRequest structure.
                 GooseLogFormat::Pretty => format!("{:#?}", message),
-                // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(&message),
+                // Csv format with `,` separator and `"` quotes.
+                GooseLogFormat::Csv => {
+                    // @TODO: properly handle Option<>; flatten raw request in own columns
+                    format_csv_row!(
+                        message.tag,
+                        format!("{:?}", message.request),
+                        format!("{:?}", message.header),
+                        format!("{:?}", message.body)
+                    )
+                }
             }
         } else {
             // A log format is required.
             unreachable!()
         }
-    }
-
-    /// Converts a GooseDebug structure to a CSV row.
-    fn prepare_csv(&self, debug: &GooseDebug) -> String {
-        // Put quotes around all fields, as they are all strings.
-        // @TODO: properly handle Option<>; also, escape inner quotes etc.
-        format!(
-            "\"{}\",\"{:?}\",\"{:?}\",\"{:?}\"",
-            debug.tag, debug.request, debug.header, debug.body
-        )
     }
 }
 /// Traits for GooseErrorMetric logs.
@@ -325,30 +341,25 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Pretty format is Debug Pretty output for GooseErrorMetric structure.
                 GooseLogFormat::Pretty => format!("{:#?}", message),
-                // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(&message),
+                // Csv format with `,` separator and `"` quotes.
+                GooseLogFormat::Csv => {
+                    format_csv_row!(
+                        message.elapsed,
+                        format!("{:?}", message.raw),
+                        message.name,
+                        message.final_url,
+                        message.redirected,
+                        message.response_time,
+                        message.status_code,
+                        message.user,
+                        message.error,
+                    )
+                }
             }
         } else {
             // A log format is required.
             unreachable!()
         }
-    }
-
-    /// Converts a GooseErrorMetric structure to a CSV row.
-    fn prepare_csv(&self, request: &GooseErrorMetric) -> String {
-        format!(
-            // Put quotes around name, url, final_url and error as they are strings.
-            "{},\"{:?}\",\"{}\",\"{}\",{},{},{},{},\"{}\"",
-            request.elapsed,
-            request.raw,
-            request.name,
-            request.final_url,
-            request.redirected,
-            request.response_time,
-            request.status_code,
-            request.user,
-            request.error,
-        )
     }
 }
 /// Traits for GooseRequestMetric logs.
@@ -363,34 +374,29 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Pretty format is Debug Pretty output for GooseRequestMetric structure.
                 GooseLogFormat::Pretty => format!("{:#?}", message),
-                // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(&message),
+                // Csv format with `,` separator and `"` quotes.
+                GooseLogFormat::Csv => {
+                    format_csv_row!(
+                        message.elapsed,
+                        format!("{:?}", message.raw),
+                        message.name,
+                        message.final_url,
+                        message.redirected,
+                        message.response_time,
+                        message.status_code,
+                        message.success,
+                        message.update,
+                        message.user,
+                        message.error,
+                        message.coordinated_omission_elapsed,
+                        message.user_cadence,
+                    )
+                }
             }
         } else {
             // A log format is required.
             unreachable!()
         }
-    }
-
-    /// Converts a GooseRequestMetric structure to a CSV row.
-    fn prepare_csv(&self, request: &GooseRequestMetric) -> String {
-        format!(
-            // Put quotes around name, url and final_url as they are strings.
-            "{},\"{:?}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}",
-            request.elapsed,
-            request.raw,
-            request.name,
-            request.final_url,
-            request.redirected,
-            request.response_time,
-            request.status_code,
-            request.success,
-            request.update,
-            request.user,
-            request.error,
-            request.coordinated_omission_elapsed,
-            request.user_cadence,
-        )
     }
 }
 /// Traits for TransactionMetric logs.
@@ -405,28 +411,23 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Pretty format is Debug Pretty output for TransactionMetric structure.
                 GooseLogFormat::Pretty => format!("{:#?}", message),
-                // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(&message),
+                // Csv format with `,` separator and `"` quotes.
+                GooseLogFormat::Csv => {
+                    format_csv_row!(
+                        message.elapsed,
+                        message.scenario_index,
+                        message.transaction_index,
+                        message.name,
+                        message.run_time,
+                        message.success,
+                        message.user,
+                    )
+                }
             }
         } else {
             // A log format is required.
             unreachable!()
         }
-    }
-
-    /// Converts a TransactionMetric structure to a CSV row.
-    fn prepare_csv(&self, request: &TransactionMetric) -> String {
-        format!(
-            // Put quotes around name as it is a string.
-            "{},{},{},\"{}\",{},{},{}",
-            request.elapsed,
-            request.scenario_index,
-            request.transaction_index,
-            request.name,
-            request.run_time,
-            request.success,
-            request.user,
-        )
     }
 }
 
@@ -442,21 +443,21 @@ impl GooseLogger<ScenarioMetric> for GooseConfiguration {
                 GooseLogFormat::Raw => format!("{:?}", message),
                 // Pretty format is Debug Pretty output for ScenarioMetric structure.
                 GooseLogFormat::Pretty => format!("{:#?}", message),
-                // Not yet implemented.
-                GooseLogFormat::Csv => self.prepare_csv(&message),
+                // Csv format with `,` separator and `"` quotes.
+                GooseLogFormat::Csv => {
+                    format_csv_row!(
+                        message.elapsed,
+                        message.name,
+                        message.index,
+                        message.run_time,
+                        message.user,
+                    )
+                }
             }
         } else {
             // A log format is required.
             unreachable!()
         }
-    }
-
-    /// Converts a ScenarioMetric structure to a CSV row.
-    fn prepare_csv(&self, scenario: &ScenarioMetric) -> String {
-        format!(
-            "{},{},{},{},{}",
-            scenario.elapsed, scenario.name, scenario.index, scenario.run_time, scenario.user,
-        )
     }
 }
 
