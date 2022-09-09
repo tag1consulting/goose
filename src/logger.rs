@@ -166,6 +166,7 @@ pub(crate) type GooseLoggerTx = Option<flume::Sender<Option<GooseLog>>>;
 /// Inner quotes are doubled according to RFC 4180 2.7.
 /// The fields are joined by commas `,`, but *not* terminated with a line ending.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! format_csv_row {
     ($( $field:expr ),+ $(,)?) => {{
         [$( $field.to_string() ),*]
