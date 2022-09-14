@@ -30,7 +30,7 @@ const DEFAULT_PORT: &str = "5115";
 ///
 /// Goose leverages [`gumdrop`](https://docs.rs/gumdrop/) to derive the above help from
 /// the the below structure.
-#[derive(Options, Debug, Clone, Serialize, Deserialize)]
+#[derive(Options, Debug, Clone, Default, Serialize, Deserialize)]
 #[options(
     help = r#"Goose is a modern, high-performance, distributed HTTP(S) load testing tool,
 written in Rust. Visit https://book.goose.rs/ for more information.
