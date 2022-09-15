@@ -3020,8 +3020,12 @@ impl GooseAttack {
                 let (seconds, minutes, hours) = self
                     .metrics
                     .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
-                let started = step[0].timestamp.format("%y-%m-%d %H:%M:%S");
-                let stopped = step[1].timestamp.format("%y-%m-%d %H:%M:%S");
+                let started = Local
+                    .timestamp(step[0].timestamp.timestamp(), 0)
+                    .format("%y-%m-%d %H:%M:%S");
+                let stopped = Local
+                    .timestamp(step[1].timestamp.timestamp(), 0)
+                    .format("%y-%m-%d %H:%M:%S");
                 match &step[0].action {
                     // For maintaining just show the current number of users.
                     TestPlanStepAction::Maintaining => {

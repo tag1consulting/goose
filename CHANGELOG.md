@@ -5,6 +5,7 @@
  - [#514](https://github.com/tag1consulting/goose/pull/514) fix panic when an empty wait time interval is set
  - [#516](https://github.com/tag1consulting/goose/pull/516) fix unescaped inner quotes in csv logs
  - [#519](https://github.com/tag1consulting/goose/pull/519) implement `Default` for `GooseConfiguration`
+ - [#522](https://github.com/tag1consulting/goose/pull/522) display times on the report in local time (instead of UTC)
 
 ## 0.16.3 July 17, 2022
  - [#498](https://github.com/tag1consulting/goose/issues/498) ignore `GooseDefault::Host` if set to an empty string
