@@ -147,7 +147,7 @@
 <p>In this case, the <a href="https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile">Drupal Umami demo</a> was installed in a local container. The following command was used to configure Goose and run the load test. The <code>-u9</code> tells Goose to spin up 9 users. The <code>-r3</code> option tells Goose to hatch 3 users per second. The <code>-t1m</code> option tells Goose to run the load test for 1 minute, or 60 seconds. The <code>--no-reset-metrics</code> flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the <code>--report-file report.html</code> tells Goose to generate an HTML-formatted report named <code>report.html</code> once the load test finishes.</p>
 <h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">ASCII metrics</a></h2>
 <pre><code class="language-bash">% cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.16.3 (~/goose)
+   Compiling goose v0.16.4 (~/goose)
     Finished release [optimized] target(s) in 11.88s
      Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
 05:09:05 [INFO] Output verbosity level: INFO
@@ -425,7 +425,7 @@ All 9 users hatched.
  Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 &lt;- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.16.3
+ goose v0.16.4
  ------------------------------------------------------------------------------
 </code></pre>
 <h2 id="html-metrics"><a class="header" href="#html-metrics">HTML metrics</a></h2>

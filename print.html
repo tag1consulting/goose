@@ -208,9 +208,9 @@ tokio = &quot;^1.12&quot;
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.16.3
+  Downloaded goose v0.16.4
       ...
-   Compiling goose v0.16.3
+   Compiling goose v0.16.4
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -570,7 +570,7 @@ Scenarios:
 </code></pre>
 <p>Or, to run only the &quot;Anonymous Spanish user&quot; and &quot;Admin user&quot; Scenarios, you could add <code>--senarios &quot;spanish,admin&quot;</code>:</p>
 <pre><code class="language-bash ignore">% cargo run --release --example umami -- --hatch-rate 10 --scenarios &quot;spanish,admin&quot;
-   Compiling goose v0.16.3-dev (/Users/jandrews/devel/goose)
+   Compiling goose v0.16.4 (/Users/jandrews/devel/goose)
     Finished release [optimized] target(s) in 11.79s
      Running `target/release/examples/umami --hatch-rate 10 --scenarios spanish,admin`
 05:53:45 [INFO] Output verbosity level: INFO
@@ -601,8 +601,9 @@ Scenarios:
 </code></pre>
 <p>When the load test completes, you can refer to the <a href="getting-started/./metrics.html#scenarios">Scenario metrics</a> to confirm which Scenarios were enabled, and which were not.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="custom-run-time-options"><a class="header" href="#custom-run-time-options">Custom Run Time Options</a></h1>
-<p>It can sometimes be necessary to add custom run time options to your load test. As Goose &quot;owns&quot; the command line, you can't simply add another option with <a href="https://docs.rs/gumdrop">gumpdrop</a> (used by Goose) or another command line parser, as Goose will throw an error if it receives an unexpected command line option.</p>
-<p>Instead, you can use environment variables. One example of this can be found in the <a href="getting-started/../example/umami.html">Umami example</a> which <a href="https://github.com/tag1consulting/goose/blob/main/examples/umami/admin.rs#L9">uses environment variables to allow the configuration of a custom username and password</a>.</p>
+<p>It can sometimes be necessary to add custom run-time options to your load test. As Goose &quot;owns&quot; the command line, adding another option with <a href="https://docs.rs/gumdrop">gumdrop</a> (used by Goose) or another command line parser can be tricky, as Goose will throw an error if it receives an unexpected command line option. There are two alternatives here.</p>
+<h2 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h2>
+<p>One option is to use environment variables. An example of this can be found in the <a href="getting-started/../example/umami.html">Umami example</a> which <a href="https://github.com/tag1consulting/goose/blob/main/examples/umami/admin.rs#L9">uses environment variables to allow the configuration of a custom username and password</a>.</p>
 <p>Alternatively, you can use this method to set configurable custom defaults. The <a href="getting-started/./custom.html">earlier example</a> can be enhanced to use an environment variable to set a custom default hostname:</p>
 <pre><code class="language-rust ignore">use goose::prelude::*;
 
@@ -660,12 +661,48 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 07:07:45 [INFO] iterations = 0
 Error: InvalidOption { option: &quot;--host&quot;, value: &quot;&quot;, detail: &quot;A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions).&quot; }
 </code></pre>
+<h2 id="command-line-arguments"><a class="header" href="#command-line-arguments">Command Line Arguments</a></h2>
+<p>If you really need to have custom command line arguments, there is a way to make Goose not throw an error due to unexpected arguments. You can do that by, instead of calling <code>GooseAttack::initialize()</code>, using <code>GooseAttack::initialize_with_config</code>. This method differs from the first one in that it does not parse arguments from the command line, but instead takes a <code>GooseConfiguration</code> value as parameter. Since this type has quite a lot of configuration options, with some private fields, currently the only way you can obtain an instance of it is via the <code>Default</code> trait: <code>GooseConfiguration::default()</code>.</p>
+<p>Note that by initializing the <code>GooseAttack</code> in this way you are preventing Goose from reading command line arguments, so if you want to have the ability of passing the arguments that Goose allows, you will need to parse them and set them in the <code>GooseConfiguration</code> instance. In particular, the <code>--host</code> parameter is mandatory, so don't forget to set it in the configuration somehow.</p>
+<p>The example below should illustrate these points:</p>
+<pre><code class="language-rust ignore">use goose::config::GooseConfiguration;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), GooseError&gt; {
+    // here we could be using a crate such as `clap` to parse CLI arguments:
+    let opt = MyCustomConfig::parse();
+
+    let mut config = GooseConfiguration::default();
+
+    // we added a `host` field to our custom argument parser that matches
+    // the `host` field used by Goose
+    config.host = opt.host;
+
+    // ... here you should do the same for all the other command line parameters
+    // offered by Goose that you care about, otherwise they will not be taken
+    // into account.
+
+    // Initialize the `GooseAttack` using the `GooseConfiguration`:
+    GooseAttack::initialize_with_config(config)?
+        .register_scenario(
+            scenario!(&quot;User&quot;)
+                .register_transaction(transaction!(loadtest_index))
+        )
+        .execute()
+        .await?;
+
+    Ok(())
+}
+</code></pre>
+<p>Assuming that <code>MyCustomConfig</code> has a <code>my_custom_arg</code> field, the program above can be invoked with a command such as:</p>
+<pre><code class="language-bash ignore">cargo run -- --host https://localhost:8080 --my-custom-arg 42
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="metrics"><a class="header" href="#metrics">Metrics</a></h1>
 <p>Here's sample output generated when running a loadtest, in this case the <a href="getting-started/../example/umami.html">Umami example</a> that comes with Goose.</p>
 <p>In this case, the <a href="https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile">Drupal Umami demo</a> was installed in a local container. The following command was used to configure Goose and run the load test. The <code>-u9</code> tells Goose to spin up 9 users. The <code>-r3</code> option tells Goose to hatch 3 users per second. The <code>-t1m</code> option tells Goose to run the load test for 1 minute, or 60 seconds. The <code>--no-reset-metrics</code> flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the <code>--report-file report.html</code> tells Goose to generate an HTML-formatted report named <code>report.html</code> once the load test finishes.</p>
 <h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">ASCII metrics</a></h2>
 <pre><code class="language-bash">% cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.16.3 (~/goose)
+   Compiling goose v0.16.4 (~/goose)
     Finished release [optimized] target(s) in 11.88s
      Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
 05:09:05 [INFO] Output verbosity level: INFO
@@ -943,7 +980,7 @@ All 9 users hatched.
  Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 &lt;- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.16.3
+ goose v0.16.4
  ------------------------------------------------------------------------------
 </code></pre>
 <h2 id="html-metrics"><a class="header" href="#html-metrics">HTML metrics</a></h2>
@@ -1109,7 +1146,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.16.3 controller commands:
+goose 0.16.4 controller commands:
 help               this help
 exit               exit controller
 
@@ -1197,7 +1234,7 @@ goose&gt; Connection closed by foreign host.
  Canceling:   2022-05-05 07:11:13 - 2022-05-05 07:11:13 (00:00:00, 0 &lt;- 20)
 
  Target host: https://umami.ddev.site/
- goose v0.16.3
+ goose v0.16.4
  ------------------------------------------------------------------------------
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="websocket-controller"><a class="header" href="#websocket-controller">WebSocket Controller</a></h1>
