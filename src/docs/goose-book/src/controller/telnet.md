@@ -11,7 +11,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose> ?
-goose 0.16.3 controller commands:
+goose 0.16.4 controller commands:
 help               this help
 exit               exit controller
 
@@ -110,6 +110,6 @@ The above commands are also summarized in the metrics overview:
  Canceling:   2022-05-05 07:11:13 - 2022-05-05 07:11:13 (00:00:00, 0 <- 20)
 
  Target host: https://umami.ddev.site/
- goose v0.16.3
+ goose v0.16.4
  ------------------------------------------------------------------------------
 ```
