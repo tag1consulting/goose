@@ -1064,27 +1064,23 @@ impl GooseMetrics {
                     self.transactions.push(transaction_vector);
                 }
 
-                // The host is not needed on the Worker, metrics are only printed on
-                // the Manager.
-                if !config.worker {
-                    // Determine the base_url for this transaction based on which of the following
-                    // are configured so metrics can be printed.
-                    self.hosts.insert(
-                        get_base_url(
-                            // Determine if --host was configured.
-                            if !config.host.is_empty() {
-                                Some(config.host.to_string())
-                            } else {
-                                None
-                            },
-                            // Determine if the scenario defines a host.
-                            scenario.host.clone(),
-                            // Determine if there is a default host.
-                            defaults.host.clone(),
-                        )?
-                        .to_string(),
-                    );
-                }
+                // Determine the base_url for this transaction based on which of the following
+                // are configured so metrics can be printed.
+                self.hosts.insert(
+                    get_base_url(
+                        // Determine if --host was configured.
+                        if !config.host.is_empty() {
+                            Some(config.host.to_string())
+                        } else {
+                            None
+                        },
+                        // Determine if the scenario defines a host.
+                        scenario.host.clone(),
+                        // Determine if there is a default host.
+                        defaults.host.clone(),
+                    )?
+                    .to_string(),
+                );
             }
         }
 

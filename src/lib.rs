@@ -1826,7 +1826,8 @@ impl GooseAttack {
             };
 
             // Regularly synchronize metrics.
-            self.sync_metrics(&mut goose_attack_run_state, false).await?;
+            self.sync_metrics(&mut goose_attack_run_state, false)
+                .await?;
 
             // Check if a Controller has made a request.
             self.handle_controller_requests(&mut goose_attack_run_state)

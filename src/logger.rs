@@ -493,16 +493,16 @@ impl GooseConfiguration {
                 filter: self.debug_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.debug_format.clone(),
-                filter: defaults.debug_format.is_none() || self.manager,
+                filter: defaults.debug_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -533,16 +533,16 @@ impl GooseConfiguration {
                 filter: self.error_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.error_format.clone(),
-                filter: defaults.error_format.is_none() || self.manager,
+                filter: defaults.error_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -573,16 +573,16 @@ impl GooseConfiguration {
                 filter: self.request_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.request_format.clone(),
-                filter: defaults.request_format.is_none() || self.manager,
+                filter: defaults.request_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -596,10 +596,10 @@ impl GooseConfiguration {
                     filter: !self.request_body,
                     message: "request_body",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.request_body,
-                    filter: defaults.request_body.is_none() || self.manager,
+                    filter: defaults.request_body.is_none(),
                     message: "request_body",
                 },
             ])
@@ -631,16 +631,16 @@ impl GooseConfiguration {
                 filter: self.transaction_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.transaction_format.clone(),
-                filter: defaults.transaction_format.is_none() || self.manager,
+                filter: defaults.transaction_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -671,16 +671,16 @@ impl GooseConfiguration {
                 filter: self.scenario_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.scenario_format.clone(),
-                filter: defaults.scenario_format.is_none() || self.manager,
+                filter: defaults.scenario_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -691,11 +691,6 @@ impl GooseConfiguration {
         &mut self,
         defaults: &GooseDefaults,
     ) -> Result<(GooseLoggerJoinHandle, GooseLoggerTx), GooseError> {
-        // If running in Manager mode, no logger thread is started.
-        if self.manager {
-            return Ok((None, None));
-        }
-
         // Update the logger configuration, loading defaults if necessasry.
         self.configure_loggers(defaults);
 
@@ -867,6 +862,7 @@ impl GooseConfiguration {
                         debug_log.as_mut()
                     }
                     GooseLog::Error(error_message) => {
+                        println!("reveived GooseLog::Error message!");
                         formatted_message = self.format_message(error_message).to_string();
                         error_log.as_mut()
                     }

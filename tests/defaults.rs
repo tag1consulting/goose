@@ -313,13 +313,6 @@ async fn test_defaults_gaggle() {
                 .unwrap()
                 .set_default(GooseDefault::RequestFormat, LOG_FORMAT)
                 .unwrap()
-                // Worker configuration using defaults instead of run-time options.
-                .set_default(GooseDefault::Worker, true)
-                .unwrap()
-                .set_default(GooseDefault::ManagerHost, HOST)
-                .unwrap()
-                .set_default(GooseDefault::ManagerPort, PORT)
-                .unwrap()
                 .execute(),
         ));
     }
@@ -351,17 +344,6 @@ async fn test_defaults_gaggle() {
         .set_default(GooseDefault::NoScenarioMetrics, true)
         .unwrap()
         .set_default(GooseDefault::StickyFollow, true)
-        .unwrap()
-        // Manager configuration using defaults instead of run-time options.
-        .set_default(GooseDefault::Manager, true)
-        .unwrap()
-        .set_default(GooseDefault::ExpectWorkers, EXPECT_WORKERS)
-        .unwrap()
-        .set_default(GooseDefault::NoHashCheck, true)
-        .unwrap()
-        .set_default(GooseDefault::ManagerBindHost, HOST)
-        .unwrap()
-        .set_default(GooseDefault::ManagerBindPort, PORT)
         .unwrap()
         .execute()
         .await
