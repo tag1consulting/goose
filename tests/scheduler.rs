@@ -426,8 +426,8 @@ async fn test_round_robin_scenario() {
     run_standalone_test(&TestType::Scenarios, &GooseScheduler::RoundRobin).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple transactions allocating Scenarios in round robin order, in
 // Gaggle mode.
@@ -441,8 +441,8 @@ async fn test_random_scenario() {
     run_standalone_test(&TestType::Scenarios, &GooseScheduler::Random).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple transactions allocating Scenarios in random order, in
 // Gaggle mode.
@@ -463,8 +463,8 @@ async fn test_round_robin_limit_iterations_scenario() {
     .await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple transactions allocating Scenarios in round robin order, in
 // Gaggle mode.
@@ -483,8 +483,8 @@ async fn test_serial_limit_iterations_scenario() {
     run_standalone_test(&TestType::ScenariosLimitIterations, &GooseScheduler::Serial).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple transactions allocating Scenarios in serial order, in
 // Gaggle mode.
@@ -499,8 +499,8 @@ async fn test_random_limit_iterations_scenario() {
     run_standalone_test(&TestType::ScenariosLimitIterations, &GooseScheduler::Random).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple transactions allocating Scenarios in random order, in
 // Gaggle mode.
@@ -514,8 +514,8 @@ async fn test_serial_scenario() {
     run_standalone_test(&TestType::Scenarios, &GooseScheduler::Serial).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple transactions allocating Scenarios in serial order, in
 // Gaggle mode.
@@ -531,8 +531,8 @@ async fn test_round_robin_transaction() {
     run_standalone_test(&TestType::Transactions, &GooseScheduler::RoundRobin).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Load test with multiple Transactions allocated in round robin order, in
 // Gaggle mode.

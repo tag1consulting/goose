@@ -297,7 +297,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
-use tokio::sync::RwLock;
 use url::Url;
 
 use crate::logger::GooseLog;
@@ -746,37 +745,6 @@ impl GooseDebug {
             header: header.map(|h| format!("{:?}", h)),
             // If header is defined, convert from &str to string.
             body: body.map(|b| b.to_string()),
-        }
-    }
-}
-
-/// The elements needed to build an individual user state on a Gaggle Worker.
-#[derive(Debug, Clone)]
-pub struct GaggleUser {
-    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`
-    /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
-    pub scenarios_index: usize,
-    /// The base URL to prepend to all relative paths.
-    pub base_url: Arc<RwLock<Url>>,
-    /// A local copy of the global GooseConfiguration.
-    pub config: GooseConfiguration,
-    /// Load test hash.
-    pub load_test_hash: u64,
-}
-impl GaggleUser {
-    /// Create a new user state.
-    pub fn new(
-        scenarios_index: usize,
-        base_url: Url,
-        configuration: &GooseConfiguration,
-        load_test_hash: u64,
-    ) -> Self {
-        trace!("new gaggle user");
-        GaggleUser {
-            scenarios_index,
-            base_url: Arc::new(RwLock::new(base_url)),
-            config: configuration.clone(),
-            load_test_hash,
         }
     }
 }

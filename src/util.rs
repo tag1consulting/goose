@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time;
 use url::Url;
 
-use crate::{GooseError, CANCELED, SHUTDOWN_GAGGLE};
+use crate::{GooseError, CANCELED};
 
 /// Parse a string representing a time span and return the number of seconds.
 ///
@@ -442,10 +442,6 @@ pub(crate) fn setup_ctrlc_handler() {
             let mut canceled = CANCELED.write().unwrap();
             *canceled = false;
             info!("reset ctrl-c handler: {}", e);
-
-            // Also reset SHUTDOWN_GAGGLE with each new test, allowing testing of gaggles.
-            let mut shutdown_gaggle = SHUTDOWN_GAGGLE.write().unwrap();
-            *shutdown_gaggle = false;
         }
     }
 }

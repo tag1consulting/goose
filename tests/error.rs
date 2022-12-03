@@ -240,8 +240,8 @@ async fn test_error_summary() {
     run_standalone_test(TestType::ErrorSummary).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Confirm that errors show up in the summary when enabled, in Gaggle mode.
 async fn test_error_summary_gaggle() {
@@ -254,8 +254,8 @@ async fn test_no_error_summary() {
     run_standalone_test(TestType::NoErrorSummary).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Confirm that errors do not show up in the summary when --no-error-summary is enabled,
 // in Gaggle mode.

@@ -390,8 +390,8 @@ async fn test_request_no_builder() {
     run_load_test(false, false).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test scenario using GooseRequest::builder().
 async fn test_request_builder_gaggle() {
@@ -399,8 +399,8 @@ async fn test_request_builder_gaggle() {
     run_load_test(true, true).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test scenario without using GooseRequest::builder().
 async fn test_request_no_builder_gaggle() {

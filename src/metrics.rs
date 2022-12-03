@@ -14,12 +14,7 @@ use crate::logger::GooseLog;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
-#[cfg(feature = "gaggle")]
-use crate::{
-    worker::{self, GaggleMetrics},
-    SHUTDOWN_GAGGLE,
-};
-use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
+use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
 use http::StatusCode;
 use itertools::Itertools;
@@ -2660,48 +2655,16 @@ impl GooseAttack {
         if !self.configuration.no_metrics {
             // Check if we're displaying running metrics.
             if let Some(running_metrics) = self.configuration.running_metrics {
-                if self.attack_mode != AttackMode::Worker
-                    && util::timer_expired(
-                        goose_attack_run_state.running_metrics_timer,
-                        running_metrics,
-                    )
-                {
+                if util::timer_expired(
+                    goose_attack_run_state.running_metrics_timer,
+                    running_metrics,
+                ) {
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
                     goose_attack_run_state.display_running_metrics = true;
                 }
-            }
 
-            // Load messages from user threads until the receiver queue is empty.
-            let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
-
-            // As worker, push metrics up to manager.
-            if self.attack_mode == AttackMode::Worker && received_message {
-                #[cfg(feature = "gaggle")]
-                {
-                    // Push metrics to manager process.
-                    if !worker::push_metrics_to_manager(
-                        &goose_attack_run_state.socket.clone().unwrap(),
-                        vec![
-                            GaggleMetrics::Requests(self.metrics.requests.clone()),
-                            GaggleMetrics::Transactions(self.metrics.transactions.clone()),
-                            GaggleMetrics::Scenarios(self.metrics.scenarios.clone()),
-                        ],
-                        true,
-                    ) {
-                        // GooseUserCommand::Exit received, shutdown the Gaggle.
-                        let mut shutdown_gaggle = SHUTDOWN_GAGGLE.write().unwrap();
-                        *shutdown_gaggle = true;
-                    }
-                    // The manager has all our metrics, reset locally.
-                    self.metrics.requests = HashMap::new();
-                    self.metrics
-                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
-                    self.metrics.initialize_transaction_metrics(
-                        &self.scenarios,
-                        &self.configuration,
-                        &self.defaults,
-                    )?;
-                }
+                // Load messages from user threads until the receiver queue is empty.
+                self.receive_metrics(goose_attack_run_state, flush).await?;
             }
         }
 
@@ -2945,6 +2908,7 @@ impl GooseAttack {
             if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
                 // This is a best effort logger attempt, if the logger has alrady shut down it
                 // will fail which we ignore.
+                // @TODO: Error handling.
                 let _ = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
                     raw: raw_request.raw.clone(),

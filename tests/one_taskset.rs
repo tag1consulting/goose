@@ -253,14 +253,14 @@ async fn test_one_scenario_reset_metrics() {
     run_standalone_test(TestType::ResetMetrics).await;
 }
 
-/* @TODO: @FIXME: Goose is not resetting metrics when running in Gaggle mode.
- * Issue: https://github.com/tag1consulting/goose/issues/193
-#[test]
+#[ignore]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test a single scenario with multiple weighted transactions, enable --no-reset-metrics
 // in Gaggle mode.
-fn test_one_senario_reset_metrics_gaggle() {
-    run_gaggle_test(TestType::ResetMetrics);
+// @TODO: @FIXME: Goose is not resetting metrics when running in Gaggle mode.
+// Issue: https://github.com/tag1consulting/goose/issues/193
+async fn test_one_senario_reset_metrics_gaggle() {
+    run_gaggle_test(TestType::ResetMetrics).await;
 }
-*/

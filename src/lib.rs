@@ -18,7 +18,6 @@
 //! - [Blogs and more](https://tag1.com/goose/)
 //!   - [Goose vs Locust and jMeter](https://www.tag1consulting.com/blog/jmeter-vs-locust-vs-goose)
 //!   - [Real-life load testing with Goose](https://www.tag1consulting.com/blog/real-life-goose-load-testing)
-//!   - [Gaggle: a distributed load test](https://www.tag1consulting.com/blog/show-me-how-flock-flies-working-gaggle-goose)
 //!   - [Optimizing Goose performance](https://www.tag1consulting.com/blog/golden-goose-egg-compile-time-adventure)
 //!
 //! ## License
@@ -45,8 +44,6 @@ pub mod controller;
 pub mod goose;
 mod graph;
 pub mod logger;
-#[cfg(feature = "gaggle")]
-mod manager;
 pub mod metrics;
 pub mod prelude;
 mod report;
@@ -54,34 +51,25 @@ mod test_plan;
 mod throttle;
 mod user;
 pub mod util;
-#[cfg(feature = "gaggle")]
-mod worker;
 
 use gumdrop::Options;
 use lazy_static::lazy_static;
-#[cfg(feature = "gaggle")]
-use nng::Socket;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, RwLock,
-};
+use std::sync::{atomic::AtomicUsize, Arc, RwLock};
 use std::time::{self, Duration};
 use std::{fmt, io};
 use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
-use crate::goose::{GaggleUser, GooseUser, GooseUserCommand, Scenario, Transaction};
+use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
-#[cfg(feature = "gaggle")]
-use crate::worker::{register_shutdown_pipe_handler, GaggleMetrics};
 
 /// Constant defining Goose's default telnet Controller port.
 const DEFAULT_TELNET_PORT: &str = "5116";
@@ -95,9 +83,6 @@ lazy_static! {
     // Global used to count how many times ctrl-c has been pressed, reset each time a
     // load test starts.
     static ref CANCELED: Arc<RwLock<bool>> = Arc::new(RwLock::new(false));
-    // Global used to detect when to shut down Gaggle across threads for reasons other than
-    // ctrl-c being pressed, reset each time a load test starts.
-    static ref SHUTDOWN_GAGGLE: Arc<RwLock<bool>> = Arc::new(RwLock::new(false));
 }
 
 /// Internal representation of a weighted transaction list.
@@ -107,20 +92,6 @@ type WeightedTransactions = Vec<(usize, String)>;
 type UnsequencedTransactions = Vec<Transaction>;
 /// Internal representation of sequenced transactions.
 type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
-
-/// Returns the unique identifier of the running Worker when running in Gaggle mode.
-///
-/// The first Worker to connect to the Manager is assigned an ID of 1. For each
-/// subsequent Worker to connect to the Manager the ID is incremented by 1. This
-/// identifier is primarily an aid in tracing logs.
-pub fn get_worker_id() -> usize {
-    WORKER_ID.load(Ordering::Relaxed)
-}
-
-#[cfg(not(feature = "gaggle"))]
-#[derive(Debug, Clone)]
-/// Socket used for coordinating a Gaggle distributed load test.
-pub(crate) struct Socket {}
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
 #[derive(Debug)]
@@ -265,10 +236,6 @@ pub enum AttackMode {
     Undefined,
     /// A single standalone process performing a load test.
     StandAlone,
-    /// The controlling process in a Gaggle distributed load test.
-    Manager,
-    /// One of one or more working processes in a Gaggle distributed load test.
-    Worker,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -369,8 +336,6 @@ struct GooseAttackRunState {
     shutdown_after_stop: bool,
     /// Whether or not the load test is currently canceling.
     canceling: bool,
-    /// Optional socket used to coordinate a distributed Gaggle.
-    socket: Option<Socket>,
 }
 
 /// Global internal state for the load test.
@@ -385,8 +350,6 @@ pub struct GooseAttack {
     scenario_machine_names: HashSet<String>,
     /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
-    /// A weighted vector containing a lightweight GaggleUser object that is sent to all Workers if running in Gaggle mode.
-    weighted_gaggle_users: Vec<GaggleUser>,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
     /// Configuration object holding options set when launching the load test.
@@ -428,7 +391,6 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
-            weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -465,7 +427,6 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
-            weighted_gaggle_users: Vec::new(),
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -608,9 +569,6 @@ impl GooseAttack {
     /// logs in during `test_start`, subsequent [`GooseUser`](./goose/struct.GooseUser.html)
     /// do not retain this session and are therefor not already logged in.
     ///
-    /// When running in a distributed Gaggle, this transaction is only run one time by the
-    /// Manager.
-    ///
     /// # Example
     /// ```rust
     /// use goose::prelude::*;
@@ -637,9 +595,6 @@ impl GooseAttack {
     /// Optionally define a transaction to run after all users have finished running
     /// all defined transactions. This would generally be used to clean up anything
     /// that was specifically set up for the load test.
-    ///
-    /// When running in a distributed Gaggle, this transaction is only run one time by the
-    /// Manager.
     ///
     /// # Example
     /// ```rust
@@ -824,38 +779,6 @@ impl GooseAttack {
         }
     }
 
-    /// Allocate a vector of weighted [`GaggleUser`](./goose/struct.GaggleUser.html).
-    fn prepare_worker_scenario_users(&mut self) -> Result<Vec<GaggleUser>, GooseError> {
-        trace!("prepare_worker_scenario_users");
-
-        let weighted_scenarios = self.allocate_scenarios();
-
-        // Determine the users sent to each Worker.
-        info!("preparing users for Workers...");
-        let mut weighted_users = Vec::new();
-        let mut user_count = 0;
-        loop {
-            for scenarios_index in &weighted_scenarios {
-                let base_url = goose::get_base_url(
-                    self.get_configuration_host(),
-                    self.scenarios[*scenarios_index].host.clone(),
-                    self.defaults.host.clone(),
-                )?;
-                weighted_users.push(GaggleUser::new(
-                    self.scenarios[*scenarios_index].scenarios_index,
-                    base_url,
-                    &self.configuration,
-                    self.metrics.hash,
-                ));
-                user_count += 1;
-                if user_count == self.test_plan.total_users() {
-                    debug!("prepared {} weighted_gaggle_users", user_count);
-                    return Ok(weighted_users);
-                }
-            }
-        }
-    }
-
     // Change from one attack_phase to another.
     fn set_attack_phase(
         &mut self,
@@ -996,13 +919,7 @@ impl GooseAttack {
         self.test_plan = TestPlan::build(&self.configuration);
 
         // With a validated GooseConfiguration, enter a run mode.
-        self.attack_mode = if self.configuration.manager {
-            AttackMode::Manager
-        } else if self.configuration.worker {
-            AttackMode::Worker
-        } else {
-            AttackMode::StandAlone
-        };
+        self.attack_mode = AttackMode::StandAlone;
 
         // Confirm there's either a global host, or each scenario has a host defined.
         if self.configuration.no_autostart && self.validate_host().is_err() {
@@ -1022,39 +939,7 @@ impl GooseAttack {
         self.metrics.hash = s.finish();
         debug!("hash: {}", self.metrics.hash);
 
-        // Start goose in manager mode.
-        if self.attack_mode == AttackMode::Manager {
-            #[cfg(feature = "gaggle")]
-            {
-                self = manager::manager_main(self).await;
-            }
-
-            #[cfg(not(feature = "gaggle"))]
-            {
-                return Err(GooseError::FeatureNotEnabled {
-                    feature: "gaggle".to_string(), detail: "Load test must be recompiled with `--features gaggle` to start in manager mode.".to_string()
-                });
-            }
-        }
-        // Start goose in worker mode.
-        else if self.attack_mode == AttackMode::Worker {
-            #[cfg(feature = "gaggle")]
-            {
-                self = worker::worker_main(self).await;
-            }
-
-            #[cfg(not(feature = "gaggle"))]
-            {
-                return Err(GooseError::FeatureNotEnabled {
-                    feature: "gaggle".to_string(),
-                    detail: "Load test must be recompiled with `--features gaggle` to start in worker mode.".to_string(),
-                });
-            }
-        }
-        // Start goose in single-process mode.
-        else {
-            self = self.start_attack(None).await?;
-        }
+        self = self.start_attack().await?;
 
         if self.metrics.display_metrics {
             info!(
@@ -1087,13 +972,11 @@ impl GooseAttack {
                             }
                         }
                         None => {
-                            if self.attack_mode != AttackMode::Worker {
-                                return Err(GooseError::InvalidOption {
-                                    option: "--host".to_string(),
-                                    value: "".to_string(),
-                                    detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).", scenario.name)
-                                });
-                            }
+                            return Err(GooseError::InvalidOption {
+                                option: "--host".to_string(),
+                                value: "".to_string(),
+                                detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).", scenario.name)
+                            });
                         }
                     },
                 }
@@ -1105,10 +988,8 @@ impl GooseAttack {
     // Create and schedule GooseUsers. This requires that the host that will be load tested
     // has been configured.
     fn prepare_load_test(&mut self) -> Result<(), GooseError> {
-        // If not on a Worker, be sure a valid host has been defined before building configuration.
-        if self.attack_mode != AttackMode::Worker {
-            self.validate_host()?;
-        }
+        // Be sure a valid host has been defined before building configuration.
+        self.validate_host()?;
 
         // Apply weights to transactions in each scenario.
         for scenario in &mut self.scenarios {
@@ -1129,20 +1010,13 @@ impl GooseAttack {
             );
         }
 
-        if self.attack_mode != AttackMode::Worker {
-            // Stand-alone and Manager processes can display metrics.
-            if !self.configuration.no_metrics && !self.configuration.no_print_metrics {
-                self.metrics.display_metrics = true;
-            }
-
-            if self.attack_mode == AttackMode::StandAlone {
-                // Allocate a state for each of the users we are about to start.
-                self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
-            } else if self.attack_mode == AttackMode::Manager {
-                // Build a list of users to be allocated on Workers.
-                self.weighted_gaggle_users = self.prepare_worker_scenario_users()?;
-            }
+        // Stand-alone processes can display metrics.
+        if !self.configuration.no_metrics && !self.configuration.no_print_metrics {
+            self.metrics.display_metrics = true;
         }
+
+        // Allocate a state for each of the users we are about to start.
+        self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
 
         Ok(())
     }
@@ -1298,25 +1172,22 @@ impl GooseAttack {
 
     // Invoke `test_start` transactions if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
-        // Initialize per-user states.
-        if self.attack_mode != AttackMode::Worker {
-            // First run global test_start_transaction, if defined.
-            match &self.test_start_transaction {
-                Some(t) => {
-                    info!("running test_start_transaction");
-                    // Create a one-time-use User to run the test_start_transaction.
-                    let base_url = goose::get_base_url(
-                        self.get_configuration_host(),
-                        None,
-                        self.defaults.host.clone(),
-                    )?;
-                    let mut user = GooseUser::single(base_url, &self.configuration)?;
-                    let function = &t.function;
-                    let _ = function(&mut user).await;
-                }
-                // No test_start_transaction defined, nothing to do.
-                None => (),
+        // First run global test_start_transaction, if defined.
+        match &self.test_start_transaction {
+            Some(t) => {
+                info!("running test_start_transaction");
+                // Create a one-time-use User to run the test_start_transaction.
+                let base_url = goose::get_base_url(
+                    self.get_configuration_host(),
+                    None,
+                    self.defaults.host.clone(),
+                )?;
+                let mut user = GooseUser::single(base_url, &self.configuration)?;
+                let function = &t.function;
+                let _ = function(&mut user).await;
             }
+            // No test_start_transaction defined, nothing to do.
+            None => (),
         }
 
         Ok(())
@@ -1324,25 +1195,22 @@ impl GooseAttack {
 
     // Invoke `test_stop` transactions if existing.
     async fn run_test_stop(&self) -> Result<(), GooseError> {
-        // Initialize per-user states.
-        if self.attack_mode != AttackMode::Worker {
-            // First run global test_stop_transaction, if defined.
-            match &self.test_stop_transaction {
-                Some(t) => {
-                    info!("running test_stop_transaction");
-                    // Create a one-time-use User to run the test_stop_transaction.
-                    let base_url = goose::get_base_url(
-                        self.get_configuration_host(),
-                        None,
-                        self.defaults.host.clone(),
-                    )?;
-                    let mut user = GooseUser::single(base_url, &self.configuration)?;
-                    let function = &t.function;
-                    let _ = function(&mut user).await;
-                }
-                // No test_stop_transaction defined, nothing to do.
-                None => (),
+        // First run global test_stop_transaction, if defined.
+        match &self.test_stop_transaction {
+            Some(t) => {
+                info!("running test_stop_transaction");
+                // Create a one-time-use User to run the test_stop_transaction.
+                let base_url = goose::get_base_url(
+                    self.get_configuration_host(),
+                    None,
+                    self.defaults.host.clone(),
+                )?;
+                let mut user = GooseUser::single(base_url, &self.configuration)?;
+                let function = &t.function;
+                let _ = function(&mut user).await;
             }
+            // No test_stop_transaction defined, nothing to do.
+            None => (),
         }
 
         Ok(())
@@ -1350,10 +1218,7 @@ impl GooseAttack {
 
     // Create a GooseAttackRunState object and do all initialization required
     // to start a [`GooseAttack`](./struct.GooseAttack.html).
-    async fn initialize_attack(
-        &mut self,
-        socket: Option<Socket>,
-    ) -> Result<GooseAttackRunState, GooseError> {
+    async fn initialize_attack(&mut self) -> Result<GooseAttackRunState, GooseError> {
         trace!("initialize_attack");
 
         // Create a single channel used to send metrics from GooseUser threads
@@ -1400,11 +1265,7 @@ impl GooseAttack {
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
-            socket,
         };
-
-        // Access socket to avoid errors.
-        trace!("socket: {:?}", &goose_attack_run_state.socket);
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
         util::setup_ctrlc_handler();
@@ -1450,31 +1311,14 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
         // Determine if enough users have been launched.
-        let all_users_launched = match self.attack_mode {
-            AttackMode::Worker | AttackMode::Manager => {
-                // If running in Gaggle mode, all configured users must be launched.
-                self.weighted_users.is_empty()
-            }
-            _ => {
-                // If not running in Gaggle mode, all users for current step must be launched.
-                goose_attack_run_state.active_users
-                    >= self.test_plan.steps[self.test_plan.current].0
-            }
-        };
+        let all_users_launched =
+            goose_attack_run_state.active_users >= self.test_plan.steps[self.test_plan.current].0;
 
         if all_users_launched {
             // All users were increased, delay until test_plan step time has elapsed.
             self.end_of_step_delay().await;
 
             if self.step_elapsed() as usize >= self.test_plan.steps[self.test_plan.current].1 {
-                if self.attack_mode == AttackMode::Worker {
-                    info!(
-                        "[{}] launched {} users...",
-                        get_worker_id(),
-                        self.test_plan.steps[self.test_plan.current].0
-                    );
-                }
-
                 // Automatically reset metrics if appropriate.
                 self.reset_metrics(goose_attack_run_state).await?;
 
@@ -1522,13 +1366,6 @@ impl GooseAttack {
                 // milliseconds and divide by the increase_rate.
                 goose_attack_run_state.adjust_user_in_ms = (1_000.0 / increase_rate) as usize;
 
-                // If running on a Worker, multiply by the number of workers as each is spawning
-                // GooseUsers at this rate.
-                if self.attack_mode == AttackMode::Worker {
-                    goose_attack_run_state.adjust_user_in_ms *=
-                        self.configuration.expect_workers.unwrap() as usize;
-                };
-
                 // Remember which task group this user is using.
                 thread_user.weighted_users_index = self.metrics.total_users;
 
@@ -1563,20 +1400,12 @@ impl GooseAttack {
                 // Start at 1 as this is human visible.
                 let thread_number = self.metrics.total_users + 1;
 
-                let is_worker = self.attack_mode == AttackMode::Worker;
-
-                // If running on Worker, use Worker configuration in GooseUser.
-                if is_worker {
-                    thread_user.config = self.configuration.clone();
-                }
-
                 // Launch a new user.
                 let user = tokio::spawn(user::user_main(
                     thread_number,
                     thread_scenario,
                     thread_user,
                     thread_receiver,
-                    is_worker,
                 ));
 
                 goose_attack_run_state.users.push(user);
@@ -1587,12 +1416,10 @@ impl GooseAttack {
                 }
 
                 if let Some(running_metrics) = self.configuration.running_metrics {
-                    if self.attack_mode != AttackMode::Worker
-                        && util::ms_timer_expired(
-                            goose_attack_run_state.running_metrics_timer,
-                            running_metrics,
-                        )
-                    {
+                    if util::ms_timer_expired(
+                        goose_attack_run_state.running_metrics_timer,
+                        running_metrics,
+                    ) {
                         goose_attack_run_state.running_metrics_timer = time::Instant::now();
                         self.metrics.print_running();
                     }
@@ -1701,23 +1528,6 @@ impl GooseAttack {
                 let _received_message = self.receive_metrics(goose_attack_run_state, true).await?;
             }
 
-            #[cfg(feature = "gaggle")]
-            {
-                // As worker, push metrics up to manager.
-                if self.attack_mode == AttackMode::Worker {
-                    worker::push_metrics_to_manager(
-                        &goose_attack_run_state.socket.clone().unwrap(),
-                        vec![
-                            GaggleMetrics::Requests(self.metrics.requests.clone()),
-                            GaggleMetrics::Errors(self.metrics.errors.clone()),
-                            GaggleMetrics::Transactions(self.metrics.transactions.clone()),
-                            GaggleMetrics::Scenarios(self.metrics.scenarios.clone()),
-                        ],
-                        true,
-                    );
-                    // No need to reset local metrics, the worker is exiting.
-                }
-            }
             // Stop any running GooseUser threads.
             self.stop_attack().await?;
             // Collect all metrics sent by GooseUser threads.
@@ -1945,13 +1755,11 @@ impl GooseAttack {
     }
 
     // Called internally in local-mode and gaggle-mode.
-    async fn start_attack(mut self, socket: Option<Socket>) -> Result<GooseAttack, GooseError> {
-        trace!("start_attack: socket({:?})", socket);
-
+    async fn start_attack(mut self) -> Result<GooseAttack, GooseError> {
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
         let mut goose_attack_run_state = self
-            .initialize_attack(socket)
+            .initialize_attack()
             .await
             .expect("failed to initialize GooseAttackRunState");
 
@@ -2018,8 +1826,7 @@ impl GooseAttack {
             };
 
             // Regularly synchronize metrics.
-            self.sync_metrics(&mut goose_attack_run_state, false)
-                .await?;
+            self.sync_metrics(&mut goose_attack_run_state, false).await?;
 
             // Check if a Controller has made a request.
             self.handle_controller_requests(&mut goose_attack_run_state)
@@ -2031,17 +1838,7 @@ impl GooseAttack {
                     .users_shutdown
                     .insert(message.expect("failed to wrap OK message"));
 
-                // In Gaggle mode, the Worker starts a fraction of the users.
-                #[cfg(feature = "gaggle")]
-                if goose_attack_run_state.users_shutdown.len()
-                    == goose_attack_run_state.active_users
-                {
-                    // Pause to allow other Workers a chance to shut down cleanly as well.
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-                    self.cancel_attack(&mut goose_attack_run_state).await?;
-                }
                 // In Stand-alone mode, all users are started.
-                #[cfg(not(feature = "gaggle"))]
                 if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
                     self.cancel_attack(&mut goose_attack_run_state).await?;
                 }

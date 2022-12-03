@@ -1,6 +1,7 @@
 # Changelog
 
-## 0.16.5-dev
+## 0.17.0
+ - [#] temporaryily removed Gaggle support to allow upgrading Tokio and other dependencies. If you require Gaggle support, use 0.16.4 with Tokio 0.15 for now.
 
 ## 0.16.4 September 20, 2022
  - [#512](https://github.com/tag1consulting/goose/pull/512) include proper HTTP method and path in logs and html report when using `GooseRequest::builder()`

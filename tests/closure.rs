@@ -290,8 +290,8 @@ async fn test_single_scenario_closure() {
     run_load_test(false).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 // Spawn a gaggle of 1 manager and 2 workers each simulating one user. Run a load test,
 // with a single scenario containing two weighted transactions setup via closure. Validate
 // that weighting and metrics are correctly merged to the Manager.
