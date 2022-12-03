@@ -212,7 +212,7 @@ impl FromStr for GooseLogFormat {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
         // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
-        let log_format = RegexSet::new(&[
+        let log_format = RegexSet::new([
             r"(?i)^csv$",
             r"(?i)^(json|jsn)$",
             r"(?i)^raw$",
@@ -483,7 +483,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `debug_format`.
         self.debug_format = self.get_value(vec![
@@ -523,7 +523,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `error_format`.
         self.error_format = self.get_value(vec![
@@ -563,7 +563,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `request_format`.
         self.request_format = self.get_value(vec![
@@ -621,7 +621,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `transaction_format`.
         self.transaction_format = self.get_value(vec![
@@ -661,7 +661,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `scenario_format`.
         self.scenario_format = self.get_value(vec![

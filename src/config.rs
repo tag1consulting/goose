@@ -1303,7 +1303,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Initialize the Goose logger.
         self.initialize_goose_logger();

@@ -309,7 +309,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                             let headers = &response.headers().clone();
                             match response.text().await {
                                 Ok(html) => {
-                                    if !html.contains(&comment_body) {
+                                    if !html.contains(comment_body) {
                                         // This will automatically get written to the error log if enabled, and will
                                         // be displayed to stdout if `-v` is enabled when running the load test.
                                         return user.set_failure(

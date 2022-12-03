@@ -88,7 +88,7 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
         // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
-        let co_mitigation = RegexSet::new(&[
+        let co_mitigation = RegexSet::new([
             r"(?i)^(average|ave|aver|avg|mean)$",
             r"(?i)^(maximum|ma|max|maxi)$",
             r"(?i)^(minimum|mi|min|mini)$",
