@@ -2428,11 +2428,15 @@ impl GooseMetrics {
             let (seconds, minutes, hours) =
                 self.get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
             let started = Local
-                .timestamp(step[0].timestamp.timestamp(), 0)
+                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             let stopped = Local
-                .timestamp(step[1].timestamp.timestamp(), 0)
+                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             match &step[0].action {
@@ -2981,10 +2985,14 @@ impl GooseAttack {
                     .metrics
                     .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
                 let started = Local
-                    .timestamp(step[0].timestamp.timestamp(), 0)
+                    .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                    // @TODO: error handling
+                    .unwrap()
                     .format("%y-%m-%d %H:%M:%S");
                 let stopped = Local
-                    .timestamp(step[1].timestamp.timestamp(), 0)
+                    .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                    // @TODO: error handling
+                    .unwrap()
                     .format("%y-%m-%d %H:%M:%S");
                 match &step[0].action {
                     // For maintaining just show the current number of users.
