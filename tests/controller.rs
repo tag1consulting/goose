@@ -31,7 +31,7 @@ const START_USERS: usize = 5;
 const MAX_USERS: usize = 20;
 const FINAL_USERS: usize = 10;
 const HATCH_RATE: usize = 25;
-const RUN_TIME: usize = 10;
+const RUN_TIME: usize = 55;
 const STARTUP_TIME: usize = 1;
 
 // There are multiple test variations in this file.
@@ -781,7 +781,10 @@ async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> Te
 async fn make_request(test_state: &mut TestState, command: &str) {
     //println!("making request: {}", command);
     if let Some(stream) = test_state.telnet_stream.as_mut() {
-        stream.write_all(command.as_bytes()).await.unwrap()
+        match stream.write_all(command.as_bytes()).await {
+            Ok(_) => (),
+            Err(e) => panic!("failed to send {} command: {}", command, e),
+        };
     } else if let Some(ws_sender) = test_state.websocket_sender.as_mut() {
         ws_sender
             .send(Message::Text(
