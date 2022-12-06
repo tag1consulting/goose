@@ -1486,14 +1486,6 @@ impl GooseAttack {
             // Subtract 1 from len() as it starts at 1 while current starts at 0.
             && self.test_plan.current >= self.test_plan.steps.len() - 1
         {
-            // Load test is shutting down, update pipe handler so there is no panic
-            // when the Manager goes away.
-            #[cfg(feature = "gaggle")]
-            if self.attack_mode == AttackMode::Worker || self.attack_mode == AttackMode::Manager {
-                let manager = goose_attack_run_state.socket.clone().unwrap();
-                register_shutdown_pipe_handler(&manager);
-            }
-
             // If throttle is enabled, tell throttle thread the load test is over.
             if let Some(throttle_tx) = goose_attack_run_state.parent_to_throttle_tx.clone() {
                 let _ = throttle_tx.send(false);

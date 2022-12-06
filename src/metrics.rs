@@ -2890,6 +2890,7 @@ impl GooseAttack {
             if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
                 break;
             }
+            // Load and process another message.
             message = goose_attack_run_state.metrics_rx.try_recv();
         }
 
@@ -2908,8 +2909,7 @@ impl GooseAttack {
             if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
                 // This is a best effort logger attempt, if the logger has alrady shut down it
                 // will fail which we ignore.
-                // @TODO: Error handling.
-                let _ = logger.send(Some(GooseLog::Error(GooseErrorMetric {
+                if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
                     raw: raw_request.raw.clone(),
                     name: raw_request.name.clone(),
@@ -2919,7 +2919,13 @@ impl GooseAttack {
                     status_code: raw_request.status_code,
                     user: raw_request.user,
                     error: raw_request.error.clone(),
-                })));
+                }))) {
+                    if let flume::SendError(Some(ref message)) = e {
+                        info!("Failed to write to error log (receiver dropped?): flume::SendError({:?})", message);
+                    } else {
+                        info!("Failed to write to error log: (receiver dropped?) {:?}", e);
+                    }
+                }
             }
         }
 
