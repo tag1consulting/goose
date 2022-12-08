@@ -3,7 +3,7 @@
 ## 0.17.0
  - [#529](https://github.com/tag1consulting/goose/pull/529) **API change** temporaryily removed Gaggle support `gaggle` feature) to allow upgrading Tokio and other dependencies.
    - if you require Gaggle support, use Goose 0.16.4 with Tokio 0.15 for now; Gaggle support is being added back in https://github.com/tag1consulting/goose/pull/509
-   - updated Tokio to 1.23, updated tungestenite and tokio-tungstenite to 0.18
+   - updated Tokio to 1.23, updated tungestenite and tokio-tungstenite to 0.18; updated ctrlc to 3.2; updated num_cpus to 1.14, updated simplelog to 0.12, updated nix to 0.26, updated rustls to 0.20, updates serial_test to 0.9
    - removed `nng` dependency and `gaggle` feature
    - removed `--manager`, `--expect-workers`, `--no-hash-check`, `--manager-bind-host`, `--manager-bind-port`, `--worker`, `--manager-host`, `--manager-port` and related configuration defaults
    - removed `AttackMode::Manager` and `AttackMode::Worker`
