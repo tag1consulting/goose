@@ -2653,7 +2653,7 @@ impl GooseAttack {
         flush: bool,
     ) -> Result<(), GooseError> {
         if !self.configuration.no_metrics {
-            // Check if we're displaying running metrics.
+            // Update timers if displaying running metrics.
             if let Some(running_metrics) = self.configuration.running_metrics {
                 if util::timer_expired(
                     goose_attack_run_state.running_metrics_timer,
@@ -2662,10 +2662,9 @@ impl GooseAttack {
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
                     goose_attack_run_state.display_running_metrics = true;
                 }
-
-                // Load messages from user threads until the receiver queue is empty.
-                self.receive_metrics(goose_attack_run_state, flush).await?;
-            }
+            };
+            // Load messages from user threads until the receiver queue is empty.
+            self.receive_metrics(goose_attack_run_state, flush).await?;
         }
 
         // If enabled, display running metrics after sync

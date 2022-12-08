@@ -470,8 +470,6 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::GooseLog`]
 ///  - [`GooseDefault::HatchRate`]
 ///  - [`GooseDefault::Host`]
-///  - [`GooseDefault::ManagerBindHost`]
-///  - [`GooseDefault::ManagerHost`]
 ///  - [`GooseDefault::ReportFile`]
 ///  - [`GooseDefault::RequestLog`]
 ///  - [`GooseDefault::ScenarioLog`]
@@ -493,11 +491,8 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::Quiet`]
 ///  - [`GooseDefault::Verbose`]
 ///  - [`GooseDefault::ThrottleRequests`]
-///  - [`GooseDefault::ExpectWorkers`]
 ///  - [`GooseDefault::TelnetPort`]
 ///  - [`GooseDefault::WebSocketPort`]
-///  - [`GooseDefault::ManagerBindPort`]
-///  - [`GooseDefault::ManagerPort`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`bool`] (and otherwise default to [`false`]).
@@ -1553,7 +1548,7 @@ impl GooseConfiguration {
                 filter: self.report_file.is_empty(),
                 message: "report_file",
             },
-            // Otherwise use GooseDefault if set and not Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.report_file.clone(),
                 filter: defaults.report_file.is_none(),
@@ -1756,7 +1751,7 @@ impl GooseConfiguration {
                     filter: self.throttle_requests == 0,
                     message: "throttle_requests",
                 },
-                // Otherwise use GooseDefault if set and not on Manager.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.throttle_requests,
                     filter: defaults.throttle_requests.is_none(),

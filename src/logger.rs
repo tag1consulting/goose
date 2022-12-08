@@ -746,7 +746,7 @@ impl GooseConfiguration {
         &self,
         log_file: &mut tokio::io::BufWriter<tokio::fs::File>,
         formatted_message: String,
-    ) -> Result<(), ()> {
+    ) {
         match log_file
             .write(format!("{}\n", formatted_message).as_ref())
             .await
@@ -756,8 +756,6 @@ impl GooseConfiguration {
                 warn!("failed to write to {}: {}", &self.debug_log, e);
             }
         }
-
-        Ok(())
     }
 
     /// Logger thread, opens a log file (if configured) and waits for messages from
@@ -783,8 +781,8 @@ impl GooseConfiguration {
         // If the debug_log is a CSV, write the header.
         if self.debug_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = debug_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self.write_to_log_file(log_file, debug_csv_header()).await;
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, debug_csv_header()).await;
             }
         }
 
@@ -795,8 +793,8 @@ impl GooseConfiguration {
         // If the request_log is a CSV, write the header.
         if self.error_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = error_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self.write_to_log_file(log_file, error_csv_header()).await;
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, error_csv_header()).await;
             }
         }
 
@@ -817,9 +815,8 @@ impl GooseConfiguration {
         // If the request_log is a CSV, write the header.
         if self.request_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = request_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self
-                    .write_to_log_file(log_file, requests_csv_header())
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, requests_csv_header())
                     .await;
             }
         }
@@ -831,9 +828,8 @@ impl GooseConfiguration {
         // If the transaction_log is a CSV, write the header.
         if self.transaction_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = transaction_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self
-                    .write_to_log_file(log_file, transactions_csv_header())
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, transactions_csv_header())
                     .await;
             }
         }
@@ -845,9 +841,8 @@ impl GooseConfiguration {
         // If the scenario_log is a CSV, write the header.
         if self.scenario_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = scenario_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self
-                    .write_to_log_file(log_file, scenarios_csv_header())
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, scenarios_csv_header())
                     .await;
             }
         }
@@ -879,8 +874,8 @@ impl GooseConfiguration {
                         scenario_log.as_mut()
                     }
                 } {
-                    // @TODO: error handling when writing to log fails.
-                    let _ = self.write_to_log_file(log_file, formatted_message).await;
+                    // This will generate a warning if it fails to write to log file.
+                    self.write_to_log_file(log_file, formatted_message).await;
                 }
             } else {
                 // Empty message means it's time to exit.
