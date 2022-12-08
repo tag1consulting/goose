@@ -66,16 +66,6 @@ Advanced:
   --co-mitigation STRATEGY    Sets coordinated omission mitigation strategy
   --throttle-requests VALUE   Sets maximum requests per second
   --sticky-follow             Follows base_url redirect with subsequent requests
-
-Gaggle:
-  --manager                   Enables distributed load test Manager mode
-  --expect-workers VALUE      Sets number of Workers to expect
-  --no-hash-check             Tells Manager to ignore load test checksum
-  --manager-bind-host HOST    Sets host Manager listens on (default: 0.0.0.0)
-  --manager-bind-port PORT    Sets port Manager listens on (default: 5115)
-  --worker                    Enables distributed load test Worker mode
-  --manager-host HOST         Sets host Worker connects to (default: 127.0.0.1)
-  --manager-port PORT         Sets port Worker connects to (default: 5115)
 ```
 
 All of the above configuration options are [defined in the developer documentation](https://docs.rs/goose/*/goose/config/struct.GooseConfiguration.html).
