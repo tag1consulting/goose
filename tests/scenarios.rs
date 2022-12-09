@@ -287,8 +287,8 @@ async fn test_scenarios_option() {
     run_standalone_test(TestType::ScenariosOption).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Run only half the configured scenarios, in Gaggle mode.
 async fn test_scenarios_option_gaggle() {
@@ -303,8 +303,8 @@ async fn test_scenarios_default() {
     run_standalone_test(TestType::ScenariosDefault).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Run only half the configured scenarios, in Gaggle mode.
 async fn test_scenarios_default_gaggle() {

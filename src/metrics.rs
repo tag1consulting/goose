@@ -14,12 +14,7 @@ use crate::logger::GooseLog;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
-#[cfg(feature = "gaggle")]
-use crate::{
-    worker::{self, GaggleMetrics},
-    SHUTDOWN_GAGGLE,
-};
-use crate::{AttackMode, GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
+use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
 use http::StatusCode;
 use itertools::Itertools;
@@ -93,7 +88,7 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
         // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
-        let co_mitigation = RegexSet::new(&[
+        let co_mitigation = RegexSet::new([
             r"(?i)^(average|ave|aver|avg|mean)$",
             r"(?i)^(maximum|ma|max|maxi)$",
             r"(?i)^(minimum|mi|min|mini)$",
@@ -1069,27 +1064,23 @@ impl GooseMetrics {
                     self.transactions.push(transaction_vector);
                 }
 
-                // The host is not needed on the Worker, metrics are only printed on
-                // the Manager.
-                if !config.worker {
-                    // Determine the base_url for this transaction based on which of the following
-                    // are configured so metrics can be printed.
-                    self.hosts.insert(
-                        get_base_url(
-                            // Determine if --host was configured.
-                            if !config.host.is_empty() {
-                                Some(config.host.to_string())
-                            } else {
-                                None
-                            },
-                            // Determine if the scenario defines a host.
-                            scenario.host.clone(),
-                            // Determine if there is a default host.
-                            defaults.host.clone(),
-                        )?
-                        .to_string(),
-                    );
-                }
+                // Determine the base_url for this transaction based on which of the following
+                // are configured so metrics can be printed.
+                self.hosts.insert(
+                    get_base_url(
+                        // Determine if --host was configured.
+                        if !config.host.is_empty() {
+                            Some(config.host.to_string())
+                        } else {
+                            None
+                        },
+                        // Determine if the scenario defines a host.
+                        scenario.host.clone(),
+                        // Determine if there is a default host.
+                        defaults.host.clone(),
+                    )?
+                    .to_string(),
+                );
             }
         }
 
@@ -2437,11 +2428,15 @@ impl GooseMetrics {
             let (seconds, minutes, hours) =
                 self.get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
             let started = Local
-                .timestamp(step[0].timestamp.timestamp(), 0)
+                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             let stopped = Local
-                .timestamp(step[1].timestamp.timestamp(), 0)
+                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             match &step[0].action {
@@ -2658,51 +2653,18 @@ impl GooseAttack {
         flush: bool,
     ) -> Result<(), GooseError> {
         if !self.configuration.no_metrics {
-            // Check if we're displaying running metrics.
+            // Update timers if displaying running metrics.
             if let Some(running_metrics) = self.configuration.running_metrics {
-                if self.attack_mode != AttackMode::Worker
-                    && util::timer_expired(
-                        goose_attack_run_state.running_metrics_timer,
-                        running_metrics,
-                    )
-                {
+                if util::timer_expired(
+                    goose_attack_run_state.running_metrics_timer,
+                    running_metrics,
+                ) {
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
                     goose_attack_run_state.display_running_metrics = true;
                 }
-            }
-
+            };
             // Load messages from user threads until the receiver queue is empty.
-            let received_message = self.receive_metrics(goose_attack_run_state, flush).await?;
-
-            // As worker, push metrics up to manager.
-            if self.attack_mode == AttackMode::Worker && received_message {
-                #[cfg(feature = "gaggle")]
-                {
-                    // Push metrics to manager process.
-                    if !worker::push_metrics_to_manager(
-                        &goose_attack_run_state.socket.clone().unwrap(),
-                        vec![
-                            GaggleMetrics::Requests(self.metrics.requests.clone()),
-                            GaggleMetrics::Transactions(self.metrics.transactions.clone()),
-                            GaggleMetrics::Scenarios(self.metrics.scenarios.clone()),
-                        ],
-                        true,
-                    ) {
-                        // GooseUserCommand::Exit received, shutdown the Gaggle.
-                        let mut shutdown_gaggle = SHUTDOWN_GAGGLE.write().unwrap();
-                        *shutdown_gaggle = true;
-                    }
-                    // The manager has all our metrics, reset locally.
-                    self.metrics.requests = HashMap::new();
-                    self.metrics
-                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
-                    self.metrics.initialize_transaction_metrics(
-                        &self.scenarios,
-                        &self.configuration,
-                        &self.defaults,
-                    )?;
-                }
-            }
+            self.receive_metrics(goose_attack_run_state, flush).await?;
         }
 
         // If enabled, display running metrics after sync
@@ -2927,6 +2889,7 @@ impl GooseAttack {
             if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
                 break;
             }
+            // Load and process another message.
             message = goose_attack_run_state.metrics_rx.try_recv();
         }
 
@@ -2945,7 +2908,7 @@ impl GooseAttack {
             if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
                 // This is a best effort logger attempt, if the logger has alrady shut down it
                 // will fail which we ignore.
-                let _ = logger.send(Some(GooseLog::Error(GooseErrorMetric {
+                if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
                     raw: raw_request.raw.clone(),
                     name: raw_request.name.clone(),
@@ -2955,7 +2918,13 @@ impl GooseAttack {
                     status_code: raw_request.status_code,
                     user: raw_request.user,
                     error: raw_request.error.clone(),
-                })));
+                }))) {
+                    if let flume::SendError(Some(ref message)) = e {
+                        info!("Failed to write to error log (receiver dropped?): flume::SendError({:?})", message);
+                    } else {
+                        info!("Failed to write to error log: (receiver dropped?) {:?}", e);
+                    }
+                }
             }
         }
 
@@ -3021,10 +2990,14 @@ impl GooseAttack {
                     .metrics
                     .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
                 let started = Local
-                    .timestamp(step[0].timestamp.timestamp(), 0)
+                    .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                    // @TODO: error handling
+                    .unwrap()
                     .format("%y-%m-%d %H:%M:%S");
                 let stopped = Local
-                    .timestamp(step[1].timestamp.timestamp(), 0)
+                    .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                    // @TODO: error handling
+                    .unwrap()
                     .format("%y-%m-%d %H:%M:%S");
                 match &step[0].action {
                     // For maintaining just show the current number of users.

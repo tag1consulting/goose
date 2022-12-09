@@ -297,7 +297,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
-use tokio::sync::RwLock;
 use url::Url;
 
 use crate::logger::GooseLog;
@@ -330,9 +329,9 @@ macro_rules! scenario {
     };
 }
 
-/// Goose transactions return a result, which is empty on success, or contains a
+/// Goose transactions return a result, which is empty on success, or contains a boxed
 /// [`TransactionError`](./enum.TransactionError.html) on error.
-pub type TransactionResult = Result<(), TransactionError>;
+pub type TransactionResult = Result<(), Box<TransactionError>>;
 
 /// An enumeration of all errors a [`Transaction`](./struct.Transaction.html) can return.
 #[derive(Debug)]
@@ -689,7 +688,7 @@ impl fmt::Display for GooseMethod {
 
 /// Convert [`http::method::Method`](https://docs.rs/http/*/http/method/struct.Method.html)
 /// to [`GooseMethod`](./enum.GooseMethod.html).
-pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, TransactionError> {
+pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, Box<TransactionError>> {
     Ok(match method {
         Method::DELETE => GooseMethod::Delete,
         Method::GET => GooseMethod::Get,
@@ -698,7 +697,7 @@ pub fn goose_method_from_method(method: Method) -> Result<GooseMethod, Transacti
         Method::POST => GooseMethod::Post,
         Method::PUT => GooseMethod::Put,
         _ => {
-            return Err(TransactionError::InvalidMethod { method });
+            return Err(Box::new(TransactionError::InvalidMethod { method }));
         }
     })
 }
@@ -746,37 +745,6 @@ impl GooseDebug {
             header: header.map(|h| format!("{:?}", h)),
             // If header is defined, convert from &str to string.
             body: body.map(|b| b.to_string()),
-        }
-    }
-}
-
-/// The elements needed to build an individual user state on a Gaggle Worker.
-#[derive(Debug, Clone)]
-pub struct GaggleUser {
-    /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`
-    /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
-    pub scenarios_index: usize,
-    /// The base URL to prepend to all relative paths.
-    pub base_url: Arc<RwLock<Url>>,
-    /// A local copy of the global GooseConfiguration.
-    pub config: GooseConfiguration,
-    /// Load test hash.
-    pub load_test_hash: u64,
-}
-impl GaggleUser {
-    /// Create a new user state.
-    pub fn new(
-        scenarios_index: usize,
-        base_url: Url,
-        configuration: &GooseConfiguration,
-        load_test_hash: u64,
-    ) -> Self {
-        trace!("new gaggle user");
-        GaggleUser {
-            scenarios_index,
-            base_url: Arc::new(RwLock::new(base_url)),
-            config: configuration.clone(),
-            load_test_hash,
         }
     }
 }
@@ -1119,7 +1087,7 @@ impl GooseUser {
     /// current scenario)
     ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default host
     /// defined for the current load test)
-    pub fn build_url(&self, path: &str) -> Result<String, TransactionError> {
+    pub fn build_url(&self, path: &str) -> Result<String, Box<TransactionError>> {
         // If URL includes a host, simply use it.
         if let Ok(parsed_path) = Url::parse(path) {
             if let Some(_host) = parsed_path.host() {
@@ -1128,7 +1096,10 @@ impl GooseUser {
         }
 
         // Otherwise use the `base_url`.
-        Ok(self.base_url.join(path)?.to_string())
+        match self.base_url.join(path) {
+            Ok(u) => Ok(u.to_string()),
+            Err(e) => Err(Box::new(e.into())),
+        }
     }
 
     /// A helper to make a `GET` request of a path and collect relevant metrics.
@@ -1156,7 +1127,7 @@ impl GooseUser {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn get(&mut self, path: &str) -> Result<GooseResponse, TransactionError> {
+    pub async fn get(&mut self, path: &str) -> Result<GooseResponse, Box<TransactionError>> {
         // GET path.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Get)
@@ -1196,7 +1167,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         name: &str,
-    ) -> Result<GooseResponse, TransactionError> {
+    ) -> Result<GooseResponse, Box<TransactionError>> {
         // GET path named.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Get)
@@ -1237,7 +1208,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         body: T,
-    ) -> Result<GooseResponse, TransactionError> {
+    ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
         let url = self.build_url(path)?;
         let reqwest_request_builder = self.client.post(url);
@@ -1283,7 +1254,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         form: &T,
-    ) -> Result<GooseResponse, TransactionError> {
+    ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
         let url = self.build_url(path)?;
         let reqwest_request_builder = self.client.post(url);
@@ -1332,7 +1303,7 @@ impl GooseUser {
         &mut self,
         path: &str,
         json: &T,
-    ) -> Result<GooseResponse, TransactionError> {
+    ) -> Result<GooseResponse, Box<TransactionError>> {
         // Build a Reqwest RequestBuilder object.
         let url = self.build_url(path)?;
         let reqwest_request_builder = self.client.post(url);
@@ -1373,7 +1344,7 @@ impl GooseUser {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn head(&mut self, path: &str) -> Result<GooseResponse, TransactionError> {
+    pub async fn head(&mut self, path: &str) -> Result<GooseResponse, Box<TransactionError>> {
         // HEAD request.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Head)
@@ -1409,7 +1380,7 @@ impl GooseUser {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn delete(&mut self, path: &str) -> Result<GooseResponse, TransactionError> {
+    pub async fn delete(&mut self, path: &str) -> Result<GooseResponse, Box<TransactionError>> {
         // DELETE request.
         let goose_request = GooseRequest::builder()
             .method(GooseMethod::Delete)
@@ -1465,7 +1436,7 @@ impl GooseUser {
         &self,
         method: &GooseMethod,
         path: &str,
-    ) -> Result<RequestBuilder, TransactionError> {
+    ) -> Result<RequestBuilder, Box<TransactionError>> {
         // Prepend the `base_url` to all relative paths.
         let url = self.build_url(path)?;
 
@@ -1517,7 +1488,7 @@ impl GooseUser {
     pub async fn request<'a>(
         &mut self,
         mut request: GooseRequest<'_>,
-    ) -> Result<GooseResponse, TransactionError> {
+    ) -> Result<GooseResponse, Box<TransactionError>> {
         // If the RequestBuilder is already defined in the GooseRequest use it.
         let request_builder = if request.request_builder.is_some() {
             request.request_builder.take().unwrap()
@@ -1534,14 +1505,19 @@ impl GooseUser {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
             debug!("GooseUser: waiting on throttle");
             // Will result in TransactionError::RequestCanceled if this fails.
-            self.throttle.clone().unwrap().send_async(true).await?;
+            if let Err(e) = self.throttle.clone().unwrap().send_async(true).await {
+                return Err(Box::new(e.into()));
+            }
         };
 
         // Once past the throttle, the request is officially started.
         let started = Instant::now();
 
         // Create a Reqwest Request object from the RequestBuilder.
-        let built_request = request_builder.build()?;
+        let built_request = match request_builder.build() {
+            Ok(r) => r,
+            Err(e) => return Err(Box::new(e.into())),
+        };
 
         // Get a string version of request path for logging.
         let path = match Url::parse(built_request.url().as_ref()) {
@@ -1621,7 +1597,10 @@ impl GooseUser {
                     let base_url = self.base_url.to_string();
                     // Check if the URL redirected started with the load test base_url.
                     if !request_metric.final_url.starts_with(&base_url) {
-                        let redirected_url = Url::parse(&request_metric.final_url)?;
+                        let redirected_url = match Url::parse(&request_metric.final_url) {
+                            Ok(u) => u,
+                            Err(e) => return Err(Box::new(e.into())),
+                        };
                         let redirected_base_url =
                             redirected_url[..url::Position::BeforePath].to_string();
                         info!(
@@ -1659,9 +1638,9 @@ impl GooseUser {
 
         if request.error_on_fail && !request_metric.success {
             error!("{:?} {}", &path, &request_metric.error);
-            return Err(TransactionError::RequestFailed {
+            return Err(Box::new(TransactionError::RequestFailed {
                 raw_request: request_metric,
-            });
+            }));
         }
 
         Ok(GooseResponse::new(request_metric, response))
@@ -1760,7 +1739,7 @@ impl GooseUser {
     async fn coordinated_omission_mitigation(
         &self,
         request_metric: &GooseRequestMetric,
-    ) -> Result<u64, TransactionError> {
+    ) -> Result<u64, Box<TransactionError>> {
         if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
             // Return immediately if coordinated omission mitigation is disabled.
             if co_mitigation == &GooseCoordinatedOmissionMitigation::Disabled {
@@ -1817,7 +1796,9 @@ impl GooseUser {
         // If requests-file is enabled, send a copy of the raw request to the logger thread.
         if !self.config.request_log.is_empty() {
             if let Some(logger) = self.logger.as_ref() {
-                logger.send(Some(GooseLog::Request(request_metric.clone())))?;
+                if let Err(e) = logger.send(Some(GooseLog::Request(request_metric.clone()))) {
+                    return Err(Box::new(e.into()));
+                }
             }
         }
 
@@ -1825,7 +1806,9 @@ impl GooseUser {
         // [`test_start`](../struct.GooseAttack.html#method.test_start),
         // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
         if let Some(metrics_channel) = self.metrics_channel.clone() {
-            metrics_channel.send(GooseMetric::Request(request_metric))?;
+            if let Err(e) = metrics_channel.send(GooseMetric::Request(request_metric)) {
+                return Err(Box::new(e.into()));
+            }
         }
 
         Ok(())
@@ -1876,9 +1859,9 @@ impl GooseUser {
     ///         }
     ///     }
     ///
-    ///     Err(TransactionError::RequestFailed {
+    ///     Err(Box::new(TransactionError::RequestFailed {
     ///         raw_request: goose.request.clone(),
-    ///     })
+    ///     }))
     /// }
     /// ````
     pub fn set_success(&self, request: &mut GooseRequestMetric) -> TransactionResult {
@@ -1966,9 +1949,9 @@ impl GooseUser {
         // Print log to stdout.
         info!("set_failure: {}", tag);
 
-        Err(TransactionError::RequestFailed {
+        Err(Box::new(TransactionError::RequestFailed {
             raw_request: request.clone(),
-        })
+        }))
     }
 
     /// Write to [`debug_file`](../struct.GooseConfiguration.html#structfield.debug_file)
@@ -2057,13 +2040,15 @@ impl GooseUser {
             // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
             if let Some(logger) = self.logger.clone() {
                 if self.config.no_debug_body {
-                    logger.send(Some(GooseLog::Debug(GooseDebug::new(
+                    if let Err(e) = logger.send(Some(GooseLog::Debug(GooseDebug::new(
                         tag, request, headers, None,
-                    ))))?;
-                } else {
-                    logger.send(Some(GooseLog::Debug(GooseDebug::new(
-                        tag, request, headers, body,
-                    ))))?;
+                    )))) {
+                        return Err(Box::new(e.into()));
+                    }
+                } else if let Err(e) = logger.send(Some(GooseLog::Debug(GooseDebug::new(
+                    tag, request, headers, body,
+                )))) {
+                    return Err(Box::new(e.into()));
                 }
             }
         }
@@ -2293,8 +2278,11 @@ impl GooseUser {
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_base_url(&mut self, host: &str) -> Result<(), TransactionError> {
-        self.base_url = Url::parse(host)?;
+    pub fn set_base_url(&mut self, host: &str) -> Result<(), Box<TransactionError>> {
+        self.base_url = match Url::parse(host) {
+            Ok(u) => u,
+            Err(e) => return Err(Box::new(e.into())),
+        };
         Ok(())
     }
 }

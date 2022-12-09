@@ -14,7 +14,7 @@ This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` 
 
 ```toml
 [dependencies]
-goose = "^0.16"
+goose = "^0.17"
 tokio = "^1.12"
 ```
 
@@ -23,9 +23,9 @@ At this point it's possible to compile all dependencies, though the resulting bi
 ```bash
 $ cargo run
     Updating crates.io index
-  Downloaded goose v0.16.4
+  Downloaded goose v0.17.0
       ...
-   Compiling goose v0.16.4
+   Compiling goose v0.17.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`

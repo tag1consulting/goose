@@ -1,7 +1,6 @@
 use rand::Rng;
 use std::time::{self, Duration};
 
-use crate::get_worker_id;
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, TransactionFunction};
 use crate::logger::GooseLog;
 use crate::metrics::{GooseMetric, ScenarioMetric, TransactionMetric};
@@ -11,21 +10,11 @@ pub(crate) async fn user_main(
     thread_scenario: Scenario,
     mut thread_user: GooseUser,
     thread_receiver: flume::Receiver<GooseUserCommand>,
-    worker: bool,
 ) {
-    if worker {
-        info!(
-            "[{}] launching user {} from {}...",
-            get_worker_id(),
-            thread_number,
-            thread_scenario.name
-        );
-    } else {
-        info!(
-            "launching user {} from {}...",
-            thread_number, thread_scenario.name
-        );
-    }
+    info!(
+        "launching user {} from {}...",
+        thread_number, thread_scenario.name
+    );
 
     // User is starting, first invoke the weighted on_start transactions.
     if !thread_scenario.weighted_on_start_transactions.is_empty() {
@@ -142,21 +131,10 @@ pub(crate) async fn user_main(
                 };
                 // Provide visual indication that a GooseUSer has completed the confifgured
                 // number of iterations.
-                if worker {
-                    info!(
-                        "[{}] user {} completed {} {} of {}...",
-                        get_worker_id(),
-                        thread_number,
-                        thread_user.iterations,
-                        pluralize,
-                        thread_scenario.name,
-                    );
-                } else {
-                    info!(
-                        "user {} completed {} {} of {}...",
-                        thread_number, thread_user.iterations, pluralize, thread_scenario.name,
-                    );
-                }
+                info!(
+                    "user {} completed {} {} of {}...",
+                    thread_number, thread_user.iterations, pluralize, thread_scenario.name,
+                );
                 // Attempt to notify the parent this thread is shutting down.
                 if let Some(shutdown_channel) = thread_user.shutdown_channel.clone() {
                     let _ = shutdown_channel.send(thread_number);
@@ -190,19 +168,10 @@ pub(crate) async fn user_main(
     }
 
     // Optional debug output when exiting.
-    if worker {
-        info!(
-            "[{}] exiting user {} from {}...",
-            get_worker_id(),
-            thread_number,
-            thread_scenario.name
-        );
-    } else {
-        info!(
-            "exiting user {} from {}...",
-            thread_number, thread_scenario.name
-        );
-    }
+    info!(
+        "exiting user {} from {}...",
+        thread_number, thread_scenario.name
+    );
 }
 
 // Determine if the parent has sent a GooseUserCommand::Exit message.

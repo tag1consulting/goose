@@ -270,11 +270,15 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         let mut steps = String::new();
         for step in history.windows(2) {
             let started = Local
-                .timestamp(step[0].timestamp.timestamp(), 0)
+                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                // @TODO: Error handling
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             let stopped = Local
-                .timestamp(step[1].timestamp.timestamp(), 0)
+                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                // @TODO: Error handling
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             match &step[0].action {
@@ -520,7 +524,9 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             .map(|(second, value)| {
                 (
                     Local
-                        .timestamp(second as i64 + started.timestamp(), 0)
+                        .timestamp_opt(second as i64 + started.timestamp(), 0)
+                        // @TODO: Error handling
+                        .unwrap()
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     *value,
@@ -1508,40 +1514,72 @@ mod test {
         let graph: Graph<usize, usize> = Graph::new("html_id", "Label", true, HashMap::new());
 
         assert_eq!(
-            graph
-                .add_timestamp_to_html_graph_data(&data, Utc.ymd(2021, 12, 14).and_hms(15, 12, 23)),
+            graph.add_timestamp_to_html_graph_data(
+                &data,
+                Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23).unwrap()
+            ),
             vec![
                 (
                     Local
-                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 23).timestamp(), 0)
+                        .timestamp_opt(
+                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23)
+                                .unwrap()
+                                .timestamp(),
+                            0
+                        )
+                        .unwrap()
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     123
                 ),
                 (
                     Local
-                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 24).timestamp(), 0)
+                        .timestamp_opt(
+                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 24)
+                                .unwrap()
+                                .timestamp(),
+                            0
+                        )
+                        .unwrap()
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     234
                 ),
                 (
                     Local
-                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 25).timestamp(), 0)
+                        .timestamp_opt(
+                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 25)
+                                .unwrap()
+                                .timestamp(),
+                            0
+                        )
+                        .unwrap()
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     345
                 ),
                 (
                     Local
-                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 26).timestamp(), 0)
+                        .timestamp_opt(
+                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 26)
+                                .unwrap()
+                                .timestamp(),
+                            0
+                        )
+                        .unwrap()
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     456
                 ),
                 (
                     Local
-                        .timestamp(Utc.ymd(2021, 12, 14).and_hms(15, 12, 27).timestamp(), 0)
+                        .timestamp_opt(
+                            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 27)
+                                .unwrap()
+                                .timestamp(),
+                            0
+                        )
+                        .unwrap()
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string(),
                     567
@@ -1646,21 +1684,26 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M")
         ).as_str();
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", true, graph.clone(),)
-                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+            Graph::new("graph-rps", "Requests #", true, graph.clone(),).get_markup(
+                &Vec::new(),
+                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+            ),
             expected
         );
 
         // It should make no difference if we disable granular graphs, since we only have one
         // request.
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
-                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+                &Vec::new(),
+                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+            ),
             expected
         );
 
@@ -1756,56 +1799,65 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
             increasing = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S"),
             decreasing = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 33).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 33).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S"),
             cancelling = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 34).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 34).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S"),
             finishing = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 35).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 35).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M:%S"),
         ).as_str();
 
         let steps = vec![
             TestPlanHistory {
                 action: TestPlanStepAction::Increasing,
-                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 32),
+                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
                 users: 123,
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Decreasing,
-                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 33),
+                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 33).unwrap(),
                 users: 123,
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Canceling,
-                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 34),
+                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 34).unwrap(),
                 users: 123,
             },
             TestPlanHistory {
                 action: TestPlanStepAction::Finished,
-                timestamp: Utc.ymd(2021, 11, 21).and_hms(21, 20, 35),
+                timestamp: Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 35).unwrap(),
                 users: 123,
             },
         ];
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", true, graph.clone(),)
-                .get_markup(&steps, Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+            Graph::new("graph-rps", "Requests #", true, graph.clone(),).get_markup(
+                &steps,
+                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+            ),
             expected
         );
 
         // It should make no difference if we disable granular graphs, since we only have one
         // request.
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
-                .get_markup(&steps, Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+                &steps,
+                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+            ),
             expected
         );
 
@@ -1816,8 +1868,10 @@ mod test {
         };
         graph.insert("GET /user".to_string(), user_data);
 
-        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone())
-            .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32));
+        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone()).get_markup(
+            &Vec::new(),
+            Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
+        );
         let expected_legend = r#"
                         legend: {
                             type: 'plain',
@@ -1846,7 +1900,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",146],["{data_series_prefix}:33",123],["{data_series_prefix}:34",143],["{data_series_prefix}:35",156]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -1865,7 +1925,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -1884,7 +1950,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",23],["{data_series_prefix}:33",12],["{data_series_prefix}:34",44],["{data_series_prefix}:35",22]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -1911,13 +1983,16 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M")
         ).as_str();
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
-                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+                &Vec::new(),
+                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+            ),
             expected
         );
 
@@ -1930,8 +2005,10 @@ mod test {
         graph.insert("GET /two".to_string(), more_data.clone());
         graph.insert("GET /three".to_string(), more_data);
 
-        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone())
-            .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32));
+        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone()).get_markup(
+            &Vec::new(),
+            Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
+        );
         let expected_legend = r#"
                         legend: {
                             type: 'scroll',
@@ -1960,7 +2037,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",149],["{data_series_prefix}:33",126],["{data_series_prefix}:34",146],["{data_series_prefix}:35",159]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -1979,7 +2062,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -1998,7 +2087,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",23],["{data_series_prefix}:33",12],["{data_series_prefix}:34",44],["{data_series_prefix}:35",22]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -2017,7 +2112,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -2036,7 +2137,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -2055,7 +2162,13 @@ mod test {
                                 data: [["{data_series_prefix}:32",1],["{data_series_prefix}:33",1],["{data_series_prefix}:34",1],["{data_series_prefix}:35",1]],
                             }},"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(
+                    Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32)
+                        .unwrap()
+                        .timestamp(),
+                    0
+                )
+                .unwrap()
                 .format("%Y-%m-%d %H:%M"),
         );
         assert!(
@@ -2080,13 +2193,16 @@ mod test {
                 </script>
             </div>"#,
             data_series_prefix = Local
-                .timestamp(Utc.ymd(2021, 11, 21).and_hms(21, 20, 32).timestamp(), 0)
+                .timestamp_opt(Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap().timestamp(), 0)
+                .unwrap()
                 .format("%Y-%m-%d %H:%M")
         ).as_str();
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),)
-                .get_markup(&Vec::new(), Utc.ymd(2021, 11, 21).and_hms(21, 20, 32)),
+            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+                &Vec::new(),
+                Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
+            ),
             expected
         );
     }

@@ -55,12 +55,13 @@ async fn main() -> Result<(), GooseError> {
 /// per user, when the user thread first starts.
 async fn website_signup(user: &mut GooseUser) -> TransactionResult {
     let params = [("username", "test_user"), ("password", "")];
-    let response = user
-        .post_form("/signup", &params)
-        .await?
-        .response?
-        .json::<AuthenticationResponse>()
-        .await?;
+    let response = match user.post_form("/signup", &params).await?.response {
+        Ok(r) => match r.json::<AuthenticationResponse>().await {
+            Ok(j) => j,
+            Err(e) => return Err(Box::new(e.into())),
+        },
+        Err(e) => return Err(Box::new(e.into())),
+    };
 
     user.set_session_data(Session {
         jwt_token: response.jwt_token,

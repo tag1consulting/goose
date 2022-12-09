@@ -169,8 +169,8 @@ async fn test_no_normal_transactions() {
     run_load_test(false).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 // Test scenario with only on_start() and on_stop() transactions, in Gaggle mode.
 async fn test_no_normal_transactions_gaggle() {
     // Run load test with is_gaggle set to true.

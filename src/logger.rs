@@ -212,7 +212,7 @@ impl FromStr for GooseLogFormat {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Use a [`RegexSet`] to match string representations of `GooseCoordinatedOmissionMitigation`,
         // returning the appropriate enum value. Also match a wide range of abbreviations and synonyms.
-        let log_format = RegexSet::new(&[
+        let log_format = RegexSet::new([
             r"(?i)^csv$",
             r"(?i)^(json|jsn)$",
             r"(?i)^raw$",
@@ -483,7 +483,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `debug_format`.
         self.debug_format = self.get_value(vec![
@@ -493,16 +493,16 @@ impl GooseConfiguration {
                 filter: self.debug_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.debug_format.clone(),
-                filter: defaults.debug_format.is_none() || self.manager,
+                filter: defaults.debug_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -523,7 +523,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `error_format`.
         self.error_format = self.get_value(vec![
@@ -533,16 +533,16 @@ impl GooseConfiguration {
                 filter: self.error_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.error_format.clone(),
-                filter: defaults.error_format.is_none() || self.manager,
+                filter: defaults.error_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -563,7 +563,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `request_format`.
         self.request_format = self.get_value(vec![
@@ -573,16 +573,16 @@ impl GooseConfiguration {
                 filter: self.request_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.request_format.clone(),
-                filter: defaults.request_format.is_none() || self.manager,
+                filter: defaults.request_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -596,10 +596,10 @@ impl GooseConfiguration {
                     filter: !self.request_body,
                     message: "request_body",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.request_body,
-                    filter: defaults.request_body.is_none() || self.manager,
+                    filter: defaults.request_body.is_none(),
                     message: "request_body",
                 },
             ])
@@ -621,7 +621,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `transaction_format`.
         self.transaction_format = self.get_value(vec![
@@ -631,16 +631,16 @@ impl GooseConfiguration {
                 filter: self.transaction_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.transaction_format.clone(),
-                filter: defaults.transaction_format.is_none() || self.manager,
+                filter: defaults.transaction_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -661,7 +661,7 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `scenario_format`.
         self.scenario_format = self.get_value(vec![
@@ -671,16 +671,16 @@ impl GooseConfiguration {
                 filter: self.scenario_format.is_none(),
                 message: "",
             },
-            // Otherwise use GooseDefault if set and not on Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.scenario_format.clone(),
-                filter: defaults.scenario_format.is_none() || self.manager,
+                filter: defaults.scenario_format.is_none(),
                 message: "",
             },
-            // Otherwise default to GooseLogFormat::Json if not on Manager.
+            // Otherwise default to GooseLogFormat::Json.
             GooseValue {
                 value: Some(GooseLogFormat::Json),
-                filter: self.manager,
+                filter: false,
                 message: "",
             },
         ]);
@@ -691,11 +691,6 @@ impl GooseConfiguration {
         &mut self,
         defaults: &GooseDefaults,
     ) -> Result<(GooseLoggerJoinHandle, GooseLoggerTx), GooseError> {
-        // If running in Manager mode, no logger thread is started.
-        if self.manager {
-            return Ok((None, None));
-        }
-
         // Update the logger configuration, loading defaults if necessasry.
         self.configure_loggers(defaults);
 
@@ -751,7 +746,7 @@ impl GooseConfiguration {
         &self,
         log_file: &mut tokio::io::BufWriter<tokio::fs::File>,
         formatted_message: String,
-    ) -> Result<(), ()> {
+    ) {
         match log_file
             .write(format!("{}\n", formatted_message).as_ref())
             .await
@@ -761,8 +756,6 @@ impl GooseConfiguration {
                 warn!("failed to write to {}: {}", &self.debug_log, e);
             }
         }
-
-        Ok(())
     }
 
     /// Logger thread, opens a log file (if configured) and waits for messages from
@@ -788,8 +781,8 @@ impl GooseConfiguration {
         // If the debug_log is a CSV, write the header.
         if self.debug_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = debug_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self.write_to_log_file(log_file, debug_csv_header()).await;
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, debug_csv_header()).await;
             }
         }
 
@@ -800,8 +793,8 @@ impl GooseConfiguration {
         // If the request_log is a CSV, write the header.
         if self.error_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = error_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self.write_to_log_file(log_file, error_csv_header()).await;
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, error_csv_header()).await;
             }
         }
 
@@ -822,9 +815,8 @@ impl GooseConfiguration {
         // If the request_log is a CSV, write the header.
         if self.request_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = request_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self
-                    .write_to_log_file(log_file, requests_csv_header())
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, requests_csv_header())
                     .await;
             }
         }
@@ -836,9 +828,8 @@ impl GooseConfiguration {
         // If the transaction_log is a CSV, write the header.
         if self.transaction_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = transaction_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self
-                    .write_to_log_file(log_file, transactions_csv_header())
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, transactions_csv_header())
                     .await;
             }
         }
@@ -850,9 +841,8 @@ impl GooseConfiguration {
         // If the scenario_log is a CSV, write the header.
         if self.scenario_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = scenario_log.as_mut() {
-                // @TODO: error handling when writing to log fails.
-                let _ = self
-                    .write_to_log_file(log_file, scenarios_csv_header())
+                // This will generate a warning if it fails to write to log file.
+                self.write_to_log_file(log_file, scenarios_csv_header())
                     .await;
             }
         }
@@ -867,6 +857,7 @@ impl GooseConfiguration {
                         debug_log.as_mut()
                     }
                     GooseLog::Error(error_message) => {
+                        println!("reveived GooseLog::Error message!");
                         formatted_message = self.format_message(error_message).to_string();
                         error_log.as_mut()
                     }
@@ -883,8 +874,8 @@ impl GooseConfiguration {
                         scenario_log.as_mut()
                     }
                 } {
-                    // @TODO: error handling when writing to log fails.
-                    let _ = self.write_to_log_file(log_file, formatted_message).await;
+                    // This will generate a warning if it fails to write to log file.
+                    self.write_to_log_file(log_file, formatted_message).await;
                 }
             } else {
                 // Empty message means it's time to exit.

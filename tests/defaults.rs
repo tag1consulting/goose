@@ -255,8 +255,8 @@ async fn test_defaults() {
     );
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Configure load test with set_default, run as Gaggle.
 async fn test_defaults_gaggle() {
@@ -313,13 +313,6 @@ async fn test_defaults_gaggle() {
                 .unwrap()
                 .set_default(GooseDefault::RequestFormat, LOG_FORMAT)
                 .unwrap()
-                // Worker configuration using defaults instead of run-time options.
-                .set_default(GooseDefault::Worker, true)
-                .unwrap()
-                .set_default(GooseDefault::ManagerHost, HOST)
-                .unwrap()
-                .set_default(GooseDefault::ManagerPort, PORT)
-                .unwrap()
                 .execute(),
         ));
     }
@@ -351,17 +344,6 @@ async fn test_defaults_gaggle() {
         .set_default(GooseDefault::NoScenarioMetrics, true)
         .unwrap()
         .set_default(GooseDefault::StickyFollow, true)
-        .unwrap()
-        // Manager configuration using defaults instead of run-time options.
-        .set_default(GooseDefault::Manager, true)
-        .unwrap()
-        .set_default(GooseDefault::ExpectWorkers, EXPECT_WORKERS)
-        .unwrap()
-        .set_default(GooseDefault::NoHashCheck, true)
-        .unwrap()
-        .set_default(GooseDefault::ManagerBindHost, HOST)
-        .unwrap()
-        .set_default(GooseDefault::ManagerBindPort, PORT)
         .unwrap()
         .execute()
         .await
@@ -457,8 +439,8 @@ async fn test_no_defaults() {
     );
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Configure load test with run time options (not with defaults), run as Gaggle.
 async fn test_no_defaults_gaggle() {

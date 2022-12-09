@@ -357,8 +357,8 @@ async fn test_cancel_runtime() {
     run_standalone_test(TestType::RunTime).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Cancel a scenario with --run-time configured before it times out, in Gaggle mode.
 async fn test_cancel_runtime_gaggle() {
@@ -374,8 +374,8 @@ async fn test_cancel_noruntime() {
     run_standalone_test(TestType::NoRunTime).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Cancel a scenario without --run-time configured, in Gaggle mode.
 async fn test_cancel_noruntime_gaggle() {
@@ -391,8 +391,8 @@ async fn test_cancel_iterations() {
     run_standalone_test(TestType::Iterations).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Cancel a scenario with --iterations configured, in Gaggle mode.
 async fn test_cancel_iterations_gaggle() {

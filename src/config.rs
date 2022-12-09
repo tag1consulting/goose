@@ -17,9 +17,6 @@ use crate::test_plan::TestPlan;
 use crate::util;
 use crate::{GooseAttack, GooseError};
 
-/// Constant defining Goose's default port when running a Gaggle.
-const DEFAULT_PORT: &str = "5115";
-
 /// Runtime options available when launching a Goose load test.
 ///
 /// Custom defaults can be programmatically set for most of these options using the
@@ -196,36 +193,8 @@ pub struct GooseConfiguration {
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
     /// Follows base_url redirect with subsequent requests
-    #[options(
-        no_short,
-        help = "Follows base_url redirect with subsequent requests\n\nGaggle:"
-    )]
+    #[options(no_short)]
     pub sticky_follow: bool,
-
-    /// Enables distributed load test Manager mode
-    #[options(no_short)]
-    pub manager: bool,
-    /// Sets number of Workers to expect
-    #[options(no_short, meta = "VALUE")]
-    pub expect_workers: Option<usize>,
-    /// Tells Manager to ignore load test checksum
-    #[options(no_short)]
-    pub no_hash_check: bool,
-    /// Sets host Manager listens on (default: 0.0.0.0)
-    #[options(no_short, meta = "HOST")]
-    pub manager_bind_host: String,
-    /// Sets port Manager listens on (default: 5115)
-    #[options(no_short, meta = "PORT")]
-    pub manager_bind_port: u16,
-    /// Enables distributed load test Worker mode
-    #[options(no_short)]
-    pub worker: bool,
-    /// Sets host Worker connects to (default: 127.0.0.1)
-    #[options(no_short, meta = "HOST")]
-    pub manager_host: String,
-    /// Sets port Worker connects to (default: 5115)
-    #[options(no_short, meta = "PORT")]
-    pub manager_port: u16,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.
@@ -355,12 +324,6 @@ pub(crate) struct GooseDefaults {
     pub throttle_requests: Option<usize>,
     /// An optional default to follows base_url redirect with subsequent request.
     pub sticky_follow: Option<bool>,
-    /// An optional default to enable Manager mode.
-    pub manager: Option<bool>,
-    /// An optional default for number of Workers to expect.
-    pub expect_workers: Option<usize>,
-    /// An optional default for Manager to ignore load test checksum.
-    pub no_hash_check: Option<bool>,
     /// An optional default for host telnet Controller listens on.
     pub telnet_host: Option<String>,
     /// An optional default for port telnet Controller listens on.
@@ -369,16 +332,6 @@ pub(crate) struct GooseDefaults {
     pub websocket_host: Option<String>,
     /// An optional default for port WebSocket Controller listens on.
     pub websocket_port: Option<u16>,
-    /// An optional default for host Manager listens on.
-    pub manager_bind_host: Option<String>,
-    /// An optional default for port Manager listens on.
-    pub manager_bind_port: Option<u16>,
-    /// An optional default to enable Worker mode.
-    pub worker: Option<bool>,
-    /// An optional default for host Worker connects to.
-    pub manager_host: Option<String>,
-    /// An optional default for port Worker connects to.
-    pub manager_port: Option<u16>,
 }
 
 /// Defines all [`GooseConfiguration`] options that can be programmatically configured with
@@ -471,12 +424,6 @@ pub enum GooseDefault {
     ThrottleRequests,
     /// An optional default to follows base_url redirect with subsequent request.
     StickyFollow,
-    /// An optional default to enable Manager mode.
-    Manager,
-    /// An optional default for number of Workers to expect.
-    ExpectWorkers,
-    /// An optional default for Manager to ignore load test checksum.
-    NoHashCheck,
     /// An optional default for host telnet Controller listens on.
     TelnetHost,
     /// An optional default for port telnet Controller listens on.
@@ -485,16 +432,6 @@ pub enum GooseDefault {
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
-    /// An optional default for host Manager listens on.
-    ManagerBindHost,
-    /// An optional default for port Manager listens on.
-    ManagerBindPort,
-    /// An optional default to enable Worker mode.
-    Worker,
-    /// An optional default for host Worker connects to.
-    ManagerHost,
-    /// An optional default for port Worker connects to.
-    ManagerPort,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
@@ -533,8 +470,6 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::GooseLog`]
 ///  - [`GooseDefault::HatchRate`]
 ///  - [`GooseDefault::Host`]
-///  - [`GooseDefault::ManagerBindHost`]
-///  - [`GooseDefault::ManagerHost`]
 ///  - [`GooseDefault::ReportFile`]
 ///  - [`GooseDefault::RequestLog`]
 ///  - [`GooseDefault::ScenarioLog`]
@@ -556,11 +491,8 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::Quiet`]
 ///  - [`GooseDefault::Verbose`]
 ///  - [`GooseDefault::ThrottleRequests`]
-///  - [`GooseDefault::ExpectWorkers`]
 ///  - [`GooseDefault::TelnetPort`]
 ///  - [`GooseDefault::WebSocketPort`]
-///  - [`GooseDefault::ManagerBindPort`]
-///  - [`GooseDefault::ManagerPort`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`bool`] (and otherwise default to [`false`]).
@@ -578,9 +510,6 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoGzip`]
 ///  - [`GooseDefault::NoStatusCodes`]
 ///  - [`GooseDefault::StickyFollow`]
-///  - [`GooseDefault::Manager`]
-///  - [`GooseDefault::Worker`]
-///  - [`GooseDefault::NoHashCheck`]
 ///  - [`GooseDefault::NoGranularData`]
 ///
 /// The following run-time flags can be configured with a custom default using a
@@ -633,10 +562,6 @@ impl GooseDefaultType<&str> for GooseAttack {
                     Some(value.to_string())
                 }
             }
-            GooseDefault::ManagerBindHost => {
-                self.defaults.manager_bind_host = Some(value.to_string())
-            }
-            GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
@@ -659,11 +584,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
-            | GooseDefault::ExpectWorkers
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort
-            | GooseDefault::ManagerBindPort
-            | GooseDefault::ManagerPort => {
+            | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -688,10 +610,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::Manager
-            | GooseDefault::NoHashCheck
-            | GooseDefault::NoGranularData
-            | GooseDefault::Worker => {
+            | GooseDefault::NoGranularData => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -742,19 +661,14 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::Quiet => self.defaults.quiet = Some(value as u8),
             GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
-            GooseDefault::ExpectWorkers => self.defaults.expect_workers = Some(value),
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
-            GooseDefault::ManagerBindPort => self.defaults.manager_bind_port = Some(value as u16),
-            GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -787,10 +701,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::Manager
-            | GooseDefault::NoHashCheck
-            | GooseDefault::NoGranularData
-            | GooseDefault::Worker => {
+            | GooseDefault::NoGranularData => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{}", value),
@@ -848,18 +759,13 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
             GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
-            GooseDefault::Manager => self.defaults.manager = Some(value),
-            GooseDefault::NoHashCheck => self.defaults.no_hash_check = Some(value),
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
-            GooseDefault::Worker => self.defaults.worker = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -887,11 +793,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
-            | GooseDefault::ExpectWorkers
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort
-            | GooseDefault::ManagerBindPort
-            | GooseDefault::ManagerPort => {
+            | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{}", value),
@@ -953,10 +856,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::Manager
-            | GooseDefault::NoHashCheck
-            | GooseDefault::NoGranularData
-            | GooseDefault::Worker => {
+            | GooseDefault::NoGranularData => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -972,8 +872,6 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1001,11 +899,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
-            | GooseDefault::ExpectWorkers
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort
-            | GooseDefault::ManagerBindPort
-            | GooseDefault::ManagerPort => {
+            | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -1061,10 +956,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::Manager
-            | GooseDefault::NoHashCheck
-            | GooseDefault::NoGranularData
-            | GooseDefault::Worker => {
+            | GooseDefault::NoGranularData => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -1080,8 +972,6 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
-            | GooseDefault::ManagerBindHost
-            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1109,11 +999,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::Quiet
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
-            | GooseDefault::ExpectWorkers
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort
-            | GooseDefault::ManagerBindPort
-            | GooseDefault::ManagerPort => {
+            | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -1411,51 +1298,13 @@ impl GooseConfiguration {
                     message: "",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Initialize the Goose logger.
         self.initialize_goose_logger();
 
         // Configure loggers.
         self.configure_loggers(defaults);
-
-        // Configure `manager`. (DEVELOPER NOTE: manager and worker must be configured
-        // immediately after the loggers.)
-        self.manager = self
-            .get_value(vec![
-                // Use --manager if set.
-                GooseValue {
-                    value: Some(self.manager),
-                    filter: !self.manager,
-                    message: "",
-                },
-                // Otherwise use default.
-                GooseValue {
-                    value: defaults.manager,
-                    filter: defaults.manager.is_none(),
-                    message: "",
-                },
-            ])
-            .unwrap_or(false);
-
-        // Configure `worker`. (DEVELOPER NOTE: manager and worker must be configured
-        // immediately after the loggers.)
-        self.worker = self
-            .get_value(vec![
-                // Use --worker if set.
-                GooseValue {
-                    value: Some(self.worker),
-                    filter: !self.worker,
-                    message: "",
-                },
-                // Otherwise use default.
-                GooseValue {
-                    value: defaults.worker,
-                    filter: defaults.worker.is_none(),
-                    message: "",
-                },
-            ])
-            .unwrap_or(false);
 
         // Configure `test_plan` before `users` so users doesn't get assigned a default when using a test plan.
         self.test_plan = self.get_value(vec![
@@ -1468,7 +1317,7 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set and not on Worker.
             GooseValue {
                 value: defaults.test_plan.clone(),
-                filter: defaults.test_plan.is_none() || self.worker,
+                filter: defaults.test_plan.is_none(),
                 message: "test_plan",
             },
         ]);
@@ -1484,13 +1333,13 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set and not on Worker.
             GooseValue {
                 value: defaults.users,
-                filter: defaults.users.is_none() || self.worker,
+                filter: defaults.users.is_none(),
                 message: "users",
             },
             // Otherwise use detected number of CPUs if not on Worker.
             GooseValue {
                 value: Some(num_cpus::get()),
-                filter: self.worker || self.test_plan.is_some(),
+                filter: self.test_plan.is_some(),
                 message: "users defaulted to number of CPUs",
             },
         ]);
@@ -1507,7 +1356,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.startup_time,
-                    filter: defaults.startup_time.is_none() || self.worker,
+                    filter: defaults.startup_time.is_none(),
                     message: "startup_time",
                 },
             ])
@@ -1525,7 +1374,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.run_time,
-                    filter: defaults.run_time.is_none() || self.worker,
+                    filter: defaults.run_time.is_none(),
                     message: "run_time",
                 },
             ])
@@ -1543,7 +1392,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: Some(util::get_hatch_rate(defaults.hatch_rate.clone())),
-                    filter: defaults.hatch_rate.is_none() || self.worker,
+                    filter: defaults.hatch_rate.is_none(),
                     message: "hatch_rate",
                 },
             ])
@@ -1561,7 +1410,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: util::get_float_from_string(defaults.timeout.clone()),
-                    filter: defaults.timeout.is_none() || self.worker,
+                    filter: defaults.timeout.is_none(),
                     message: "timeout",
                 },
             ])
@@ -1578,7 +1427,7 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.running_metrics,
-                filter: defaults.running_metrics.is_none() || self.worker,
+                filter: defaults.running_metrics.is_none(),
                 message: "running_metrics",
             },
         ]);
@@ -1595,7 +1444,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_reset_metrics,
-                    filter: defaults.no_reset_metrics.is_none() || self.worker,
+                    filter: defaults.no_reset_metrics.is_none(),
                     message: "no_reset_metrics",
                 },
             ])
@@ -1613,7 +1462,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_metrics,
-                    filter: defaults.no_metrics.is_none() || self.worker,
+                    filter: defaults.no_metrics.is_none(),
                     message: "no_metrics",
                 },
             ])
@@ -1631,7 +1480,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_transaction_metrics,
-                    filter: defaults.no_transaction_metrics.is_none() || self.worker,
+                    filter: defaults.no_transaction_metrics.is_none(),
                     message: "no_transaction_metrics",
                 },
             ])
@@ -1649,7 +1498,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_scenario_metrics,
-                    filter: defaults.no_scenario_metrics.is_none() || self.worker,
+                    filter: defaults.no_scenario_metrics.is_none(),
                     message: "no_scenario_metrics",
                 },
             ])
@@ -1667,7 +1516,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_print_metrics,
-                    filter: defaults.no_print_metrics.is_none() || self.worker,
+                    filter: defaults.no_print_metrics.is_none(),
                     message: "no_print_metrics",
                 },
             ])
@@ -1685,7 +1534,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_error_summary,
-                    filter: defaults.no_error_summary.is_none() || self.worker,
+                    filter: defaults.no_error_summary.is_none(),
                     message: "no_error_summary",
                 },
             ])
@@ -1699,10 +1548,10 @@ impl GooseConfiguration {
                 filter: self.report_file.is_empty(),
                 message: "report_file",
             },
-            // Otherwise use GooseDefault if set and not Manager.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.report_file.clone(),
-                filter: defaults.report_file.is_none() || self.manager,
+                filter: defaults.report_file.is_none(),
                 message: "report_file",
             },
         ]) {
@@ -1722,7 +1571,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_debug_body,
-                    filter: defaults.no_debug_body.is_none() || self.manager,
+                    filter: defaults.no_debug_body.is_none(),
                     message: "no_granular_report",
                 },
             ])
@@ -1740,7 +1589,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.iterations,
-                    filter: defaults.iterations.is_none() || self.worker,
+                    filter: defaults.iterations.is_none(),
                     message: "iterations",
                 },
             ])
@@ -1758,7 +1607,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.scenarios.clone(),
-                    filter: defaults.scenarios.is_none() || self.worker,
+                    filter: defaults.scenarios.is_none(),
                     message: "scenarios",
                 },
             ])
@@ -1776,7 +1625,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_debug_body,
-                    filter: defaults.no_debug_body.is_none() || self.manager,
+                    filter: defaults.no_debug_body.is_none(),
                     message: "no_debug_body",
                 },
             ])
@@ -1794,7 +1643,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.no_status_codes,
-                    filter: defaults.no_status_codes.is_none() || self.worker,
+                    filter: defaults.no_status_codes.is_none(),
                     message: "no_status_codes",
                 },
             ])
@@ -1808,12 +1657,6 @@ impl GooseConfiguration {
                     value: Some(self.no_telnet),
                     filter: !self.no_telnet,
                     message: "no_telnet",
-                },
-                // Force-disable telnet Controller if in Gaggle mode.
-                GooseValue {
-                    value: Some(true),
-                    filter: !self.manager && !self.worker,
-                    message: "",
                 },
                 // Use default if --no-telnet hasn't been set.
                 GooseValue {
@@ -1832,12 +1675,6 @@ impl GooseConfiguration {
                     value: Some(self.no_websocket),
                     filter: !self.no_websocket,
                     message: "no_websocket",
-                },
-                // Force-disable WebSocket Controller if in Gaggle mode.
-                GooseValue {
-                    value: Some(true),
-                    filter: !self.manager && !self.worker,
-                    message: "",
                 },
                 // Use default if --no-websocket hasn't been set.
                 GooseValue {
@@ -1860,7 +1697,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.no_autostart,
-                    filter: defaults.no_autostart.is_none() || self.worker,
+                    filter: defaults.no_autostart.is_none(),
                     message: "no_autostart",
                 },
             ])
@@ -1878,7 +1715,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.no_gzip,
-                    filter: defaults.no_gzip.is_none() || self.worker,
+                    filter: defaults.no_gzip.is_none(),
                     message: "no_gzip",
                 },
             ])
@@ -1894,13 +1731,13 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set and not Worker.
             GooseValue {
                 value: defaults.co_mitigation.clone(),
-                filter: defaults.co_mitigation.is_none() || self.worker,
+                filter: defaults.co_mitigation.is_none(),
                 message: "co_mitigation",
             },
             // Otherwise default to GooseCoordinaatedOmissionMitigation::Disabled.
             GooseValue {
                 value: Some(GooseCoordinatedOmissionMitigation::Disabled),
-                filter: self.worker,
+                filter: false,
                 message: "",
             },
         ]);
@@ -1914,10 +1751,10 @@ impl GooseConfiguration {
                     filter: self.throttle_requests == 0,
                     message: "throttle_requests",
                 },
-                // Otherwise use GooseDefault if set and not on Manager.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.throttle_requests,
-                    filter: defaults.throttle_requests.is_none() || self.manager,
+                    filter: defaults.throttle_requests.is_none(),
                     message: "throttle_requests",
                 },
             ])
@@ -1935,449 +1772,15 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.sticky_follow,
-                    filter: defaults.sticky_follow.is_none() || self.worker,
+                    filter: defaults.sticky_follow.is_none(),
                     message: "sticky_follow",
                 },
             ])
             .unwrap_or(false);
-
-        // Configure `expect_workers`.
-        self.expect_workers = self.get_value(vec![
-            // Use --expect-workers if configured.
-            GooseValue {
-                value: self.expect_workers,
-                filter: self.expect_workers.is_none(),
-                message: "expect_workers",
-            },
-            // Use GooseDefault if not already set and not Worker.
-            GooseValue {
-                value: defaults.expect_workers,
-                filter: self.expect_workers.is_none() && self.worker,
-                message: "expect_workers",
-            },
-        ]);
-
-        // Configure `no_hash_check`.
-        self.no_hash_check = self
-            .get_value(vec![
-                // Use --no-hash_check if set.
-                GooseValue {
-                    value: Some(self.no_hash_check),
-                    filter: !self.no_hash_check,
-                    message: "no_hash_check",
-                },
-                // Use GooseDefault if not already set and not Worker.
-                GooseValue {
-                    value: defaults.no_hash_check,
-                    filter: defaults.no_hash_check.is_none() || self.worker,
-                    message: "no_hash_check",
-                },
-            ])
-            .unwrap_or(false);
-
-        // Set `manager_bind_host` on Manager.
-        self.manager_bind_host = self
-            .get_value(vec![
-                // Use --manager-bind-host if configured.
-                GooseValue {
-                    value: Some(self.manager_bind_host.to_string()),
-                    filter: self.manager_bind_host.is_empty(),
-                    message: "manager_bind_host",
-                },
-                // Otherwise use default if set and on Manager.
-                GooseValue {
-                    value: defaults.manager_bind_host.clone(),
-                    filter: defaults.manager_bind_host.is_none() || !self.manager,
-                    message: "manager_bind_host",
-                },
-                // Otherwise default to 0.0.0.0 if on Manager.
-                GooseValue {
-                    value: Some("0.0.0.0".to_string()),
-                    filter: !self.manager,
-                    message: "manager_bind_host",
-                },
-            ])
-            .unwrap_or_else(|| "".to_string());
-
-        // Set `manager_bind_port` on Manager.
-        self.manager_bind_port = self
-            .get_value(vec![
-                // Use --manager-bind-port if configured.
-                GooseValue {
-                    value: Some(self.manager_bind_port),
-                    filter: self.manager_bind_port == 0,
-                    message: "manager_bind_port",
-                },
-                // Otherwise use default if set and on Manager.
-                GooseValue {
-                    value: defaults.manager_bind_port,
-                    filter: defaults.manager_bind_port.is_none() || !self.manager,
-                    message: "manager_bind_port",
-                },
-                // Otherwise default to DEFAULT_PORT if on Manager.
-                GooseValue {
-                    value: Some(DEFAULT_PORT.to_string().parse().unwrap()),
-                    filter: !self.manager,
-                    message: "manager_bind_port",
-                },
-            ])
-            .unwrap_or(0);
-
-        // Set `manager_host` on Worker.
-        self.manager_host = self
-            .get_value(vec![
-                // Use --manager-host if configured.
-                GooseValue {
-                    value: Some(self.manager_host.to_string()),
-                    filter: self.manager_host.is_empty(),
-                    message: "manager_host",
-                },
-                // Otherwise use default if set and on Worker.
-                GooseValue {
-                    value: defaults.manager_host.clone(),
-                    filter: defaults.manager_host.is_none() || !self.worker,
-                    message: "manager_host",
-                },
-                // Otherwise default to 127.0.0.1 if on Worker.
-                GooseValue {
-                    value: Some("127.0.0.1".to_string()),
-                    filter: !self.worker,
-                    message: "manager_host",
-                },
-            ])
-            .unwrap_or_else(|| "".to_string());
-
-        // Set `manager_port` on Worker.
-        self.manager_port = self
-            .get_value(vec![
-                // Use --manager-port if configured.
-                GooseValue {
-                    value: Some(self.manager_port),
-                    filter: self.manager_port == 0,
-                    message: "manager_port",
-                },
-                // Otherwise use default if set and on Worker.
-                GooseValue {
-                    value: defaults.manager_port,
-                    filter: defaults.manager_port.is_none() || !self.worker,
-                    message: "manager_port",
-                },
-                // Otherwise default to DEFAULT_PORT if on Worker.
-                GooseValue {
-                    value: Some(DEFAULT_PORT.to_string().parse().unwrap()),
-                    filter: !self.worker,
-                    message: "manager_port",
-                },
-            ])
-            .unwrap_or(0);
     }
 
     /// Validate configured [`GooseConfiguration`] values.
     pub(crate) fn validate(&self) -> Result<(), GooseError> {
-        // Validate nothing incompatible is enabled with --manager.
-        if self.manager {
-            // Don't allow --manager and --worker together.
-            if self.worker {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.manager` && `configuration.worker`".to_string(),
-                    value: "true".to_string(),
-                    detail: "Goose can not run as both Manager and Worker".to_string(),
-                });
-            } else if !self.debug_log.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.debug_log`".to_string(),
-                    value: self.debug_log.clone(),
-                    detail: "`configuration.debug_log` can not be set on the Manager.".to_string(),
-                });
-            } else if !self.error_log.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.error_log`".to_string(),
-                    value: self.error_log.clone(),
-                    detail: "`configuration.error_log` can not be set on the Manager.".to_string(),
-                });
-            } else if !self.request_log.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.request_log`".to_string(),
-                    value: self.request_log.clone(),
-                    detail: "`configuration.request_log` can not be set on the Manager."
-                        .to_string(),
-                });
-            } else if !self.transaction_log.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.transaction_log`".to_string(),
-                    value: self.transaction_log.clone(),
-                    detail: "`configuration.transaction_log` can not be set on the Manager."
-                        .to_string(),
-                });
-            } else if !self.scenario_log.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.scenario_log`".to_string(),
-                    value: self.scenario_log.clone(),
-                    detail: "`configuration.scenario_log` can not be set on the Manager."
-                        .to_string(),
-                });
-            } else if self.no_autostart {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_autostart`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_autostart` can not be set on the Manager."
-                        .to_string(),
-                });
-            } else if !self.report_file.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.report_file`".to_string(),
-                    value: self.report_file.to_string(),
-                    detail: "`configuration.report_file` can not be set on the Manager."
-                        .to_string(),
-                });
-            } else if self.no_granular_report {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_granular_report`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_granular_report` can not be set on the Manager."
-                        .to_string(),
-                });
-            } else if self.no_debug_body {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_debug_body`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_debug_body` can not be set on the Manager."
-                        .to_string(),
-                });
-            // Can not set `throttle_requests` on Manager.
-            } else if self.throttle_requests > 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.throttle_requests`".to_string(),
-                    value: self.throttle_requests.to_string(),
-                    detail: "`configuration.throttle_requests` can not be set on the Manager."
-                        .to_string(),
-                });
-            }
-            if let Some(expect_workers) = self.expect_workers.as_ref() {
-                // Must expect at least 1 Worker when running as Manager.
-                if expect_workers == &0 {
-                    return Err(GooseError::InvalidOption {
-                        option: "`configuration.expect_workers`".to_string(),
-                        value: expect_workers.to_string(),
-                        detail: "`configuration.expect_workers must be set to at least 1."
-                            .to_string(),
-                    });
-                }
-
-                // Must be at least 1 user per worker.
-                if let Some(users) = self.users.as_ref() {
-                    if expect_workers > users {
-                        return Err(GooseError::InvalidOption {
-                            option: "`configuration.expect_workers`".to_string(),
-                            value: expect_workers.to_string(),
-                            detail: "`configuration.expect_workers can not be set to a value larger than `configuration.users`.".to_string(),
-                        });
-                    }
-                } else {
-                    return Err(GooseError::InvalidOption {
-                        option: "`configuration.expect_workers`".to_string(),
-                        value: expect_workers.to_string(),
-                        detail: "`configuration.expect_workers can not be set without setting `configuration.users`.".to_string(),
-                    });
-                }
-            } else {
-                return Err(GooseError::InvalidOption {
-                    option: "configuration.manager".to_string(),
-                    value: true.to_string(),
-                    detail: "Manager mode requires --expect-workers be configured".to_string(),
-                });
-            }
-        } else {
-            // Don't allow `expect_workers` if not running as Manager.
-            if let Some(expect_workers) = self.expect_workers.as_ref() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.expect_workers`".to_string(),
-                    value: expect_workers.to_string(),
-                    detail: "`configuration.expect_workers` can not be set unless on the Manager."
-                        .to_string(),
-                });
-            }
-        }
-
-        // Validate nothing incompatible is enabled with --worker.
-        if self.worker {
-            // Can't set `users` on Worker.
-            if self.users.is_some() {
-                return Err(GooseError::InvalidOption {
-                    option: "configuration.users".to_string(),
-                    value: self.users.as_ref().unwrap().to_string(),
-                    detail: "`configuration.users` can not be set together with the `configuration.worker`.".to_string(),
-                });
-            // Can't set `startup_time` on Worker.
-            } else if self.startup_time != "0" {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.startup_time".to_string(),
-                    value: self.startup_time.to_string(),
-                    detail: "`configuration.startup_time` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `run_time` on Worker.
-            } else if self.run_time != "0" {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.run_time".to_string(),
-                    value: self.run_time.to_string(),
-                    detail: "`configuration.run_time` can not be set in Worker mode.".to_string(),
-                });
-            // Can't set `hatch_rate` on Worker.
-            } else if self.hatch_rate.is_some() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.hatch_rate`".to_string(),
-                    value: self.hatch_rate.as_ref().unwrap().to_string(),
-                    detail: "`configuration.hatch_rate` can not be set in Worker mode.".to_string(),
-                });
-            // Can't set `timeout` on Worker.
-            } else if self.timeout.is_some() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.timeout`".to_string(),
-                    value: self.timeout.as_ref().unwrap().to_string(),
-                    detail: "`configuration.timeout` can not be set in Worker mode.".to_string(),
-                });
-            // Can't set `running_metrics` on Worker.
-            } else if self.running_metrics.is_some() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.running_metrics".to_string(),
-                    value: self.running_metrics.as_ref().unwrap().to_string(),
-                    detail: "`configuration.running_metrics` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_reset_metrics` on Worker.
-            } else if self.no_reset_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
-                    value: self.no_reset_metrics.to_string(),
-                    detail: "`configuration.no_reset_metrics` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_metrics` on Worker.
-            } else if self.no_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_metrics".to_string(),
-                    value: self.no_metrics.to_string(),
-                    detail: "`configuration.no_metrics` can not be set in Worker mode.".to_string(),
-                });
-            // Can't set `no_transaction_metrics` on Worker.
-            } else if self.no_transaction_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_transaction_metrics".to_string(),
-                    value: self.no_transaction_metrics.to_string(),
-                    detail: "`configuration.no_transaction_metrics` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_scenario_metrics` on Worker.
-            } else if self.no_scenario_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_scenario_metrics".to_string(),
-                    value: self.no_scenario_metrics.to_string(),
-                    detail: "`configuration.no_scenario_metrics` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_print_metrics` on Worker.
-            } else if self.no_print_metrics {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_print_metrics".to_string(),
-                    value: self.no_print_metrics.to_string(),
-                    detail: "`configuration.no_print_metrics` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_error_summary` on Worker.
-            } else if self.no_error_summary {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_error_summary".to_string(),
-                    value: self.no_error_summary.to_string(),
-                    detail: "`configuration.no_error_summary` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_status_codes` on Worker.
-            } else if self.no_status_codes {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_status_codes".to_string(),
-                    value: self.no_status_codes.to_string(),
-                    detail: "`configuration.no_status_codes` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_autostart` on Worker.
-            } else if self.no_autostart {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_autostart`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_autostart` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `no_gzip` on Worker.
-            } else if self.no_gzip {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_gzip`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_gzip` can not be set in Worker mode.".to_string(),
-                });
-            } else if self
-                .co_mitigation
-                .as_ref()
-                .unwrap_or(&GooseCoordinatedOmissionMitigation::Disabled)
-                != &GooseCoordinatedOmissionMitigation::Disabled
-            {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.co_mitigation`".to_string(),
-                    value: format!("{:?}", self.co_mitigation.as_ref().unwrap()),
-                    detail: "`configuration.co_mitigation` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `manager_bind_host` on Worker.
-            } else if !self.manager_bind_host.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.manager_bind_host`".to_string(),
-                    value: self.manager_bind_host.to_string(),
-                    detail: "`configuration.manager_bind_host` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can't set `manager_bind_port` on Worker.
-            } else if self.manager_bind_port > 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.manager_bind_port`".to_string(),
-                    value: self.manager_bind_host.to_string(),
-                    detail: "`configuration.manager_bind_port` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Must set `manager_host` on Worker.
-            } else if self.manager_host.is_empty() {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.manager_host`".to_string(),
-                    value: self.manager_host.clone(),
-                    detail: "`configuration.manager_host` must be set when in Worker mode."
-                        .to_string(),
-                });
-            // Must set `manager_port` on Worker.
-            } else if self.manager_port == 0 {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.manager_port`".to_string(),
-                    value: self.manager_port.to_string(),
-                    detail: "`configuration.manager_port` must be set when in Worker mode."
-                        .to_string(),
-                });
-            // Can not set `sticky_follow` on Worker.
-            } else if self.sticky_follow {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.sticky_follow`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.sticky_follow` can not be set in Worker mode."
-                        .to_string(),
-                });
-            // Can not set `no_hash_check` on Worker.
-            } else if self.no_hash_check {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_hash_check`".to_string(),
-                    value: true.to_string(),
-                    detail: "`configuration.no_hash_check` can not be set in Worker mode."
-                        .to_string(),
-                });
-            }
-        }
-
         // Can't set both --verbose and --quiet.
         if self.verbose > 0 && self.quiet > 0 {
             return Err(GooseError::InvalidOption {
@@ -2495,20 +1898,6 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
-            if self.manager {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.test_plan".to_string(),
-                    value: format!("{:?}", self.test_plan),
-                    detail: "`configuration.test_plan` can not be set in Manager mode.".to_string(),
-                });
-            }
-            if self.worker {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.test_plan".to_string(),
-                    value: format!("{:?}", self.test_plan),
-                    detail: "`configuration.test_plan` can not be set in Worker mode.".to_string(),
-                });
-            }
         }
 
         // Validate `iterations`.
@@ -2531,14 +1920,6 @@ impl GooseConfiguration {
                     detail:
                         "`configuration.iteratoins` can not be set with `configuration.test_plan`."
                             .to_string(),
-                });
-            }
-            // The --worker flag isn't compatible with --iterations.
-            if self.worker {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.iterations".to_string(),
-                    value: self.iterations.to_string(),
-                    detail: "`configuration.iterations` can not be set in Worker mode.".to_string(),
                 });
             }
             // The --no-reset-metrics option isn't compatible with --iterations.
@@ -2749,11 +2130,6 @@ mod test {
         let debug_log = "custom-goose-debug.log".to_string();
         let error_log = "custom-goose-error.log".to_string();
         let throttle_requests: usize = 25;
-        let expect_workers: usize = 5;
-        let manager_bind_host = "127.0.0.1".to_string();
-        let manager_bind_port: usize = 1221;
-        let manager_host = "127.0.0.1".to_string();
-        let manager_port: usize = 1221;
 
         let goose_attack = GooseAttack::initialize()
             .unwrap()
@@ -2833,22 +2209,6 @@ mod test {
             .set_default(GooseDefault::ThrottleRequests, throttle_requests)
             .unwrap()
             .set_default(GooseDefault::StickyFollow, true)
-            .unwrap()
-            .set_default(GooseDefault::Manager, true)
-            .unwrap()
-            .set_default(GooseDefault::ExpectWorkers, expect_workers)
-            .unwrap()
-            .set_default(GooseDefault::NoHashCheck, true)
-            .unwrap()
-            .set_default(GooseDefault::ManagerBindHost, manager_bind_host.as_str())
-            .unwrap()
-            .set_default(GooseDefault::ManagerBindPort, manager_bind_port)
-            .unwrap()
-            .set_default(GooseDefault::Worker, true)
-            .unwrap()
-            .set_default(GooseDefault::ManagerHost, manager_host.as_str())
-            .unwrap()
-            .set_default(GooseDefault::ManagerPort, manager_port)
             .unwrap();
 
         assert!(goose_attack.defaults.host == Some(host));
@@ -2887,13 +2247,5 @@ mod test {
         );
         assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
         assert!(goose_attack.defaults.sticky_follow == Some(true));
-        assert!(goose_attack.defaults.manager == Some(true));
-        assert!(goose_attack.defaults.expect_workers == Some(expect_workers));
-        assert!(goose_attack.defaults.no_hash_check == Some(true));
-        assert!(goose_attack.defaults.manager_bind_host == Some(manager_bind_host));
-        assert!(goose_attack.defaults.manager_bind_port == Some(manager_bind_port as u16));
-        assert!(goose_attack.defaults.worker == Some(true));
-        assert!(goose_attack.defaults.manager_host == Some(manager_host));
-        assert!(goose_attack.defaults.manager_port == Some(manager_port as u16));
     }
 }
