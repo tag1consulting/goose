@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.17.1-dev
+
 ## 0.17.0 December 9, 2022
  - [#529](https://github.com/tag1consulting/goose/pull/529) **API change** temporaryily removed Gaggle support `gaggle` feature) to allow upgrading Tokio and other dependencies.
    - if you require Gaggle support, use Goose 0.16.4 with Tokio 0.15 for now; Gaggle support is being added back in https://github.com/tag1consulting/goose/pull/509
@@ -8,7 +10,7 @@
    - removed `--manager`, `--expect-workers`, `--no-hash-check`, `--manager-bind-host`, `--manager-bind-port`, `--worker`, `--manager-host`, `--manager-port` and related configuration defaults
    - removed `AttackMode::Manager` and `AttackMode::Worker`
    - ignore all Gaggle tests, will re-enable these tests when Gaggle support is re-implemented
-   - Box `TransactionError` to avoid over-allocating memory on the stack (see `examples/session.rs` for an example of working with this)
+   - box `TransactionError` to avoid over-allocating memory on the stack (see `examples/session.rs` for an example of working with this)
 
 ## 0.16.4 September 20, 2022
  - [#512](https://github.com/tag1consulting/goose/pull/512) include proper HTTP method and path in logs and html report when using `GooseRequest::builder()`
