@@ -143,6 +143,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="gaggle-technical-details"><a class="header" href="#gaggle-technical-details">Gaggle Technical Details</a></h1>
+<p><strong>NOTE: Gaggle support was temporarily removed as of Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529). Use Goose 0.16.4 if you need the functionality described in this section.</strong></p>
 <p>Goose uses <a href="https://docs.rs/nng/"><code>nng</code></a> to send network messages between the Manager and all Workers. <a href="https://docs.serde.rs/serde/index.html">Serde</a> and <a href="https://github.com/pyfisch/cbor">Serde CBOR</a> are used to serialize messages into <a href="https://tools.ietf.org/html/rfc7049">Concise Binary Object Representation</a>.</p>
 <p>Workers initiate all network connections, and push metrics to the Manager process.</p>
 <h2 id="compile-time-feature"><a class="header" href="#compile-time-feature">Compile-time Feature</a></h2>

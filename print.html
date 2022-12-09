@@ -202,15 +202,15 @@ $ cd loadtest/
 </code></pre>
 <p>This creates a new directory named <code>loadtest/</code> containing <code>loadtest/Cargo.toml</code> and <code>loadtest/src/main.rs</code>. Edit <code>Cargo.toml</code> and add Goose and <a href="https://tokio.rs/"><code>Tokio</code></a> under the dependencies heading:</p>
 <pre><code class="language-toml">[dependencies]
-goose = &quot;^0.16&quot;
+goose = &quot;^0.17&quot;
 tokio = &quot;^1.12&quot;
 </code></pre>
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.16.4
+  Downloaded goose v0.17.0
       ...
-   Compiling goose v0.16.4
+   Compiling goose v0.17.0
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -415,16 +415,6 @@ Advanced:
   --co-mitigation STRATEGY    Sets coordinated omission mitigation strategy
   --throttle-requests VALUE   Sets maximum requests per second
   --sticky-follow             Follows base_url redirect with subsequent requests
-
-Gaggle:
-  --manager                   Enables distributed load test Manager mode
-  --expect-workers VALUE      Sets number of Workers to expect
-  --no-hash-check             Tells Manager to ignore load test checksum
-  --manager-bind-host HOST    Sets host Manager listens on (default: 0.0.0.0)
-  --manager-bind-port PORT    Sets port Manager listens on (default: 5115)
-  --worker                    Enables distributed load test Worker mode
-  --manager-host HOST         Sets host Worker connects to (default: 127.0.0.1)
-  --manager-port PORT         Sets port Worker connects to (default: 5115)
 </code></pre>
 <p>All of the above configuration options are <a href="https://docs.rs/goose/*/goose/config/struct.GooseConfiguration.html">defined in the developer documentation</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="common-run-time-options"><a class="header" href="#common-run-time-options">Common Run Time Options</a></h1>
@@ -570,7 +560,7 @@ Scenarios:
 </code></pre>
 <p>Or, to run only the &quot;Anonymous Spanish user&quot; and &quot;Admin user&quot; Scenarios, you could add <code>--senarios &quot;spanish,admin&quot;</code>:</p>
 <pre><code class="language-bash ignore">% cargo run --release --example umami -- --hatch-rate 10 --scenarios &quot;spanish,admin&quot;
-   Compiling goose v0.16.4 (/Users/jandrews/devel/goose)
+   Compiling goose v0.17.0 (/Users/jandrews/devel/goose)
     Finished release [optimized] target(s) in 11.79s
      Running `target/release/examples/umami --hatch-rate 10 --scenarios spanish,admin`
 05:53:45 [INFO] Output verbosity level: INFO
@@ -702,7 +692,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <p>In this case, the <a href="https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile">Drupal Umami demo</a> was installed in a local container. The following command was used to configure Goose and run the load test. The <code>-u9</code> tells Goose to spin up 9 users. The <code>-r3</code> option tells Goose to hatch 3 users per second. The <code>-t1m</code> option tells Goose to run the load test for 1 minute, or 60 seconds. The <code>--no-reset-metrics</code> flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the <code>--report-file report.html</code> tells Goose to generate an HTML-formatted report named <code>report.html</code> once the load test finishes.</p>
 <h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">ASCII metrics</a></h2>
 <pre><code class="language-bash">% cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.16.4 (~/goose)
+   Compiling goose v0.17.0 (~/goose)
     Finished release [optimized] target(s) in 11.88s
      Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
 05:09:05 [INFO] Output verbosity level: INFO
@@ -980,7 +970,7 @@ All 9 users hatched.
  Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 &lt;- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.16.4
+ goose v0.17.0
  ------------------------------------------------------------------------------
 </code></pre>
 <h2 id="html-metrics"><a class="header" href="#html-metrics">HTML metrics</a></h2>
@@ -1146,7 +1136,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.16.4 controller commands:
+goose 0.17.0 controller commands:
 help               this help
 exit               exit controller
 
@@ -1234,7 +1224,7 @@ goose&gt; Connection closed by foreign host.
  Canceling:   2022-05-05 07:11:13 - 2022-05-05 07:11:13 (00:00:00, 0 &lt;- 20)
 
  Target host: https://umami.ddev.site/
- goose v0.16.4
+ goose v0.17.0
  ------------------------------------------------------------------------------
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="websocket-controller"><a class="header" href="#websocket-controller">WebSocket Controller</a></h1>
@@ -1264,6 +1254,7 @@ foo
 {&quot;response&quot;:&quot;load test shut down&quot;,&quot;success&quot;:true}
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="gaggle-distributed-load-test"><a class="header" href="#gaggle-distributed-load-test">Gaggle: Distributed Load Test</a></h1>
+<p><strong>NOTE: Gaggle support was temporarily removed as of Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529). Use Goose 0.16.4 if you need the functionality described in this section.</strong></p>
 <p>Goose also supports distributed load testing. A Gaggle is one Goose process running in <a href="gaggle/manager.html">Manager mode</a>, and 1 or more Goose processes running in <a href="gaggle/worker.html">Worker mode</a>. The Manager coordinates starting and stopping the Workers, and collects aggregated metrics. Gaggle support is a <a href="gaggle/technical.html#compile-time-feature">cargo feature that must be enabled at compile-time</a>. To launch a Gaggle, you must copy your load test application to all servers from which you wish to generate load.</p>
 <p>It is strongly recommended that the same load test application be copied to all servers involved in a Gaggle. By default, Goose will verify that the load test is identical by comparing a hash of all load test rules. Telling it to skip this check can cause the load test to panic (for example, if a Worker defines a different number of transactions or scenarios than the Manager).</p>
 <h2 id="load-testing-at-scale"><a class="header" href="#load-testing-at-scale">Load Testing At Scale</a></h2>
@@ -1271,6 +1262,7 @@ foo
 <p>Generating this much traffic in and of itself is not fundamentally difficult, but with Goose each request is fully analyzed and validated. It not only confirms the response code for each response the server returns, but also inspects the returned HTML to confirm it contains all expected elements. Links to static elements such as images and CSS are extracted from each response and also loaded, with each simulated user behaving similar to how a real user would. Goose excels at providing consistent and repeatable load testing.</p>
 <p>For full details and graphs, refer to the blog <a href="https://www.tag1consulting.com/blog/goose-clouds-load-testing-scale">A Goose In The Clouds: Load Testing At Scale</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="gaggle-manager"><a class="header" href="#gaggle-manager">Gaggle Manager</a></h1>
+<p><strong>NOTE: Gaggle support was temporarily removed as of Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529). Use Goose 0.16.4 if you need the functionality described in this section.</strong></p>
 <p>To launch a Gaggle, you first must start a Goose application in Manager mode. All configuration happens in the Manager. To start, add the <code>--manager</code> flag and <code>--expect-workers</code> option, the latter necessary to tell the Manager process how many Worker processes it will be coordinating.</p>
 <h2 id="example-2"><a class="header" href="#example-2">Example</a></h2>
 <p><em>Configure a Goose Manager to listen on all interfaces on the default port (0.0.0.0:5115), waiting for 2 Goose Worker processes.</em></p>
@@ -1287,6 +1279,7 @@ foo
 </code></pre>
 <p>Once all expected Workers are running, the distributed load test will automatically start. We set the <code>-v</code> flag so Goose provides verbose output indicating what is happening. In our example, the load test will run until it is canceled. You can cancel the Manager or either of the Worker processes, and the test will stop on all servers.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="run-time-flags"><a class="header" href="#run-time-flags">Run-time Flags</a></h1>
+<p><strong>NOTE: Gaggle support was temporarily removed as of Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529). Use Goose 0.16.4 if you need the functionality described in this section.</strong></p>
 <ul>
 <li><code>--manager</code>: starts a Goose process in Manager mode. There currently can only be one Manager per Gaggle.</li>
 <li><code>--worker</code>: starts a Goose process in Worker mode. How many Workers are in a given Gaggle is defined by the <code>--expect-workers</code> option, documented below.</li>
@@ -1303,6 +1296,7 @@ foo
 <p>The <code>--users</code>, <code>--startup-time</code>, <code>--hatch-rate</code>, <code>--host</code>, and <code>--run-time</code> options must be set on the Manager. Workers inherit these options from the Manager.</p>
 <p>The <code>--throttle-requests</code> option must be configured on each Worker, and can be set to a different value on each Worker if desired.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="gaggle-technical-details"><a class="header" href="#gaggle-technical-details">Gaggle Technical Details</a></h1>
+<p><strong>NOTE: Gaggle support was temporarily removed as of Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529). Use Goose 0.16.4 if you need the functionality described in this section.</strong></p>
 <p>Goose uses <a href="https://docs.rs/nng/"><code>nng</code></a> to send network messages between the Manager and all Workers. <a href="https://docs.serde.rs/serde/index.html">Serde</a> and <a href="https://github.com/pyfisch/cbor">Serde CBOR</a> are used to serialize messages into <a href="https://tools.ietf.org/html/rfc7049">Concise Binary Object Representation</a>.</p>
 <p>Workers initiate all network connections, and push metrics to the Manager process.</p>
 <h2 id="compile-time-feature"><a class="header" href="#compile-time-feature">Compile-time Feature</a></h2>
@@ -1735,12 +1729,13 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <span class="boring">}
 </span></code></pre></pre>
 <p>The session data structure is created from json-formatted response data returned by an authentication request, uniquely stored in each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> instance:</p>
-<pre><code class="language-rust ignore">        jwt_token: response.jwt_token,
+<pre><code class="language-rust ignore">    user.set_session_data(Session {
+        jwt_token: response.jwt_token,
     });
-
 </code></pre>
 <p>The session data is retrieved from the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with each subsequent request. To keep the example simple no validation is done:</p>
-<pre><code class="language-rust ignore">    // Use `get_session_data` to handle a missing session.
+<pre><code class="language-rust ignore">    // This will panic if the session is missing or if the session is not of the right type.
+    // Use `get_session_data` to handle a missing session.
     let session = user.get_session_data_unchecked::&lt;Session&gt;();
 
     // Create a Reqwest RequestBuilder object and configure bearer authentication when making
@@ -1748,7 +1743,6 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
     let reqwest_request_builder = user
         .get_request_builder(&amp;GooseMethod::Get, &quot;/&quot;)?
         .bearer_auth(&amp;session.jwt_token);
-
 </code></pre>
 <p><em>This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token.</em></p>
 <h2 id="complete-source-code-2"><a class="header" href="#complete-source-code-2">Complete Source Code</a></h2>
@@ -1809,12 +1803,13 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 /// per user, when the user thread first starts.
 async fn website_signup(user: &amp;mut GooseUser) -&gt; TransactionResult {
     let params = [(&quot;username&quot;, &quot;test_user&quot;), (&quot;password&quot;, &quot;&quot;)];
-    let response = user
-        .post_form(&quot;/signup&quot;, &amp;params)
-        .await?
-        .response?
-        .json::&lt;AuthenticationResponse&gt;()
-        .await?;
+    let response = match user.post_form(&quot;/signup&quot;, &amp;params).await?.response {
+        Ok(r) =&gt; match r.json::&lt;AuthenticationResponse&gt;().await {
+            Ok(j) =&gt; j,
+            Err(e) =&gt; return Err(Box::new(e.into())),
+        },
+        Err(e) =&gt; return Err(Box::new(e.into())),
+    };
 
     user.set_session_data(Session {
         jwt_token: response.jwt_token,
@@ -2196,7 +2191,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                             let headers = &amp;response.headers().clone();
                             match response.text().await {
                                 Ok(html) =&gt; {
-                                    if !html.contains(&amp;comment_body) {
+                                    if !html.contains(comment_body) {
                                         // This will automatically get written to the error log if enabled, and will
                                         // be displayed to stdout if `-v` is enabled when running the load test.
                                         return user.set_failure(
