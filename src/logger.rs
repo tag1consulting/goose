@@ -857,7 +857,6 @@ impl GooseConfiguration {
                         debug_log.as_mut()
                     }
                     GooseLog::Error(error_message) => {
-                        println!("reveived GooseLog::Error message!");
                         formatted_message = self.format_message(error_message).to_string();
                         error_log.as_mut()
                     }
