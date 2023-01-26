@@ -3435,7 +3435,7 @@ impl GooseAttack {
                     count: aggregate_count,
                     response_time_average: format!(
                         "{:.2}",
-                        aggregate_response_time_counter as f32 / aggregate_count as f32
+                        aggregate_response_time_counter / aggregate_count as f32
                     ),
                     response_time_minimum: aggregate_scenario_time_minimum,
                     response_time_maximum: aggregate_scenario_time_maximum,
