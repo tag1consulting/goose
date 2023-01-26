@@ -145,7 +145,7 @@ fn setup_mock_server_endpoints<'a>(
                 server.mock(|when, then| {
                     when.method(GET).path(REDIRECT_PATH);
                     then.status(301)
-                        .header("Location", &server2.unwrap().url(INDEX_PATH));
+                        .header("Location", server2.unwrap().url(INDEX_PATH));
                 }),
                 // Next set up INDEX_PATH on server 2, store in vector at SERVER2_INDEX_KEY.
                 server2.unwrap().mock(|when, then| {
