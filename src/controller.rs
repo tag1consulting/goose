@@ -987,7 +987,7 @@ pub(crate) async fn controller_main(
 
         // Spawn a new thread to communicate with a client. The returned JoinHandle is
         // ignored as the thread simply runs until the client exits or Goose shuts down.
-        let _ = tokio::spawn(controller_state.accept_connections(stream));
+        let _ = tokio::spawn(controller_state.accept_connections(stream)).await;
     }
 
     Ok(())
