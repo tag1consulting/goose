@@ -47,7 +47,7 @@ use goose::prelude::*;
 > use crate::goose::{
 >     GooseMethod, GooseRequest, GooseUser, Scenario, Transaction, TransactionError,
 >     TransactionFunction, TransactionResult,
-> );
+> };
 > use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
 > use crate::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};
 > ```
