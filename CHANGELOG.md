@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.17.1-dev
+ - remove external dependency on num_cpus(), use instead built-in available_parallelism() added in rust 1.59.0
 
 ## 0.17.0 December 9, 2022
  - [#529](https://github.com/tag1consulting/goose/pull/529) **API change** temporaryily removed Gaggle support `gaggle` feature) to allow upgrading Tokio and other dependencies.
