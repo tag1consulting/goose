@@ -277,9 +277,6 @@ async fn test_defaults_gaggle() {
     // Setup the mock endpoints needed for this test.
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
-    const HOST: &str = "127.0.0.1";
-    const PORT: usize = 9988;
-
     let mut configuration = common::build_configuration(&server, vec![]);
 
     // Unset options set in common.rs so set_default() is instead used.

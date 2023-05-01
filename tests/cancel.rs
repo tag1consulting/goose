@@ -236,7 +236,8 @@ async fn run_standalone_test(test_type: TestType) {
     let configuration = common_build_configuration(&server, &test_type);
 
     // Start a thread that will send a SIGINT to the running load test.
-    let _ = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
+    // Don't await tokio::spawn, instead run in parallel and continue to start Goose Attakc.
+    let _ignored_joinhandle = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(
@@ -333,7 +334,8 @@ async fn run_gaggle_test(test_type: TestType) {
     );
 
     // Start a thread that will send a SIGINT to the running load test.
-    let _ = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
+    // Don't await tokio::spawn, instead run in parallel and continue to start Goose Attakc.
+    let _ignored_joinhandle = tokio::spawn(cancel_load_test(Duration::from_secs(3)));
 
     // Run the Goose Attack.
     let goose_metrics = common::run_load_test(manager_goose_attack, Some(worker_handles)).await;
