@@ -72,7 +72,7 @@ use crate::metrics::{GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 
 /// Constant defining Goose's default telnet Controller port.
-const DEFAULT_TELNET_PORT: &str = "5116";
+const DEFAULT_TELNET_PORT: &str = "5115";
 
 /// Constant defining Goose's default WebSocket Controller port.
 const DEFAULT_WEBSOCKET_PORT: &str = "5117";
