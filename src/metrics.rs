@@ -3263,27 +3263,6 @@ pub(crate) fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
 }
 
-/// A helper function that merges together times.
-///
-/// Used in `lib.rs` to merge together per-thread times, and in `metrics.rs` to
-/// aggregate all times.
-pub(crate) fn merge_times(
-    mut global_response_times: BTreeMap<usize, usize>,
-    local_response_times: BTreeMap<usize, usize>,
-) -> BTreeMap<usize, usize> {
-    // Iterate over user response times, and merge into global response times.
-    for (response_time, count) in &local_response_times {
-        let counter = match global_response_times.get(response_time) {
-            // We've seen this response_time before, increment counter.
-            Some(c) => *c + count,
-            // First time we've seen this response time, initialize counter.
-            None => *count,
-        };
-        global_response_times.insert(*response_time, counter);
-    }
-    global_response_times
-}
-
 /// A helper function to update the global minimum time based on local time.
 pub(crate) fn update_min_time(mut global_min: usize, min: usize) -> usize {
     if global_min == 0 || (min > 0 && min < global_min) {
@@ -3371,11 +3350,14 @@ mod test {
 
     #[test]
     fn response_time_merge() {
-        let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        global_response_times = merge_times(global_response_times, local_response_times.clone());
-        // @TODO: how can we do useful testing of private method and objects?
-        assert_eq!(&global_response_times, &local_response_times);
+        let mut global_response_times: Digest = Digest::new(100);
+        global_response_times.record_time(1);
+        let mut local_response_times: Digest = Digest::new(100);
+        local_response_times.record_time(2);
+        local_response_times.record_time(2);
+        local_response_times.record_time(2);
+        global_response_times = global_response_times.merge(local_response_times.clone());
+        assert_eq!(global_response_times.quantile(0.5), 2);
     }
 
     #[test]
