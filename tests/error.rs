@@ -106,10 +106,10 @@ fn validate_error(
     assert!(a_404_metrics.method == GooseMethod::Get);
 
     // All requests to the index succeeded.
-    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.counter);
+    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.times.count());
     mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
     // All requests to the 404 page failed.
-    mock_endpoints[A_404_KEY].assert_hits(a_404_metrics.raw_data.counter);
+    mock_endpoints[A_404_KEY].assert_hits(a_404_metrics.raw_data.times.count());
     mock_endpoints[A_404_KEY].assert_hits(a_404_metrics.fail_count);
 
     match test_type {

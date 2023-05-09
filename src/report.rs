@@ -1,12 +1,10 @@
 //! Optionally writes an html-formatted summary report after running a load test.
 
-use crate::metrics::{self, format_number};
+use crate::metrics::{self, format_number, Digest};
 
-use std::collections::BTreeMap;
 use std::mem;
 
 use serde::Serialize;
-use tdigest::TDigest;
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
@@ -98,20 +96,16 @@ pub(crate) struct StatusCodeMetric {
     pub status_codes: String,
 }
 
-//TODO only pass in TDigest as it has all the data needed
 /// Helper to generate a single response metric.
 pub(crate) fn get_response_metric(
     method: &str,
     name: &str,
-    response_times: &TDigest,
-    total_request_count: usize,
-    response_time_minimum: usize,
-    response_time_maximum: usize,
+    response_times: &Digest,
 ) -> ResponseMetric {
     // Calculate percentiles in a loop.
     let mut percentiles = Vec::new();
     for q in &[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
-        percentiles.push(format_number(response_times.estimate_quantile(*q) as usize));
+        percentiles.push(format_number(response_times.quantile(*q) as usize));
     }
 
     // Now take the Strings out of the Vector and build a ResponseMetric object.
