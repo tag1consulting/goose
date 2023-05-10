@@ -1,8 +1,7 @@
 //! Optionally writes an html-formatted summary report after running a load test.
 
-use crate::metrics;
+use crate::metrics::{self, format_number, Digest};
 
-use std::collections::BTreeMap;
 use std::mem;
 
 use serde::Serialize;
@@ -101,21 +100,12 @@ pub(crate) struct StatusCodeMetric {
 pub(crate) fn get_response_metric(
     method: &str,
     name: &str,
-    response_times: &BTreeMap<usize, usize>,
-    total_request_count: usize,
-    response_time_minimum: usize,
-    response_time_maximum: usize,
+    response_times: &Digest,
 ) -> ResponseMetric {
     // Calculate percentiles in a loop.
     let mut percentiles = Vec::new();
-    for percent in &[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
-        percentiles.push(metrics::calculate_response_time_percentile(
-            response_times,
-            total_request_count,
-            response_time_minimum,
-            response_time_maximum,
-            *percent,
-        ));
+    for q in &[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
+        percentiles.push(format_number(response_times.quantile(*q) as usize));
     }
 
     // Now take the Strings out of the Vector and build a ResponseMetric object.

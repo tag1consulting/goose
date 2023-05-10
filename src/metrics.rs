@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::str::FromStr;
 use std::{f32, fmt};
+use tdigest::TDigest;
 use tokio::io::AsyncWriteExt;
 
 /// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
@@ -511,32 +512,57 @@ impl PartialOrd for GooseRequestMetricAggregate {
 /// Collects per-request timing metrics.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequestMetricTimingData {
-    /// Per-response-time counters, tracking how often pages are returned with this response time.
-    ///
-    /// All response times between 1 and 100ms are stored without any rounding. Response times between
-    /// 100 and 500ms are rounded to the nearest 10ms and then stored. Response times betwee 500 and
-    /// 1000ms are rounded to the nearest 100ms. Response times larger than 1000ms are rounded to the
-    /// nearest 1000ms.
-    pub times: BTreeMap<usize, usize>,
-    /// The shortest response time seen so far.
-    ///
-    /// For example a `min_response_time` of `3` means the quickest response for this method-path
-    /// pair returned in 3 milliseconds. This value is not rounded.
-    pub minimum_time: usize,
-    /// The longest response time seen so far.
-    ///
-    /// For example a `max_response_time` of `2013` means the slowest response for this method-path
-    /// pair returned in 2013 milliseconds. This value is not rounded.
-    pub maximum_time: usize,
-    /// Total combined response times seen so far.
-    ///
-    /// A running total of all response times returned for this method-path pair.
-    pub total_time: usize,
-    /// Total number of response times seen so far.
-    ///
-    /// A count of how many requests have been tracked for this method-path pair.
-    pub counter: usize,
+    pub times: Digest,
 }
+
+/// Approximation of the distribution of times.
+///
+/// Uses tdigest to create an space efficient and accurate
+/// approximation of distribution of the times.
+///
+/// Specific quantiles can be estimated from the digest.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Digest {
+    digest: TDigest,
+}
+
+impl Digest {
+    pub(crate) fn new(max_size: usize) -> Self {
+        Self {
+            digest: TDigest::new_with_size(max_size),
+        }
+    }
+    pub(crate) fn merge(self, other: Self) -> Self {
+        Self {
+            digest: TDigest::merge_digests(vec![self.digest, other.digest]),
+        }
+    }
+    /// Record a new time.
+    pub(crate) fn record_time(&mut self, time_elapsed: u64) {
+        self.digest = self.digest.merge_sorted(vec![time_elapsed as f64]);
+    }
+
+    pub(crate) fn total_time(&self) -> usize {
+        self.digest.sum() as usize
+    }
+    pub fn count(&self) -> usize {
+        self.digest.count() as usize
+    }
+    pub(crate) fn min(&self) -> usize {
+        self.digest.min() as usize
+    }
+    pub(crate) fn max(&self) -> usize {
+        self.digest.max() as usize
+    }
+    pub(crate) fn mean(&self) -> f32 {
+        self.digest.mean() as f32
+    }
+    // TODO use f64
+    pub(crate) fn quantile(&self, q: f64) -> usize {
+        self.digest.estimate_quantile(q) as usize
+    }
+}
+
 impl GooseRequestMetricTimingData {
     /// Create a new GooseRequestMetricAggregate object.
     pub(crate) fn new(metric_data: Option<&GooseRequestMetricTimingData>) -> Self {
@@ -547,69 +573,14 @@ impl GooseRequestMetricTimingData {
         // Create a new empty metric_data.
         } else {
             GooseRequestMetricTimingData {
-                times: BTreeMap::new(),
-                minimum_time: 0,
-                maximum_time: 0,
-                total_time: 0,
-                counter: 0,
+                times: Digest::new(100),
             }
         }
     }
 
     /// Record a new time.
     pub(crate) fn record_time(&mut self, time_elapsed: u64) {
-        // Perform this conversin only once, then re-use throughout this funciton.
-        let time = time_elapsed as usize;
-
-        // Update minimum if this one is fastest yet.
-        if time > 0 && (self.minimum_time == 0 || time < self.minimum_time) {
-            self.minimum_time = time;
-        }
-
-        // Update maximum if this one is slowest yet.
-        if time > self.maximum_time {
-            self.maximum_time = time;
-        }
-
-        // Update total time, adding in this one.
-        self.total_time += time;
-
-        // Each time we store a new time, increment counter by one.
-        self.counter += 1;
-
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        // No rounding for 1-100ms times.
-        let rounded_time = if time_elapsed < 100 {
-            time
-        }
-        // Round to nearest 10 for 100-500ms times.
-        else if time_elapsed < 500 {
-            ((time_elapsed as f64 / 10.0).round() * 10.0) as usize
-        }
-        // Round to nearest 100 for 500-1000ms times.
-        else if time_elapsed < 1000 {
-            ((time_elapsed as f64 / 100.0).round() * 100.0) as usize
-        }
-        // Round to nearest 1000 for all larger times.
-        else {
-            ((time_elapsed as f64 / 1000.0).round() * 1000.0) as usize
-        };
-
-        let counter = match self.times.get(&rounded_time) {
-            // We've seen this elapsed time before, increment counter.
-            Some(c) => {
-                debug!("got {:?} counter: {}", rounded_time, c);
-                *c + 1
-            }
-            // First time we've seen this elapsed time, initialize counter.
-            None => {
-                debug!("no match for counter: {}", rounded_time);
-                1
-            }
-        };
-        debug!("incremented {} counter: {}", rounded_time, counter);
-        self.times.insert(rounded_time, counter);
+        self.times.record_time(time_elapsed)
     }
 }
 /// The per-scenario metrics collected each time a scenario is run.
@@ -708,15 +679,7 @@ pub struct TransactionMetricAggregate {
     /// An optional name for the transaction.
     pub transaction_name: String,
     /// Per-run-time counters, tracking how often transactions take a given time to complete.
-    pub times: BTreeMap<usize, usize>,
-    /// The shortest run-time for this transaction.
-    pub min_time: usize,
-    /// The longest run-time for this transaction.
-    pub max_time: usize,
-    /// Total combined run-times for this transaction.
-    pub total_time: usize,
-    /// Total number of times transaction has run.
-    pub counter: usize,
+    pub times: Digest,
     /// Total number of times transaction has run successfully.
     pub success_count: usize,
     /// Total number of times transaction has failed.
@@ -735,11 +698,7 @@ impl TransactionMetricAggregate {
             scenario_name: scenario_name.to_string(),
             transaction_index,
             transaction_name: transaction_name.to_string(),
-            times: BTreeMap::new(),
-            min_time: 0,
-            max_time: 0,
-            total_time: 0,
-            counter: 0,
+            times: Digest::new(100),
             success_count: 0,
             fail_count: 0,
         }
@@ -747,52 +706,13 @@ impl TransactionMetricAggregate {
 
     /// Track transaction function elapsed time in milliseconds.
     pub(crate) fn set_time(&mut self, time: u64, success: bool) {
-        // Perform this conversion only once, then re-use throughout this function.
-        let time_usize = time as usize;
-
-        // Update minimum if this one is fastest yet.
-        if self.min_time == 0 || time_usize < self.min_time {
-            self.min_time = time_usize;
-        }
-
-        // Update maximum if this one is slowest yet.
-        if time_usize > self.max_time {
-            self.max_time = time_usize;
-        }
-
-        // Update total_time, adding in this one.
-        self.total_time += time_usize;
-
-        // Each time we store a new time, increment counter by one.
-        self.counter += 1;
+        self.times.record_time(time);
 
         if success {
             self.success_count += 1;
         } else {
             self.fail_count += 1;
         }
-
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        let rounded_time = match time {
-            // No rounding for times 0-100 ms.
-            0..=100 => time_usize,
-            // Round to nearest 10 for times 100-500 ms.
-            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
-            // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
-            // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
-        };
-
-        let counter = match self.times.get(&rounded_time) {
-            // We've seen this time before, increment counter.
-            Some(c) => *c + 1,
-            // First time we've seen this time, initialize counter.
-            None => 1,
-        };
-        self.times.insert(rounded_time, counter);
-        debug!("incremented {} counter: {}", rounded_time, counter);
     }
 }
 /// Aggregated per-scenario metrics updated each time a scenario is run.
@@ -810,15 +730,7 @@ pub struct ScenarioMetricAggregate {
     /// List of users running this scenario.
     pub users: HashSet<usize>,
     /// Per-run-time counters, tracking how often scenario takes a given time to complete.
-    pub times: BTreeMap<usize, usize>,
-    /// The shortest run-time for this scenario.
-    pub min_time: usize,
-    /// The longest run-time for this scenario.
-    pub max_time: usize,
-    /// Total combined run-times for this scenario.
-    pub total_time: usize,
-    /// Total number of times scenario has run.
-    pub counter: usize,
+    pub times: Digest,
 }
 impl ScenarioMetricAggregate {
     /// Create a new ScenarioMetricAggregate.
@@ -827,11 +739,7 @@ impl ScenarioMetricAggregate {
             index,
             name: name.to_string(),
             users: HashSet::new(),
-            times: BTreeMap::new(),
-            min_time: 0,
-            max_time: 0,
-            total_time: 0,
-            counter: 0,
+            times: Digest::new(100),
         }
     }
 
@@ -839,47 +747,7 @@ impl ScenarioMetricAggregate {
     pub(crate) fn update(&mut self, time: u64, user: usize) {
         // Record each different user running this scenario.
         self.users.insert(user);
-
-        // Perform this conversion only once, then re-use throughout this function.
-        let time_usize = time as usize;
-
-        // Update minimum if this one is fastest yet.
-        if self.min_time == 0 || time_usize < self.min_time {
-            self.min_time = time_usize;
-        }
-
-        // Update maximum if this one is slowest yet.
-        if time_usize > self.max_time {
-            self.max_time = time_usize;
-        }
-
-        // Update total_time, adding in this one.
-        self.total_time += time_usize;
-
-        // Each time we store a new time, increment counter by one.
-        self.counter += 1;
-
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        let rounded_time = match time {
-            // No rounding for times 0-100 ms.
-            0..=100 => time_usize,
-            // Round to nearest 10 for times 100-500 ms.
-            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
-            // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
-            // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
-        };
-
-        let counter = match self.times.get(&rounded_time) {
-            // We've seen this time before, increment counter.
-            Some(c) => *c + 1,
-            // First time we've seen this time, initialize counter.
-            None => 1,
-        };
-        self.times.insert(rounded_time, counter);
-        debug!("incremented {} counter: {}", rounded_time, counter);
+        self.times.record_time(time);
     }
 }
 /// All metrics optionally collected during a Goose load test.
@@ -1431,7 +1299,7 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut aggregate_transaction_times: Digest = Digest::new(100);
         let mut aggregate_total_transaction_time: usize = 0;
         let mut aggregate_transaction_time_counter: usize = 0;
         let mut aggregate_min_transaction_time: usize = 0;
@@ -1473,25 +1341,25 @@ impl GooseMetrics {
 
                 // Iterate over user transaction times, and merge into global transaction times.
                 aggregate_transaction_times =
-                    merge_times(aggregate_transaction_times, transaction.times.clone());
+                    aggregate_transaction_times.merge(transaction.times.clone());
 
                 // Increment total transaction time counter.
-                aggregate_total_transaction_time += &transaction.total_time;
+                aggregate_total_transaction_time += &transaction.times.total_time();
 
                 // Increment counter tracking individual transaction times seen.
-                aggregate_transaction_time_counter += &transaction.counter;
+                aggregate_transaction_time_counter += &transaction.times.count();
 
                 // If user had new fastest transaction time, update global fastest transaction time.
                 aggregate_min_transaction_time =
-                    update_min_time(aggregate_min_transaction_time, transaction.min_time);
+                    update_min_time(aggregate_min_transaction_time, transaction.times.min());
 
                 // If user had new slowest transaction` time, update global slowest transaction` time.
                 aggregate_max_transaction_time =
-                    update_max_time(aggregate_max_transaction_time, transaction.max_time);
+                    update_max_time(aggregate_max_transaction_time, transaction.times.max());
 
-                let average = match transaction.counter {
+                let average = match transaction.times.count() {
                     0 => 0.00,
-                    _ => transaction.total_time as f32 / transaction.counter as f32,
+                    _ => transaction.times.total_time() as f32 / transaction.times.count() as f32,
                 };
                 let average_precision = determine_precision(average);
 
@@ -1507,14 +1375,9 @@ impl GooseMetrics {
                         24
                     ),
                     average,
-                    format_number(transaction.min_time),
-                    format_number(transaction.max_time),
-                    format_number(util::median(
-                        &transaction.times,
-                        transaction.counter,
-                        transaction.min_time,
-                        transaction.max_time
-                    )),
+                    format_number(transaction.times.min()),
+                    format_number(transaction.times.max()),
+                    format_number(transaction.times.quantile(0.5)),
                     avg_precision = average_precision,
                 )?;
             }
@@ -1540,12 +1403,7 @@ impl GooseMetrics {
                 average,
                 format_number(aggregate_min_transaction_time),
                 format_number(aggregate_max_transaction_time),
-                format_number(util::median(
-                    &aggregate_transaction_times,
-                    aggregate_transaction_time_counter,
-                    aggregate_min_transaction_time,
-                    aggregate_max_transaction_time
-                )),
+                format_number(aggregate_transaction_times.quantile(0.5)),
                 avg_precision = average_precision,
             )?;
         }
@@ -1581,17 +1439,17 @@ impl GooseMetrics {
         let mut aggregate_counter = 0;
         for scenario in &self.scenarios {
             aggregate_users += scenario.users.len();
-            aggregate_counter += scenario.counter;
-            let (runs, _fails) = per_second_calculations(self.duration, scenario.counter, 0);
+            aggregate_counter += scenario.times.count();
+            let (runs, _fails) = per_second_calculations(self.duration, scenario.times.count(), 0);
             let runs_precision = determine_precision(runs);
-            let iterations = scenario.counter as f32 / scenario.users.len() as f32;
+            let iterations = scenario.times.count() as f32 / scenario.users.len() as f32;
             let iterations_precision = determine_precision(iterations);
             writeln!(
                 fmt,
                 " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
                 util::truncate_string(&format!("{}: {}", scenario.index + 1, &scenario.name,), 24),
                 scenario.users.len(),
-                scenario.counter,
+                scenario.times.count(),
                 runs,
                 iterations,
                 runs_p = runs_precision,
@@ -1635,7 +1493,7 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut aggregate_scenario_times: Digest = Digest::new(100);
         let mut aggregate_total_scenario_time: usize = 0;
         let mut aggregate_scenario_time_counter: usize = 0;
         let mut aggregate_min_scenario_time: usize = 0;
@@ -1655,26 +1513,25 @@ impl GooseMetrics {
         )?;
         for scenario in &self.scenarios {
             // Iterate over user transaction times, and merge into global transaction times.
-            aggregate_scenario_times =
-                merge_times(aggregate_scenario_times, scenario.times.clone());
+            aggregate_scenario_times = aggregate_scenario_times.merge(scenario.times.clone());
 
             // Increment total scenario time counter.
-            aggregate_total_scenario_time += &scenario.total_time;
+            aggregate_total_scenario_time += &scenario.times.total_time();
 
             // Increment counter tracking individual scenario times seen.
-            aggregate_scenario_time_counter += &scenario.counter;
+            aggregate_scenario_time_counter += &scenario.times.count();
 
             // If user had new fastest scenario time, update global fastest scenario time.
             aggregate_min_scenario_time =
-                update_min_time(aggregate_min_scenario_time, scenario.min_time);
+                update_min_time(aggregate_min_scenario_time, scenario.times.min());
 
             // If user had new slowest scenario time, update global slowest scenario time.
             aggregate_max_scenario_time =
-                update_max_time(aggregate_max_scenario_time, scenario.max_time);
+                update_max_time(aggregate_max_scenario_time, scenario.times.max());
 
-            let average = match scenario.counter {
+            let average = match scenario.times.count() {
                 0 => 0.00,
-                _ => scenario.total_time as f32 / scenario.counter as f32,
+                _ => scenario.times.total_time() as f32 / scenario.times.count() as f32,
             };
             let average_precision = determine_precision(average);
 
@@ -1683,14 +1540,9 @@ impl GooseMetrics {
                 " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
                 util::truncate_string(&format!("  {}: {}", scenario.index + 1, scenario.name), 24),
                 average,
-                format_number(scenario.min_time),
-                format_number(scenario.max_time),
-                format_number(util::median(
-                    &scenario.times,
-                    scenario.counter,
-                    scenario.min_time,
-                    scenario.max_time
-                )),
+                format_number(scenario.times.min()),
+                format_number(scenario.times.max()),
+                format_number(scenario.times.quantile(0.5)),
                 avg_precision = average_precision,
             )?;
         }
@@ -1712,12 +1564,7 @@ impl GooseMetrics {
                 average,
                 format_number(aggregate_min_scenario_time),
                 format_number(aggregate_max_scenario_time),
-                format_number(util::median(
-                    &aggregate_scenario_times,
-                    aggregate_scenario_time_counter,
-                    aggregate_min_scenario_time,
-                    aggregate_max_scenario_time
-                )),
+                format_number(aggregate_scenario_times.quantile(0.5)),
                 avg_precision = average_precision,
             )?;
         }
@@ -1735,7 +1582,7 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut aggregate_raw_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut aggregate_raw_times: Digest = Digest::new(100);
         let mut aggregate_raw_total_time: usize = 0;
         let mut aggregate_raw_counter: usize = 0;
         let mut aggregate_raw_min_time: usize = 0;
@@ -1761,38 +1608,33 @@ impl GooseMetrics {
                 co_data = true;
             }
 
-            let raw_average = match request.raw_data.counter {
+            let raw_average = match request.raw_data.times.count() {
                 0 => 0.0,
-                _ => request.raw_data.total_time as f32 / request.raw_data.counter as f32,
+                _ => request.raw_data.times.mean(),
             };
             let raw_average_precision = determine_precision(raw_average);
 
             // Merge in all times from this request into an aggregate.
-            aggregate_raw_times = merge_times(aggregate_raw_times, request.raw_data.times.clone());
+            aggregate_raw_times = aggregate_raw_times.merge(request.raw_data.times.clone());
             // Increment total response time counter.
-            aggregate_raw_total_time += &request.raw_data.total_time;
+            aggregate_raw_total_time += &request.raw_data.times.total_time();
             // Increment counter tracking individual response times seen.
-            aggregate_raw_counter += &request.raw_data.counter;
+            aggregate_raw_counter += &request.raw_data.times.count();
             // If user had new fastest response time, update global fastest response time.
             aggregate_raw_min_time =
-                update_min_time(aggregate_raw_min_time, request.raw_data.minimum_time);
+                update_min_time(aggregate_raw_min_time, request.raw_data.times.min());
             // If user had new slowest response time, update global slowest response time.
             aggregate_raw_max_time =
-                update_max_time(aggregate_raw_max_time, request.raw_data.maximum_time);
+                update_max_time(aggregate_raw_max_time, request.raw_data.times.max());
 
             writeln!(
                 fmt,
                 " {:<24} | {:>11.raw_avg_precision$} | {:>10} | {:>11} | {:>10}",
                 util::truncate_string(request_key, 24),
                 raw_average,
-                format_number(request.raw_data.minimum_time),
-                format_number(request.raw_data.maximum_time),
-                format_number(util::median(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                )),
+                format_number(request.raw_data.times.min()),
+                format_number(request.raw_data.times.max()),
+                format_number(request.raw_data.times.quantile(0.5)),
                 raw_avg_precision = raw_average_precision,
             )?;
         }
@@ -1816,12 +1658,7 @@ impl GooseMetrics {
                 raw_average,
                 format_number(aggregate_raw_min_time),
                 format_number(aggregate_raw_max_time),
-                format_number(util::median(
-                    &aggregate_raw_times,
-                    aggregate_raw_counter,
-                    aggregate_raw_min_time,
-                    aggregate_raw_max_time
-                )),
+                format_number(aggregate_raw_times.quantile(0.5)),
                 avg_precision = raw_average_precision,
             )?;
         }
@@ -1837,7 +1674,7 @@ impl GooseMetrics {
         )?;
         writeln!(fmt, " Adjusted for Coordinated Omission:")?;
 
-        let mut aggregate_co_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut aggregate_co_times: Digest = Digest::new(100);
         let mut aggregate_co_total_time: usize = 0;
         let mut aggregate_co_counter: usize = 0;
         let mut aggregate_co_min_time: usize = 0;
@@ -1860,33 +1697,23 @@ impl GooseMetrics {
         for (request_key, request) in self.requests.iter().sorted() {
             let co_average;
             let standard_deviation;
-            let co_minimum;
             let co_maximum;
             if let Some(co_data) = request.coordinated_omission_data.as_ref() {
-                let raw_average = match request.raw_data.counter {
-                    0 => 0.0,
-                    _ => request.raw_data.total_time as f32 / request.raw_data.counter as f32,
-                };
-                co_average = match co_data.counter {
-                    0 => 0.0,
-                    _ => co_data.total_time as f32 / co_data.counter as f32,
-                };
+                let raw_average = request.raw_data.times.mean();
+                co_average = co_data.times.mean();
                 standard_deviation = util::standard_deviation(raw_average, co_average);
-                aggregate_co_times = merge_times(aggregate_co_times, co_data.times.clone());
-                aggregate_co_counter += co_data.counter;
+                aggregate_co_times = aggregate_co_times.merge(co_data.times.clone());
+                aggregate_co_counter += co_data.times.count();
                 // If user had new fastest response time, update global fastest response time.
-                aggregate_co_min_time =
-                    update_min_time(aggregate_co_min_time, co_data.minimum_time);
+                aggregate_co_min_time = update_min_time(aggregate_co_min_time, co_data.times.min());
                 // If user had new slowest response time, update global slowest response time.
                 aggregate_co_max_time =
-                    update_max_time(aggregate_raw_max_time, co_data.maximum_time);
-                aggregate_co_total_time += co_data.total_time;
-                co_minimum = co_data.minimum_time;
-                co_maximum = co_data.maximum_time;
+                    update_max_time(aggregate_raw_max_time, co_data.times.max());
+                aggregate_co_total_time += co_data.times.total_time();
+                co_maximum = co_data.times.max();
             } else {
                 co_average = 0.0;
                 standard_deviation = 0.0;
-                co_minimum = 0;
                 co_maximum = 0;
             }
             let co_average_precision = determine_precision(co_average);
@@ -1901,12 +1728,7 @@ impl GooseMetrics {
                     co_average,
                     standard_deviation,
                     format_number(co_maximum),
-                    format_number(util::median(
-                        &co_data.times,
-                        co_data.counter,
-                        co_minimum,
-                        co_maximum,
-                    )),
+                    format_number(co_data.times.quantile(0.5)),
                     co_avg_precision = co_average_precision,
                     sd_precision = standard_deviation_precision,
                 )?;
@@ -1945,12 +1767,7 @@ impl GooseMetrics {
                 co_average,
                 standard_deviation,
                 format_number(aggregate_co_max_time),
-                format_number(util::median(
-                    &aggregate_co_times,
-                    aggregate_co_counter,
-                    aggregate_co_min_time,
-                    aggregate_co_max_time
-                )),
+                format_number(aggregate_co_times.quantile(0.5)),
                 avg_precision = co_average_precision,
                 sd_precision = standard_deviation_precision,
             )?;
@@ -1969,7 +1786,7 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut raw_aggregate_response_times: Digest = Digest::new(100);
         let mut raw_aggregate_total_response_time: usize = 0;
         let mut raw_aggregate_response_time_counter: usize = 0;
         let mut raw_aggregate_min_response_time: usize = 0;
@@ -2004,72 +1821,36 @@ impl GooseMetrics {
 
             // Iterate over user response times, and merge into global response times.
             raw_aggregate_response_times =
-                merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
+                raw_aggregate_response_times.merge(request.raw_data.times.clone());
 
             // Increment total response time counter.
-            raw_aggregate_total_response_time += &request.raw_data.total_time;
+            raw_aggregate_total_response_time += &request.raw_data.times.total_time();
 
             // Increment counter tracking individual response times seen.
-            raw_aggregate_response_time_counter += &request.raw_data.counter;
+            raw_aggregate_response_time_counter += &request.raw_data.times.count();
 
             // If user had new fastest response time, update global fastest response time.
             raw_aggregate_min_response_time = update_min_time(
                 raw_aggregate_min_response_time,
-                request.raw_data.minimum_time,
+                request.raw_data.times.min(),
             );
 
             // If user had new slowest response time, update global slowest response time.
             raw_aggregate_max_response_time = update_max_time(
                 raw_aggregate_max_response_time,
-                request.raw_data.maximum_time,
+                request.raw_data.times.max(),
             );
             // Sort response times so we can calculate a mean.
             writeln!(
                 fmt,
                 " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                 util::truncate_string(request_key, 24),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.5
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.75
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.98
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.99
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.999
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.9999
-                ),
+                calculate_response_time_percentile(&request.raw_data.times, 0.5),
+                calculate_response_time_percentile(&request.raw_data.times, 0.75),
+                calculate_response_time_percentile(&request.raw_data.times, 0.98),
+                calculate_response_time_percentile(&request.raw_data.times, 0.99),
+                calculate_response_time_percentile(&request.raw_data.times, 0.999),
+                calculate_response_time_percentile(&request.raw_data.times, 0.9999),
             )?;
         }
         if self.requests.len() > 1 {
@@ -2081,48 +1862,12 @@ impl GooseMetrics {
                 fmt,
                 " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                 "Aggregated",
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.5
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.75
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.98
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.99
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.999
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.9999
-                ),
+                calculate_response_time_percentile(&raw_aggregate_response_times, 0.5),
+                calculate_response_time_percentile(&raw_aggregate_response_times, 0.75),
+                calculate_response_time_percentile(&raw_aggregate_response_times, 0.98),
+                calculate_response_time_percentile(&raw_aggregate_response_times, 0.99),
+                calculate_response_time_percentile(&raw_aggregate_response_times, 0.999),
+                calculate_response_time_percentile(&raw_aggregate_response_times, 0.9999),
             )?;
         }
 
@@ -2131,7 +1876,7 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut co_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut co_aggregate_response_times: Digest = Digest::new(100);
         let mut co_aggregate_total_response_time: usize = 0;
         let mut co_aggregate_response_time_counter: usize = 0;
         let mut co_aggregate_min_response_time: usize = 0;
@@ -2158,27 +1903,25 @@ impl GooseMetrics {
         for (request_key, request) in self.requests.iter().sorted() {
             if let Some(coordinated_omission_data) = request.coordinated_omission_data.as_ref() {
                 // Iterate over user response times, and merge into global response times.
-                co_aggregate_response_times = merge_times(
-                    co_aggregate_response_times,
-                    coordinated_omission_data.times.clone(),
-                );
+                co_aggregate_response_times =
+                    co_aggregate_response_times.merge(coordinated_omission_data.times.clone());
 
                 // Increment total response time counter.
-                co_aggregate_total_response_time += &coordinated_omission_data.total_time;
+                co_aggregate_total_response_time += &coordinated_omission_data.times.total_time();
 
                 // Increment counter tracking individual response times seen.
-                co_aggregate_response_time_counter += &coordinated_omission_data.counter;
+                co_aggregate_response_time_counter += &coordinated_omission_data.times.count();
 
                 // If user had new fastest response time, update global fastest response time.
                 co_aggregate_min_response_time = update_min_time(
                     co_aggregate_min_response_time,
-                    coordinated_omission_data.minimum_time,
+                    coordinated_omission_data.times.min(),
                 );
 
                 // If user had new slowest response time, update global slowest response time.
                 co_aggregate_max_response_time = update_max_time(
                     co_aggregate_max_response_time,
-                    coordinated_omission_data.maximum_time,
+                    coordinated_omission_data.times.max(),
                 );
 
                 // Sort response times so we can calculate a mean.
@@ -2186,48 +1929,12 @@ impl GooseMetrics {
                     fmt,
                     " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                     util::truncate_string(request_key, 24),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.5
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.75
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.98
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.99
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.999
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.9999
-                    ),
+                    calculate_response_time_percentile(&coordinated_omission_data.times, 0.5),
+                    calculate_response_time_percentile(&coordinated_omission_data.times, 0.75),
+                    calculate_response_time_percentile(&coordinated_omission_data.times, 0.98),
+                    calculate_response_time_percentile(&coordinated_omission_data.times, 0.99),
+                    calculate_response_time_percentile(&coordinated_omission_data.times, 0.999),
+                    calculate_response_time_percentile(&coordinated_omission_data.times, 0.9999),
                 )?;
             } else {
                 writeln!(
@@ -2252,48 +1959,12 @@ impl GooseMetrics {
                 fmt,
                 " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                 "Aggregated",
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.5
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.75
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.98
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.99
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.999
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.9999
-                ),
+                calculate_response_time_percentile(&co_aggregate_response_times, 0.5),
+                calculate_response_time_percentile(&co_aggregate_response_times, 0.75),
+                calculate_response_time_percentile(&co_aggregate_response_times, 0.98),
+                calculate_response_time_percentile(&co_aggregate_response_times, 0.99),
+                calculate_response_time_percentile(&co_aggregate_response_times, 0.999),
+                calculate_response_time_percentile(&co_aggregate_response_times, 0.9999),
             )?;
         }
 
@@ -3061,10 +2732,10 @@ impl GooseAttack {
             let mut raw_aggregate_response_time_counter: usize = 0;
             let mut raw_aggregate_response_time_minimum: usize = 0;
             let mut raw_aggregate_response_time_maximum: usize = 0;
-            let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+            let mut raw_aggregate_response_times: Digest = Digest::new(100);
             let mut co_aggregate_response_time_counter: usize = 0;
             let mut co_aggregate_response_time_maximum: usize = 0;
-            let mut co_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+            let mut co_aggregate_response_times: Digest = Digest::new(100);
             let mut co_data = false;
             for (request_key, request) in self.metrics.requests.iter().sorted() {
                 // Determine whether or not to include Coordinated Omission data.
@@ -3092,10 +2763,11 @@ impl GooseAttack {
                     number_of_failures: request.fail_count,
                     response_time_average: format!(
                         "{:.2}",
-                        request.raw_data.total_time as f32 / request.raw_data.counter as f32
+                        request.raw_data.times.total_time() as f32
+                            / request.raw_data.times.count() as f32
                     ),
-                    response_time_minimum: request.raw_data.minimum_time,
-                    response_time_maximum: request.raw_data.maximum_time,
+                    response_time_minimum: request.raw_data.times.min(),
+                    response_time_maximum: request.raw_data.times.max(),
                     requests_per_second: format!("{:.2}", requests_per_second),
                     failures_per_second: format!("{:.2}", failures_per_second),
                 });
@@ -3105,25 +2777,22 @@ impl GooseAttack {
                     &method,
                     &name,
                     &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
                 ));
 
                 // Collect aggregated request and response metrics.
                 raw_aggregate_total_count += total_request_count;
                 raw_aggregate_fail_count += request.fail_count;
-                raw_aggregate_response_time_counter += request.raw_data.total_time;
+                raw_aggregate_response_time_counter += request.raw_data.times.total_time();
                 raw_aggregate_response_time_minimum = update_min_time(
                     raw_aggregate_response_time_minimum,
-                    request.raw_data.minimum_time,
+                    request.raw_data.times.min(),
                 );
                 raw_aggregate_response_time_maximum = update_max_time(
                     raw_aggregate_response_time_maximum,
-                    request.raw_data.maximum_time,
+                    request.raw_data.times.max(),
                 );
                 raw_aggregate_response_times =
-                    merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
+                    raw_aggregate_response_times.merge(request.raw_data.times.clone());
             }
 
             // Prepare aggregate per-request metrics.
@@ -3153,9 +2822,6 @@ impl GooseAttack {
                 "",
                 "Aggregated",
                 &raw_aggregate_response_times,
-                raw_aggregate_total_count,
-                raw_aggregate_response_time_minimum,
-                raw_aggregate_response_time_maximum,
             ));
 
             // Compile the request metrics template.
@@ -3184,10 +2850,8 @@ impl GooseAttack {
                             .strip_prefix(&format!("{} ", request.method))
                             .unwrap()
                             .to_string();
-                        let raw_average =
-                            request.raw_data.total_time as f32 / request.raw_data.counter as f32;
-                        let co_average = coordinated_omission_data.total_time as f32
-                            / coordinated_omission_data.counter as f32;
+                        let raw_average = request.raw_data.times.mean();
+                        let co_average = coordinated_omission_data.times.mean();
                         // Prepare per-request metrics.
                         co_request_metrics.push(report::CORequestMetric {
                             method: method.to_string(),
@@ -3197,7 +2861,7 @@ impl GooseAttack {
                                 "{:.2}",
                                 util::standard_deviation(raw_average, co_average)
                             ),
-                            response_time_maximum: coordinated_omission_data.maximum_time,
+                            response_time_maximum: coordinated_omission_data.times.max(),
                         });
 
                         // Prepare per-response metrics.
@@ -3205,21 +2869,17 @@ impl GooseAttack {
                             &method,
                             &name,
                             &coordinated_omission_data.times,
-                            coordinated_omission_data.counter,
-                            coordinated_omission_data.minimum_time,
-                            coordinated_omission_data.maximum_time,
                         ));
 
                         // Collect aggregated request and response metrics.
-                        co_aggregate_response_time_counter += coordinated_omission_data.total_time;
+                        co_aggregate_response_time_counter +=
+                            coordinated_omission_data.times.total_time();
                         co_aggregate_response_time_maximum = update_max_time(
                             co_aggregate_response_time_maximum,
-                            coordinated_omission_data.maximum_time,
+                            coordinated_omission_data.times.max(),
                         );
-                        co_aggregate_response_times = merge_times(
-                            co_aggregate_response_times,
-                            coordinated_omission_data.times.clone(),
-                        );
+                        co_aggregate_response_times = co_aggregate_response_times
+                            .merge(coordinated_omission_data.times.clone());
                     }
                     let total_request_count = request.success_count + request.fail_count;
                     co_aggregate_total_count += total_request_count;
@@ -3247,9 +2907,6 @@ impl GooseAttack {
                     "",
                     "Aggregated",
                     &co_aggregate_response_times,
-                    co_aggregate_total_count,
-                    raw_aggregate_response_time_minimum,
-                    co_aggregate_response_time_maximum,
                 ));
 
                 // Compile the co_request metrics rows.
@@ -3289,7 +2946,7 @@ impl GooseAttack {
                 let mut aggregate_transaction_time_counter: usize = 0;
                 let mut aggregate_transaction_time_minimum: usize = 0;
                 let mut aggregate_transaction_time_maximum: usize = 0;
-                let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut aggregate_transaction_times: Digest = Digest::new(100);
                 for (scenario_counter, scenario) in self.metrics.transactions.iter().enumerate() {
                     for (transaction_counter, transaction) in scenario.iter().enumerate() {
                         if transaction_counter == 0 {
@@ -3313,9 +2970,12 @@ impl GooseAttack {
                             total_run_count,
                             transaction.fail_count,
                         );
-                        let average = match transaction.counter {
+                        let average = match transaction.times.count() {
                             0 => 0.00,
-                            _ => transaction.total_time as f32 / transaction.counter as f32,
+                            _ => {
+                                transaction.times.total_time() as f32
+                                    / transaction.times.count() as f32
+                            }
                         };
                         transaction_metrics.push(report::TransactionMetric {
                             is_scenario: false,
@@ -3324,8 +2984,8 @@ impl GooseAttack {
                             number_of_requests: total_run_count,
                             number_of_failures: transaction.fail_count,
                             response_time_average: format!("{:.2}", average),
-                            response_time_minimum: transaction.min_time,
-                            response_time_maximum: transaction.max_time,
+                            response_time_minimum: transaction.times.min(),
+                            response_time_maximum: transaction.times.max(),
                             requests_per_second: format!("{:.2}", requests_per_second),
                             failures_per_second: format!("{:.2}", failures_per_second),
                         });
@@ -3333,15 +2993,15 @@ impl GooseAttack {
                         aggregate_total_count += total_run_count;
                         aggregate_fail_count += transaction.fail_count;
                         aggregate_transaction_times =
-                            merge_times(aggregate_transaction_times, transaction.times.clone());
-                        aggregate_transaction_time_counter += &transaction.counter;
+                            aggregate_transaction_times.merge(transaction.times.clone());
+                        aggregate_transaction_time_counter += &transaction.times.count();
                         aggregate_transaction_time_minimum = update_min_time(
                             aggregate_transaction_time_minimum,
-                            transaction.min_time,
+                            transaction.times.min(),
                         );
                         aggregate_transaction_time_maximum = update_max_time(
                             aggregate_transaction_time_maximum,
-                            transaction.max_time,
+                            transaction.times.max(),
                         );
                     }
                 }
@@ -3392,39 +3052,39 @@ impl GooseAttack {
                 let mut aggregate_scenario_time_counter: usize = 0;
                 let mut aggregate_scenario_time_minimum: usize = 0;
                 let mut aggregate_scenario_time_maximum: usize = 0;
-                let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut aggregate_scenario_times: Digest = Digest::new(100);
                 let mut aggregate_iterations = 0.0;
                 let mut aggregate_response_time_counter = 0.0;
                 for scenario in &self.metrics.scenarios {
                     let (count_per_second, _failures_per_second) =
-                        per_second_calculations(self.metrics.duration, scenario.counter, 0);
-                    let average = match scenario.counter {
+                        per_second_calculations(self.metrics.duration, scenario.times.count(), 0);
+                    let average = match scenario.times.count() {
                         0 => 0.00,
-                        _ => scenario.total_time as f32 / scenario.counter as f32,
+                        _ => scenario.times.total_time() as f32 / scenario.times.count() as f32,
                     };
-                    let iterations = scenario.counter as f32 / scenario.users.len() as f32;
+                    let iterations = scenario.times.count() as f32 / scenario.users.len() as f32;
                     scenario_metrics.push(report::ScenarioMetric {
                         name: scenario.name.to_string(),
                         users: scenario.users.len(),
-                        count: scenario.counter,
+                        count: scenario.times.count(),
                         response_time_average: format!("{:.2}", average),
-                        response_time_minimum: scenario.min_time,
-                        response_time_maximum: scenario.max_time,
+                        response_time_minimum: scenario.times.min(),
+                        response_time_maximum: scenario.times.max(),
                         count_per_second: format!("{:.2}", count_per_second),
                         iterations: format!("{:.2}", iterations),
                     });
 
                     aggregate_users += scenario.users.len();
-                    aggregate_count += scenario.counter;
+                    aggregate_count += scenario.times.count();
                     aggregate_scenario_times =
-                        merge_times(aggregate_scenario_times, scenario.times.clone());
-                    aggregate_scenario_time_counter += &scenario.counter;
+                        aggregate_scenario_times.merge(scenario.times.clone());
+                    aggregate_scenario_time_counter += &scenario.times.count();
                     aggregate_scenario_time_minimum =
-                        update_min_time(aggregate_scenario_time_minimum, scenario.min_time);
+                        update_min_time(aggregate_scenario_time_minimum, scenario.times.min());
                     aggregate_scenario_time_maximum =
-                        update_max_time(aggregate_scenario_time_maximum, scenario.max_time);
+                        update_max_time(aggregate_scenario_time_maximum, scenario.times.max());
                     aggregate_iterations += iterations;
-                    aggregate_response_time_counter += scenario.total_time as f32;
+                    aggregate_response_time_counter += scenario.times.total_time() as f32;
                 }
 
                 let (aggregate_count_per_second, _aggregate_failures_per_second) =
@@ -3603,27 +3263,6 @@ pub(crate) fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
 }
 
-/// A helper function that merges together times.
-///
-/// Used in `lib.rs` to merge together per-thread times, and in `metrics.rs` to
-/// aggregate all times.
-pub(crate) fn merge_times(
-    mut global_response_times: BTreeMap<usize, usize>,
-    local_response_times: BTreeMap<usize, usize>,
-) -> BTreeMap<usize, usize> {
-    // Iterate over user response times, and merge into global response times.
-    for (response_time, count) in &local_response_times {
-        let counter = match global_response_times.get(response_time) {
-            // We've seen this response_time before, increment counter.
-            Some(c) => *c + count,
-            // First time we've seen this response time, initialize counter.
-            None => *count,
-        };
-        global_response_times.insert(*response_time, counter);
-    }
-    global_response_times
-}
-
 /// A helper function to update the global minimum time based on local time.
 pub(crate) fn update_min_time(mut global_min: usize, min: usize) -> usize {
     if global_min == 0 || (min > 0 && min < global_min) {
@@ -3641,34 +3280,8 @@ pub(crate) fn update_max_time(mut global_max: usize, max: usize) -> usize {
 }
 
 /// Get the response time that a certain number of percent of the requests finished within.
-pub(crate) fn calculate_response_time_percentile(
-    response_times: &BTreeMap<usize, usize>,
-    total_requests: usize,
-    min: usize,
-    max: usize,
-    percent: f32,
-) -> String {
-    let percentile_request = (total_requests as f32 * percent).round() as usize;
-    debug!(
-        "percentile: {}, request {} of total {}",
-        percent, percentile_request, total_requests
-    );
-
-    let mut total_count: usize = 0;
-
-    for (value, counter) in response_times {
-        total_count += counter;
-        if total_count >= percentile_request {
-            if *value < min {
-                return format_number(min);
-            } else if *value > max {
-                return format_number(max);
-            } else {
-                return format_number(*value);
-            }
-        }
-    }
-    format_number(0)
+pub(crate) fn calculate_response_time_percentile(response_times: &Digest, q: f64) -> String {
+    format_number(response_times.quantile(q))
 }
 
 /// Helper to count and aggregate seen status codes.
@@ -3737,45 +3350,105 @@ mod test {
 
     #[test]
     fn response_time_merge() {
-        let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        global_response_times = merge_times(global_response_times, local_response_times.clone());
-        // @TODO: how can we do useful testing of private method and objects?
-        assert_eq!(&global_response_times, &local_response_times);
+        let mut global_response_times: Digest = Digest::new(100);
+        global_response_times.record_time(1);
+        let mut local_response_times: Digest = Digest::new(100);
+        local_response_times.record_time(2);
+        local_response_times.record_time(2);
+        local_response_times.record_time(2);
+        global_response_times = global_response_times.merge(local_response_times.clone());
+        assert_eq!(global_response_times.quantile(0.5), 2);
     }
 
     #[test]
     fn max_response_time_percentile() {
-        let mut response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        response_times.insert(1, 1);
-        response_times.insert(2, 1);
-        response_times.insert(3, 1);
+        let mut response_times: Digest = Digest::new(100);
+        response_times.record_time(1);
+        response_times.record_time(2);
+        response_times.record_time(3);
         // 3 * .5 = 1.5, rounds to 2.
-        assert!(calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5) == "2");
-        response_times.insert(3, 2);
-        // 4 * .5 = 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5) == "2");
-        // 4 * .25 = 1
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25) == "1");
-        // 4 * .75 = 3
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75) == "3");
-        // 4 * 1 = 4 (and the 4th response time is also 3)
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0) == "3");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 0.5),
+            "2"
+        );
+        response_times.record_time(3);
 
-        // 4 * .5 = 2, but uses specified minimum of 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25) == "2");
-        // 4 * .75 = 3, but uses specified maximum of 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75) == "2");
+        // We have these durations: [1, 2, 3, 3]
 
-        response_times.insert(10, 25);
-        response_times.insert(20, 25);
-        response_times.insert(30, 25);
-        response_times.insert(50, 25);
-        response_times.insert(100, 10);
-        response_times.insert(200, 1);
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9) == "50");
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99) == "100");
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999) == "200");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 0.5),
+            "2"
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 0.25),
+            "1"
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 0.75),
+            "3"
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 1.0),
+            "3"
+        );
+
+        (0..111)
+            .map(|i| {
+                if i < 25 {
+                    10
+                } else if i < 50 {
+                    20
+                } else if i < 75 {
+                    30
+                } else if i < 100 {
+                    50
+                } else if i < 110 {
+                    100
+                } else {
+                    200
+                }
+            })
+            .for_each(|time| response_times.record_time(time));
+
+        //       Cummulative Distribution Function
+        //
+        // 200 |                       ~
+        // 190 |
+        // 180 |
+        // 170 |
+        // 160 |
+        // 150 |
+        // 140 |
+        // 130 |
+        // 120 |
+        // 110 |
+        // 100 |                     ~~
+        //  90 |
+        //  80 |
+        //  70 |
+        //  60 |
+        //  50 |               ~~~~~
+        //  40 |
+        //  30 |          ~~~~~
+        //  20 |     ~~~~~
+        //  10 |~~~~~
+        //   0 |----|----|----|----|----|
+        //     0%  20%  40%  60%  80%  100%
+
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 0.9),
+            "50"
+        );
+        // We interpolate between points of the distribution
+        // to get a more accurate approximation.
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 0.99),
+            "117"
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 0.999),
+            "200"
+        );
     }
 
     #[test]
@@ -3842,29 +3515,25 @@ mod test {
         let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
-        assert_eq!(request.raw_data.times.len(), 0);
-        assert_eq!(request.raw_data.minimum_time, 0);
-        assert_eq!(request.raw_data.maximum_time, 0);
-        assert_eq!(request.raw_data.total_time, 0);
-        assert_eq!(request.raw_data.counter, 0);
+        assert_eq!(request.raw_data.times.count(), 0);
+        assert_eq!(request.raw_data.times.min(), 0);
+        assert_eq!(request.raw_data.times.max(), 0);
+        assert_eq!(request.raw_data.times.total_time(), 0);
+        assert_eq!(request.raw_data.times.count(), 0);
         assert_eq!(request.status_code_counts.len(), 0);
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
 
         // Tracking a response time updates several fields.
         request.record_time(1, false);
-        // We've seen only one response time so far.
-        assert_eq!(request.raw_data.times.len(), 1);
-        // We've seen one response time of length 1.
-        assert_eq!(request.raw_data.times[&1], 1);
         // The minimum response time seen so far is 1.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // The maximum response time seen so far is 1.
-        assert_eq!(request.raw_data.maximum_time, 1);
+        assert_eq!(request.raw_data.times.max(), 1);
         // We've seen a total of 1 ms of response time so far.
-        assert_eq!(request.raw_data.total_time, 1);
-        // We've seen a total of 2 response times so far.
-        assert_eq!(request.raw_data.counter, 1);
+        assert_eq!(request.raw_data.times.total_time(), 1);
+        // We've seen only one response time so far.
+        assert_eq!(request.raw_data.times.count(), 1);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
@@ -3874,18 +3543,14 @@ mod test {
 
         // Tracking another response time updates all related fields.
         request.record_time(10, false);
-        // We've added a new unique response time.
-        assert_eq!(request.raw_data.times.len(), 2);
-        // We've seen the 10 ms response time 1 time.
-        assert_eq!(request.raw_data.times[&10], 1);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // Maximum is new response time.
-        assert_eq!(request.raw_data.maximum_time, 10);
+        assert_eq!(request.raw_data.times.max(), 10);
         // Total combined response times is now 11 ms.
-        assert_eq!(request.raw_data.total_time, 11);
+        assert_eq!(request.raw_data.times.total_time(), 11);
         // We've seen two response times so far.
-        assert_eq!(request.raw_data.counter, 2);
+        assert_eq!(request.raw_data.times.count(), 2);
         // Nothing else changes.
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
@@ -3895,93 +3560,81 @@ mod test {
 
         // Tracking another response time updates all related fields.
         request.record_time(10, false);
-        // We've incremented the counter of an existing response time.
-        assert_eq!(request.raw_data.times.len(), 2);
-        // We've seen the 10 ms response time 2 times.
-        assert_eq!(request.raw_data.times[&10], 2);
+        // We've seen [1ms, 10ms, 10ms] the median should be 10ms
+        assert_eq!(request.raw_data.times.quantile(0.5), 10);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // Maximum doesn't change.
-        assert_eq!(request.raw_data.maximum_time, 10);
+        assert_eq!(request.raw_data.times.max(), 10);
         // Total combined response times is now 21 ms.
-        assert_eq!(request.raw_data.total_time, 21);
+        assert_eq!(request.raw_data.times.total_time(), 21);
         // We've seen three response times so far.
-        assert_eq!(request.raw_data.counter, 3);
+        assert_eq!(request.raw_data.times.count(), 3);
 
         // Tracking another response time updates all related fields.
         request.record_time(101, false);
-        // We've added a new response time for the first time.
-        assert_eq!(request.raw_data.times.len(), 3);
-        // The response time was internally rounded to 100, which we've seen once.
-        assert_eq!(request.raw_data.times[&100], 1);
+        // We've seen [1ms, 10ms, 10ms, 101ms] the median should be 10ms
+        assert_eq!(request.raw_data.times.quantile(0.5), 10);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 101);
+        assert_eq!(request.raw_data.times.max(), 101);
         // Total combined response times is now 122 ms.
-        assert_eq!(request.raw_data.total_time, 122);
+        assert_eq!(request.raw_data.times.total_time(), 122);
         // We've seen four response times so far.
-        assert_eq!(request.raw_data.counter, 4);
+        assert_eq!(request.raw_data.times.count(), 4);
 
         // Tracking another response time updates all related fields.
         request.record_time(102, false);
-        // Due to rounding, this increments the existing 100 ms response time.
-        assert_eq!(request.raw_data.times.len(), 3);
-        // The response time was internally rounded to 100, which we've now seen twice.
-        assert_eq!(request.raw_data.times[&100], 2);
+        // We've seen [1ms, 10ms, 10ms, 101ms, 102ms] the 75th should be 102ms
+        assert_eq!(request.raw_data.times.quantile(0.75), 102);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 102);
+        assert_eq!(request.raw_data.times.max(), 102);
         // Add 102 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 224);
+        assert_eq!(request.raw_data.times.total_time(), 224);
         // We've seen five response times so far.
-        assert_eq!(request.raw_data.counter, 5);
+        assert_eq!(request.raw_data.times.count(), 5);
 
         // Tracking another response time updates all related fields.
         request.record_time(155, false);
-        // Adds a new response time.
-        assert_eq!(request.raw_data.times.len(), 4);
-        // The response time was internally rounded to 160, seen for the first time.
-        assert_eq!(request.raw_data.times[&160], 1);
+        // We've seen [1ms, 10ms, 10ms, 101ms, 102ms, 155ms] the 75th should be 102ms
+        assert_eq!(request.raw_data.times.quantile(0.75), 102);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 155);
+        assert_eq!(request.raw_data.times.max(), 155);
         // Add 155 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 379);
+        assert_eq!(request.raw_data.times.total_time(), 379);
         // We've seen six response times so far.
-        assert_eq!(request.raw_data.counter, 6);
+        assert_eq!(request.raw_data.times.count(), 6);
 
         // Tracking another response time updates all related fields.
         request.record_time(2345, false);
-        // Adds a new response time.
-        assert_eq!(request.raw_data.times.len(), 5);
-        // The response time was internally rounded to 2000, seen for the first time.
-        assert_eq!(request.raw_data.times[&2000], 1);
+        // We've seen [1ms, 10ms, 10ms, 101ms, 102ms, 155ms, 2345ms] the 75th should be 102ms
+        assert_eq!(request.raw_data.times.quantile(0.75), 102);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 2345);
+        assert_eq!(request.raw_data.times.max(), 2345);
         // Add 2345 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 2724);
+        assert_eq!(request.raw_data.times.total_time(), 2724);
         // We've seen seven response times so far.
-        assert_eq!(request.raw_data.counter, 7);
+        assert_eq!(request.raw_data.times.count(), 7);
 
         // Tracking another response time updates all related fields.
         request.record_time(987654321, false);
-        // Adds a new response time.
-        assert_eq!(request.raw_data.times.len(), 6);
-        // The response time was internally rounded to 987654000, seen for the first time.
-        assert_eq!(request.raw_data.times[&987654000], 1);
+        // We've seen [1ms, 10ms, 10ms, 101ms, 102ms, 155ms, 2345ms, 988764321ms] the 75th should be 102ms
+        assert_eq!(request.raw_data.times.quantile(0.75), 155);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.times.min(), 1);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 987654321);
+        assert_eq!(request.raw_data.times.max(), 987654321);
         // Add 987654321 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 987657045);
+        assert_eq!(request.raw_data.times.total_time(), 987657045);
         // We've seen eight response times so far.
-        assert_eq!(request.raw_data.counter, 8);
+        assert_eq!(request.raw_data.times.count(), 8);
 
         // Tracking status code updates all related fields.
         request.set_status_code(200);
@@ -3993,11 +3646,10 @@ mod test {
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
         // Nothing else changes.
-        assert_eq!(request.raw_data.times.len(), 6);
-        assert_eq!(request.raw_data.minimum_time, 1);
-        assert_eq!(request.raw_data.maximum_time, 987654321);
-        assert_eq!(request.raw_data.total_time, 987657045);
-        assert_eq!(request.raw_data.counter, 8);
+        assert_eq!(request.raw_data.times.min(), 1);
+        assert_eq!(request.raw_data.times.max(), 987654321);
+        assert_eq!(request.raw_data.times.total_time(), 987657045);
+        assert_eq!(request.raw_data.times.count(), 8);
 
         // Tracking status code updates all related fields.
         request.set_status_code(200);
@@ -4036,10 +3688,9 @@ mod test {
         // Nothing else changes.
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
-        assert_eq!(request.raw_data.times.len(), 6);
-        assert_eq!(request.raw_data.minimum_time, 1);
-        assert_eq!(request.raw_data.maximum_time, 987654321);
-        assert_eq!(request.raw_data.total_time, 987657045);
-        assert_eq!(request.raw_data.counter, 8);
+        assert_eq!(request.raw_data.times.min(), 1);
+        assert_eq!(request.raw_data.times.max(), 987654321);
+        assert_eq!(request.raw_data.times.total_time(), 987657045);
+        assert_eq!(request.raw_data.times.count(), 8);
     }
 }

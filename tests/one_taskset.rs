@@ -106,16 +106,16 @@ fn validate_one_scenario(
             // fewer page loads than the server actually saw.
             println!(
                 "raw_data.counter: {}, mock_endpoint_called: {}",
-                index_metrics.raw_data.counter,
+                index_metrics.raw_data.times.count(),
                 mock_endpoints[INDEX_KEY].hits()
             );
 
-            assert!(index_metrics.raw_data.counter < mock_endpoints[INDEX_KEY].hits());
+            assert!(index_metrics.raw_data.times.count() < mock_endpoints[INDEX_KEY].hits());
             assert!(
                 index_metrics.status_code_counts[&status_code] < mock_endpoints[INDEX_KEY].hits()
             );
             assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].hits());
-            assert!(about_metrics.raw_data.counter < mock_endpoints[ABOUT_KEY].hits());
+            assert!(about_metrics.raw_data.times.count() < mock_endpoints[ABOUT_KEY].hits());
             assert!(
                 about_metrics.status_code_counts[&status_code] < mock_endpoints[ABOUT_KEY].hits()
             );
@@ -124,10 +124,10 @@ fn validate_one_scenario(
         TestType::NoResetMetrics => {
             // Statistics were not reset, so Goose should report the same number of page
             // loads as the server actually saw.
-            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.counter);
+            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.times.count());
             mock_endpoints[INDEX_KEY].assert_hits(index_metrics.status_code_counts[&status_code]);
             mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
-            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.raw_data.counter);
+            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.raw_data.times.count());
             mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.status_code_counts[&status_code]);
             mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.success_count);
         }
