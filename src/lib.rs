@@ -51,6 +51,9 @@ mod test_plan;
 mod throttle;
 mod user;
 pub mod util;
+pub mod gaggle {
+    pub mod manager;
+}
 
 use gumdrop::Options;
 use lazy_static::lazy_static;
@@ -58,7 +61,10 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::sync::{atomic::AtomicUsize, Arc, RwLock};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, RwLock,
+};
 use std::time::{self, Duration};
 use std::{fmt, io};
 use tokio::fs::File;
@@ -92,6 +98,15 @@ type WeightedTransactions = Vec<(usize, String)>;
 type UnsequencedTransactions = Vec<Transaction>;
 /// Internal representation of sequenced transactions.
 type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
+
+/// Returns the unique identifier of the running Worker when running in Gaggle mode.
+///
+/// The first Worker to connect to the Manager is assigned an ID of 1. For each
+/// subsequent Worker to connect to the Manager the ID is incremented by 1. This
+/// identifier is primarily an aid in tracing logs.
+pub fn get_worker_id() -> usize {
+    WORKER_ID.load(Ordering::Relaxed)
+}
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
 #[derive(Debug)]
@@ -236,6 +251,10 @@ pub enum AttackMode {
     Undefined,
     /// A single standalone process performing a load test.
     StandAlone,
+    /// The controlling process in a Gaggle distributed load test.
+    Manager,
+    /// One of one or more working processes in a Gaggle distributed load test.
+    Worker,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -919,7 +938,13 @@ impl GooseAttack {
         self.test_plan = TestPlan::build(&self.configuration);
 
         // With a validated GooseConfiguration, enter a run mode.
-        self.attack_mode = AttackMode::StandAlone;
+        self.attack_mode = if self.configuration.manager {
+            AttackMode::Manager
+        } else if self.configuration.worker {
+            AttackMode::Worker
+        } else {
+            AttackMode::StandAlone
+        };
 
         // Confirm there's either a global host, or each scenario has a host defined.
         if self.configuration.no_autostart && self.validate_host().is_err() {
@@ -939,7 +964,21 @@ impl GooseAttack {
         self.metrics.hash = s.finish();
         debug!("hash: {}", self.metrics.hash);
 
-        self = self.start_attack().await?;
+        self = match self.attack_mode {
+            AttackMode::Manager => {
+                self.manager_main().await?;
+                panic!("attempted to start in AttackMode::Manager");
+            },
+            AttackMode::Worker => {
+                panic!("attempted to start in AttackMode::Worker");
+            },
+            AttackMode::StandAlone => {
+                self.start_attack().await?
+            },
+            AttackMode::Undefined => {
+                panic!("attempted to start in AttackMode::Undefined");
+            },
+        };
 
         if self.metrics.display_metrics {
             info!(
