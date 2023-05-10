@@ -1322,6 +1322,16 @@ impl GooseConfiguration {
             },
         ]);
 
+        // Determine how many CPUs are available.
+        let default_users = match std::thread::available_parallelism() {
+            Ok(ap) => Some(ap.get()),
+            Err(e) => {
+                // Default to 1 user if unable to detect number of CPUs.
+                info!("failed to detect available_parallelism: {}", e);
+                Some(1)
+            }
+        };
+
         // Configure `users`.
         self.users = self.get_value(vec![
             // Use --users if set.
@@ -1338,7 +1348,7 @@ impl GooseConfiguration {
             },
             // Otherwise use detected number of CPUs if not on Worker.
             GooseValue {
-                value: Some(num_cpus::get()),
+                value: default_users,
                 filter: self.test_plan.is_some(),
                 message: "users defaulted to number of CPUs",
             },
