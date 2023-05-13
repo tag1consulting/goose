@@ -4,10 +4,12 @@
 //! real-time control of the running load test.
 
 use crate::config::GooseConfiguration;
+use crate::gaggle::manager::{ManagerCommand, ManagerMessage};
+use crate::gaggle::worker::{WorkerCommand, WorkerMessage};
 use crate::metrics::GooseMetrics;
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 use crate::util;
-use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
+use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
@@ -154,6 +156,38 @@ pub enum ControllerCommand {
     ///
     /// Can be configured on an idle or running load test.
     TestPlan,
+    /// Taggles Gaggle Manager-mode.
+    ///
+    /// # Example
+    /// Enables Gaggle Manager-mode.
+    /// ```notest
+    /// manager
+    /// ```
+    Manager,
+    /// Configures the number of Gaggle Workers to expect before starting the load test.
+    ///
+    /// # Example
+    /// Tells Gaggle Manager to wait for 4 Workers to connect.
+    /// ```notest
+    /// expect-workers 4
+    /// ```
+    ExpectWorkers,
+    /// Configures the number of Gaggle Workers to expect before starting the load test.
+    ///
+    /// # Example
+    /// Tells Gaggle Manager to wait for 4 Workers to connect.
+    /// ```notest
+    /// expect-workers 4
+    /// ```
+    NoHashCheck,
+    /// Taggles no-hash-check when in Manager-mode.
+    ///
+    /// # Example
+    /// Enables no-hash-check.
+    /// ```notest
+    /// no-hash-check
+    /// ```
+    Worker,
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -192,6 +226,8 @@ pub enum ControllerCommand {
     ///
     /// This command can be run at any time.
     MetricsJson,
+    /// Used by Worker instances to connect to a Manager instance.
+    WorkerConnect,
 }
 
 /// Defines details around identifying and processing ControllerCommands.
@@ -207,10 +243,10 @@ impl ControllerCommand {
     fn details(&self) -> ControllerCommandDetails {
         match self {
             ControllerCommand::Config => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "config",
                     description: "display load test configuration\n",
-                },
+                }),
                 regex: r"(?i)^config$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Config(config) = response {
@@ -221,10 +257,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::ConfigJson => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "config-json",
                     description: "display load test configuration in json format\n",
-                },
+                }),
                 regex: r"(?i)^(configjson|config-json)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Config(config) = response {
@@ -235,10 +271,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Exit => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "exit",
                     description: "exit controller\n\n",
-                },
+                }),
                 regex: r"(?i)^(exit|quit|q)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible EXIT command";
@@ -247,10 +283,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::HatchRate => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "hatchrate FLOAT",
                     description: "set per-second rate users hatch\n",
-                },
+                }),
                 regex: r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -261,10 +297,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Help => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "help",
                     description: "this help\n",
-                },
+                }),
                 regex: r"(?i)^(help|\?)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible HELP command";
@@ -273,10 +309,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Host => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "host HOST",
                     description: "set host to load test, (ie https://web.site/)\n",
-                },
+                }),
                 regex: r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -286,11 +322,73 @@ impl ControllerCommand {
                     }
                 }),
             },
+            ControllerCommand::Manager => ControllerCommandDetails {
+                help: Some(ControllerHelp {
+                    name: "manager",
+                    description: "toggle Manager mode\n",
+                }),
+                regex: r"(?i)^manager$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("manager mode toggled".to_string())
+                    } else {
+                        Err("failed to toggle manager mode, be sure load test is idle".to_string())
+                    }
+                }),
+            },
+            ControllerCommand::ExpectWorkers => ControllerCommandDetails {
+                help: Some(ControllerHelp {
+                    name: "expect-workers INT",
+                    description: "set number of Workers to expect\n",
+                }),
+                regex: r"(?i)^(expect|expectworkers|expect_workers|expect-workers) ([0-9]+)$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("expect-workers configured".to_string())
+                    } else {
+                        Err(
+                            "failed to configure expect-workers, be sure load test is idle and in Manager mode"
+                                .to_string(),
+                        )
+                    }
+                }),
+            },
+            ControllerCommand::NoHashCheck => ControllerCommandDetails {
+                help: Some(ControllerHelp {
+                    name: "no-hash-check",
+                    description: "toggle no-hash-check\n",
+                }),
+                regex: r"(?i)^(no-hash-check|no_hash_check|nohashcheck)$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("no-hash-check toggled".to_string())
+                    } else {
+                        Err(
+                            "failed to toggle no-hash-check, be sure load test is idle and in Manager mode"
+                                .to_string(),
+                        )
+                    }
+                }),
+            },
+            ControllerCommand::Worker => ControllerCommandDetails {
+                help: Some(ControllerHelp {
+                    name: "worker",
+                    description: "toggle Worker mode\n\n",
+                }),
+                regex: r"(?i)^worker$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("worker mode toggled".to_string())
+                    } else {
+                        Err("failed to toggle worker mode, be sure load test is idle".to_string())
+                    }
+                }),
+            },
             ControllerCommand::Metrics => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "metrics",
                     description: "display metrics for current load test\n",
-                },
+                }),
                 regex: r"(?i)^(metrics|stats)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Metrics(metrics) = response {
@@ -302,11 +400,11 @@ impl ControllerCommand {
             },
             ControllerCommand::MetricsJson => {
                 ControllerCommandDetails {
-                    help: ControllerHelp {
+                    help: Some(ControllerHelp {
                         name: "metrics-json",
                         // No new-line as this is the last line of the help screen.
                         description: "display metrics for current load test in json format",
-                    },
+                    }),
                     regex: r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$",
                     process_response: Box::new(|response| {
                         if let ControllerResponseMessage::Metrics(metrics) = response {
@@ -318,10 +416,10 @@ impl ControllerCommand {
                 }
             }
             ControllerCommand::RunTime => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "runtime TIME",
                     description: "set how long to run test, (ie 1h30m5s)\n",
-                },
+                }),
                 regex: r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -332,10 +430,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Shutdown => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "shutdown",
                     description: "shutdown load test and exit controller\n\n",
-                },
+                }),
                 regex: r"(?i)^shutdown$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -347,10 +445,10 @@ impl ControllerCommand {
             },
             ControllerCommand::Start => {
                 ControllerCommandDetails {
-                    help: ControllerHelp {
+                    help: Some(ControllerHelp {
                         name: "start",
                         description: "start an idle load test\n",
-                    },
+                    }),
                     regex: r"(?i)^start$",
                     process_response: Box::new(|response| {
                         if let ControllerResponseMessage::Bool(true) = response {
@@ -362,10 +460,10 @@ impl ControllerCommand {
                 }
             }
             ControllerCommand::StartupTime => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "startup-time TIME",
                     description: "set total time to take starting users\n",
-                },
+                }),
                 regex: r"(?i)^(starttime|start_time|start-time|startup|startuptime|startup_time|startup-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -379,10 +477,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Stop => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "stop",
                     description: "stop a running load test and return to idle state\n",
-                },
+                }),
                 regex: r"(?i)^stop$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -393,10 +491,10 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::TestPlan => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "test-plan PLAN",
                     description: "define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
-                },
+                }),
                 regex: r"(?i)^(testplan|test_plan|test-plan|plan) (((\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)*;*)+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
@@ -407,16 +505,27 @@ impl ControllerCommand {
                 }),
             },
             ControllerCommand::Users => ControllerCommandDetails {
-                help: ControllerHelp {
+                help: Some(ControllerHelp {
                     name: "users INT",
                     description: "set number of simulated users\n",
-                },
+                }),
                 regex: r"(?i)^(users?) (\d+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
                         Ok("users configured".to_string())
                     } else {
                         Err("load test not idle, failed to reconfigure users".to_string())
+                    }
+                }),
+            },
+            ControllerCommand::WorkerConnect => ControllerCommandDetails {
+                help: None,
+                regex: r"^(WORKER-CONNECT) (\d+)$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("worker connected".to_string())
+                    } else {
+                        Err("failed to connect worker".to_string())
                     }
                 }),
             },
@@ -447,12 +556,12 @@ impl ControllerCommand {
     // the value.
     //
     // Returns Some(value) if the value is valid, otherwise returns None.
-    fn get_value(&self, command_string: &str) -> Option<String> {
+    fn get_value(&self, command_string: &str) -> Option<ControllerValue> {
         let regex = Regex::new(self.details().regex)
             .expect("ControllerCommand::details().regex returned invalid regex [2]");
         let caps = regex.captures(command_string).unwrap();
         let value = caps.get(2).map_or("", |m| m.as_str());
-        self.validate_value(value)
+        self.validate_value(value).map(ControllerValue::Text)
     }
 
     // Builds a help screen displayed when a controller receives the `help` command.
@@ -467,13 +576,15 @@ impl ControllerCommand {
         .expect("failed to write to buffer");
         // Builds help screen in the order commands are defined in the ControllerCommand enum.
         for command in ControllerCommand::iter() {
-            write!(
-                &mut help_text,
-                "{:<18} {}",
-                command.details().help.name,
-                command.details().help.description
-            )
-            .expect("failed to write to buffer");
+            if command.details().help.is_some() {
+                write!(
+                    &mut help_text,
+                    "{:<19} {}",
+                    command.details().help.unwrap().name,
+                    command.details().help.unwrap().description,
+                )
+                .expect("failed to write to buffer");
+            }
         }
         String::from_utf8(help_text).expect("invalid utf-8 in help text")
     }
@@ -486,8 +597,7 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        // If the controller is enabled, check if we've received any
-        // messages.
+        // If the controller is enabled, check if we've received any messages.
         if let Some(c) = goose_attack_run_state.controller_channel_rx.as_ref() {
             match c.try_recv() {
                 Ok(message) => {
@@ -517,29 +627,53 @@ impl GooseAttack {
                         ControllerCommand::Start => {
                             // We can only start an idle load test.
                             if self.attack_phase == AttackPhase::Idle {
-                                self.test_plan = TestPlan::build(&self.configuration);
-                                if self.prepare_load_test().is_ok() {
-                                    // Rebuild test plan in case any parameters have been changed.
-                                    self.set_attack_phase(
-                                        goose_attack_run_state,
-                                        AttackPhase::Increase,
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(true),
-                                    );
-                                    // Reset the run state when starting a new load test.
-                                    self.reset_run_state(goose_attack_run_state).await?;
-                                    self.metrics.history.push(TestPlanHistory::step(
-                                        TestPlanStepAction::Increasing,
-                                        0,
-                                    ));
-                                } else {
-                                    // Do not move to Starting phase if unable to prepare load test.
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(false),
-                                    );
+                                // Validate GooseConfiguration.
+                                match self.configuration.validate() {
+                                    Err(e) => {
+                                        println!("Failed to start: {:?}", e);
+                                        self.reply_to_controller(
+                                            message,
+                                            ControllerResponseMessage::Bool(false),
+                                        );
+                                    }
+                                    Ok(_) => {
+                                        // Update test plan in case configuration changed.
+                                        self.test_plan = TestPlan::build(&self.configuration);
+
+                                        // Update attack_mode in case configuration changed.
+                                        self.attack_mode = if self.configuration.manager {
+                                            AttackMode::Manager
+                                        } else if self.configuration.worker {
+                                            AttackMode::Worker
+                                        } else {
+                                            AttackMode::StandAlone
+                                        };
+
+                                        // @TODO: Enforce waiting for Workers to connect.
+                                        if self.prepare_load_test().is_ok() {
+                                            // Rebuild test plan in case any parameters have been changed.
+                                            self.set_attack_phase(
+                                                goose_attack_run_state,
+                                                AttackPhase::Increase,
+                                            );
+                                            self.reply_to_controller(
+                                                message,
+                                                ControllerResponseMessage::Bool(true),
+                                            );
+                                            // Reset the run state when starting a new load test.
+                                            self.reset_run_state(goose_attack_run_state).await?;
+                                            self.metrics.history.push(TestPlanHistory::step(
+                                                TestPlanStepAction::Increasing,
+                                                0,
+                                            ));
+                                        } else {
+                                            // Do not move to Starting phase if unable to prepare load test.
+                                            self.reply_to_controller(
+                                                message,
+                                                ControllerResponseMessage::Bool(false),
+                                            );
+                                        }
+                                    }
                                 }
                             } else {
                                 self.reply_to_controller(
@@ -572,6 +706,21 @@ impl GooseAttack {
                         }
                         // Stop the load test, and acknowledge request.
                         ControllerCommand::Shutdown => {
+                            // @TODO: Properly implement shutdown logic, also for Manager.
+                            if self.configuration.worker {
+                                if let Some(worker_tx) = goose_attack_run_state.worker_tx.as_ref() {
+                                    info!("Telling Worker to stop.",);
+                                    let _ = worker_tx.tx.send(WorkerMessage {
+                                        command: WorkerCommand::Stop,
+                                        _value: None,
+                                    });
+                                } else {
+                                    warn!(
+                                        "Failed to unwrap worker_tx, unable to send Stop message."
+                                    )
+                                }
+                            }
+
                             // If load test is Idle, there are no metrics to display.
                             if self.attack_phase == AttackPhase::Idle {
                                 self.metrics.display_metrics = false;
@@ -582,6 +731,9 @@ impl GooseAttack {
                             } else {
                                 self.cancel_attack(goose_attack_run_state).await?;
                             }
+
+                            // @TODO: Special handling for a running Gaggle?
+                            self.gaggle_phase = None;
 
                             // Shutdown after stopping.
                             goose_attack_run_state.shutdown_after_stop = true;
@@ -599,7 +751,7 @@ impl GooseAttack {
                                 // The controller uses a regular expression to validate that
                                 // this is a valid hostname, so simply use it with further
                                 // validation.
-                                if let Some(host) = &message.request.value {
+                                if let Some(ControllerValue::Text(host)) = &message.request.value {
                                     info!(
                                         "changing host from {:?} to {}",
                                         self.configuration.host, host
@@ -630,7 +782,7 @@ impl GooseAttack {
                             // The controller uses a regular expression to validate that
                             // this is a valid integer, so simply use it with further
                             // validation.
-                            if let Some(users) = &message.request.value {
+                            if let Some(ControllerValue::Text(users)) = &message.request.value {
                                 // Use expect() as Controller uses regex to validate this is an integer.
                                 let new_users = usize::from_str(users)
                                     .expect("failed to convert string to usize");
@@ -735,7 +887,8 @@ impl GooseAttack {
                             // The controller uses a regular expression to validate that
                             // this is a valid float, so simply use it with further
                             // validation.
-                            if let Some(hatch_rate) = &message.request.value {
+                            if let Some(ControllerValue::Text(hatch_rate)) = &message.request.value
+                            {
                                 // If startup_time was already set, unset it first.
                                 if !self.configuration.startup_time.is_empty() {
                                     info!(
@@ -767,7 +920,9 @@ impl GooseAttack {
                                 // The controller uses a regular expression to validate that
                                 // this is a valid startup time, so simply use it with further
                                 // validation.
-                                if let Some(startup_time) = &message.request.value {
+                                if let Some(ControllerValue::Text(startup_time)) =
+                                    &message.request.value
+                                {
                                     // If hatch_rate was already set, unset it first.
                                     if let Some(hatch_rate) = &self.configuration.hatch_rate {
                                         info!("resetting hatch_rate from {} to None", hatch_rate);
@@ -805,7 +960,7 @@ impl GooseAttack {
                             // The controller uses a regular expression to validate that
                             // this is a valid run time, so simply use it with further
                             // validation.
-                            if let Some(run_time) = &message.request.value {
+                            if let Some(ControllerValue::Text(run_time)) = &message.request.value {
                                 info!(
                                     "changing run_time from {:?} to {}",
                                     self.configuration.run_time, run_time
@@ -825,7 +980,7 @@ impl GooseAttack {
                             }
                         }
                         ControllerCommand::TestPlan => {
-                            if let Some(value) = &message.request.value {
+                            if let Some(ControllerValue::Text(value)) = &message.request.value {
                                 match value.parse::<TestPlan>() {
                                     Ok(t) => {
                                         // Switch the configuration to use the test plan.
@@ -894,6 +1049,208 @@ impl GooseAttack {
                                     message,
                                     ControllerResponseMessage::Bool(false),
                                 );
+                            }
+                        }
+                        ControllerCommand::Manager => {
+                            if self.attack_phase == AttackPhase::Idle {
+                                // Toggle Manager mode.
+                                self.configuration.manager = if self.configuration.manager {
+                                    info!("manager mode disabled");
+                                    false
+                                } else {
+                                    // Also disable Worker mode if enabled.
+                                    if self.configuration.worker {
+                                        info!("worker mode disabled");
+                                        self.configuration.worker = false;
+                                    }
+                                    info!("manager mode enabled");
+                                    true
+                                };
+                                // Update Gaggle configuration options.
+                                self.configuration.configure_manager(&self.defaults);
+                                self.configuration.configure_worker(&self.defaults);
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                            }
+                        }
+                        ControllerCommand::ExpectWorkers => {
+                            // The controller uses a regular expression to validate that
+                            // this is a valid run time, so simply use it with further
+                            // validation.
+                            if let Some(ControllerValue::Text(expect_workers)) =
+                                &message.request.value
+                            {
+                                // Can only change expect_workers when the load test is idle and in Manager mode.
+                                if self.attack_phase == AttackPhase::Idle
+                                    && self.configuration.manager
+                                {
+                                    // Use expect() as Controller uses regex to validate this is an integer.
+                                    let expect_workers = usize::from_str(expect_workers)
+                                        .expect("failed to convert string to usize");
+                                    if expect_workers == 0 {
+                                        info!(
+                                            "changing expect_workers from {:?} to None",
+                                            self.configuration.expect_workers
+                                        );
+                                        self.configuration.expect_workers = None;
+                                    } else {
+                                        info!(
+                                            "changing expect_workers from {:?} to {}",
+                                            self.configuration.expect_workers, expect_workers
+                                        );
+                                        self.configuration.expect_workers = Some(expect_workers);
+                                    }
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(true),
+                                    );
+                                } else {
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(false),
+                                    );
+                                    if self.configuration.manager {
+                                        info!("unable to configure expect_workers when load test is not idle");
+                                    } else {
+                                        info!("unable to configure expect_workers when not in manager mode");
+                                    }
+                                }
+                            } else {
+                                warn!(
+                                    "Controller didn't provide expect_workers: {:#?}",
+                                    &message.request
+                                );
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                            }
+                        }
+                        ControllerCommand::NoHashCheck => {
+                            if self.attack_phase == AttackPhase::Idle && self.configuration.manager
+                            {
+                                self.configuration.no_hash_check =
+                                    if self.configuration.no_hash_check {
+                                        info!("disabled no_hash_check");
+                                        false
+                                    } else {
+                                        info!("enabled no_hash_check");
+                                        true
+                                    };
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                                if self.configuration.manager {
+                                    info!("unable to configure expect_workers when load test is not idle");
+                                } else {
+                                    info!("unable to configure expect_workers when not in manager mode");
+                                }
+                            }
+                        }
+                        ControllerCommand::Worker => {
+                            if self.attack_phase == AttackPhase::Idle {
+                                // Toggle Worker mode.
+                                self.configuration.worker = if self.configuration.worker {
+                                    info!("worker mode disabled");
+                                    false
+                                } else {
+                                    // Disable Manager mode if enabled.
+                                    if self.configuration.manager {
+                                        info!("manager mode disabled");
+                                        self.configuration.manager = false;
+                                    }
+                                    info!("worker mode enabled");
+                                    true
+                                };
+                                // Update Gaggle configuration options.
+                                self.configuration.configure_manager(&self.defaults);
+                                self.configuration.configure_worker(&self.defaults);
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                            }
+                        }
+                        ControllerCommand::WorkerConnect => {
+                            // Verify running in Manager mode.
+                            if self.configuration.manager {
+                                // Verify expecting more Workers to connect.
+                                if goose_attack_run_state.gaggle_workers
+                                    < self.configuration.expect_workers.unwrap_or(0)
+                                {
+                                    if let Some(manager_tx) =
+                                        goose_attack_run_state.manager_tx.as_ref()
+                                    {
+                                        if let Some(ControllerValue::Socket(worker_connection)) =
+                                            message.request.value
+                                        {
+                                            // Use expect() as Controller uses regex to validate this is an integer.
+                                            let worker_hash =
+                                                u64::from_str(&worker_connection.hash)
+                                                    .expect("failed to convert string to usize");
+                                            if worker_hash != self.metrics.hash
+                                                && !self.configuration.no_hash_check
+                                            {
+                                                /*
+                                                self.reply_to_controller(
+                                                    message,
+                                                    ControllerResponseMessage::Bool(false),
+                                                );
+                                                 */
+                                                warn!("WorkerConnect request ignored, Worker hash {} does not match Manager hash {}, enable --no-hash-check to ignore.", worker_hash, self.metrics.hash)
+                                            } else {
+                                                if worker_hash != self.metrics.hash {
+                                                    warn!("Ignoring that Worker hash {} does not match Manager hash {} because --no-hash-check is enabled.", worker_hash, self.metrics.hash)
+                                                } else {
+                                                    warn!("Valid hash: {}", worker_hash);
+                                                }
+                                                goose_attack_run_state.gaggle_workers += 1;
+                                                info!(
+                                                    "Worker {} of {} connected.",
+                                                    goose_attack_run_state.gaggle_workers,
+                                                    self.configuration.expect_workers.unwrap_or(0)
+                                                );
+                                                // Pass the Telnet socket to the Manager thread.
+                                                let _ = manager_tx.tx.send(ManagerMessage {
+                                                    command: ManagerCommand::WorkerJoinRequest,
+                                                    value: Some(worker_connection.socket),
+                                                });
+                                            }
+                                        } else {
+                                            warn!("Whoops !?");
+                                            //panic!("Whoops!?");
+                                        }
+                                    } else {
+                                        panic!("WorkerConnect failure, failed to reference manager_tx.")
+                                    }
+                                } else {
+                                    // @TODO: Can we return a helpful error?
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(false),
+                                    );
+                                    warn!("WorkerConnect request ignored, all expected Workers already connected.")
+                                }
+                            } else {
+                                warn!("WorkerConnect request ignored, not in --manager mode.")
                             }
                         }
                         // These messages shouldn't be received here.
@@ -1071,7 +1428,7 @@ pub(crate) struct ControllerHelp<'a> {
 /// recognized command worked correctly.
 pub(crate) struct ControllerCommandDetails<'a> {
     // The name and description of the controller command.
-    help: ControllerHelp<'a>,
+    help: Option<ControllerHelp<'a>>,
     // A [regular expression](https://docs.rs/regex/1.5.5/regex/struct.Regex.html) for
     // matching the command and option value.
     regex: &'a str,
@@ -1086,7 +1443,20 @@ pub(crate) struct ControllerRequestMessage {
     /// The command that is being sent to the parent.
     pub command: ControllerCommand,
     /// An optional value that is being sent to the parent.
-    pub value: Option<String>,
+    pub value: Option<ControllerValue>,
+}
+
+#[derive(Debug)]
+pub(crate) struct WorkerConnection {
+    hash: String,
+    socket: tokio::net::TcpStream,
+}
+
+/// Allows multiple types to be sent to the parent process.
+#[derive(Debug)]
+pub(crate) enum ControllerValue {
+    Text(String),
+    Socket(WorkerConnection),
 }
 
 /// An enumeration of all messages the parent can reply back to the controller thread.
@@ -1251,6 +1621,40 @@ impl ControllerState {
                     if let Ok(command_string) = self.get_command_string(buf).await {
                         // Extract the command and value in a generic way.
                         if let Ok(request_message) = self.get_match(command_string.trim()).await {
+                            let hash = if let Some(ControllerValue::Text(hash)) =
+                                request_message.value.as_ref()
+                            {
+                                // Clone the value.
+                                hash.to_string()
+                            } else {
+                                unreachable!("Hash must exist, enforced by regex");
+                            };
+                            // Workers using Telnet socket to connect to the Manager.
+                            if request_message.command == ControllerCommand::WorkerConnect {
+                                info!("Worker instance connecting ...");
+                                if request_message.command == ControllerCommand::WorkerConnect {
+                                    // A Worker is trying to connect, send the connection to the Parent.
+                                    if self
+                                        .channel_tx
+                                        .try_send(ControllerRequest {
+                                            response_channel: None,
+                                            client_id: self.thread_id,
+                                            request: ControllerRequestMessage {
+                                                command: ControllerCommand::WorkerConnect,
+                                                value: Some(ControllerValue::Socket(
+                                                    WorkerConnection { hash, socket },
+                                                )),
+                                            },
+                                        })
+                                        .is_err()
+                                    {
+                                        warn!("failed to send Worker socket to parent");
+                                    };
+                                    break;
+                                    // ELSE?
+                                }
+                            }
+
                             // Act on the commmand received.
                             if self.execute_command(&mut socket, request_message).await {
                                 // If execute_command returns true, it's time to exit.
@@ -1346,7 +1750,7 @@ impl ControllerState {
         // Use FromStr to convert &str to ControllerCommand.
         let command: ControllerCommand = ControllerCommand::from_str(command_string)?;
         // Extract value if there is one, otherwise will be None.
-        let value: Option<String> = command.get_value(command_string);
+        let value: Option<ControllerValue> = command.get_value(command_string);
 
         Ok(ControllerRequestMessage { command, value })
     }
