@@ -74,6 +74,16 @@ enum ManagerPhase {
 
 impl GooseConfiguration {
     pub(crate) fn configure_manager(&mut self, defaults: &GooseDefaults) {
+        // Determine how many CPUs are available.
+        let default_users = match std::thread::available_parallelism() {
+            Ok(ap) => Some(ap.get()),
+            Err(e) => {
+                // Default to 1 user if unable to detect number of CPUs.
+                info!("failed to detect available_parallelism: {}", e);
+                Some(1)
+            }
+        };
+
         // Re-configure `users`, in case the AttackMode was changed.
         self.users = self.get_value(vec![
             // Use --users if set and not on Worker.
@@ -90,7 +100,7 @@ impl GooseConfiguration {
             },
             // Otherwise use detected number of CPUs if not on Worker.
             GooseValue {
-                value: Some(num_cpus::get()),
+                value: default_users,
                 filter: self.worker || self.test_plan.is_some(),
                 message: "users defaulted to number of CPUs",
             },
