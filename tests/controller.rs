@@ -233,7 +233,7 @@ async fn run_standalone_test(test_type: TestType) {
                 unreachable!();
             }
 
-            println!("{:?}: {}", test_state.command, response);
+            //println!("{:?}: {}", test_state.command, response);
             match test_state.command {
                 ControllerCommand::Exit => {
                     match test_state.step {

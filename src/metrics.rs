@@ -2650,7 +2650,7 @@ impl GooseAttack {
     pub(crate) async fn sync_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
-        _flush: bool,
+        flush: bool,
     ) -> Result<(), GooseError> {
         if !self.configuration.no_metrics {
             // Update timers if displaying running metrics.
@@ -2663,11 +2663,8 @@ impl GooseAttack {
                     goose_attack_run_state.display_running_metrics = true;
                 }
             };
-            /*
-            * @TODO: Why was this disabled?
             // Load messages from user threads until the receiver queue is empty.
             self.receive_metrics(goose_attack_run_state, flush).await?;
-            */
         }
 
         // If enabled, display running metrics after sync
