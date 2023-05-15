@@ -1621,38 +1621,39 @@ impl ControllerState {
                     if let Ok(command_string) = self.get_command_string(buf).await {
                         // Extract the command and value in a generic way.
                         if let Ok(request_message) = self.get_match(command_string.trim()).await {
-                            let hash = if let Some(ControllerValue::Text(hash)) =
-                                request_message.value.as_ref()
-                            {
-                                // Clone the value.
-                                hash.to_string()
-                            } else {
-                                unreachable!("Hash must exist, enforced by regex");
-                            };
                             // Workers using Telnet socket to connect to the Manager.
                             if request_message.command == ControllerCommand::WorkerConnect {
                                 info!("Worker instance connecting ...");
-                                if request_message.command == ControllerCommand::WorkerConnect {
-                                    // A Worker is trying to connect, send the connection to the Parent.
-                                    if self
-                                        .channel_tx
-                                        .try_send(ControllerRequest {
-                                            response_channel: None,
-                                            client_id: self.thread_id,
-                                            request: ControllerRequestMessage {
-                                                command: ControllerCommand::WorkerConnect,
-                                                value: Some(ControllerValue::Socket(
-                                                    WorkerConnection { hash, socket },
-                                                )),
-                                            },
-                                        })
-                                        .is_err()
-                                    {
-                                        warn!("failed to send Worker socket to parent");
-                                    };
-                                    break;
-                                    // ELSE?
-                                }
+                                // Workers must include hash when connecting.
+                                let hash = if let Some(ControllerValue::Text(hash)) =
+                                    request_message.value.as_ref()
+                                {
+                                    // Clone the value.
+                                    hash.to_string()
+                                } else {
+                                    // @TODO: Don't panic, instead cancel the connection ...
+                                    panic!("Hash must exist, enforced by regex");
+                                };
+
+                                // A Worker is trying to connect, send the connection to the Parent.
+                                if self
+                                    .channel_tx
+                                    .try_send(ControllerRequest {
+                                        response_channel: None,
+                                        client_id: self.thread_id,
+                                        request: ControllerRequestMessage {
+                                            command: ControllerCommand::WorkerConnect,
+                                            value: Some(ControllerValue::Socket(
+                                                WorkerConnection { hash, socket },
+                                            )),
+                                        },
+                                    })
+                                    .is_err()
+                                {
+                                    warn!("failed to send Worker socket to parent");
+                                };
+                                break;
+                                // ELSE?
                             }
 
                             // Act on the commmand received.

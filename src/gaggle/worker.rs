@@ -120,7 +120,7 @@ impl GooseConfiguration {
                     message: "manager_host",
                 },
             ])
-            .unwrap_or_else(|| "".to_string());
+            .unwrap_or_default();
 
         // Set `manager_port` on Worker.
         self.manager_port = self

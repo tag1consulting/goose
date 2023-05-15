@@ -206,8 +206,8 @@ async fn run_standalone_test(test_type: TestType) {
             if let Some(stream) = test_state.telnet_stream.as_mut() {
                 let _ = match stream.read(&mut test_state.buf).await {
                     Ok(data) => data,
-                    Err(_) => {
-                        panic!("ERROR: server disconnected!");
+                    Err(e) => {
+                        panic!("ERROR: server disconnected: {}", e);
                     }
                 };
                 response = str::from_utf8(&test_state.buf).unwrap();
@@ -233,7 +233,7 @@ async fn run_standalone_test(test_type: TestType) {
                 unreachable!();
             }
 
-            //println!("{:?}: {}", test_state.command, response);
+            println!("{:?}: {}", test_state.command, response);
             match test_state.command {
                 ControllerCommand::Exit => {
                     match test_state.step {
@@ -751,7 +751,7 @@ async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> Te
     } else {
         // Connect to telnet controller.
         let telnet_stream = match test_type {
-            TestType::Telnet => Some(TcpStream::connect("127.0.0.1:5116").await.unwrap()),
+            TestType::Telnet => Some(TcpStream::connect("127.0.0.1:5115").await.unwrap()),
             _ => None,
         };
 
