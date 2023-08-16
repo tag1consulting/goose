@@ -44,7 +44,7 @@ use tokio::io::AsyncWriteExt;
 /// can spend all their time generating and validating load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GooseMetric {
-    Request(GooseRequestMetric),
+    Request(Box<GooseRequestMetric>),
     Transaction(TransactionMetric),
     Scenario(ScenarioMetric),
 }
@@ -315,6 +315,19 @@ impl GooseRawRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionDetail<'a> {
+    /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
+    pub scenario_index: usize,
+    /// The scenario name.
+    pub scenario_name: &'a str,
+    /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
+    pub transaction_index: &'a str,
+    /// An optional name for the transaction.
+    pub transaction_name: &'a str,
+}
+
+/// How many milliseconds the load test has been running.
 /// For tracking and counting requests made during a load test.
 ///
 /// The request that Goose is making. User threads send this data to the parent thread
@@ -326,6 +339,15 @@ impl GooseRawRequest {
 pub struct GooseRequestMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
+    /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
+    pub scenario_index: usize,
+    /// The scenario name.
+    pub scenario_name: String,
+    /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
+    /// Stored as string, `""` is no transaction, while `0` is the first `Scenario.transaction`.
+    pub transaction_index: String,
+    /// The optional transaction name.
+    pub transaction_name: String,
     /// The raw request that the GooseClient made.
     pub raw: GooseRawRequest,
     /// The optional name of the request.
@@ -355,9 +377,19 @@ pub struct GooseRequestMetric {
     pub user_cadence: u64,
 }
 impl GooseRequestMetric {
-    pub(crate) fn new(raw: GooseRawRequest, name: &str, elapsed: u128, user: usize) -> Self {
+    pub(crate) fn new(
+        raw: GooseRawRequest,
+        transaction_detail: TransactionDetail,
+        name: &str,
+        elapsed: u128,
+        user: usize,
+    ) -> Self {
         GooseRequestMetric {
             elapsed: elapsed as u64,
+            scenario_index: transaction_detail.scenario_index,
+            scenario_name: transaction_detail.scenario_name.to_string(),
+            transaction_index: transaction_detail.transaction_index.to_string(),
+            transaction_name: transaction_detail.transaction_name.to_string(),
             raw,
             name: name.to_string(),
             final_url: "".to_string(),
@@ -3807,8 +3839,23 @@ mod test {
     fn goose_raw_request() {
         const PATH: &str = "http://127.0.0.1/";
         let raw_request = GooseRawRequest::new(GooseMethod::Get, PATH, vec![], "");
-        let mut request_metric = GooseRequestMetric::new(raw_request, "/", 0, 0);
+        let mut request_metric = GooseRequestMetric::new(
+            raw_request,
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: "LoadTestUser",
+                transaction_index: 5.to_string().as_str(),
+                transaction_name: "front page",
+            },
+            "/",
+            0,
+            0,
+        );
         assert_eq!(request_metric.raw.method, GooseMethod::Get);
+        assert_eq!(request_metric.scenario_index, 0);
+        assert_eq!(request_metric.scenario_name, "LoadTestUser");
+        assert_eq!(request_metric.transaction_index, "5");
+        assert_eq!(request_metric.transaction_name, "front page");
         assert_eq!(request_metric.raw.url, PATH.to_string());
         assert_eq!(request_metric.name, "/".to_string());
         assert_eq!(request_metric.response_time, 0);

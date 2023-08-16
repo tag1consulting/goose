@@ -262,6 +262,10 @@ fn error_csv_header() -> String {
 fn requests_csv_header() -> String {
     format_csv_row!(
         "elapsed",
+        "scenario_index",
+        "scenario_name",
+        "transaction_index",
+        "transaction_name",
         "raw",
         "name",
         "final_url",
@@ -379,6 +383,10 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                 GooseLogFormat::Csv => {
                     format_csv_row!(
                         message.elapsed,
+                        message.scenario_index,
+                        message.scenario_name,
+                        message.transaction_index,
+                        message.transaction_name,
                         format!("{:?}", message.raw),
                         message.name,
                         message.final_url,

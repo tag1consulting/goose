@@ -236,6 +236,7 @@ async fn invoke_transaction_function(
         thread_transaction_name.to_string(),
         thread_user.weighted_users_index,
     );
+    // Store details about the currently running transaction for logging purposes.
     if !thread_transaction_name.is_empty() {
         thread_user
             .transaction_name
@@ -243,6 +244,8 @@ async fn invoke_transaction_function(
     } else {
         thread_user.transaction_name.take();
     }
+    // As the index is optional, `""` is none, whereas `"0"` is the first index.
+    thread_user.transaction_index = Some(thread_transaction_index.to_string());
 
     let success = function(thread_user).await.is_ok();
     raw_transaction.set_time(started.elapsed().as_millis(), success);
