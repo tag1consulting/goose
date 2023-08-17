@@ -7,7 +7,7 @@ In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-d
 ## ASCII metrics
 ```bash
 % cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.17.0 (~/goose)
+   Compiling goose v0.17.1 (~/goose)
     Finished release [optimized] target(s) in 11.88s
      Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
 05:09:05 [INFO] Output verbosity level: INFO
@@ -285,7 +285,7 @@ All 9 users hatched.
  Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 <- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.17.0
+ goose v0.17.1
  ------------------------------------------------------------------------------
 ```
 
