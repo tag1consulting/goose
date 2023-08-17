@@ -766,6 +766,7 @@ impl GooseAttack {
                 )?;
                 weighted_users.push(GooseUser::new(
                     self.scenarios[*scenarios_index].scenarios_index,
+                    self.scenarios[*scenarios_index].machine_name.to_string(),
                     base_url,
                     &self.configuration,
                     self.metrics.hash,

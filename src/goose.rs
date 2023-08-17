@@ -302,6 +302,7 @@ use url::Url;
 use crate::logger::GooseLog;
 use crate::metrics::{
     GooseCoordinatedOmissionMitigation, GooseMetric, GooseRawRequest, GooseRequestMetric,
+    TransactionDetail,
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
@@ -824,7 +825,13 @@ pub struct GooseUser {
     pub(crate) iterations: usize,
     /// An index into the internal [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`
     /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
-    pub scenarios_index: usize,
+    pub(crate) scenarios_index: usize,
+    /// The Scenario this GooseUser is running.
+    pub(crate) scenario_name: String,
+    /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
+    pub(crate) transaction_index: Option<String>,
+    /// Current transaction name, if set.
+    pub(crate) transaction_name: Option<String>,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Client,
     /// The base URL to prepend to all relative paths.
@@ -853,8 +860,6 @@ pub struct GooseUser {
     request_cadence: GooseRequestCadence,
     /// Tracks how much time is spent sleeping during a loop through all transactions.
     pub(crate) slept: u64,
-    /// Current transaction name.
-    pub(crate) transaction_name: Option<String>,
     /// Optional per-user session data of a generic type implementing the
     /// [`GooseUserData`] trait.
     session_data: Option<Box<dyn GooseUserData>>,
@@ -863,6 +868,7 @@ impl GooseUser {
     /// Create a new user state.
     pub fn new(
         scenarios_index: usize,
+        scenario_name: String,
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
@@ -891,6 +897,9 @@ impl GooseUser {
             started: Instant::now(),
             iterations: 0,
             scenarios_index,
+            scenario_name,
+            transaction_index: None,
+            transaction_name: None,
             client,
             base_url,
             config: configuration.clone(),
@@ -904,14 +913,13 @@ impl GooseUser {
             load_test_hash,
             request_cadence: GooseRequestCadence::new(),
             slept: 0,
-            transaction_name: None,
             session_data: None,
         })
     }
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new(0, base_url, configuration, 0)?;
+        let mut single_user = GooseUser::new(0, "".to_string(), base_url, configuration, 0)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -1557,9 +1565,24 @@ impl GooseUser {
             body,
         );
 
+        // Provide details about the current transaction for logging.
+        let transaction_detail = TransactionDetail {
+            scenario_index: self.scenarios_index,
+            scenario_name: self.scenario_name.as_str(),
+            transaction_index: self
+                .transaction_index
+                .as_ref()
+                .map_or_else(|| "", |v| v.as_ref()),
+            transaction_name: self
+                .transaction_name
+                .as_ref()
+                .map_or_else(|| "", |v| v.as_ref()),
+        };
+
         // Record information about the request.
         let mut request_metric = GooseRequestMetric::new(
             raw_request,
+            transaction_detail,
             request_name,
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
@@ -1806,7 +1829,7 @@ impl GooseUser {
         // [`test_start`](../struct.GooseAttack.html#method.test_start),
         // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
         if let Some(metrics_channel) = self.metrics_channel.clone() {
-            if let Err(e) = metrics_channel.send(GooseMetric::Request(request_metric)) {
+            if let Err(e) = metrics_channel.send(GooseMetric::Request(Box::new(request_metric))) {
                 return Err(Box::new(e.into()));
             }
         }
@@ -3152,7 +3175,7 @@ mod tests {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, base_url, &configuration, 0).unwrap();
+        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0).unwrap();
         assert_eq!(user.scenarios_index, 0);
         assert_eq!(user.weighted_users_index, usize::max_value());
 
@@ -3179,7 +3202,7 @@ mod tests {
             Some("http://www.example.com/".to_string()),
         )
         .unwrap();
-        let user2 = GooseUser::new(0, base_url, &configuration, 0).unwrap();
+        let user2 = GooseUser::new(0, "".to_string(), base_url, &configuration, 0).unwrap();
 
         // Confirm the URLs are correctly built using the scenario_host.
         let url = user2.build_url("/foo").unwrap();
@@ -3192,7 +3215,7 @@ mod tests {
         // Confirm Goose can build a base_url that includes a path.
         const HOST_WITH_PATH: &str = "http://example.com/with/path/";
         let base_url = get_base_url(Some(HOST_WITH_PATH.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, base_url, &configuration, 0).unwrap();
+        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0).unwrap();
 
         // Confirm the URLs are correctly built using the default_host that includes a path.
         let url = user.build_url("foo").unwrap();
