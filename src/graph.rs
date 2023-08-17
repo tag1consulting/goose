@@ -357,79 +357,82 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         }
 
         let mut total_values: TimeSeries<T, U> = TimeSeries::new();
-        let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
-            // If we are dealing with a metric with granular data we need to calculate totals.
-            for (_, single_data) in self.data.iter() {
-                total_values.add_time_series(single_data);
-            }
+        if self.data.is_empty() {
+            "<!-- no data, no legend -->".to_string()
+        } else {
+            let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
+                // If we are dealing with a metric with granular data we need to calculate totals.
+                for (_, single_data) in self.data.iter() {
+                    total_values.add_time_series(single_data);
+                }
 
-            // We will have multiple lines. We need to prepare the legend section on the graph
-            // and create data series for all of them.
-            let mut legend = vec!["Total"];
+                // We will have multiple lines. We need to prepare the legend section on the graph
+                // and create data series for all of them.
+                let mut legend = vec!["Total"];
 
-            let mut other_values = String::new();
-            if self.granular_data {
-                // In order for this to sort correctly we need to flip label and time series since tuples
-                // are sorted lexicographically so we want time series to be the first element of the tuple.
-                for (sub_data, label) in self
-                    .data
-                    .iter()
-                    .map(|(label, sub_data)| (sub_data, label))
-                    .sorted()
-                    .rev()
-                {
-                    legend.push(label);
+                let mut other_values = String::new();
+                if self.granular_data {
+                    // In order for this to sort correctly we need to flip label and time series since tuples
+                    // are sorted lexicographically so we want time series to be the first element of the tuple.
+                    for (sub_data, label) in self
+                        .data
+                        .iter()
+                        .map(|(label, sub_data)| (sub_data, label))
+                        .sorted()
+                        .rev()
+                    {
+                        legend.push(label);
 
-                    let formatted_line = format!(
-                        r#"{{
+                        let formatted_line = format!(
+                            r#"{{
                                 name: '{label}',
                                 type: 'line',
                                 symbol: 'none',
                                 sampling: 'lttb',
                                 data: {values},
                             }},
-                            "#,
-                        label = label,
-                        values = json!(self.add_timestamp_to_html_graph_data(
-                            &sub_data.get_graph_data(),
-                            test_started_time
-                        ))
-                    );
-                    other_values += formatted_line.as_str();
-                }
-                (
-                    format!(
-                        r#"legend: {{
+                        "#,
+                            label = label,
+                            values = json!(self.add_timestamp_to_html_graph_data(
+                                &sub_data.get_graph_data(),
+                                test_started_time
+                            ))
+                        );
+                        other_values += formatted_line.as_str();
+                    }
+                    (
+                        format!(
+                            r#"legend: {{
                             type: '{legend_type}',
                             width: '75%',
                             data: {data},
                         }},"#,
-                        legend_type = if self.data.len() > 4 {
-                            "scroll"
-                        } else {
-                            "plain"
-                        },
-                        data = json!(legend)
-                    ),
-                    "Total",
-                    &total_values,
-                    other_values,
-                )
+                            legend_type = if self.data.len() > 4 {
+                                "scroll"
+                            } else {
+                                "plain"
+                            },
+                            data = json!(legend)
+                        ),
+                        "Total",
+                        &total_values,
+                        other_values,
+                    )
+                } else {
+                    ("".to_string(), "Total", &total_values, "".to_string())
+                }
             } else {
-                ("".to_string(), "Total", &total_values, "".to_string())
-            }
-        } else {
-            // If there is only one data series in the metric we simply display it.
-            (
-                "".to_string(),
-                self.data.keys().next().unwrap().as_str(),
-                self.data.values().next().unwrap(),
-                "".to_string(),
-            )
-        };
+                // If there is only one data series in the metric we simply display it.
+                (
+                    "".to_string(),
+                    self.data.keys().next().unwrap().as_str(),
+                    self.data.values().next().unwrap(),
+                    "".to_string(),
+                )
+            };
 
-        format!(
-            r#"<div class="graph">
+            format!(
+                r#"<div class="graph">
                 <div id="{html_id}" style="width: 1000px; height:500px; background: white;"></div>
 
                 <script type="text/javascript">
@@ -496,17 +499,18 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     }});
                 </script>
             </div>"#,
-            html_id = self.html_id,
-            main_values = json!(self.add_timestamp_to_html_graph_data(
-                &main_values.get_graph_data(),
-                test_started_time
-            )),
-            y_axis_label = self.y_axis_label,
-            main_label = main_label,
-            legend = legend,
-            other_values = other_values,
-            steps = steps,
-        )
+                html_id = self.html_id,
+                main_values = json!(self.add_timestamp_to_html_graph_data(
+                    &main_values.get_graph_data(),
+                    test_started_time
+                )),
+                y_axis_label = self.y_axis_label,
+                main_label = main_label,
+                legend = legend,
+                other_values = other_values,
+                steps = steps,
+            )
+        }
     }
 
     /// Adds timestamps to the graph data series to ensure correct time display on x axis.

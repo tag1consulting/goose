@@ -5,6 +5,7 @@
  - [#552](https://github.com/tag1consulting/goose/pull/552) add `scenario_index`, `scenario_name`, `transaction_index` and `transaction_name` to the request log
  - [#553](https://github.com/tag1consulting/goose/pull/553) remove `serde_cbor` dependency no longer required due to [#529]
  - [#554](https://github.com/tag1consulting/goose/pull/554) update `flume`, `itertools`, `strum`, `strum_macros`, `tokio-tungstenite`, and `tungestenite` dependencies to latest versions
+ - [#555](https://github.com/tag1consulting/goose/pull/555) don't panic when report has no data
 
 ## 0.17.0 December 9, 2022
  - [#529](https://github.com/tag1consulting/goose/pull/529) **API change** temporaryily removed Gaggle support `gaggle` feature) to allow upgrading Tokio and other dependencies.
