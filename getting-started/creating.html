@@ -7,8 +7,7 @@
 
 
         <!-- Custom HTML head -->
-
-        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff" />
@@ -33,14 +32,15 @@
 
     </head>
     <body>
+    <div id="body-container">
         <!-- Provide site root to javascript -->
-        <script type="text/javascript">
+        <script>
             var path_to_root = "../";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
 
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
-        <script type="text/javascript">
+        <script>
             try {
                 var theme = localStorage.getItem('mdbook-theme');
                 var sidebar = localStorage.getItem('mdbook-sidebar');
@@ -56,7 +56,7 @@
         </script>
 
         <!-- Set the theme before any content is loaded, prevents flash -->
-        <script type="text/javascript">
+        <script>
             var theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
@@ -68,12 +68,14 @@
         </script>
 
         <!-- Hide / unhide sidebar before it is displayed -->
-        <script type="text/javascript">
+        <script>
             var html = document.querySelector('html');
-            var sidebar = 'hidden';
+            var sidebar = null;
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
             }
             html.classList.remove('sidebar-visible');
             html.classList.add("sidebar-" + sidebar);
@@ -86,11 +88,33 @@
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
 
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky bordered">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
                         <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
@@ -99,7 +123,7 @@
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
@@ -132,7 +156,7 @@
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
-                <script type="text/javascript">
+                <script>
                     document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
                     document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
                     Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
@@ -157,9 +181,9 @@ tokio = &quot;^1.12&quot;
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.17.0
+  Downloaded goose v0.17.1
       ...
-   Compiling goose v0.17.0
+   Compiling goose v0.17.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -167,18 +191,16 @@ Hello, world!
 </code></pre>
 <h2 id="creating-the-load-test"><a class="header" href="#creating-the-load-test">Creating the load test</a></h2>
 <p>To create an actual load test, you first have to add the following boilerplate to the top of <code>src/main.rs</code> to make Goose's functionality available to your code:</p>
-<pre><code class="language-rust ignore">use goose::prelude::*;
-</code></pre>
+<pre><code class="language-rust ignore">use goose::prelude::*;</code></pre>
 <blockquote>
 <p><strong>Note:</strong> Using the above prelude automatically adds the following <code>use</code> statements necessary when writing a load test, so you don't need to manually add all of them:</p>
 <pre><code class="language-rust ignore">use crate::config::{GooseDefault, GooseDefaultType};
 use crate::goose::{
     GooseMethod, GooseRequest, GooseUser, Scenario, Transaction, TransactionError,
     TransactionFunction, TransactionResult,
-);
+};
 use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
-use crate::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};
-</code></pre>
+use crate::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};</code></pre>
 </blockquote>
 <p>Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the <a href="https://docs.rs/reqwest/">Reqwest</a> library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.</p>
 <p>In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. Relative paths (not starting with a <code>/</code>) should be used.</p>
@@ -189,8 +211,7 @@ async fn loadtest_index(user: &amp;mut GooseUser) -&gt; TransactionResult {
     let _goose_metrics = user.get(&quot;&quot;).await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <p>The function is declared <code>async</code> so that we don't block a CPU-core while loading web pages. All Goose load test functions are passed in a mutable reference to a <code>GooseUser</code> object, and return a <code>TransactionResult</code> which is either an empty <code>Ok(())</code> on success, or a <code>TransactionError</code> on failure. We use the <code>GooseUser</code> object to make requests, in this case we make a <code>GET</code> request for the front page, specified with an empty path <code>&quot;&quot;</code>. The <code>.await</code> frees up the CPU-core while we wait for the web page to respond, and the trailing <code>?</code> unwraps the response, returning any unexpected errors that may be generated by this request.</p>
 <p>When the GET request completes, Goose returns metrics which we store in the  <code>_goose_metrics</code> variable. The variable is prefixed with an underscore (<code>_</code>) to tell the compiler we are intentionally not using the results. Finally, after making a single successful request, we return <code>Ok(())</code> to let Goose know this transaction function completed successfully.</p>
 <p>Now we have to tell Goose about our new transaction function. Edit the <code>main()</code> function, setting a return type and replacing the hello world text as follows:</p>
@@ -204,8 +225,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
         .await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <p>The <code>#[tokio::main]</code> at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing (and requiring) us to declare the <code>main()</code> function of our load test application as <code>async</code>.</p>
 <p>If you're new to Rust, <code>main()</code>'s return type of <code>Result&lt;(), GooseError&gt;</code> may look strange. It essentially says that <code>main</code> will return nothing (<code>()</code>) on success, and will return a <code>GooseError</code> on failure. This is helpful as several of <code>GooseAttack</code>'s methods can fail, returning an error. In our example, <code>initialize()</code> and <code>execute()</code> each may fail. The <code>?</code> that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the <code>.execute()</code> method is asynchronous, so it must be followed with <code>.await</code>, and as it can return an error it alsos has a <code>?</code>. The final line, <code>Ok(())</code> returns the empty result expected on success.</p>
 <p>And that's it, you've created your first load test! Read on to see how to run it and what it does.</p>
@@ -242,21 +262,22 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 
 
 
-        <script type="text/javascript">
+        <script>
             window.playground_copyable = true;
         </script>
 
 
-        <script src="../elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="../mark.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="../searcher.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="../clipboard.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
-        <script src="../book.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
 
 
+    </div>
     </body>
 </html>

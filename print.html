@@ -8,8 +8,7 @@
 
 
         <!-- Custom HTML head -->
-
-        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff" />
@@ -34,14 +33,15 @@
 
     </head>
     <body>
+    <div id="body-container">
         <!-- Provide site root to javascript -->
-        <script type="text/javascript">
+        <script>
             var path_to_root = "";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
 
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
-        <script type="text/javascript">
+        <script>
             try {
                 var theme = localStorage.getItem('mdbook-theme');
                 var sidebar = localStorage.getItem('mdbook-sidebar');
@@ -57,7 +57,7 @@
         </script>
 
         <!-- Set the theme before any content is loaded, prevents flash -->
-        <script type="text/javascript">
+        <script>
             var theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
@@ -69,12 +69,14 @@
         </script>
 
         <!-- Hide / unhide sidebar before it is displayed -->
-        <script type="text/javascript">
+        <script>
             var html = document.querySelector('html');
-            var sidebar = 'hidden';
+            var sidebar = null;
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
             }
             html.classList.remove('sidebar-visible');
             html.classList.add("sidebar-" + sidebar);
@@ -87,11 +89,33 @@
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
 
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky bordered">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
                         <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
@@ -100,7 +124,7 @@
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
@@ -133,7 +157,7 @@
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
-                <script type="text/javascript">
+                <script>
                     document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
                     document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
                     Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
@@ -177,7 +201,7 @@
 <p>Goose load tests are managed with <a href="https://doc.rust-lang.org/cargo/">Cargo</a>, the Rust package manager.</p>
 </li>
 <li>
-<p>Goose requires a minimum <a href="https://doc.rust-lang.org/rustc/what-is-rustc.html"><code>rustc</code></a> version of <a href="https://blog.rust-lang.org/2020/12/31/Rust-1.49.0.html"><code>1.49.0</code></a> or later. This is because Goose depends on <a href="https://docs.rs/flume"><code>flume</code></a> for communication between threads, which in turn depends on <a href="https://docs.rs/spinning_top"><code>spinning_top</code></a> which uses <a href="https://doc.rust-lang.org/std/hint/fn.spin_loop.html"><code>hint::spin_loop</code></a> which stabilized in <code>rustc</code> version <code>1.49.0</code>. (See <a href="https://github.com/rust-lang/rust/issues/55002">https://github.com/rust-lang/rust/issues/55002</a> for more detail.)</p>
+<p>Goose requires a minimum <a href="https://doc.rust-lang.org/rustc/what-is-rustc.html"><code>rustc</code></a> version of <a href="https://blog.rust-lang.org/2022/11/03/Rust-1.65.0.html"><code>1.65.0</code></a> or later.</p>
 </li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="glossary"><a class="header" href="#glossary">Glossary</a></h1>
@@ -208,9 +232,9 @@ tokio = &quot;^1.12&quot;
 <p>At this point it's possible to compile all dependencies, though the resulting binary only displays &quot;Hello, world!&quot;:</p>
 <pre><code class="language-bash">$ cargo run
     Updating crates.io index
-  Downloaded goose v0.17.0
+  Downloaded goose v0.17.1
       ...
-   Compiling goose v0.17.0
+   Compiling goose v0.17.1
    Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
     Finished dev [unoptimized + debuginfo] target(s) in 52.97s
      Running `target/debug/loadtest`
@@ -218,18 +242,16 @@ Hello, world!
 </code></pre>
 <h2 id="creating-the-load-test"><a class="header" href="#creating-the-load-test">Creating the load test</a></h2>
 <p>To create an actual load test, you first have to add the following boilerplate to the top of <code>src/main.rs</code> to make Goose's functionality available to your code:</p>
-<pre><code class="language-rust ignore">use goose::prelude::*;
-</code></pre>
+<pre><code class="language-rust ignore">use goose::prelude::*;</code></pre>
 <blockquote>
 <p><strong>Note:</strong> Using the above prelude automatically adds the following <code>use</code> statements necessary when writing a load test, so you don't need to manually add all of them:</p>
 <pre><code class="language-rust ignore">use crate::config::{GooseDefault, GooseDefaultType};
 use crate::goose::{
     GooseMethod, GooseRequest, GooseUser, Scenario, Transaction, TransactionError,
     TransactionFunction, TransactionResult,
-);
+};
 use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
-use crate::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};
-</code></pre>
+use crate::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};</code></pre>
 </blockquote>
 <p>Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable pointer to a GooseUser object, which is used to track metrics and make web requests. Thanks to the <a href="https://docs.rs/reqwest/">Reqwest</a> library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.</p>
 <p>In load test functions you typically do not set the host, and instead configure the host at run time, so you can easily run your load test against different environments without recompiling. Relative paths (not starting with a <code>/</code>) should be used.</p>
@@ -240,8 +262,7 @@ async fn loadtest_index(user: &amp;mut GooseUser) -&gt; TransactionResult {
     let _goose_metrics = user.get(&quot;&quot;).await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <p>The function is declared <code>async</code> so that we don't block a CPU-core while loading web pages. All Goose load test functions are passed in a mutable reference to a <code>GooseUser</code> object, and return a <code>TransactionResult</code> which is either an empty <code>Ok(())</code> on success, or a <code>TransactionError</code> on failure. We use the <code>GooseUser</code> object to make requests, in this case we make a <code>GET</code> request for the front page, specified with an empty path <code>&quot;&quot;</code>. The <code>.await</code> frees up the CPU-core while we wait for the web page to respond, and the trailing <code>?</code> unwraps the response, returning any unexpected errors that may be generated by this request.</p>
 <p>When the GET request completes, Goose returns metrics which we store in the  <code>_goose_metrics</code> variable. The variable is prefixed with an underscore (<code>_</code>) to tell the compiler we are intentionally not using the results. Finally, after making a single successful request, we return <code>Ok(())</code> to let Goose know this transaction function completed successfully.</p>
 <p>Now we have to tell Goose about our new transaction function. Edit the <code>main()</code> function, setting a return type and replacing the hello world text as follows:</p>
@@ -255,8 +276,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
         .await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <p>The <code>#[tokio::main]</code> at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing (and requiring) us to declare the <code>main()</code> function of our load test application as <code>async</code>.</p>
 <p>If you're new to Rust, <code>main()</code>'s return type of <code>Result&lt;(), GooseError&gt;</code> may look strange. It essentially says that <code>main</code> will return nothing (<code>()</code>) on success, and will return a <code>GooseError</code> on failure. This is helpful as several of <code>GooseAttack</code>'s methods can fail, returning an error. In our example, <code>initialize()</code> and <code>execute()</code> each may fail. The <code>?</code> that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the <code>.execute()</code> method is asynchronous, so it must be followed with <code>.await</code>, and as it can return an error it alsos has a <code>?</code>. The final line, <code>Ok(())</code> returns the empty result expected on success.</p>
 <p>And that's it, you've created your first load test! Read on to see how to run it and what it does.</p>
@@ -268,8 +288,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 goose-eggs = &quot;0.4&quot;
 </code></pre>
 <p>For example, to use the Goose Eggs validation functions, bring the <code>Validate</code> structure and either the <code>validate_page</code> or the <code>validate_and_load_static_assets</code> function into scope:</p>
-<pre><code class="language-rust ignore">use goose_eggs::{validate_and_load_static_assets, Validate};
-</code></pre>
+<pre><code class="language-rust ignore">use goose_eggs::{validate_and_load_static_assets, Validate};</code></pre>
 <p>Now, it is simple to verify that we received a <code>200</code> HTTP response status code, and that the text <code>Gander</code> appeared somewhere on the page as expected:</p>
 <pre><code class="language-rust ignore">let goose = user.get(&quot;/goose/&quot;).await?;
 
@@ -278,8 +297,7 @@ let validate = &amp;Validate::builder()
     .text(&quot;Gander&quot;)
     .build();
 
-validate_and_load_static_assets(user, goose, &amp;validate).await?;
-</code></pre>
+validate_and_load_static_assets(user, goose, &amp;validate).await?;</code></pre>
 <p>Whether or not validation passed or failed will be visible in the Goose metrics when the load test finishes. You can enable the <a href="https://book.goose.rs/logging/debug.html">debug log</a> to gain more insight into failures.</p>
 <p>Read <a href="https://docs.rs/goose-eggs/latest/goose_eggs">the goose-eggs documentation</a> to learn about other helpful functions useful in writing load tests, as well as other validation helpers, such as <a href="https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.header">headers</a>, <a href="https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.header_value">header values</a>, <a href="https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.title">the page title</a>, and <a href="https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.redirect">whether the request was redirected</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="running-a-load-test"><a class="header" href="#running-a-load-test">Running A Load Test</a></h1>
@@ -560,7 +578,7 @@ Scenarios:
 </code></pre>
 <p>Or, to run only the &quot;Anonymous Spanish user&quot; and &quot;Admin user&quot; Scenarios, you could add <code>--senarios &quot;spanish,admin&quot;</code>:</p>
 <pre><code class="language-bash ignore">% cargo run --release --example umami -- --hatch-rate 10 --scenarios &quot;spanish,admin&quot;
-   Compiling goose v0.17.0 (/Users/jandrews/devel/goose)
+   Compiling goose v0.17.1 (/Users/jandrews/devel/goose)
     Finished release [optimized] target(s) in 11.79s
      Running `target/release/examples/umami --hatch-rate 10 --scenarios spanish,admin`
 05:53:45 [INFO] Output verbosity level: INFO
@@ -620,8 +638,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
         .await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <p>This can now be used to set a custom default for the scenario, in this example with no <code>--host</code> set Goose will execute a load test against the hostname defined in <code>HOST</code>:</p>
 <pre><code class="language-bash ignore">% HOST=&quot;https://local.dev/&quot; cargo run --release                  
     Finished release [optimized] target(s) in 0.07s
@@ -682,8 +699,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
         .await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <p>Assuming that <code>MyCustomConfig</code> has a <code>my_custom_arg</code> field, the program above can be invoked with a command such as:</p>
 <pre><code class="language-bash ignore">cargo run -- --host https://localhost:8080 --my-custom-arg 42
 </code></pre>
@@ -692,7 +708,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 <p>In this case, the <a href="https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile">Drupal Umami demo</a> was installed in a local container. The following command was used to configure Goose and run the load test. The <code>-u9</code> tells Goose to spin up 9 users. The <code>-r3</code> option tells Goose to hatch 3 users per second. The <code>-t1m</code> option tells Goose to run the load test for 1 minute, or 60 seconds. The <code>--no-reset-metrics</code> flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the <code>--report-file report.html</code> tells Goose to generate an HTML-formatted report named <code>report.html</code> once the load test finishes.</p>
 <h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">ASCII metrics</a></h2>
 <pre><code class="language-bash">% cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.17.0 (~/goose)
+   Compiling goose v0.17.1 (~/goose)
     Finished release [optimized] target(s) in 11.88s
      Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
 05:09:05 [INFO] Output verbosity level: INFO
@@ -970,7 +986,7 @@ All 9 users hatched.
  Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 &lt;- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.17.0
+ goose v0.17.1
  ------------------------------------------------------------------------------
 </code></pre>
 <h2 id="html-metrics"><a class="header" href="#html-metrics">HTML metrics</a></h2>
@@ -1136,7 +1152,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose&gt; ?
-goose 0.17.0 controller commands:
+goose 0.17.1 controller commands:
 help               this help
 exit               exit controller
 
@@ -1224,7 +1240,7 @@ goose&gt; Connection closed by foreign host.
  Canceling:   2022-05-05 07:11:13 - 2022-05-05 07:11:13 (00:00:00, 0 &lt;- 20)
 
  Target host: https://umami.ddev.site/
- goose v0.17.0
+ goose v0.17.1
  ------------------------------------------------------------------------------
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="websocket-controller"><a class="header" href="#websocket-controller">WebSocket Controller</a></h1>
@@ -1408,8 +1424,7 @@ goose = { version = &quot;^0.16&quot;, features = [&quot;gaggle&quot;] }
         .execute()
         .await?;
 
-    Ok(())
-</code></pre>
+    Ok(())</code></pre>
 <p>The following defaults can be configured with a <code>&amp;str</code>:</p>
 <ul>
 <li>host: <code>GooseDefault::Host</code></li>
@@ -1490,24 +1505,20 @@ goose = { version = &quot;^0.16&quot;, features = [&quot;gaggle&quot;] }
         .execute()
         .await?;
 
-    Ok(())
-</code></pre>
+    Ok(())</code></pre>
 <p>Find a complete list of all configuration options that can be configured with custom defaults <a href="https://docs.rs/goose/*/goose/config/enum.GooseDefault.html">in the developer documentation</a>, as well as complete details on <a href="https://docs.rs/goose/*/goose/config/trait.GooseDefaultType.html">how to configure defaults</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="scheduling-scenarios-and-transactions"><a class="header" href="#scheduling-scenarios-and-transactions">Scheduling Scenarios And Transactions</a></h1>
 <p>When starting a load test, Goose assigns one <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> to each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> thread. By default, it assigns <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> (and then <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> within the scenario) in a round robin order. As new <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> threads are launched, the first will be assigned the first defined <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a>, the next will be assigned the next defined <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a>, and so on, looping through all available <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a>. Weighting is respected during this process, so if one <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> is weighted heavier than others, that <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> will get assigned to <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> more at the end of the launching process.</p>
 <p>The <a href="https://docs.rs/goose/*/goose/enum.GooseScheduler.html"><code>GooseScheduler</code></a> can be configured to instead launch <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> and <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> in a <a href="https://docs.rs/goose/*/goose/enum.GooseScheduler.html#variant.Serial"><code>Serial</code></a> or a <a href="https://docs.rs/goose/*/goose/enum.GooseScheduler.html#variant.Random"><code>Random order</code></a>. When configured to allocate in a <a href="https://docs.rs/goose/*/goose/enum.GooseScheduler.html#variant.Serial"><code>Serial</code></a> order, <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> and <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> are launched in the extact order they are defined in the load test (see below for more detail on how this works). When configured to allocate in a <a href="https://docs.rs/goose/*/goose/enum.GooseScheduler.html#variant.Random"><code>Random</code></a> order, running the same load test multiple times can lead to different amounts of load being generated.</p>
 <p>Prior to Goose <code>0.10.6</code> <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> were allocated in a serial order. Prior to Goose <code>0.11.1</code> <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> were allocated in a serial order. To restore the old behavior, you can use the <a href="https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_scheduler"><code>GooseAttack::set_scheduler()</code></a> method as follows:</p>
 <pre><code class="language-rust ignore">    GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::Serial);
-</code></pre>
+        .set_scheduler(GooseScheduler::Serial);</code></pre>
 <p>To instead randomize the order that <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> and <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> are allocated, you can instead configure as follows:</p>
 <pre><code class="language-rust ignore">    GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::Random);
-</code></pre>
+        .set_scheduler(GooseScheduler::Random);</code></pre>
 <p>The following configuration is possible but superfluous because it is the scheduling default, and is therefor how Goose behaves even if the <a href="https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.set_scheduler"><code>.set_scheduler()</code></a> method is not called at all:</p>
 <pre><code class="language-rust ignore">    GooseAttack::initialize()?
-        .set_scheduler(GooseScheduler::RoundRobin);
-</code></pre>
+        .set_scheduler(GooseScheduler::RoundRobin);</code></pre>
 <h2 id="scheduling-example"><a class="header" href="#scheduling-example">Scheduling Example</a></h2>
 <p>The following simple example helps illustrate how the different schedulers work.</p>
 <pre><code class="language-rust ignore">use goose::prelude::*;
@@ -1528,8 +1539,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
         .await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <h2 id="round-robin-scheduler"><a class="header" href="#round-robin-scheduler">Round Robin Scheduler</a></h2>
 <p>This first example assumes the default of <code>.set_scheduler(GooseScheduler::RoundRobin)</code>.</p>
 <p>If Goose is told to launch only two users, the first <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> will run <code>Scenario1</code> and the second user will run <code>Scenario2</code>. Even though <code>Scenario1</code> has a weight of 2 <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> are allocated round-robin so with only two users the second instance of <code>Scenario1</code> is never launched.</p>
@@ -1633,18 +1643,15 @@ async fn website_about(user: &amp;mut GooseUser) -&gt; TransactionResult {
     let _goose = user.get(&quot;/about/&quot;).await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="closure-example"><a class="header" href="#closure-example">Closure Example</a></h1>
 <p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/closure.rs"><code>examples/closure.rs</code></a> example loads three different pages on a web site. Instead of defining a hard coded <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> function for each, the paths are passed in via a <a href="https://doc.rust-lang.org/std/vec/index.html">vector</a> and the <a href="https://docs.rs/goose/*/goose/goose/type.TransactionFunction.html">TransactionFunction</a> is dynamically created in a <a href="https://doc.rust-lang.org/rust-by-example/fn/closures.html">closure</a>.</p>
 <h2 id="details-1"><a class="header" href="#details-1">Details</a></h2>
 <p>The paths to be loaded are first defiend in a vector:</p>
-<pre><pre class="playground"><code class="language-rust edition2018">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>    let paths = vec![&quot;/&quot;, &quot;/about&quot;, &quot;/our-team&quot;];
-<span class="boring">}
-</span></code></pre></pre>
+<span class="boring">}</span></code></pre></pre>
 <p>A transaction function for each path is then dynamically created as a closure:</p>
 <pre><code class="language-rust ignore">    for request_path in paths {
         let path = request_path;
@@ -1655,8 +1662,7 @@ async fn website_about(user: &amp;mut GooseUser) -&gt; TransactionResult {
 
                 Ok(())
             })
-        });
-</code></pre>
+        });</code></pre>
 <h2 id="complete-source-code-1"><a class="header" href="#complete-source-code-1">Complete Source Code</a></h2>
 <pre><code class="language-rust ignore">//! Simple Goose load test example using closures.
 //!
@@ -1714,25 +1720,21 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
         .await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="session-example"><a class="header" href="#session-example">Session Example</a></h1>
 <p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/session.rs"><code>examples/session.rs</code></a> example demonstrates how you can add JWT authentication support to your load test, making use of the <a href="https://docs.rs/goose/*/goose/goose/trait.GooseUserData.html"><code>GooseUserData</code></a> marker trait. In this example, the session is recorded in the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_session_data"><code>set_session_data</code></a>, and retrieved with <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.get_session_data_unchecked"><code>get_session_data_unchecked</code></a>.</p>
 <h2 id="details-2"><a class="header" href="#details-2">Details</a></h2>
 <p>In this example, the <a href="https://docs.rs/goose/*/goose/goose/trait.GooseUserData.html"><code>GooseUserData</code></a> is a simple struct containing a string:</p>
-<pre><pre class="playground"><code class="language-rust edition2018">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>struct Session {
     jwt_token: String,
 }
-<span class="boring">}
-</span></code></pre></pre>
+<span class="boring">}</span></code></pre></pre>
 <p>The session data structure is created from json-formatted response data returned by an authentication request, uniquely stored in each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> instance:</p>
 <pre><code class="language-rust ignore">    user.set_session_data(Session {
         jwt_token: response.jwt_token,
-    });
-</code></pre>
+    });</code></pre>
 <p>The session data is retrieved from the <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> object with each subsequent request. To keep the example simple no validation is done:</p>
 <pre><code class="language-rust ignore">    // This will panic if the session is missing or if the session is not of the right type.
     // Use `get_session_data` to handle a missing session.
@@ -1742,8 +1744,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
     // a GET request for the index.
     let reqwest_request_builder = user
         .get_request_builder(&amp;GooseMethod::Get, &quot;/&quot;)?
-        .bearer_auth(&amp;session.jwt_token);
-</code></pre>
+        .bearer_auth(&amp;session.jwt_token);</code></pre>
 <p><em>This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token.</em></p>
 <h2 id="complete-source-code-2"><a class="header" href="#complete-source-code-2">Complete Source Code</a></h2>
 <pre><code class="language-rust ignore">//! Goose load test example, leveraging the per-GooseUser `GooseUserData` field
@@ -1839,8 +1840,7 @@ async fn authenticated_index(user: &amp;mut GooseUser) -&gt; TransactionResult {
     user.request(goose_request).await?;
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="drupal-memcache-example"><a class="header" href="#drupal-memcache-example">Drupal Memcache Example</a></h1>
 <p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/drupal_memcache.rs"><code>examples/drupal_memcache.rs</code></a> example is used to validate the performance of each release of the <a href="https://www.drupal.org/project/memcache">Drupal Memcache Module</a>.</p>
 <h2 id="background"><a class="header" href="#background">Background</a></h2>
@@ -1855,8 +1855,7 @@ async fn authenticated_index(user: &amp;mut GooseUser) -&gt; TransactionResult {
                     transaction!(drupal_memcache_login)
                         .set_on_start()
                         .set_name(&quot;(Auth) login&quot;),
-                )
-</code></pre>
+                )</code></pre>
 <p>Each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> thread logs in as a random user (depending on a properly configured test environment):</p>
 <pre><code class="language-rust ignore">                    let uid: usize = rand::thread_rng().gen_range(3..5_002);
                     let username = format!(&quot;user{}&quot;, uid);
@@ -1869,15 +1868,13 @@ async fn authenticated_index(user: &amp;mut GooseUser) -&gt; TransactionResult {
                     ];
                     let _goose = user.post_form(&quot;/user&quot;, &amp;params).await?;
                     // @TODO: verify that we actually logged in.
-                }
-</code></pre>
+                }</code></pre>
 <p>The test also includes an example of how to post a comment during a load test:</p>
 <pre><code class="language-rust ignore">                .register_transaction(
                     transaction!(drupal_memcache_post_comment)
                         .set_weight(3)?
                         .set_name(&quot;(Auth) comment form&quot;),
-                ),
-</code></pre>
+                ),</code></pre>
 <p>Note that much of this functionality can be simplified by using the <a href="https://docs.rs/goose-eggs">Goose Eggs library</a> which includes some <a href="https://docs.rs/goose-eggs/*/goose_eggs/drupal/index.html">Drupal-specific functionality</a>.</p>
 <h2 id="complete-source-code-3"><a class="header" href="#complete-source-code-3">Complete Source Code</a></h2>
 <pre><code class="language-rust ignore">//! Conversion of Locust load test used for the Drupal memcache module, from
@@ -2260,8 +2257,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
     }
 
     Ok(())
-}
-</code></pre>
+}</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="umami-example"><a class="header" href="#umami-example">Umami Example</a></h1>
 <p>The <a href="https://github.com/tag1consulting/goose/tree/main/examples/umami"><code>examples/umami</code></a> example load tests the <a href="https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile">Umami demonstration profile</a> included with <a href="https://www.drupal.org/blog/drupal-9-released">Drupal 9</a>.</p>
 <h2 id="overview-1"><a class="header" href="#overview-1">Overview</a></h2>
@@ -2293,26 +2289,27 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
 
 
 
-        <script type="text/javascript">
+        <script>
             window.playground_copyable = true;
         </script>
 
 
-        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
 
-        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
-        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
 
         <!-- Custom JS scripts -->
 
-        <script type="text/javascript">
+        <script>
         window.addEventListener('load', function() {
             window.setTimeout(window.print, 100);
         });
         </script>
 
+    </div>
     </body>
 </html>
