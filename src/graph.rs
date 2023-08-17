@@ -385,12 +385,12 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
 
                         let formatted_line = format!(
                             r#"{{
-                            name: '{label}',
-                            type: 'line',
-                            symbol: 'none',
-                            sampling: 'lttb',
-                            data: {values},
-                        }},
+                                name: '{label}',
+                                type: 'line',
+                                symbol: 'none',
+                                sampling: 'lttb',
+                                data: {values},
+                            }},
                         "#,
                             label = label,
                             values = json!(self.add_timestamp_to_html_graph_data(
@@ -403,10 +403,10 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     (
                         format!(
                             r#"legend: {{
-                        type: '{legend_type}',
-                        width: '75%',
-                        data: {data},
-                    }},"#,
+                            type: '{legend_type}',
+                            width: '75%',
+                            data: {data},
+                        }},"#,
                             legend_type = if self.data.len() > 4 {
                                 "scroll"
                             } else {
