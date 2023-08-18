@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.17.2-dev
+
 ## 0.17.1 August 17, 2023
  - [#543](https://github.com/tag1consulting/goose/pull/543) remove external dependency on num_cpus(), use instead built-in available_parallelism() added in rust 1.59.0
  - [#552](https://github.com/tag1consulting/goose/pull/552) add `scenario_index`, `scenario_name`, `transaction_index` and `transaction_name` to the request log
