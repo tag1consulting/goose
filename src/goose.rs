@@ -872,26 +872,14 @@ impl GooseUser {
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
+        reqwest_client: Option<Client>,
     ) -> Result<Self, GooseError> {
         trace!("new GooseUser");
 
-        // Either use manually configured timeout, or default.
-        let timeout = if configuration.timeout.is_some() {
-            match crate::util::get_float_from_string(configuration.timeout.clone()) {
-                Some(f) => f as u64 * 1_000,
-                None => GOOSE_REQUEST_TIMEOUT,
-            }
-        } else {
-            GOOSE_REQUEST_TIMEOUT
+        let client = match reqwest_client {
+            Some(c) => c,
+            None => create_reqwest_client(configuration)?,
         };
-
-        let client = Client::builder()
-            .user_agent(APP_USER_AGENT)
-            .cookie_store(true)
-            .timeout(Duration::from_millis(timeout))
-            // Enable gzip unless `--no-gzip` flag is enabled.
-            .gzip(!configuration.no_gzip)
-            .build()?;
 
         Ok(GooseUser {
             started: Instant::now(),
@@ -919,7 +907,7 @@ impl GooseUser {
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new(0, "".to_string(), base_url, configuration, 0)?;
+        let mut single_user = GooseUser::new(0, "".to_string(), base_url, configuration, 0, None)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -2310,6 +2298,29 @@ impl GooseUser {
     }
 }
 
+/// Internal helper function to create the default GooseUser reqwest client
+pub(crate) fn create_reqwest_client(
+    configuration: &GooseConfiguration,
+) -> Result<Client, reqwest::Error> {
+    // Either use manually configured timeout, or default.
+    let timeout = if configuration.timeout.is_some() {
+        match crate::util::get_float_from_string(configuration.timeout.clone()) {
+            Some(f) => f as u64 * 1_000,
+            None => GOOSE_REQUEST_TIMEOUT,
+        }
+    } else {
+        GOOSE_REQUEST_TIMEOUT
+    };
+
+    Client::builder()
+        .user_agent(APP_USER_AGENT)
+        .cookie_store(true)
+        .timeout(Duration::from_millis(timeout))
+        // Enable gzip unless `--no-gzip` flag is enabled.
+        .gzip(!configuration.no_gzip)
+        .build()
+}
+
 /// Defines the HTTP requests that Goose makes.
 ///
 /// Can be manually created and configured with [`GooseRequest::builder`], but it's typically
@@ -3175,7 +3186,7 @@ mod tests {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0).unwrap();
+        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0, None).unwrap();
         assert_eq!(user.scenarios_index, 0);
         assert_eq!(user.weighted_users_index, usize::max_value());
 
@@ -3202,7 +3213,7 @@ mod tests {
             Some("http://www.example.com/".to_string()),
         )
         .unwrap();
-        let user2 = GooseUser::new(0, "".to_string(), base_url, &configuration, 0).unwrap();
+        let user2 = GooseUser::new(0, "".to_string(), base_url, &configuration, 0, None).unwrap();
 
         // Confirm the URLs are correctly built using the scenario_host.
         let url = user2.build_url("/foo").unwrap();
@@ -3215,7 +3226,7 @@ mod tests {
         // Confirm Goose can build a base_url that includes a path.
         const HOST_WITH_PATH: &str = "http://example.com/with/path/";
         let base_url = get_base_url(Some(HOST_WITH_PATH.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0).unwrap();
+        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0, None).unwrap();
 
         // Confirm the URLs are correctly built using the default_host that includes a path.
         let url = user.build_url("foo").unwrap();
