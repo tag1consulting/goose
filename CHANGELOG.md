@@ -2,6 +2,7 @@
 
 ## 0.17.2-dev
  - [#557](https://github.com/tag1consulting/goose/pull/557) speed up user initialization on Linux
+ - [#559](https://github.com/tag1consulting/goose/pull/559) disable unnecessary features in chronos, avoid potential segfault in time crate: https://rustsec.org/advisories/RUSTSEC-2020-0071
 
 ## 0.17.1 August 17, 2023
  - [#543](https://github.com/tag1consulting/goose/pull/543) remove external dependency on num_cpus(), use instead built-in available_parallelism() added in rust 1.59.0
