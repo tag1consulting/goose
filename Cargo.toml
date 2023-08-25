@@ -13,7 +13,7 @@ license = "Apache-2.0"
 
 [dependencies]
 async-trait = "0.1"
-chrono = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ctrlc = "3"
 downcast-rs = "1.2"
 flume = "0.11"
