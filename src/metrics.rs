@@ -2546,7 +2546,6 @@ impl GooseMetrics {
             env!("CARGO_PKG_VERSION"),
         )?;
 
-        if self.hosts.len() == 1 {}
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
