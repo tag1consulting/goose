@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.17.3-dev
+
 ## 0.17.2 August 28, 2023
  - [#557](https://github.com/tag1consulting/goose/pull/557) speed up user initialization on Linux
  - [#559](https://github.com/tag1consulting/goose/pull/559) disable unnecessary features in chronos, avoid potential segfault in time crate: https://rustsec.org/advisories/RUSTSEC-2020-0071
