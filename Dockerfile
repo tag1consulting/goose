@@ -11,15 +11,18 @@ LABEL org.label-schema.vendor="Tag1 Consulting" \
 ENV GOOSE_EXAMPLE=umami \
     GOOSE_FEATURES="gaggle"
 
-ARG DEBIAN_FRONTEND=noninteractive
+RUN export DEBIAN_FRONTEND=noninteractive \
+ && apt-get update \
+ && apt-get install -y \
+    cmake \
+    gcc \
+    libssl-dev \
+    pkg-config \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY . /build
 WORKDIR ./build
-
-RUN apt-get update && \
-  apt-get install -y libssl-dev gcc pkg-config cmake && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/*
 
 RUN cargo build --features "${GOOSE_FEATURES}" --release --example "${GOOSE_EXAMPLE}"
 RUN chmod +x ./docker-entrypoint.sh
