@@ -165,7 +165,7 @@ pub struct GooseConfiguration {
     /// Sets telnet Controller host (default: 0.0.0.0)
     #[options(no_short, meta = "HOST")]
     pub telnet_host: String,
-    /// Sets telnet Controller TCP port (default: 5116)
+    /// Sets telnet Controller TCP port (default: 5115)
     #[options(no_short, meta = "PORT")]
     pub telnet_port: u16,
     /// Doesn't enable WebSocket Controller
@@ -193,8 +193,31 @@ pub struct GooseConfiguration {
     #[options(no_short, meta = "VALUE")]
     pub throttle_requests: usize,
     /// Follows base_url redirect with subsequent requests
-    #[options(no_short)]
+    // Add a blank line and then an Gaggle: header after this option
+    #[options(
+        no_short,
+        help = "Follows base_url redirect with subsequent requests\n\nGaggle:"
+    )]
     pub sticky_follow: bool,
+
+    /// Enables distributed load test Manager mode
+    #[options(no_short)]
+    pub manager: bool,
+    /// Sets number of Workers to expect
+    #[options(no_short, meta = "VALUE")]
+    pub expect_workers: Option<usize>,
+    /// Tells Manager to ignore load test checksum
+    #[options(no_short)]
+    pub no_hash_check: bool,
+    /// Enables distributed load test Worker mode
+    #[options(no_short)]
+    pub worker: bool,
+    /// Sets host Worker connects to (default: 127.0.0.1)
+    #[options(no_short, meta = "HOST")]
+    pub manager_host: String,
+    /// Sets port Worker connects to (default: 5115)
+    #[options(no_short, meta = "PORT")]
+    pub manager_port: u16,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.
@@ -240,98 +263,110 @@ impl FromStr for Scenarios {
 /// These custom defaults can be configured using [`GooseDefaultType::set_default()`].
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GooseDefaults {
-    /// An optional default host to run this load test against.
-    pub host: Option<String>,
-    /// An optional default number of users to simulate.
-    pub users: Option<usize>,
-    /// An optional default number of clients to start per second.
-    pub hatch_rate: Option<String>,
-    /// An optional default number of seconds for the test to start.
-    pub startup_time: Option<usize>,
-    /// An optional default number of seconds for the test to run.
-    pub run_time: Option<usize>,
-    /// An optional default test plan.
-    pub test_plan: Option<TestPlan>,
-    /// An optional default test plan.
-    pub iterations: Option<usize>,
-    /// Optional default scenarios.
-    pub scenarios: Option<Scenarios>,
-    /// An optional default log level.
-    pub log_level: Option<u8>,
-    /// An optional default for the goose log file name.
-    pub goose_log: Option<String>,
-    /// An optional default value for quiet level.
-    pub quiet: Option<u8>,
-    /// An optional default value for verbosity level.
-    pub verbose: Option<u8>,
-    /// An optional default for printing running metrics.
-    pub running_metrics: Option<usize>,
-    /// An optional default for not resetting metrics after all users started.
-    pub no_reset_metrics: Option<bool>,
-    /// An optional default for not tracking metrics.
-    pub no_metrics: Option<bool>,
-    /// An optional default for not tracking transaction metrics.
-    pub no_transaction_metrics: Option<bool>,
-    /// An optional default for not tracking scenario metrics.
-    pub no_scenario_metrics: Option<bool>,
-    /// An optional default for not displaying metrics at the end of the load test.
-    pub no_print_metrics: Option<bool>,
-    /// An optional default for not displaying an error summary.
-    pub no_error_summary: Option<bool>,
-    /// An optional default for the html-formatted report file name.
-    pub report_file: Option<String>,
-    /// An optional default for the flag that disables granular data in HTML report graphs.
-    pub no_granular_report: Option<bool>,
-    /// An optional default for the requests log file name.
-    pub request_log: Option<String>,
-    /// An optional default for the requests log file format.
-    pub request_format: Option<GooseLogFormat>,
-    /// An optional default for logging the request body.
-    pub request_body: Option<bool>,
-    /// An optional default for the transaction log file name.
-    pub transaction_log: Option<String>,
-    /// An optional default for the transaction log file format.
-    pub transaction_format: Option<GooseLogFormat>,
-    /// An optional default for the scenario log file name.
-    pub scenario_log: Option<String>,
-    /// An optional default for the scenario log file format.
-    pub scenario_format: Option<GooseLogFormat>,
-    /// An optional default for the error log file name.
-    pub error_log: Option<String>,
-    /// An optional default for the error log format.
-    pub error_format: Option<GooseLogFormat>,
-    /// An optional default for the debug log file name.
-    pub debug_log: Option<String>,
-    /// An optional default for the debug log format.
-    pub debug_format: Option<GooseLogFormat>,
-    /// An optional default for not logging response body in debug log.
-    pub no_debug_body: Option<bool>,
-    /// An optional default for not enabling telnet Controller thread.
-    pub no_telnet: Option<bool>,
-    /// An optional default for not enabling WebSocket Controller thread.
-    pub no_websocket: Option<bool>,
-    /// An optional default for not auto-starting the load test.
-    pub no_autostart: Option<bool>,
-    /// An optional default for not setting the gzip Accept-Encoding header.
-    pub no_gzip: Option<bool>,
-    /// An optional default number of seconds to timeout requests.
-    pub timeout: Option<String>,
     /// An optional default for coordinated omission mitigation.
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
+    /// An optional default for the debug log format.
+    pub debug_format: Option<GooseLogFormat>,
+    /// An optional default for the debug log file name.
+    pub debug_log: Option<String>,
+    /// An optional default for the error log format.
+    pub error_format: Option<GooseLogFormat>,
+    /// An optional default for the error log file name.
+    pub error_log: Option<String>,
+    /// An optional default for number of Workers to expect.
+    pub expect_workers: Option<usize>,
+    /// An optional default for the goose log file name.
+    pub goose_log: Option<String>,
+    /// An optional default number of clients to start per second.
+    pub hatch_rate: Option<String>,
+    /// An optional default host to run this load test against.
+    pub host: Option<String>,
+    /// An optional default test plan.
+    pub iterations: Option<usize>,
+    /// An optional default log level.
+    pub log_level: Option<u8>,
+    /// An optional default to enable Manager mode.
+    pub manager: Option<bool>,
+    /// An optional default for host Worker connects to.
+    pub manager_host: Option<String>,
+    /// An optional default for port Worker connects to.
+    pub manager_port: Option<u16>,
+    /// An optional default for not auto-starting the load test.
+    pub no_autostart: Option<bool>,
+    /// An optional default for not logging response body in debug log.
+    pub no_debug_body: Option<bool>,
+    /// An optional default for not displaying an error summary.
+    pub no_error_summary: Option<bool>,
+    /// An optional default for the flag that disables granular data in HTML report graphs.
+    pub no_granular_report: Option<bool>,
+    /// An optional default for not setting the gzip Accept-Encoding header.
+    pub no_gzip: Option<bool>,
+    /// An optional default for Manager to ignore load test checksum.
+    pub no_hash_check: Option<bool>,
+    /// An optional default for not tracking metrics.
+    pub no_metrics: Option<bool>,
+    /// An optional default for not displaying metrics at the end of the load test.
+    pub no_print_metrics: Option<bool>,
+    /// An optional default for not resetting metrics after all users started.
+    pub no_reset_metrics: Option<bool>,
+    /// An optional default for not tracking scenario metrics.
+    pub no_scenario_metrics: Option<bool>,
     /// An optional default to not track status code metrics.
     pub no_status_codes: Option<bool>,
-    /// An optional default maximum requests per second.
-    pub throttle_requests: Option<usize>,
+    /// An optional default for not enabling telnet Controller thread.
+    pub no_telnet: Option<bool>,
+    /// An optional default for not tracking transaction metrics.
+    pub no_transaction_metrics: Option<bool>,
+    /// An optional default for not enabling WebSocket Controller thread.
+    pub no_websocket: Option<bool>,
+    /// An optional default for the html-formatted report file name.
+    pub report_file: Option<String>,
+    /// An optional default for logging the request body.
+    pub request_body: Option<bool>,
+    /// An optional default for the requests log file format.
+    pub request_format: Option<GooseLogFormat>,
+    /// An optional default for the requests log file name.
+    pub request_log: Option<String>,
+    /// An optional default number of seconds for the test to run.
+    pub run_time: Option<usize>,
+    /// An optional default for printing running metrics.
+    pub running_metrics: Option<usize>,
+    /// An optional default for the scenario log file format.
+    pub scenario_format: Option<GooseLogFormat>,
+    /// An optional default for the scenario log file name.
+    pub scenario_log: Option<String>,
+    /// Optional default scenarios.
+    pub scenarios: Option<Scenarios>,
+    /// An optional default number of seconds for the test to start.
+    pub startup_time: Option<usize>,
     /// An optional default to follows base_url redirect with subsequent request.
     pub sticky_follow: Option<bool>,
     /// An optional default for host telnet Controller listens on.
     pub telnet_host: Option<String>,
     /// An optional default for port telnet Controller listens on.
     pub telnet_port: Option<u16>,
+    /// An optional default test plan.
+    pub test_plan: Option<TestPlan>,
+    /// An optional default maximum requests per second.
+    pub throttle_requests: Option<usize>,
+    /// An optional default number of seconds to timeout requests.
+    pub timeout: Option<String>,
+    /// An optional default for the transaction log file format.
+    pub transaction_format: Option<GooseLogFormat>,
+    /// An optional default for the transaction log file name.
+    pub transaction_log: Option<String>,
+    /// An optional default value for quiet level.
+    pub quiet: Option<u8>,
+    /// An optional default number of users to simulate.
+    pub users: Option<usize>,
+    /// An optional default value for verbosity level.
+    pub verbose: Option<u8>,
     /// An optional default for host WebSocket Controller listens on.
     pub websocket_host: Option<String>,
     /// An optional default for port WebSocket Controller listens on.
     pub websocket_port: Option<u16>,
+    /// An optional default to enable Worker mode.
+    pub worker: Option<bool>,
 }
 
 /// Defines all [`GooseConfiguration`] options that can be programmatically configured with
@@ -340,98 +375,110 @@ pub(crate) struct GooseDefaults {
 /// These custom defaults can be configured using [`GooseDefaultType::set_default()`].
 #[derive(Debug)]
 pub enum GooseDefault {
-    /// An optional default host to run this load test against.
-    Host,
-    /// An optional default number of users to simulate.
-    Users,
-    /// An optional default number of clients to start per second.
-    HatchRate,
-    /// An optional default number of seconds for the test to start up.
-    StartupTime,
-    /// An optional default number of seconds for the test to run.
-    RunTime,
-    /// An optional default test plan.
-    TestPlan,
-    /// An optional default number of iterations to run scenarios then exit.
-    Iterations,
-    /// Optional default list of scenarios to run.
-    Scenarios,
-    /// An optional default log level.
-    LogLevel,
-    /// An optional default for the log file name.
-    GooseLog,
-    /// An optional default value for quiet level.
-    Quiet,
-    /// An optional default value for verbosity level.
-    Verbose,
-    /// An optional default for printing running metrics.
-    RunningMetrics,
-    /// An optional default for not resetting metrics after all users started.
-    NoResetMetrics,
-    /// An optional default for not tracking metrics.
-    NoMetrics,
-    /// An optional default for not tracking transaction metrics.
-    NoTransactionMetrics,
-    /// An optional default for not tracking scneario metrics.
-    NoScenarioMetrics,
-    /// An optional default for not displaying metrics at end of load test.
-    NoPrintMetrics,
-    /// An optional default for not displaying an error summary.
-    NoErrorSummary,
-    /// An optional default for the report file name.
-    ReportFile,
-    /// An optional default for the flag that disables granular data in HTML report graphs.
-    NoGranularData,
-    /// An optional default for the request log file name.
-    RequestLog,
-    /// An optional default for the request log file format.
-    RequestFormat,
-    /// An optional default for logging the request body.
-    RequestBody,
-    /// An optional default for the transaction log file name.
-    TransactionLog,
-    /// An optional default for the transaction log file format.
-    TransactionFormat,
-    /// An optional default for the scenario log file name.
-    ScenarioLog,
-    /// An optional default for the scenario log file format.
-    ScenarioFormat,
-    /// An optional default for the error log file name.
-    ErrorLog,
-    /// An optional default for the error log format.
-    ErrorFormat,
-    /// An optional default for the debug log file name.
-    DebugLog,
+    /// An optional default for coordinated omission mitigation.
+    CoordinatedOmissionMitigation,
     /// An optional default for the debug log format.
     DebugFormat,
+    /// An optional default for the debug log file name.
+    DebugLog,
+    /// An optional default for the error log format.
+    ErrorFormat,
+    /// An optional default for the error log file name.
+    ErrorLog,
+    /// An optional default for numb er of Workers to expect.
+    ExpectWorkers,
+    /// An optional default for the log file name.
+    GooseLog,
+    /// An optional default number of clients to start per second.
+    HatchRate,
+    /// An optional default host to run this load test against.
+    Host,
+    /// An optional default number of iterations to run scenarios then exit.
+    Iterations,
+    /// An optional default log level.
+    LogLevel,
+    /// An optional default to enable Manager mode.
+    Manager,
+    /// An optional default for host Worker connects to.
+    ManagerHost,
+    /// An optional default for port Worker connects to.
+    ManagerPort,
+    /// An optional default for not automatically starting load test.
+    NoAutoStart,
     /// An optional default for not logging the response body in the debug log.
     NoDebugBody,
+    /// An optional default for not displaying an error summary.
+    NoErrorSummary,
+    /// An optional default for the flag that disables granular data in HTML report graphs.
+    NoGranularData,
+    /// An optional default for not setting the gzip Accept-Encoding header.
+    NoGzip,
+    /// An optional default for Manager to ignore load test checksum.
+    NoHashCheck,
+    /// An optional default for not tracking metrics.
+    NoMetrics,
+    /// An optional default for not displaying metrics at end of load test.
+    NoPrintMetrics,
+    /// An optional default for not resetting metrics after all users started.
+    NoResetMetrics,
+    /// An optional default for not tracking scneario metrics.
+    NoScenarioMetrics,
+    /// An optional default to not track status code metrics.
+    NoStatusCodes,
+    /// An optional default for not tracking transaction metrics.
+    NoTransactionMetrics,
     /// An optional default for not enabling telnet Controller thread.
     NoTelnet,
     /// An optional default for not enabling WebSocket Controller thread.
     NoWebSocket,
-    /// An optional default for coordinated omission mitigation.
-    CoordinatedOmissionMitigation,
-    /// An optional default for not automatically starting load test.
-    NoAutoStart,
-    /// An optional default timeout for all requests, in seconds.
-    Timeout,
-    /// An optional default for not setting the gzip Accept-Encoding header.
-    NoGzip,
-    /// An optional default to not track status code metrics.
-    NoStatusCodes,
-    /// An optional default maximum requests per second.
-    ThrottleRequests,
+    /// An optional default for the report file name.
+    ReportFile,
+    /// An optional default for logging the request body.
+    RequestBody,
+    /// An optional default for the request log file format.
+    RequestFormat,
+    /// An optional default for the request log file name.
+    RequestLog,
+    /// An optional default for printing running metrics.
+    RunningMetrics,
+    /// An optional default number of seconds for the test to run.
+    RunTime,
+    /// An optional default for the scenario log file format.
+    ScenarioFormat,
+    /// An optional default for the scenario log file name.
+    ScenarioLog,
+    /// Optional default list of scenarios to run.
+    Scenarios,
+    /// An optional default number of seconds for the test to start up.
+    StartupTime,
     /// An optional default to follows base_url redirect with subsequent request.
     StickyFollow,
     /// An optional default for host telnet Controller listens on.
     TelnetHost,
     /// An optional default for port telnet Controller listens on.
     TelnetPort,
+    /// An optional default test plan.
+    TestPlan,
+    /// An optional default maximum requests per second.
+    ThrottleRequests,
+    /// An optional default timeout for all requests, in seconds.
+    Timeout,
+    /// An optional default for the transaction log file name.
+    TransactionLog,
+    /// An optional default for the transaction log file format.
+    TransactionFormat,
+    /// An optional default value for quiet level.
+    Quiet,
+    /// An optional default number of users to simulate.
+    Users,
+    /// An optional default value for verbosity level.
+    Verbose,
     /// An optional default for host Websocket Controller listens on.
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
+    /// An optional default to enable Worker mode.
+    Worker,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
@@ -470,6 +517,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::GooseLog`]
 ///  - [`GooseDefault::HatchRate`]
 ///  - [`GooseDefault::Host`]
+///  - [`GooseDefault::ManagerHost`]
 ///  - [`GooseDefault::ReportFile`]
 ///  - [`GooseDefault::RequestLog`]
 ///  - [`GooseDefault::ScenarioLog`]
@@ -482,43 +530,48 @@ pub enum GooseDefault {
 ///
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
-///  - [`GooseDefault::Users`]
-///  - [`GooseDefault::StartupTime`]
-///  - [`GooseDefault::RunTime`]
+///  - [`GooseDefault::ExpectWorkers`]
 ///  - [`GooseDefault::Iterations`]
-///  - [`GooseDefault::RunningMetrics`]
 ///  - [`GooseDefault::LogLevel`]
-///  - [`GooseDefault::Quiet`]
-///  - [`GooseDefault::Verbose`]
+///  - [`GooseDefault::ManagerPort`]
+///  - [`GooseDefault::RunningMetrics`]
+///  - [`GooseDefault::RunTime`]
+///  - [`GooseDefault::StartupTime`]
 ///  - [`GooseDefault::ThrottleRequests`]
 ///  - [`GooseDefault::TelnetPort`]
+///  - [`GooseDefault::Quiet`]
+///  - [`GooseDefault::Users`]
+///  - [`GooseDefault::Verbose`]
 ///  - [`GooseDefault::WebSocketPort`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`bool`] (and otherwise default to [`false`]).
-///  - [`GooseDefault::NoResetMetrics`]
-///  - [`GooseDefault::NoPrintMetrics`]
-///  - [`GooseDefault::NoMetrics`]
-///  - [`GooseDefault::NoTransactionMetrics`]
-///  - [`GooseDefault::NoScenarioMetrics`]
-///  - [`GooseDefault::RequestBody`]
+///  - [`GooseDefault::Manager`]
+///  - [`GooseDefault::NoAutoStart`]
 ///  - [`GooseDefault::NoErrorSummary`]
 ///  - [`GooseDefault::NoDebugBody`]
-///  - [`GooseDefault::NoTelnet`]
-///  - [`GooseDefault::NoWebSocket`]
-///  - [`GooseDefault::NoAutoStart`]
-///  - [`GooseDefault::NoGzip`]
-///  - [`GooseDefault::NoStatusCodes`]
-///  - [`GooseDefault::StickyFollow`]
 ///  - [`GooseDefault::NoGranularData`]
+///  - [`GooseDefault::NoGzip`]
+///  - [`GooseDefault::NoHashCheck`]
+///  - [`GooseDefault::NoMetrics`]
+///  - [`GooseDefault::NoPrintMetrics`]
+///  - [`GooseDefault::NoResetMetrics`]
+///  - [`GooseDefault::NoScenarioMetrics`]
+///  - [`GooseDefault::NoStatusCodes`]
+///  - [`GooseDefault::NoTelnet`]
+///  - [`GooseDefault::NoTransactionMetrics`]
+///  - [`GooseDefault::NoWebSocket`]
+///  - [`GooseDefault::RequestBody`]
+///  - [`GooseDefault::StickyFollow`]
+///  - [`GooseDefault::Worker`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseLogFormat`].
-///  - [`GooseDefault::RequestFormat`]
-///  - [`GooseDefault::TransactionFormat`]
-///  - [`GooseDefault::ScenarioFormat`]
-///  - [`GooseDefault::ErrorFormat`]
 ///  - [`GooseDefault::DebugFormat`]
+///  - [`GooseDefault::ErrorFormat`]
+///  - [`GooseDefault::RequestFormat`]
+///  - [`GooseDefault::ScenarioFormat`]
+///  - [`GooseDefault::TransactionFormat`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseCoordinatedOmissionMitigation`].
@@ -562,6 +615,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                     Some(value.to_string())
                 }
             }
+            GooseDefault::ManagerHost => self.defaults.manager_host = Some(value.to_string()),
             GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
@@ -576,15 +630,17 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
             // Otherwise display a helpful and explicit error.
-            GooseDefault::Users
-            | GooseDefault::StartupTime
-            | GooseDefault::RunTime
+            GooseDefault::ExpectWorkers
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
-            | GooseDefault::Quiet
-            | GooseDefault::Verbose
+            | GooseDefault::ManagerPort
+            | GooseDefault::RunTime
+            | GooseDefault::StartupTime
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
+            | GooseDefault::Quiet
+            | GooseDefault::Users
+            | GooseDefault::Verbose
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -595,22 +651,25 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
-            GooseDefault::RunningMetrics
-            | GooseDefault::NoResetMetrics
-            | GooseDefault::NoMetrics
-            | GooseDefault::NoTransactionMetrics
-            | GooseDefault::NoScenarioMetrics
-            | GooseDefault::RequestBody
-            | GooseDefault::NoPrintMetrics
-            | GooseDefault::NoErrorSummary
-            | GooseDefault::NoDebugBody
-            | GooseDefault::NoTelnet
-            | GooseDefault::NoWebSocket
+            GooseDefault::Manager
             | GooseDefault::NoAutoStart
+            | GooseDefault::NoDebugBody
+            | GooseDefault::NoErrorSummary
+            | GooseDefault::NoGranularData
             | GooseDefault::NoGzip
+            | GooseDefault::NoHashCheck
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoPrintMetrics
+            | GooseDefault::NoResetMetrics
+            | GooseDefault::NoScenarioMetrics
             | GooseDefault::NoStatusCodes
+            | GooseDefault::NoTelnet
+            | GooseDefault::NoTransactionMetrics
+            | GooseDefault::NoWebSocket
+            | GooseDefault::RequestBody
+            | GooseDefault::RunningMetrics
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -622,9 +681,9 @@ impl GooseDefaultType<&str> for GooseAttack {
             }
             GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
-            | GooseDefault::TransactionFormat
             | GooseDefault::ScenarioFormat
-            | GooseDefault::RequestFormat => {
+            | GooseDefault::RequestFormat
+            | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -652,16 +711,18 @@ impl GooseDefaultType<usize> for GooseAttack {
     /// Sets [`GooseDefault`] to a [`usize`] value.
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
-            GooseDefault::Users => self.defaults.users = Some(value),
-            GooseDefault::StartupTime => self.defaults.startup_time = Some(value),
-            GooseDefault::RunTime => self.defaults.run_time = Some(value),
+            GooseDefault::ExpectWorkers => self.defaults.expect_workers = Some(value),
             GooseDefault::Iterations => self.defaults.iterations = Some(value),
-            GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
-            GooseDefault::Quiet => self.defaults.quiet = Some(value as u8),
-            GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
+            GooseDefault::ManagerPort => self.defaults.manager_port = Some(value as u16),
+            GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
+            GooseDefault::RunTime => self.defaults.run_time = Some(value),
+            GooseDefault::StartupTime => self.defaults.startup_time = Some(value),
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
+            GooseDefault::Quiet => self.defaults.quiet = Some(value as u8),
+            GooseDefault::Users => self.defaults.users = Some(value),
+            GooseDefault::Verbose => self.defaults.verbose = Some(value as u8),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
@@ -669,6 +730,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -687,21 +749,24 @@ impl GooseDefaultType<usize> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::NoResetMetrics
-            | GooseDefault::NoMetrics
-            | GooseDefault::NoTransactionMetrics
-            | GooseDefault::NoScenarioMetrics
-            | GooseDefault::RequestBody
-            | GooseDefault::NoPrintMetrics
-            | GooseDefault::NoErrorSummary
+            GooseDefault::Manager
+            | GooseDefault::NoAutoStart
             | GooseDefault::NoDebugBody
+            | GooseDefault::NoErrorSummary
+            | GooseDefault::NoGranularData
+            | GooseDefault::NoGzip
+            | GooseDefault::NoHashCheck
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoPrintMetrics
+            | GooseDefault::NoResetMetrics
+            | GooseDefault::NoScenarioMetrics
+            | GooseDefault::NoStatusCodes
+            | GooseDefault::NoTransactionMetrics
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
-            | GooseDefault::NoAutoStart
-            | GooseDefault::NoGzip
-            | GooseDefault::NoStatusCodes
+            | GooseDefault::RequestBody
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{}", value),
@@ -711,9 +776,9 @@ impl GooseDefaultType<usize> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::RequestFormat
-            | GooseDefault::DebugFormat
+            GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
+            | GooseDefault::RequestFormat
             | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
@@ -743,29 +808,33 @@ impl GooseDefaultType<bool> for GooseAttack {
     /// Sets [`GooseDefault`] to a [`bool`] value.
     fn set_default(mut self, key: GooseDefault, value: bool) -> Result<Box<Self>, GooseError> {
         match key {
-            GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
+            GooseDefault::Manager => self.defaults.manager = Some(value),
+            GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
+            GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
+            GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
+            GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
+            GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
+            GooseDefault::NoHashCheck => self.defaults.no_hash_check = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
+            GooseDefault::NoPrintMetrics => self.defaults.no_print_metrics = Some(value),
+            GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
+            GooseDefault::NoScenarioMetrics => self.defaults.no_scenario_metrics = Some(value),
+            GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
+            GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
             GooseDefault::NoTransactionMetrics => {
                 self.defaults.no_transaction_metrics = Some(value)
             }
-            GooseDefault::NoScenarioMetrics => self.defaults.no_scenario_metrics = Some(value),
-            GooseDefault::RequestBody => self.defaults.request_body = Some(value),
-            GooseDefault::NoPrintMetrics => self.defaults.no_print_metrics = Some(value),
-            GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
-            GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
-            GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
-            GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
-            GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
-            GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
+            GooseDefault::RequestBody => self.defaults.request_body = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
-            GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
+            GooseDefault::Worker => self.defaults.worker = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -784,16 +853,18 @@ impl GooseDefaultType<bool> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::Users
-            | GooseDefault::StartupTime
-            | GooseDefault::RunTime
-            | GooseDefault::RunningMetrics
+            GooseDefault::ExpectWorkers
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
-            | GooseDefault::Quiet
-            | GooseDefault::Verbose
-            | GooseDefault::ThrottleRequests
+            | GooseDefault::ManagerPort
+            | GooseDefault::RunningMetrics
+            | GooseDefault::RunTime
+            | GooseDefault::StartupTime
             | GooseDefault::TelnetPort
+            | GooseDefault::ThrottleRequests
+            | GooseDefault::Quiet
+            | GooseDefault::Users
+            | GooseDefault::Verbose
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -804,9 +875,9 @@ impl GooseDefaultType<bool> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::RequestFormat
-            | GooseDefault::DebugFormat
+            GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
+            | GooseDefault::RequestFormat
             | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
@@ -842,21 +913,24 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
         match key {
             GooseDefault::CoordinatedOmissionMitigation => self.defaults.co_mitigation = Some(value),
             // Otherwise display a helpful and explicit error.
-            GooseDefault::NoResetMetrics
-            | GooseDefault::NoMetrics
-            | GooseDefault::NoTransactionMetrics
-            | GooseDefault::NoScenarioMetrics
-            | GooseDefault::RequestBody
-            | GooseDefault::NoPrintMetrics
-            | GooseDefault::NoErrorSummary
+            GooseDefault::Manager
+            | GooseDefault::NoAutoStart
             | GooseDefault::NoDebugBody
+            | GooseDefault::NoErrorSummary
+            | GooseDefault::NoGranularData
+            | GooseDefault::NoGzip
+            | GooseDefault::NoHashCheck
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoPrintMetrics
+            | GooseDefault::NoResetMetrics
+            | GooseDefault::NoScenarioMetrics
+            | GooseDefault::NoStatusCodes
+            | GooseDefault::NoTransactionMetrics
             | GooseDefault::NoTelnet
             | GooseDefault::NoWebSocket
-            | GooseDefault::NoAutoStart
-            | GooseDefault::NoGzip
-            | GooseDefault::NoStatusCodes
+            | GooseDefault::RequestBody
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -872,6 +946,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -890,16 +965,18 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::Users
-            | GooseDefault::StartupTime
-            | GooseDefault::RunTime
-            | GooseDefault::RunningMetrics
+            GooseDefault::ExpectWorkers
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
-            | GooseDefault::Quiet
-            | GooseDefault::Verbose
-            | GooseDefault::ThrottleRequests
+            | GooseDefault::ManagerPort
+            | GooseDefault::RunningMetrics
+            | GooseDefault::RunTime
+            | GooseDefault::StartupTime
             | GooseDefault::TelnetPort
+            | GooseDefault::ThrottleRequests
+            | GooseDefault::Quiet
+            | GooseDefault::Users
+            | GooseDefault::Verbose
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -910,9 +987,9 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::RequestFormat
-            | GooseDefault::DebugFormat
+            GooseDefault::DebugFormat
             | GooseDefault::ErrorFormat
+            | GooseDefault::RequestFormat
             | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
@@ -936,27 +1013,30 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
         value: GooseLogFormat,
     ) -> Result<Box<Self>, GooseError> {
         match key {
-            GooseDefault::RequestFormat => self.defaults.request_format = Some(value),
             GooseDefault::DebugFormat => self.defaults.debug_format = Some(value),
             GooseDefault::ErrorFormat => self.defaults.error_format = Some(value),
-            GooseDefault::TransactionFormat => self.defaults.transaction_format = Some(value),
+            GooseDefault::RequestFormat => self.defaults.request_format = Some(value),
             GooseDefault::ScenarioFormat => self.defaults.scenario_format = Some(value),
+            GooseDefault::TransactionFormat => self.defaults.transaction_format = Some(value),
             // Otherwise display a helpful and explicit error.
-            GooseDefault::NoResetMetrics
-            | GooseDefault::NoMetrics
-            | GooseDefault::NoTransactionMetrics
-            | GooseDefault::NoScenarioMetrics
-            | GooseDefault::RequestBody
-            | GooseDefault::NoPrintMetrics
-            | GooseDefault::NoErrorSummary
-            | GooseDefault::NoDebugBody
-            | GooseDefault::NoTelnet
-            | GooseDefault::NoWebSocket
+            GooseDefault::Manager
             | GooseDefault::NoAutoStart
+            | GooseDefault::NoDebugBody
+            | GooseDefault::NoErrorSummary
+            | GooseDefault::NoGranularData
             | GooseDefault::NoGzip
+            | GooseDefault::NoHashCheck
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoPrintMetrics
+            | GooseDefault::NoResetMetrics
+            | GooseDefault::NoScenarioMetrics
             | GooseDefault::NoStatusCodes
+            | GooseDefault::NoTelnet
+            | GooseDefault::NoTransactionMetrics
+            | GooseDefault::NoWebSocket
+            | GooseDefault::RequestBody
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::Worker => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -972,6 +1052,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::GooseLog
             | GooseDefault::HatchRate
             | GooseDefault::Host
+            | GooseDefault::ManagerHost
             | GooseDefault::ReportFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -990,16 +1071,18 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                     ),
                 })
             }
-            GooseDefault::Users
-            | GooseDefault::StartupTime
-            | GooseDefault::RunTime
-            | GooseDefault::RunningMetrics
+            GooseDefault::ExpectWorkers
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
-            | GooseDefault::Quiet
-            | GooseDefault::Verbose
-            | GooseDefault::ThrottleRequests
+            | GooseDefault::ManagerPort
+            | GooseDefault::RunningMetrics
+            | GooseDefault::RunTime
+            | GooseDefault::StartupTime
             | GooseDefault::TelnetPort
+            | GooseDefault::ThrottleRequests
+            | GooseDefault::Quiet
+            | GooseDefault::Users
+            | GooseDefault::Verbose
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
@@ -1306,6 +1389,42 @@ impl GooseConfiguration {
         // Configure loggers.
         self.configure_loggers(defaults);
 
+        // Configure `manager`.
+        self.manager = self
+            .get_value(vec![
+                // Use --manager if set.
+                GooseValue {
+                    value: Some(self.manager),
+                    filter: !self.manager,
+                    message: "",
+                },
+                // Otherwise use default.
+                GooseValue {
+                    value: defaults.manager,
+                    filter: defaults.manager.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `worker`.
+        self.worker = self
+            .get_value(vec![
+                // Use --worker if set.
+                GooseValue {
+                    value: Some(self.worker),
+                    filter: !self.worker,
+                    message: "",
+                },
+                // Otherwise use default.
+                GooseValue {
+                    value: defaults.worker,
+                    filter: defaults.worker.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+
         // Configure `test_plan` before `users` so users doesn't get assigned a default when using a test plan.
         self.test_plan = self.get_value(vec![
             // Use --test-plan if set.
@@ -1317,7 +1436,7 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set and not on Worker.
             GooseValue {
                 value: defaults.test_plan.clone(),
-                filter: defaults.test_plan.is_none(),
+                filter: defaults.test_plan.is_none() || self.worker,
                 message: "test_plan",
             },
         ]);
@@ -1343,13 +1462,13 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set and not on Worker.
             GooseValue {
                 value: defaults.users,
-                filter: defaults.users.is_none(),
+                filter: defaults.users.is_none() || self.worker,
                 message: "users",
             },
             // Otherwise use detected number of CPUs if not on Worker.
             GooseValue {
                 value: default_users,
-                filter: self.test_plan.is_some(),
+                filter: self.test_plan.is_some() || self.worker,
                 message: "users defaulted to number of CPUs",
             },
         ]);
@@ -1366,7 +1485,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.startup_time,
-                    filter: defaults.startup_time.is_none(),
+                    filter: defaults.startup_time.is_none() | self.worker,
                     message: "startup_time",
                 },
             ])
@@ -1384,7 +1503,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.run_time,
-                    filter: defaults.run_time.is_none(),
+                    filter: defaults.run_time.is_none() || self.worker,
                     message: "run_time",
                 },
             ])
@@ -1402,7 +1521,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: Some(util::get_hatch_rate(defaults.hatch_rate.clone())),
-                    filter: defaults.hatch_rate.is_none(),
+                    filter: defaults.hatch_rate.is_none() | self.worker,
                     message: "hatch_rate",
                 },
             ])
@@ -1420,7 +1539,7 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: util::get_float_from_string(defaults.timeout.clone()),
-                    filter: defaults.timeout.is_none(),
+                    filter: defaults.timeout.is_none() || self.worker,
                     message: "timeout",
                 },
             ])
@@ -1434,10 +1553,10 @@ impl GooseConfiguration {
                 filter: self.running_metrics.is_none(),
                 message: "running_metrics",
             },
-            // Otherwise use GooseDefault if set.
+            // Otherwise use GooseDefault if set and not on Worker.
             GooseValue {
                 value: defaults.running_metrics,
-                filter: defaults.running_metrics.is_none(),
+                filter: defaults.running_metrics.is_none() || self.worker,
                 message: "running_metrics",
             },
         ]);
@@ -1451,10 +1570,10 @@ impl GooseConfiguration {
                     filter: !self.no_reset_metrics,
                     message: "no_reset_metrics",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.no_reset_metrics,
-                    filter: defaults.no_reset_metrics.is_none(),
+                    filter: defaults.no_reset_metrics.is_none() || self.worker,
                     message: "no_reset_metrics",
                 },
             ])
@@ -1469,10 +1588,10 @@ impl GooseConfiguration {
                     filter: !self.no_metrics,
                     message: "no_metrics",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.no_metrics,
-                    filter: defaults.no_metrics.is_none(),
+                    filter: defaults.no_metrics.is_none() || self.worker,
                     message: "no_metrics",
                 },
             ])
@@ -1487,10 +1606,10 @@ impl GooseConfiguration {
                     filter: !self.no_transaction_metrics,
                     message: "no_transaction_metrics",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.no_transaction_metrics,
-                    filter: defaults.no_transaction_metrics.is_none(),
+                    filter: defaults.no_transaction_metrics.is_none() || self.worker,
                     message: "no_transaction_metrics",
                 },
             ])
@@ -1505,10 +1624,10 @@ impl GooseConfiguration {
                     filter: !self.no_scenario_metrics,
                     message: "no_scenario_metrics",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.no_scenario_metrics,
-                    filter: defaults.no_scenario_metrics.is_none(),
+                    filter: defaults.no_scenario_metrics.is_none() || self.worker,
                     message: "no_scenario_metrics",
                 },
             ])
@@ -1523,10 +1642,10 @@ impl GooseConfiguration {
                     filter: !self.no_print_metrics,
                     message: "no_print_metrics",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.no_print_metrics,
-                    filter: defaults.no_print_metrics.is_none(),
+                    filter: defaults.no_print_metrics.is_none() || self.worker,
                     message: "no_print_metrics",
                 },
             ])
@@ -1541,10 +1660,10 @@ impl GooseConfiguration {
                     filter: !self.no_error_summary,
                     message: "no_error_summary",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.no_error_summary,
-                    filter: defaults.no_error_summary.is_none(),
+                    filter: defaults.no_error_summary.is_none() || self.worker,
                     message: "no_error_summary",
                 },
             ])
@@ -1558,10 +1677,10 @@ impl GooseConfiguration {
                 filter: self.report_file.is_empty(),
                 message: "report_file",
             },
-            // Otherwise use GooseDefault if set.
+            // Otherwise use GooseDefault if set and not on Manager.
             GooseValue {
                 value: defaults.report_file.clone(),
-                filter: defaults.report_file.is_none(),
+                filter: defaults.report_file.is_none() || self.manager,
                 message: "report_file",
             },
         ]) {
@@ -1578,10 +1697,10 @@ impl GooseConfiguration {
                     filter: !self.no_granular_report,
                     message: "no_granular_report",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Manager.
                 GooseValue {
                     value: defaults.no_debug_body,
-                    filter: defaults.no_debug_body.is_none(),
+                    filter: defaults.no_debug_body.is_none() || self.manager,
                     message: "no_granular_report",
                 },
             ])
@@ -1599,7 +1718,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.iterations,
-                    filter: defaults.iterations.is_none(),
+                    filter: defaults.iterations.is_none() || self.worker,
                     message: "iterations",
                 },
             ])
@@ -1617,7 +1736,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.scenarios.clone(),
-                    filter: defaults.scenarios.is_none(),
+                    filter: defaults.scenarios.is_none() || self.worker,
                     message: "scenarios",
                 },
             ])
@@ -1632,10 +1751,10 @@ impl GooseConfiguration {
                     filter: !self.no_debug_body,
                     message: "no_debug_body",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Manager.
                 GooseValue {
                     value: defaults.no_debug_body,
-                    filter: defaults.no_debug_body.is_none(),
+                    filter: defaults.no_debug_body.is_none() || self.manager,
                     message: "no_debug_body",
                 },
             ])
@@ -1650,10 +1769,10 @@ impl GooseConfiguration {
                     filter: !self.no_status_codes,
                     message: "no_status_codes",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
                     value: defaults.no_status_codes,
-                    filter: defaults.no_status_codes.is_none(),
+                    filter: defaults.no_status_codes.is_none() || self.worker,
                     message: "no_status_codes",
                 },
             ])
@@ -1707,7 +1826,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.no_autostart,
-                    filter: defaults.no_autostart.is_none(),
+                    filter: defaults.no_autostart.is_none() || self.worker,
                     message: "no_autostart",
                 },
             ])
@@ -1725,7 +1844,7 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.no_gzip,
-                    filter: defaults.no_gzip.is_none(),
+                    filter: defaults.no_gzip.is_none() || self.worker,
                     message: "no_gzip",
                 },
             ])
@@ -1741,7 +1860,7 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set and not Worker.
             GooseValue {
                 value: defaults.co_mitigation.clone(),
-                filter: defaults.co_mitigation.is_none(),
+                filter: defaults.co_mitigation.is_none() || self.worker,
                 message: "co_mitigation",
             },
             // Otherwise default to GooseCoordinaatedOmissionMitigation::Disabled.
@@ -1761,10 +1880,10 @@ impl GooseConfiguration {
                     filter: self.throttle_requests == 0,
                     message: "throttle_requests",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set and not on Manager.
                 GooseValue {
                     value: defaults.throttle_requests,
-                    filter: defaults.throttle_requests.is_none(),
+                    filter: defaults.throttle_requests.is_none() || self.manager,
                     message: "throttle_requests",
                 },
             ])
@@ -1782,11 +1901,17 @@ impl GooseConfiguration {
                 // Use GooseDefault if not already set and not Worker.
                 GooseValue {
                     value: defaults.sticky_follow,
-                    filter: defaults.sticky_follow.is_none(),
+                    filter: defaults.sticky_follow.is_none() || self.worker,
                     message: "sticky_follow",
                 },
             ])
             .unwrap_or(false);
+
+        // Manager configuration.
+        self.configure_manager(defaults);
+
+        // Worker configuration.
+        self.configure_worker(defaults);
     }
 
     /// Validate configured [`GooseConfiguration`] values.
@@ -2057,6 +2182,12 @@ impl GooseConfiguration {
             }
         }
 
+        // Validate Manager configuration.
+        self.validate_manager()?;
+
+        // Validate Worker configuration.
+        self.validate_worker()?;
+
         Ok(())
     }
 
@@ -2124,64 +2255,98 @@ mod test {
 
     #[test]
     fn set_defaults() {
-        let host = "http://example.com/".to_string();
-        let users: usize = 10;
-        let run_time: usize = 10;
-        let hatch_rate = "2".to_string();
-        let timeout = "45".to_string();
-        let log_level: usize = 1;
-        let goose_log = "custom-goose.log".to_string();
-        let quiet: usize = 0;
-        let verbose: usize = 0;
-        let report_file = "custom-goose-report.html".to_string();
-        let request_log = "custom-goose-request.log".to_string();
-        let transaction_log = "custom-goose-transaction.log".to_string();
-        let scenario_log = "custom-goose-scenario.log".to_string();
         let debug_log = "custom-goose-debug.log".to_string();
         let error_log = "custom-goose-error.log".to_string();
+        let expect_workers: usize = 7;
+        let goose_log = "custom-goose.log".to_string();
+        let hatch_rate = "2".to_string();
+        let host = "http://example.com/".to_string();
+        let iterations: usize = 123;
+        let log_level: usize = 1;
+        let manager_host = "10.11.12.13".to_string();
+        let manager_port = 1234;
+        let report_file = "custom-goose-report.html".to_string();
+        let request_log = "custom-goose-request.log".to_string();
+        let run_time: usize = 10;
+        let scenario_log = "custom-goose-scenario.log".to_string();
+        let startup_time: usize = 30;
+        let telnet_host = "10.20.30.40".to_string();
+        let telnet_port = 2468;
         let throttle_requests: usize = 25;
+        let test_plan = "60,60s;0,30s".to_string();
+        // Compiles into TestPlan, in which steps are a vector of (users, milliseconds) tuples.
+        let test_plan_compiled = TestPlan {
+            steps: vec![(60, 60000), (0, 30000)],
+            current: 0,
+        };
+        let timeout = "45".to_string();
+        let transaction_log = "custom-goose-transaction.log".to_string();
+        let quiet: usize = 0;
+        let users: usize = 10;
+        let verbose: usize = 0;
+        let websocket_host = "10.30.60.90".to_string();
+        let websocket_port = 1369;
 
         let goose_attack = GooseAttack::initialize()
             .unwrap()
-            .set_default(GooseDefault::Host, host.as_str())
+            .set_default(
+                GooseDefault::CoordinatedOmissionMitigation,
+                GooseCoordinatedOmissionMitigation::Disabled,
+            )
             .unwrap()
-            .set_default(GooseDefault::Users, users)
+            .set_default(GooseDefault::DebugLog, debug_log.as_str())
             .unwrap()
-            .set_default(GooseDefault::RunTime, run_time)
+            .set_default(GooseDefault::DebugFormat, GooseLogFormat::Csv)
             .unwrap()
-            .set_default(GooseDefault::HatchRate, hatch_rate.as_str())
+            .set_default(GooseDefault::ErrorLog, error_log.as_str())
             .unwrap()
-            .set_default(GooseDefault::LogLevel, log_level)
+            .set_default(GooseDefault::ErrorFormat, GooseLogFormat::Csv)
+            .unwrap()
+            .set_default(GooseDefault::ExpectWorkers, expect_workers)
             .unwrap()
             .set_default(GooseDefault::GooseLog, goose_log.as_str())
             .unwrap()
-            .set_default(GooseDefault::Quiet, quiet)
+            .set_default(GooseDefault::HatchRate, hatch_rate.as_str())
             .unwrap()
-            .set_default(GooseDefault::Verbose, verbose)
+            .set_default(GooseDefault::Host, host.as_str())
             .unwrap()
-            .set_default(GooseDefault::Timeout, timeout.as_str())
+            .set_default(GooseDefault::Iterations, iterations)
             .unwrap()
-            .set_default(GooseDefault::RunningMetrics, 15)
+            .set_default(GooseDefault::LogLevel, log_level)
             .unwrap()
-            .set_default(GooseDefault::NoResetMetrics, true)
+            .set_default(GooseDefault::Manager, true)
+            .unwrap()
+            .set_default(GooseDefault::ManagerHost, manager_host.as_str())
+            .unwrap()
+            .set_default(GooseDefault::ManagerPort, manager_port)
+            .unwrap()
+            .set_default(GooseDefault::NoAutoStart, true)
+            .unwrap()
+            .set_default(GooseDefault::NoDebugBody, true)
+            .unwrap()
+            .set_default(GooseDefault::NoErrorSummary, true)
+            .unwrap()
+            .set_default(GooseDefault::NoGranularData, true)
+            .unwrap()
+            .set_default(GooseDefault::NoGzip, true)
+            .unwrap()
+            .set_default(GooseDefault::NoHashCheck, true)
             .unwrap()
             .set_default(GooseDefault::NoMetrics, true)
             .unwrap()
-            .set_default(GooseDefault::NoTransactionMetrics, true)
+            .set_default(GooseDefault::NoPrintMetrics, true)
+            .unwrap()
+            .set_default(GooseDefault::NoResetMetrics, true)
             .unwrap()
             .set_default(GooseDefault::NoScenarioMetrics, true)
             .unwrap()
-            .set_default(GooseDefault::NoPrintMetrics, true)
+            .set_default(GooseDefault::NoStatusCodes, true)
             .unwrap()
-            .set_default(GooseDefault::NoErrorSummary, true)
+            .set_default(GooseDefault::NoTransactionMetrics, true)
             .unwrap()
             .set_default(GooseDefault::NoTelnet, true)
             .unwrap()
             .set_default(GooseDefault::NoWebSocket, true)
-            .unwrap()
-            .set_default(GooseDefault::NoAutoStart, true)
-            .unwrap()
-            .set_default(GooseDefault::NoGzip, true)
             .unwrap()
             .set_default(GooseDefault::ReportFile, report_file.as_str())
             .unwrap()
@@ -2191,71 +2356,98 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::RequestBody, true)
             .unwrap()
-            .set_default(GooseDefault::TransactionLog, transaction_log.as_str())
+            .set_default(GooseDefault::RunTime, run_time)
             .unwrap()
-            .set_default(GooseDefault::TransactionFormat, GooseLogFormat::Raw)
-            .unwrap()
-            .set_default(GooseDefault::ScenarioLog, scenario_log.as_str())
+            .set_default(GooseDefault::RunningMetrics, 15)
             .unwrap()
             .set_default(GooseDefault::ScenarioFormat, GooseLogFormat::Raw)
             .unwrap()
-            .set_default(GooseDefault::ErrorLog, error_log.as_str())
+            .set_default(GooseDefault::ScenarioLog, scenario_log.as_str())
             .unwrap()
-            .set_default(GooseDefault::ErrorFormat, GooseLogFormat::Csv)
+            .set_default(GooseDefault::StartupTime, startup_time)
             .unwrap()
-            .set_default(GooseDefault::DebugLog, debug_log.as_str())
+            .set_default(GooseDefault::StickyFollow, true)
             .unwrap()
-            .set_default(GooseDefault::DebugFormat, GooseLogFormat::Csv)
+            .set_default(GooseDefault::TelnetHost, telnet_host.as_str())
             .unwrap()
-            .set_default(GooseDefault::NoDebugBody, true)
+            .set_default(GooseDefault::TelnetPort, telnet_port)
             .unwrap()
-            .set_default(GooseDefault::NoStatusCodes, true)
-            .unwrap()
-            .set_default(
-                GooseDefault::CoordinatedOmissionMitigation,
-                GooseCoordinatedOmissionMitigation::Disabled,
-            )
+            .set_default(GooseDefault::TestPlan, test_plan.as_str())
             .unwrap()
             .set_default(GooseDefault::ThrottleRequests, throttle_requests)
             .unwrap()
-            .set_default(GooseDefault::StickyFollow, true)
+            .set_default(GooseDefault::Timeout, timeout.as_str())
+            .unwrap()
+            .set_default(GooseDefault::TransactionFormat, GooseLogFormat::Raw)
+            .unwrap()
+            .set_default(GooseDefault::TransactionLog, transaction_log.as_str())
+            .unwrap()
+            .set_default(GooseDefault::Quiet, quiet)
+            .unwrap()
+            .set_default(GooseDefault::Users, users)
+            .unwrap()
+            .set_default(GooseDefault::Verbose, verbose)
+            .unwrap()
+            .set_default(GooseDefault::WebSocketHost, websocket_host.as_str())
+            .unwrap()
+            .set_default(GooseDefault::WebSocketPort, websocket_port)
+            .unwrap()
+            .set_default(GooseDefault::Worker, true)
             .unwrap();
 
-        assert!(goose_attack.defaults.host == Some(host));
-        assert!(goose_attack.defaults.users == Some(users));
-        assert!(goose_attack.defaults.run_time == Some(run_time));
-        assert!(goose_attack.defaults.hatch_rate == Some(hatch_rate));
-        assert!(goose_attack.defaults.log_level == Some(log_level as u8));
-        assert!(goose_attack.defaults.goose_log == Some(goose_log));
-        assert!(goose_attack.defaults.request_body == Some(true));
-        assert!(goose_attack.defaults.no_debug_body == Some(true));
-        assert!(goose_attack.defaults.quiet == Some(quiet as u8));
-        assert!(goose_attack.defaults.verbose == Some(verbose as u8));
-        assert!(goose_attack.defaults.running_metrics == Some(15));
-        assert!(goose_attack.defaults.no_reset_metrics == Some(true));
-        assert!(goose_attack.defaults.no_metrics == Some(true));
-        assert!(goose_attack.defaults.no_transaction_metrics == Some(true));
-        assert!(goose_attack.defaults.no_scenario_metrics == Some(true));
-        assert!(goose_attack.defaults.no_print_metrics == Some(true));
-        assert!(goose_attack.defaults.no_error_summary == Some(true));
-        assert!(goose_attack.defaults.no_telnet == Some(true));
-        assert!(goose_attack.defaults.no_websocket == Some(true));
-        assert!(goose_attack.defaults.no_autostart == Some(true));
-        assert!(goose_attack.defaults.timeout == Some(timeout));
-        assert!(goose_attack.defaults.no_gzip == Some(true));
-        assert!(goose_attack.defaults.report_file == Some(report_file));
-        assert!(goose_attack.defaults.request_log == Some(request_log));
-        assert!(goose_attack.defaults.request_format == Some(GooseLogFormat::Raw));
-        assert!(goose_attack.defaults.error_log == Some(error_log));
-        assert!(goose_attack.defaults.error_format == Some(GooseLogFormat::Csv));
-        assert!(goose_attack.defaults.debug_log == Some(debug_log));
-        assert!(goose_attack.defaults.debug_format == Some(GooseLogFormat::Csv));
-        assert!(goose_attack.defaults.no_status_codes == Some(true));
         assert!(
             goose_attack.defaults.co_mitigation
                 == Some(GooseCoordinatedOmissionMitigation::Disabled)
         );
-        assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
+        assert!(goose_attack.defaults.debug_log == Some(debug_log));
+        assert!(goose_attack.defaults.debug_format == Some(GooseLogFormat::Csv));
+        assert!(goose_attack.defaults.error_log == Some(error_log));
+        assert!(goose_attack.defaults.error_format == Some(GooseLogFormat::Csv));
+        assert!(goose_attack.defaults.expect_workers == Some(expect_workers));
+        assert!(goose_attack.defaults.goose_log == Some(goose_log));
+        assert!(goose_attack.defaults.hatch_rate == Some(hatch_rate));
+        assert!(goose_attack.defaults.host == Some(host));
+        assert!(goose_attack.defaults.iterations == Some(iterations));
+        assert!(goose_attack.defaults.log_level == Some(log_level as u8));
+        assert!(goose_attack.defaults.manager == Some(true));
+        assert!(goose_attack.defaults.manager_host == Some(manager_host));
+        assert!(goose_attack.defaults.manager_port == Some(manager_port as u16));
+        assert!(goose_attack.defaults.no_autostart == Some(true));
+        assert!(goose_attack.defaults.no_debug_body == Some(true));
+        assert!(goose_attack.defaults.no_error_summary == Some(true));
+        assert!(goose_attack.defaults.no_granular_report == Some(true));
+        assert!(goose_attack.defaults.no_gzip == Some(true));
+        assert!(goose_attack.defaults.no_hash_check == Some(true));
+        assert!(goose_attack.defaults.no_metrics == Some(true));
+        assert!(goose_attack.defaults.no_print_metrics == Some(true));
+        assert!(goose_attack.defaults.no_reset_metrics == Some(true));
+        assert!(goose_attack.defaults.no_scenario_metrics == Some(true));
+        assert!(goose_attack.defaults.no_status_codes == Some(true));
+        assert!(goose_attack.defaults.no_transaction_metrics == Some(true));
+        assert!(goose_attack.defaults.no_telnet == Some(true));
+        assert!(goose_attack.defaults.no_websocket == Some(true));
+        assert!(goose_attack.defaults.report_file == Some(report_file));
+        assert!(goose_attack.defaults.request_body == Some(true));
+        assert!(goose_attack.defaults.request_format == Some(GooseLogFormat::Raw));
+        assert!(goose_attack.defaults.request_log == Some(request_log));
+        assert!(goose_attack.defaults.run_time == Some(run_time));
+        assert!(goose_attack.defaults.running_metrics == Some(15));
+        assert!(goose_attack.defaults.scenario_format == Some(GooseLogFormat::Raw));
+        assert!(goose_attack.defaults.scenario_log == Some(scenario_log));
+        assert!(goose_attack.defaults.startup_time == Some(startup_time));
         assert!(goose_attack.defaults.sticky_follow == Some(true));
+        assert!(goose_attack.defaults.test_plan == Some(test_plan_compiled));
+        assert!(goose_attack.defaults.telnet_host == Some(telnet_host));
+        assert!(goose_attack.defaults.telnet_port == Some(telnet_port as u16));
+        assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
+        assert!(goose_attack.defaults.timeout == Some(timeout));
+        assert!(goose_attack.defaults.transaction_format == Some(GooseLogFormat::Raw));
+        assert!(goose_attack.defaults.transaction_log == Some(transaction_log));
+        assert!(goose_attack.defaults.quiet == Some(quiet as u8));
+        assert!(goose_attack.defaults.users == Some(users));
+        assert!(goose_attack.defaults.verbose == Some(verbose as u8));
+        assert!(goose_attack.defaults.websocket_host == Some(websocket_host));
+        assert!(goose_attack.defaults.websocket_port == Some(websocket_port as u16));
+        assert!(goose_attack.defaults.worker == Some(true));
     }
 }

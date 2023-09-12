@@ -15,7 +15,7 @@ use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
 /// Internal data structure representing a test plan.
-#[derive(Options, Debug, Clone, Serialize, Deserialize)]
+#[derive(Options, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct TestPlan {
     // A test plan is a vector of tuples each indicating a # of users and milliseconds.
     pub(crate) steps: Vec<(usize, usize)>,
