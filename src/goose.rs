@@ -2318,6 +2318,8 @@ pub(crate) fn create_reqwest_client(
         .timeout(Duration::from_millis(timeout))
         // Enable gzip unless `--no-gzip` flag is enabled.
         .gzip(!configuration.no_gzip)
+        // Validate https certificates unless `--accept-invalid-certs` is enabled.
+        .danger_accept_invalid_certs(configuration.accept_invalid_certs)
         .build()
 }
 
