@@ -195,7 +195,7 @@ pub struct GooseConfiguration {
     /// Follows base_url redirect with subsequent requests
     #[options(no_short)]
     pub sticky_follow: bool,
-    /// Allows to test internally when https validation is not required
+    /// Disables validation of https certificates
     #[options(no_short)]
     pub accept_invalid_certs: bool,
 }
@@ -335,7 +335,7 @@ pub(crate) struct GooseDefaults {
     pub websocket_host: Option<String>,
     /// An optional default for port WebSocket Controller listens on.
     pub websocket_port: Option<u16>,
-    /// Allow for internal testing when no certificates are available but still using https
+    /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
 }
 
@@ -437,6 +437,7 @@ pub enum GooseDefault {
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
+    /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
 }
 
