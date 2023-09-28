@@ -195,6 +195,9 @@ pub struct GooseConfiguration {
     /// Follows base_url redirect with subsequent requests
     #[options(no_short)]
     pub sticky_follow: bool,
+    /// Allows to test internally when https validation is not required
+    #[options(no_short)]
+    pub accept_invalid_certs: bool,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.
@@ -332,6 +335,8 @@ pub(crate) struct GooseDefaults {
     pub websocket_host: Option<String>,
     /// An optional default for port WebSocket Controller listens on.
     pub websocket_port: Option<u16>,
+    /// Allow for internal testing when no certificates are available but still using https
+    pub accept_invalid_certs: Option<bool>,
 }
 
 /// Defines all [`GooseConfiguration`] options that can be programmatically configured with
@@ -432,6 +437,7 @@ pub enum GooseDefault {
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
+    AcceptInvalidCerts,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
@@ -610,7 +616,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::NoGranularData
+            | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: value.to_string(),
@@ -701,7 +708,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::NoGranularData
+            | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{}", value),
@@ -757,6 +765,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
+            GooseDefault::AcceptInvalidCerts => self.defaults.accept_invalid_certs = Some(value),
             GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
@@ -856,7 +865,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::NoGranularData
+            | GooseDefault::AcceptInvalidCerts  => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -956,7 +966,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoGzip
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
-            | GooseDefault::NoGranularData => {
+            | GooseDefault::NoGranularData
+            | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{:?}", key),
                     value: format!("{:?}", value),
@@ -1727,6 +1738,24 @@ impl GooseConfiguration {
                     value: defaults.no_gzip,
                     filter: defaults.no_gzip.is_none(),
                     message: "no_gzip",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `accept_invalid_certs`
+        self.accept_invalid_certs = self
+            .get_value(vec![
+                // Use --accept-invalid-certs if set.
+                GooseValue {
+                    value: Some(self.accept_invalid_certs),
+                    filter: !self.accept_invalid_certs,
+                    message: "accept_invalid_certs",
+                },
+                // Use GooseDefault if not already set and not Worker.
+                GooseValue {
+                    value: defaults.accept_invalid_certs,
+                    filter: defaults.accept_invalid_certs.is_none(),
+                    message: "accept_invalid_certs",
                 },
             ])
             .unwrap_or(false);
