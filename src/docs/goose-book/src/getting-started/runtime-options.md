@@ -66,6 +66,7 @@ Advanced:
   --co-mitigation STRATEGY    Sets coordinated omission mitigation strategy
   --throttle-requests VALUE   Sets maximum requests per second
   --sticky-follow             Follows base_url redirect with subsequent requests
+  --accept-invalid-certs      Disables validation of https certificates
 ```
 
 All of the above configuration options are [defined in the developer documentation](https://docs.rs/goose/*/goose/config/struct.GooseConfiguration.html).
