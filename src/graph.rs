@@ -570,16 +570,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq + PartialOrd> Ord for TimeSe
 
 impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq + PartialOrd> PartialOrd for TimeSeries<T, U> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let self_total = self.total();
-        let other_total = other.total();
-
-        if self_total > other_total {
-            Some(Ordering::Greater)
-        } else if self_total < other_total {
-            Some(Ordering::Less)
-        } else {
-            Some(Ordering::Equal)
-        }
+        Some(self.cmp(other))
     }
 }
 
