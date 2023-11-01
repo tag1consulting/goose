@@ -564,6 +564,13 @@ mod tests {
         assert_eq!(truncate_string("abcde", 2), "..");
         assert_eq!(truncate_string("これはテストだ", 10), "これはテストだ");
         assert_eq!(truncate_string("これはテストだ", 3), "こ..");
+        assert_eq!(truncate_string("这是一个测试。", 10), "这是一个测试。");
+        assert_eq!(truncate_string("这是一个测试。", 3), "这..");
+        assert_eq!(
+            truncate_string("이것은 테스트입니다.", 15),
+            "이것은 테스트입니다."
+        );
+        assert_eq!(truncate_string("이것은 테스트입니다.", 3), "이..");
     }
 
     #[tokio::test]
