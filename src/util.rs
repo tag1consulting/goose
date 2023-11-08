@@ -247,14 +247,15 @@ pub fn median(
 /// // All characters are returned as the string is less than 15 characters long.
 /// assert_eq!(util::truncate_string("shorter string", 15), "shorter string");
 /// ```
-pub fn truncate_string(str_to_truncate: &str, max_length: u64) -> String {
-    let mut string_to_truncate = str_to_truncate.to_string();
-    if string_to_truncate.len() as u64 > max_length {
-        let truncated_length = max_length - 2;
-        string_to_truncate.truncate(truncated_length as usize);
-        string_to_truncate += "..";
+pub fn truncate_string(str_to_truncate: &str, max_length: usize) -> String {
+    if str_to_truncate.char_indices().count() > max_length {
+        match str_to_truncate.char_indices().nth(max_length - 2) {
+            None => str_to_truncate.to_string(),
+            Some((idx, _)) => format!("{}..", &str_to_truncate[..idx]),
+        }
+    } else {
+        str_to_truncate.to_string()
     }
-    string_to_truncate
 }
 
 /// Determine if a timer expired, with second granularity.
@@ -561,6 +562,15 @@ mod tests {
         assert_eq!(truncate_string("abcde", 4), "ab..");
         assert_eq!(truncate_string("abcde", 3), "a..");
         assert_eq!(truncate_string("abcde", 2), "..");
+        assert_eq!(truncate_string("これはテストだ", 10), "これはテストだ");
+        assert_eq!(truncate_string("これはテストだ", 3), "こ..");
+        assert_eq!(truncate_string("这是一个测试。", 10), "这是一个测试。");
+        assert_eq!(truncate_string("这是一个测试。", 3), "这..");
+        assert_eq!(
+            truncate_string("이것은 테스트입니다.", 15),
+            "이것은 테스트입니다."
+        );
+        assert_eq!(truncate_string("이것은 테스트입니다.", 3), "이..");
     }
 
     #[tokio::test]
