@@ -58,6 +58,6 @@ rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls"]
 [dev-dependencies]
 httpmock = "0.6"
 native-tls = "0.2"
-nix = "0.26"
+nix = "0.27"
 rustls = "0.20"
 serial_test = "0.9"
