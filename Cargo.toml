@@ -59,5 +59,5 @@ rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls"]
 httpmock = "0.6"
 native-tls = "0.2"
 nix = "0.27"
-rustls = "0.20"
+rustls = "0.22"
 serial_test = "0.9"
