@@ -288,9 +288,8 @@
 //! limitations under the License.
 
 use downcast_rs::{impl_downcast, Downcast};
-use http::method::Method;
 use regex::Regex;
-use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
+use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
