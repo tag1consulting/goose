@@ -16,7 +16,7 @@ use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
-use http::StatusCode;
+use reqwest::StatusCode;
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
@@ -3872,7 +3872,7 @@ mod test {
         assert!(request_metric.success);
         assert!(!request_metric.update);
 
-        let status_code = http::StatusCode::OK;
+        let status_code = reqwest::StatusCode::OK;
         request_metric.set_status_code(Some(status_code));
         assert_eq!(request_metric.raw.method, GooseMethod::Get);
         assert_eq!(request_metric.name, "/".to_string());

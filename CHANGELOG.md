@@ -3,6 +3,7 @@
 ## 0.17.3-dev
  - [#565](https://github.com/tag1consulting/goose/pull/565) add `--accept-invalid-certs` to skip validation of https certificates
  - [#568](https://github.com/tag1consulting/goose/pull/568) don't panic when truncating non utf-8 string
+ - update [`http`](https://docs.rs/http)
 
 ## 0.17.2 August 28, 2023
  - [#557](https://github.com/tag1consulting/goose/pull/557) speed up user initialization on Linux
