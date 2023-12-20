@@ -751,7 +751,6 @@ impl GooseAttack {
             self.test_plan.total_users()
         );
 
-        let reqwest_client = goose::create_reqwest_client(&self.configuration)?;
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
         loop {
@@ -772,7 +771,7 @@ impl GooseAttack {
                     base_url,
                     &self.configuration,
                     self.metrics.hash,
-                    Some(reqwest_client.clone()),
+                    Some(goose::create_reqwest_client(&self.configuration)?),
                 )?);
                 user_count += 1;
                 if user_count == total_users {

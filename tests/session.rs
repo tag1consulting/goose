@@ -20,13 +20,13 @@ const COOKIE_PATH: &str = "/cookie";
 const POST_SESSION_KEY: usize = 0;
 const GET_SESSION_KEY: usize = 1;
 const POST_COOKIE_KEY_0: usize = 2;
-const GET_COOKIE_KEY_0: usize = 3;
-const POST_COOKIE_KEY_1: usize = 4;
-const GET_COOKIE_KEY_1: usize = 5;
-const POST_COOKIE_KEY_2: usize = 6;
-const GET_COOKIE_KEY_2: usize = 7;
-const POST_COOKIE_KEY_3: usize = 8;
-const GET_COOKIE_KEY_3: usize = 9;
+const GET_COOKIE_KEY_0: usize = 6;
+const POST_COOKIE_KEY_1: usize = 7;
+const GET_COOKIE_KEY_1: usize = 11;
+const POST_COOKIE_KEY_2: usize = 12;
+const GET_COOKIE_KEY_2: usize = 16;
+const POST_COOKIE_KEY_3: usize = 17;
+const GET_COOKIE_KEY_3: usize = 21;
 
 // How many users to simulate, each with their own session.
 const SESSION_USERS: &str = "10";
@@ -151,21 +151,21 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
         // Be sure TestCookie1 doesn't exist for user0.
         server.mock(|when, then| {
             when.method(GET)
-                .path(&cookie_path_1)
+                .path(&cookie_path_0)
                 .cookie_exists("TestCookie1");
             then.status(500);
         }),
         // Be sure TestCookie2 doesn't exist for user0.
         server.mock(|when, then| {
             when.method(GET)
-                .path(&cookie_path_1)
+                .path(&cookie_path_0)
                 .cookie_exists("TestCookie2");
             then.status(500);
         }),
         // Be sure TestCookie3 doesn't exist for user0.
         server.mock(|when, then| {
             when.method(GET)
-                .path(&cookie_path_1)
+                .path(&cookie_path_0)
                 .cookie_exists("TestCookie3");
             then.status(500);
         }),
