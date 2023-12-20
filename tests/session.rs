@@ -16,7 +16,7 @@ const SESSION_DATA: &str = "This is my session data.";
 const SESSION_PATH: &str = "/session";
 const COOKIE_PATH: &str = "/cookie";
 
-// Indexes to the above paths, used to validate tests.
+// Indexes for valid requests of above paths, used to validate tests.
 const POST_SESSION_KEY: usize = 0;
 const GET_SESSION_KEY: usize = 1;
 const POST_COOKIE_KEY_0: usize = 2;
@@ -101,9 +101,8 @@ pub async fn set_cookie(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(request_builder)
         .build();
     let goose = user.request(goose_request).await?;
-    //println!("headers: {:#?}", goose.response.expect("response").headers());
-    let response = goose.response.expect("response");
-    let cookie: reqwest::cookie::Cookie = response.cookies().next().expect("cookie should be set");
+    let response = goose.response.expect("there must be a response");
+    let cookie: reqwest::cookie::Cookie = response.cookies().next().expect("cookie must be set");
     assert!(cookie.name() == cookie_name);
 
     Ok(())
@@ -318,8 +317,8 @@ fn common_build_configuration(
 fn validate_requests(test_type: TestType, goose_metrics: &GooseMetrics, mock_endpoints: &[Mock]) {
     // Convert USERS to a usize.
     let users = match test_type {
-        TestType::Session => SESSION_USERS.parse::<usize>().expect("usize"),
-        TestType::Cookie => COOKIE_USERS.parse::<usize>().expect("usize"),
+        TestType::Session => SESSION_USERS.parse::<usize>().expect("must be a valid usize"),
+        TestType::Cookie => COOKIE_USERS.parse::<usize>().expect("must be a valid usize"),
     };
 
     match test_type {
