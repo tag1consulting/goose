@@ -317,8 +317,12 @@ fn common_build_configuration(
 fn validate_requests(test_type: TestType, goose_metrics: &GooseMetrics, mock_endpoints: &[Mock]) {
     // Convert USERS to a usize.
     let users = match test_type {
-        TestType::Session => SESSION_USERS.parse::<usize>().expect("must be a valid usize"),
-        TestType::Cookie => COOKIE_USERS.parse::<usize>().expect("must be a valid usize"),
+        TestType::Session => SESSION_USERS
+            .parse::<usize>()
+            .expect("must be a valid usize"),
+        TestType::Cookie => COOKIE_USERS
+            .parse::<usize>()
+            .expect("must be a valid usize"),
     };
 
     match test_type {
