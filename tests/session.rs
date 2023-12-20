@@ -148,6 +148,28 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
             then.status(200)
                 .header(header::SET_COOKIE.as_str(), "TestCookie0=foo");
         }),
+        // Be sure TestCookie1 doesn't exist for user0.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_1)
+                .cookie_exists("TestCookie1");
+            then.status(500);
+        }),
+        // Be sure TestCookie2 doesn't exist for user0.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_1)
+                .cookie_exists("TestCookie2");
+            then.status(500);
+        }),
+        // Be sure TestCookie3 doesn't exist for user0.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_1)
+                .cookie_exists("TestCookie3");
+            then.status(500);
+        }),
+        // TestCookie0 should only exist for user0.
         server.mock(|when, then| {
             when.method(GET)
                 .path(cookie_path_0)
@@ -160,6 +182,28 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
             then.status(200)
                 .header(header::SET_COOKIE.as_str(), "TestCookie1=foo");
         }),
+        // Be sure TestCookie0 doesn't exist for user1.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_1)
+                .cookie_exists("TestCookie0");
+            then.status(500);
+        }),
+        // Be sure TestCookie2 doesn't exist for user1.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_1)
+                .cookie_exists("TestCookie2");
+            then.status(500);
+        }),
+        // Be sure TestCookie3 doesn't exist for user1.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_1)
+                .cookie_exists("TestCookie3");
+            then.status(500);
+        }),
+        // TestCookie1 should only exist for user1.
         server.mock(|when, then| {
             when.method(GET)
                 .path(cookie_path_1)
@@ -172,6 +216,28 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
             then.status(200)
                 .header(header::SET_COOKIE.as_str(), "TestCookie2=foo");
         }),
+        // Be sure TestCookie0 doesn't exist for user2.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_2)
+                .cookie_exists("TestCookie0");
+            then.status(500);
+        }),
+        // Be sure TestCookie1 doesn't exist for user2.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_2)
+                .cookie_exists("TestCookie1");
+            then.status(500);
+        }),
+        // Be sure TestCookie3 doesn't exist for user2.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_2)
+                .cookie_exists("TestCookie3");
+            then.status(500);
+        }),
+        // TestCookie2 should only exist for user0.
         server.mock(|when, then| {
             when.method(GET)
                 .path(cookie_path_2)
@@ -184,6 +250,28 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
             then.status(200)
                 .header(header::SET_COOKIE.as_str(), "TestCookie3=foo");
         }),
+        // Be sure TestCookie0 doesn't exist for user3.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_3)
+                .cookie_exists("TestCookie0");
+            then.status(500);
+        }),
+        // Be sure TestCookie1 doesn't exist for user3.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_3)
+                .cookie_exists("TestCookie1");
+            then.status(500);
+        }),
+        // Be sure TestCookie2 doesn't exist for user3.
+        server.mock(|when, then| {
+            when.method(GET)
+                .path(&cookie_path_3)
+                .cookie_exists("TestCookie2");
+            then.status(500);
+        }),
+        // TestCookie3 should only exist for user3.
         server.mock(|when, then| {
             when.method(GET)
                 .path(cookie_path_3)
