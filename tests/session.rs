@@ -20,37 +20,37 @@ const COOKIE_PATH: &str = "/cookie";
 const POST_SESSION_KEY: usize = 0;
 const GET_SESSION_KEY: usize = 1;
 
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const POST_COOKIE_KEY_0: usize = 2;
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const GET_COOKIE_KEY_0: usize = 6;
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const POST_COOKIE_KEY_1: usize = 7;
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const GET_COOKIE_KEY_1: usize = 11;
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const POST_COOKIE_KEY_2: usize = 12;
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const GET_COOKIE_KEY_2: usize = 16;
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const POST_COOKIE_KEY_3: usize = 17;
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 const GET_COOKIE_KEY_3: usize = 21;
 
 // How many users to simulate, each with their own session.
 const SESSION_USERS: &str = "10";
 
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 // How many users to simulate, each with their own cookie.
 const COOKIE_USERS: &str = "4";
 
 // By default, there are multiple test variations in this file. It is possible to
-// disable the `goose-cookies` feature, which will also disable the related tests.
+// disable the `cookies` feature, which will also disable the related tests.
 #[derive(Clone)]
 enum TestType {
     // Test sessions.
     Session,
-    #[cfg(feature = "goose-cookies")]
+    #[cfg(feature = "cookies")]
     // Test cookies.
     Cookie,
 }
@@ -97,7 +97,7 @@ pub async fn validate_session_data(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 // Set a cookie that is unique per-user.
 pub async fn set_cookie(user: &mut GooseUser) -> TransactionResult {
     // Per-user cookie name.
@@ -309,7 +309,7 @@ fn common_build_configuration(
             "--run-time",
             "2",
         ],
-        #[cfg(feature = "goose-cookies")]
+        #[cfg(feature = "cookies")]
         TestType::Cookie => vec![
             "--users",
             COOKIE_USERS,
@@ -334,7 +334,7 @@ fn validate_requests(test_type: TestType, goose_metrics: &GooseMetrics, mock_end
         TestType::Session => SESSION_USERS
             .parse::<usize>()
             .expect("must be a valid usize"),
-        #[cfg(feature = "goose-cookies")]
+        #[cfg(feature = "cookies")]
         TestType::Cookie => COOKIE_USERS
             .parse::<usize>()
             .expect("must be a valid usize"),
@@ -347,7 +347,7 @@ fn validate_requests(test_type: TestType, goose_metrics: &GooseMetrics, mock_end
             // Confirm that each user validated their session multiple times.
             assert!(mock_endpoints[GET_SESSION_KEY].hits() > users);
         }
-        #[cfg(feature = "goose-cookies")]
+        #[cfg(feature = "cookies")]
         TestType::Cookie => {
             // Confirm that each user set a cookie one and only one time.
             assert!(mock_endpoints[POST_COOKIE_KEY_0].hits() == 1);
@@ -365,14 +365,14 @@ fn validate_requests(test_type: TestType, goose_metrics: &GooseMetrics, mock_end
     // Extract the POST requests out of goose metrics.
     let post_metrics = match test_type {
         TestType::Session => goose_metrics.requests.get("POST create session").unwrap(),
-        #[cfg(feature = "goose-cookies")]
+        #[cfg(feature = "cookies")]
         TestType::Cookie => goose_metrics.requests.get("POST create cookie").unwrap(),
     };
 
     // Extract the GET requests out of goose metrics.
     let get_metrics = match test_type {
         TestType::Session => goose_metrics.requests.get("GET read session").unwrap(),
-        #[cfg(feature = "goose-cookies")]
+        #[cfg(feature = "cookies")]
         TestType::Cookie => goose_metrics.requests.get("GET read cookie").unwrap(),
     };
 
@@ -404,7 +404,7 @@ fn get_scenarios(test_type: &TestType) -> Scenario {
                 // Validate the session repeateldy.
                 .register_transaction(transaction!(validate_session_data).set_name("read session"))
         }
-        #[cfg(feature = "goose-cookies")]
+        #[cfg(feature = "cookies")]
         TestType::Cookie => {
             scenario!("Cookie")
                 // Create the cookie only one time
@@ -454,7 +454,7 @@ async fn test_session() {
     run_standalone_test(TestType::Session).await;
 }
 
-#[cfg(feature = "goose-cookies")]
+#[cfg(feature = "cookies")]
 #[tokio::test]
 // Test to confirm cookies are unique per GooseUser and last their lifetime.
 async fn test_cookie() {

@@ -51,9 +51,9 @@ tungstenite = "0.20"
 url = "2"
 
 [features]
-default = ["reqwest/default-tls", "goose-cookies"]
-rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls", "goose-cookies"]
-goose-cookies = ["reqwest/cookies"]
+default = ["reqwest/default-tls", "cookies"]
+rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls", "cookies"]
+cookies = ["reqwest/cookies"]
 
 [dev-dependencies]
 httpmock = "0.6"
