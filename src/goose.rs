@@ -2383,7 +2383,7 @@ pub(crate) fn create_reqwest_client(
         // Validate https certificates unless `--accept-invalid-certs` is enabled.
         .danger_accept_invalid_certs(configuration.accept_invalid_certs);
 
-    #[cfg(feature = "goose-cookies")]
+    #[cfg(feature = "cookies")]
     let client_builder = client_builder.cookie_store(true);
 
     client_builder.build()

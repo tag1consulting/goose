@@ -759,23 +759,23 @@ impl GooseAttack {
             self.test_plan.total_users()
         );
 
-        // Create a single Reqwest Client to share if `goose-cookies` are disabled.
-        #[cfg(not(feature = "goose-cookies"))]
+        // Create a single Reqwest Client to share if `cookies` are disabled.
+        #[cfg(not(feature = "cookies"))]
         let reqwest_client = goose::create_reqwest_client(&self.configuration)?;
 
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
         loop {
             for scenarios_index in &weighted_scenarios {
-                // If the `goose-cookies` feature is enabled, create a new reqwest client
+                // If the `cookies` feature is enabled, create a new reqwest client
                 // for each GooseUser, giving each their own CookieJar.
-                #[cfg(feature = "goose-cookies")]
+                #[cfg(feature = "cookies")]
                 let client = goose::create_reqwest_client(&self.configuration)?;
 
-                // If the `goose-cookies` feature is disabled, create a single client (see
+                // If the `cookies` feature is disabled, create a single client (see
                 // above, the client is created outside this loop) and clone it for each
                 // GooseUser.
-                #[cfg(not(feature = "goose-cookies"))]
+                #[cfg(not(feature = "cookies"))]
                 let client = reqwest_client.clone();
 
                 debug!(
