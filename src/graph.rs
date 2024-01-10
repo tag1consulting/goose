@@ -23,28 +23,40 @@ impl ItemsPerSecond {
         ItemsPerSecond(Default::default())
     }
 
+    #[inline(always)]
     fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
-        if !self.0.contains_key(key) {
-            self.0.insert(key.to_string(), TimeSeries::new());
+        if !self.contains_key(key) {
+            self.insert(key, TimeSeries::new());
         }
         let data = self.0.get_mut(key).unwrap();
         data.increase_value(second, value);
         data.get(second)
     }
 
+    #[inline(always)]
+    fn contains_key(&mut self, key: &str) -> bool {
+        self.0.contains_key(key)
+    }
+
+    #[inline(always)]
     #[allow(dead_code)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
         self.0.insert(key.to_string(), time_series);
     }
 
+    #[inline(always)]
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[inline(always)]
+    #[allow(dead_code)]
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
         self.0.get(key).cloned()
     }
 
+    #[inline(always)]
     fn get_map(&self) -> HashMap<String, TimeSeries<u32, u32>> {
         self.0.clone()
     }
