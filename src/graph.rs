@@ -39,7 +39,6 @@ impl ItemsPerSecond {
     }
 
     #[inline(always)]
-    #[allow(dead_code)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
         self.0.insert(key.to_string(), time_series);
     }
