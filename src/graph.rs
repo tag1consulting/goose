@@ -15,12 +15,58 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::marker::PhantomData;
 
+#[derive(Clone)]
+struct ItemsPerSecond(HashMap<String, TimeSeries<u32, u32>>);
+
+impl ItemsPerSecond {
+    fn new() -> ItemsPerSecond {
+        ItemsPerSecond(Default::default())
+    }
+
+    #[inline(always)]
+    fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
+        if !self.contains_key(key) {
+            self.insert(key, TimeSeries::new());
+        }
+        let data = self.0.get_mut(key).unwrap();
+        data.increase_value(second, value);
+        data.get(second)
+    }
+
+    #[inline(always)]
+    fn contains_key(&mut self, key: &str) -> bool {
+        self.0.contains_key(key)
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
+        self.0.insert(key.to_string(), time_series);
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
+        self.0.get(key).cloned()
+    }
+
+    #[inline(always)]
+    fn get_map(&self) -> HashMap<String, TimeSeries<u32, u32>> {
+        self.0.clone()
+    }
+}
+
 /// Used to collect graph data during a load test.
 pub(crate) struct GraphData {
     /// Counts requests per second for each request type.
-    requests_per_second: HashMap<String, TimeSeries<u32, u32>>,
+    requests_per_second: ItemsPerSecond,
     /// Counts errors per second.
-    errors_per_second: HashMap<String, TimeSeries<u32, u32>>,
+    errors_per_second: ItemsPerSecond,
     /// Maintains average response time per second.
     average_response_time_per_second: HashMap<String, TimeSeries<MovingAverage, f32>>,
     /// Number of transactions at the end of each second of the test.
@@ -36,8 +82,8 @@ impl GraphData {
     pub(crate) fn new() -> Self {
         trace!("new graph");
         GraphData {
-            requests_per_second: HashMap::new(),
-            errors_per_second: HashMap::new(),
+            requests_per_second: ItemsPerSecond::new(),
+            errors_per_second: ItemsPerSecond::new(),
             average_response_time_per_second: HashMap::new(),
             transactions_per_second: TimeSeries::new(),
             scenarios_per_second: TimeSeries::new(),
@@ -47,33 +93,24 @@ impl GraphData {
 
     /// Record requests per second metric.
     pub(crate) fn record_requests_per_second(&mut self, key: &str, second: usize) {
-        if !self.requests_per_second.contains_key(key) {
-            self.requests_per_second
-                .insert(key.to_string(), TimeSeries::new());
-        }
-        let data = self.requests_per_second.get_mut(key).unwrap();
-        data.increase_value(second, 1);
-
+        let value = self
+            .requests_per_second
+            .initialize_or_increment(key, second, 1);
         debug!(
             "incremented second {} for requests per second counter: {}",
-            second,
-            data.get(second)
+            second, value
         );
     }
 
     /// Record errors per second metric.
     pub(crate) fn record_errors_per_second(&mut self, key: &str, second: usize) {
-        if !self.errors_per_second.contains_key(key) {
-            self.errors_per_second
-                .insert(key.to_string(), TimeSeries::new());
-        }
-        let data = self.errors_per_second.get_mut(key).unwrap();
-        data.increase_value(second, 1);
+        let value = self
+            .errors_per_second
+            .initialize_or_increment(key, second, 1);
 
         debug!(
             "incremented second {} for errors per second counter: {}",
-            second,
-            data.get(second)
+            second, value
         );
     }
 
@@ -141,7 +178,7 @@ impl GraphData {
             "graph-rps",
             "Requests #",
             granular_data,
-            self.requests_per_second.clone(),
+            self.requests_per_second.get_map(),
         )
     }
 
@@ -190,7 +227,7 @@ impl GraphData {
             "graph-eps",
             "Errors #",
             granular_data,
-            self.errors_per_second.clone(),
+            self.errors_per_second.get_map(),
         )
     }
 
@@ -807,7 +844,7 @@ mod test {
     fn test_graph_setters() {
         let mut graph = GraphData::new();
         graph.requests_per_second.insert(
-            "GET /".to_string(),
+            "GET /",
             TimeSeries {
                 data: vec![123, 234, 345, 456, 567],
                 phantom: PhantomData,
@@ -864,7 +901,7 @@ mod test {
         };
 
         graph.errors_per_second.insert(
-            "GET /".to_string(),
+            "GET /",
             TimeSeries {
                 data: vec![567, 123, 234, 345, 456],
                 phantom: PhantomData,
