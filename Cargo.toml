@@ -27,7 +27,6 @@ num-format = "0.4"
 rand = "0.8"
 regex = "1"
 reqwest = { version = "0.11",  default-features = false, features = [
-    "cookies",
     "gzip",
     "json",
 ] }
@@ -52,8 +51,9 @@ tungstenite = "0.20"
 url = "2"
 
 [features]
-default = ["reqwest/default-tls"]
-rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls"]
+default = ["reqwest/default-tls", "cookies"]
+rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls", "cookies"]
+cookies = ["reqwest/cookies"]
 
 [dev-dependencies]
 httpmock = "0.6"
