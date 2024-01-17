@@ -433,6 +433,13 @@ impl From<reqwest::Error> for TransactionError {
     }
 }
 
+/// Auto-convert Reqwest errors to boxed TransactionError.
+impl From<reqwest::Error> for Box<TransactionError> {
+    fn from(value: reqwest::Error) -> Self {
+        Box::new(TransactionError::Reqwest(value))
+    }
+}
+
 /// Auto-convert Url errors.
 impl From<url::ParseError> for TransactionError {
     fn from(err: url::ParseError) -> TransactionError {
