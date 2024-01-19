@@ -1,7 +1,7 @@
 # Glossary
 
 ## GooseUser
-A thread that repeatedly runs a single [**scenario**](./getting-started/metrics.html#scenarios) for the duration of the load test. For example, when Goose starts, you may use the [`--users`](./getting-started/common.html#how-many-users-to-simulate) command line option to configure how many GooseUser threads are started. There is not intended to be a 1:1 correlation between GooseUsers and real website users.
+A thread that repeatedly runs a single [**scenario**](./getting-started/metrics.html#scenarios) for the duration of the load test. For example, when Goose starts, you may use the [`--users`](./getting-started/common.html#how-many-users-to-simulate) command line option to configure how many GooseUser threads are started. This is not intended to be a 1:1 correlation between GooseUsers and real website users.
 
 ## Request
 A single [**request**](./getting-started/metrics.html#requests) based around HTTP verbs.
