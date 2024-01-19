@@ -563,7 +563,11 @@ impl Scenario {
     /// }
     /// ```
     pub fn register_transaction(mut self, mut transaction: Transaction) -> Self {
-        trace!("{} register_transaction: {}", self.name, transaction.name);
+        trace!(
+            "{} register_transaction: {}",
+            self.name,
+            transaction.name.name_for_transaction()
+        );
         transaction.transactions_index = self.transactions.len();
         self.transactions.push(transaction);
         self
@@ -858,7 +862,7 @@ pub struct GooseUser {
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
     pub(crate) transaction_index: Option<String>,
     /// Current transaction name, if set.
-    pub(crate) transaction_name: Option<String>,
+    pub(crate) transaction_name: Option<TransactionName>,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Client,
     /// The base URL to prepend to all relative paths.
@@ -1630,15 +1634,15 @@ impl GooseUser {
                 .map_or_else(|| "", |v| v.as_ref()),
             transaction_name: self
                 .transaction_name
-                .as_ref()
-                .map_or_else(|| "", |v| v.as_ref()),
+                .clone()
+                .unwrap_or(TransactionName::default_value()),
         };
 
         // Record information about the request.
         let mut request_metric = GooseRequestMetric::new(
             raw_request,
             transaction_detail,
-            request_name,
+            request_name.as_str(),
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
         );
@@ -1696,7 +1700,7 @@ impl GooseUser {
                 warn!("{:?}: {}", &path, e);
                 request_metric.success = false;
                 request_metric.set_status_code(None);
-                request_metric.error = clean_reqwest_error(e, request_name);
+                request_metric.error = clean_reqwest_error(e, request_name.as_str());
             }
         };
 
@@ -1827,7 +1831,10 @@ impl GooseUser {
                 && request_metric.response_time > self.request_cadence.user_cadence
             {
                 let transaction_name = if let Some(transaction_name) = &self.transaction_name {
-                    format!(", transaction name: \"{transaction_name}\"")
+                    format!(
+                        ", transaction name: \"{}\"",
+                        transaction_name.name_for_transaction()
+                    )
                 } else {
                     "".to_string()
                 };
@@ -1890,18 +1897,19 @@ impl GooseUser {
 
     /// If `request_name` is set, unwrap and use this. Otherwise, if the Transaction has a name
     /// set use it. Otherwise use the path.
-    fn get_request_name<'a>(&'a self, request: &'a GooseRequest) -> &'a str {
+    fn get_request_name(&self, request: &GooseRequest) -> String {
         match request.name {
             // If a request.name is set, unwrap and return it.
-            Some(rn) => rn,
+            Some(rn) => rn.to_string(),
             None => {
                 // Otherwise determine if the current Transaction is named, and if so return it.
                 if let Some(transaction_name) = &self.transaction_name {
-                    transaction_name
-                } else {
-                    // Otherwise return a copy of the the path.
-                    request.path
+                    let request_name = transaction_name.name_for_request();
+                    if !request_name.is_empty() {
+                        return request_name;
+                    }
                 }
+                request.path.to_string()
             }
         }
     }
@@ -2786,6 +2794,30 @@ pub type TransactionFunction = Arc<
         + Sync,
 >;
 
+#[derive(Clone, Deserialize, Serialize, Hash, PartialEq, Eq, Debug)]
+pub enum TransactionName {
+    InheritNameByRequests(String),
+    TransactionOnly(String),
+}
+
+impl TransactionName {
+    pub fn name_for_transaction(&self) -> String {
+        match self {
+            TransactionName::InheritNameByRequests(v) => v.to_string(),
+            TransactionName::TransactionOnly(v) => v.to_string(),
+        }
+    }
+    pub fn name_for_request(&self) -> String {
+        match self {
+            TransactionName::InheritNameByRequests(v) => v.to_string(),
+            TransactionName::TransactionOnly(_) => "".to_string(),
+        }
+    }
+    pub fn default_value() -> Self {
+        Self::InheritNameByRequests("".to_string())
+    }
+}
+
 /// An individual transaction within a [`Scenario`](./struct.Scenario.html).
 #[derive(Clone)]
 pub struct Transaction {
@@ -2793,7 +2825,7 @@ pub struct Transaction {
     /// transaction this is.
     pub transactions_index: usize,
     /// An optional name for the transaction, used when displaying metrics.
-    pub name: String,
+    pub name: TransactionName,
     /// An integer value that controls the frequency that this transaction will be run.
     pub weight: usize,
     /// An integer value that controls when this transaction runs compared to other transactions in the same
@@ -2811,7 +2843,7 @@ impl Transaction {
         trace!("new transaction");
         Transaction {
             transactions_index: usize::MAX,
-            name: "".to_string(),
+            name: TransactionName::default_value(),
             weight: 1,
             sequence: 0,
             on_start: false,
@@ -2838,8 +2870,18 @@ impl Transaction {
     /// }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
-        trace!("[{}] set_name: {}", self.transactions_index, self.name);
-        self.name = name.to_string();
+        trace!("[{}] set_name: {}", self.transactions_index, name);
+        self.name = TransactionName::InheritNameByRequests(name.to_string());
+        self
+    }
+
+    pub fn set_name_transaction_only(mut self, name: &str) -> Self {
+        trace!(
+            "[{}] set_name (for transaction only): {}",
+            self.transactions_index,
+            name
+        );
+        self.name = TransactionName::TransactionOnly(name.to_string());
         self
     }
 
@@ -2868,7 +2910,7 @@ impl Transaction {
     pub fn set_on_start(mut self) -> Self {
         trace!(
             "{} [{}] set_on_start transaction",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index
         );
         self.on_start = true;
@@ -2900,7 +2942,7 @@ impl Transaction {
     pub fn set_on_stop(mut self) -> Self {
         trace!(
             "{} [{}] set_on_stop transaction",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index
         );
         self.on_stop = true;
@@ -2931,7 +2973,7 @@ impl Transaction {
     pub fn set_weight(mut self, weight: usize) -> Result<Self, GooseError> {
         trace!(
             "{} [{}] set_weight: {}",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index,
             weight
         );
@@ -3019,14 +3061,14 @@ impl Transaction {
     pub fn set_sequence(mut self, sequence: usize) -> Self {
         trace!(
             "{} [{}] set_sequence: {}",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index,
             sequence
         );
         if sequence < 1 {
             info!(
                 "setting sequence to 0 for transaction {} is unnecessary, sequence disabled",
-                self.name
+                self.name.name_for_transaction()
             );
         }
         self.sequence = sequence;
@@ -3178,6 +3220,7 @@ mod tests {
         // Initialize scenario.
         let mut transaction = transaction!(test_function_a);
         assert_eq!(transaction.transactions_index, usize::MAX);
+        assert_eq!(transaction.name.name_for_transaction(), "".to_string());
         assert_eq!(transaction.name, "".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
@@ -3186,7 +3229,7 @@ mod tests {
 
         // Name can be set, without affecting other fields.
         transaction = transaction.set_name("foo");
-        assert_eq!(transaction.name, "foo".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "foo".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
         assert!(!transaction.on_start);
@@ -3194,12 +3237,12 @@ mod tests {
 
         // Name can be set multiple times.
         transaction = transaction.set_name("bar");
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
 
         // On start flag can be set, without affecting other fields.
         transaction = transaction.set_on_start();
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
         assert!(!transaction.on_stop);
@@ -3213,7 +3256,7 @@ mod tests {
         transaction = transaction.set_on_stop();
         assert!(transaction.on_stop);
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
 
@@ -3226,7 +3269,7 @@ mod tests {
         assert_eq!(transaction.weight, 2);
         assert!(transaction.on_stop);
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
         assert_eq!(transaction.sequence, 0);
 
         // Weight field can be changed multiple times.
@@ -3239,7 +3282,7 @@ mod tests {
         assert_eq!(transaction.weight, 3);
         assert!(transaction.on_stop);
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
 
         // Sequence field can be changed multiple times.
         transaction = transaction.set_sequence(8);
