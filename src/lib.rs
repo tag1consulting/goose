@@ -65,7 +65,7 @@ use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
-use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction};
+use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction, TransactionName};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
 use crate::metrics::{GooseMetric, GooseMetrics};
@@ -86,7 +86,7 @@ lazy_static! {
 }
 
 /// Internal representation of a weighted transaction list.
-type WeightedTransactions = Vec<(usize, String)>;
+type WeightedTransactions = Vec<(usize, TransactionName)>;
 
 /// Internal representation of unsequenced transactions.
 type UnsequencedTransactions = Vec<Transaction>;
@@ -884,7 +884,8 @@ impl GooseAttack {
                 for transaction in scenario.transactions {
                     println!(
                         "    o {} (weight: {})",
-                        transaction.name, transaction.weight
+                        transaction.name.name_for_transaction(),
+                        transaction.weight
                     );
                 }
             }
@@ -2007,19 +2008,19 @@ fn allocate_transactions(
     for transaction in scheduled_sequenced_on_start_transactions.iter() {
         on_start_transactions.extend(vec![(
             *transaction,
-            scenario.transactions[*transaction].name.to_string(),
+            scenario.transactions[*transaction].name.clone(),
         )])
     }
     for transaction in scheduled_sequenced_transactions.iter() {
         transactions.extend(vec![(
             *transaction,
-            scenario.transactions[*transaction].name.to_string(),
+            scenario.transactions[*transaction].name.clone(),
         )])
     }
     for transaction in scheduled_sequenced_on_stop_transactions.iter() {
         on_stop_transactions.extend(vec![(
             *transaction,
-            scenario.transactions[*transaction].name.to_string(),
+            scenario.transactions[*transaction].name.clone(),
         )])
     }
 
@@ -2027,19 +2028,19 @@ fn allocate_transactions(
     for transaction in scheduled_unsequenced_on_start_transactions.iter() {
         on_start_transactions.extend(vec![(
             *transaction,
-            scenario.transactions[*transaction].name.to_string(),
+            scenario.transactions[*transaction].name.clone(),
         )])
     }
     for transaction in scheduled_unsequenced_transactions.iter() {
         transactions.extend(vec![(
             *transaction,
-            scenario.transactions[*transaction].name.to_string(),
+            scenario.transactions[*transaction].name.clone(),
         )])
     }
     for transaction in scheduled_unsequenced_on_stop_transactions.iter() {
         on_stop_transactions.extend(vec![(
             *transaction,
-            scenario.transactions[*transaction].name.to_string(),
+            scenario.transactions[*transaction].name.clone(),
         )])
     }
 
@@ -2061,7 +2062,7 @@ fn weight_unsequenced_transactions(
         trace!(
             "{}: {} has weight of {} (reduced with gcd to {})",
             transaction.transactions_index,
-            transaction.name,
+            transaction.name.name_for_transaction(),
             transaction.weight,
             weight
         );
