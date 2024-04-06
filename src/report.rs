@@ -498,6 +498,7 @@ pub(crate) fn build_report(
         r#"<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
     <title>Goose Attack Report</title>
     <style>
         .container {{
