@@ -61,7 +61,7 @@ pub async fn basic_page_en(user: &mut GooseUser) -> TransactionResult {
 /// Load a random node by nid in English and all static assets found on the page.
 pub async fn page_by_nid(user: &mut GooseUser) -> TransactionResult {
     // Randomly select a content type.
-    let content_types = vec![
+    let content_types = [
         common::ContentType::Article,
         common::ContentType::BasicPage,
         common::ContentType::Recipe,
