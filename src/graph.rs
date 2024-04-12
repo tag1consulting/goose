@@ -1672,7 +1672,7 @@ mod test {
                             nameGap: 45,
                             type: 'value'
                         }},
-                        
+
                         series: [
                             {{
                                 name: '{main_series_label}',
@@ -1705,12 +1705,12 @@ mod test {
         let mut expected = expected_prefix.to_owned();
         expected += format!(
             r#"                                    data: [
-                                        
+
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }},
-                            
+
                         ]
                     }});
                 </script>
@@ -1825,7 +1825,7 @@ mod test {
                                 }},
                                 data: [["{data_series_prefix}:32",123],["{data_series_prefix}:33",111],["{data_series_prefix}:34",99],["{data_series_prefix}:35",134]],
                             }},
-                            
+
                         ]
                     }});
                 </script>
@@ -1926,7 +1926,7 @@ mod test {
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
                                     data: [
-                                        
+
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",146],["{data_series_prefix}:33",123],["{data_series_prefix}:34",143],["{data_series_prefix}:35",156]],
@@ -2004,12 +2004,12 @@ mod test {
         let mut expected = expected_nongranular_prefix.to_owned();
         expected += format!(
             r#"                                    data: [
-                                        
+
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",146],["{data_series_prefix}:33",123],["{data_series_prefix}:34",143],["{data_series_prefix}:35",156]],
                             }},
-                            
+
                         ]
                     }});
                 </script>
@@ -2063,7 +2063,7 @@ mod test {
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
                                     data: [
-                                        
+
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",149],["{data_series_prefix}:33",126],["{data_series_prefix}:34",146],["{data_series_prefix}:35",159]],
@@ -2214,12 +2214,12 @@ mod test {
         let mut expected = expected_nongranular_prefix;
         expected += format!(
             r#"                                    data: [
-                                        
+
                                     ]
                                 }},
                                 data: [["{data_series_prefix}:32",149],["{data_series_prefix}:33",126],["{data_series_prefix}:34",146],["{data_series_prefix}:35",159]],
                             }},
-                            
+
                         ]
                     }});
                 </script>
