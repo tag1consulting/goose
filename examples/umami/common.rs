@@ -383,7 +383,7 @@ pub fn random_words(count: usize, english: bool) -> Vec<String> {
 
     for _ in 0..count {
         // Randomly select a content type, favoring articles and recipes.
-        let content_types = vec![
+        let content_types = [
             ContentType::Article,
             ContentType::Article,
             ContentType::Article,
