@@ -557,7 +557,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
     /// it belongs to.
     fn add_timestamp_to_html_graph_data(
         &self,
-        data: &[U],
+        data: &[Option<U>],
         started: DateTime<Utc>,
     ) -> Vec<(String, U)> {
         data.iter()
@@ -573,6 +573,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     *value,
                 )
             })
+            .filter_map(|(time, data_option)| data_option.map(|data| (time, data)))
             .collect::<Vec<_>>()
     }
 }
@@ -672,7 +673,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
 
     /// Gets time series suitable for usage in HTML graphs (generally each value
     /// becomes some kind of a scalar).
-    fn get_graph_data(&self) -> Vec<U> {
+    fn get_graph_data(&self) -> Vec<Option<U>> {
         self.data
             .iter()
             .map(|value| value.get_graph_value())
@@ -696,7 +697,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
 
     /// Gets time series total value (sum of all values).
     fn total(&self) -> U {
-        self.total.get_graph_value()
+        self.total.get_total_value()
     }
 }
 
@@ -711,7 +712,8 @@ pub trait TimeSeriesValue<T, U> {
     /// Merges (adds) another TimeSeriesValue.
     fn merge(&mut self, other: &T);
     /// Gets representation of the value suitable for HTML graphs (generally a scalar).
-    fn get_graph_value(&self) -> U;
+    fn get_graph_value(&self) -> Option<U>;
+    fn get_total_value(&self) -> U;
 }
 
 impl TimeSeriesValue<usize, usize> for usize {
@@ -727,7 +729,13 @@ impl TimeSeriesValue<usize, usize> for usize {
     fn merge(&mut self, other: &usize) {
         *self += *other;
     }
-    fn get_graph_value(&self) -> usize {
+    fn get_graph_value(&self) -> Option<usize> {
+        match *self == 0 {
+            true => None,
+            false => Some(*self),
+        }
+    }
+    fn get_total_value(&self) -> usize {
         *self
     }
 }
@@ -745,7 +753,13 @@ impl TimeSeriesValue<u32, u32> for u32 {
     fn merge(&mut self, other: &u32) {
         *self += *other;
     }
-    fn get_graph_value(&self) -> u32 {
+    fn get_graph_value(&self) -> Option<u32> {
+        match *self == 0 {
+            true => None,
+            false => Some(*self),
+        }
+    }
+    fn get_total_value(&self) -> u32 {
         *self
     }
 }
@@ -770,7 +784,13 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
         };
         self.count = total_count;
     }
-    fn get_graph_value(&self) -> f32 {
+    fn get_graph_value(&self) -> Option<f32> {
+        match self.average == 0f32 {
+            true => None,
+            false => Some(self.average),
+        }
+    }
+    fn get_total_value(&self) -> f32 {
         self.average
     }
 }
@@ -1542,7 +1562,7 @@ mod test {
 
     #[test]
     fn test_add_timestamp_to_html_graph_data() {
-        let data = vec![123, 234, 345, 456, 567];
+        let data = vec![Some(123), Some(234), Some(345), Some(456), Some(567)];
         let graph: Graph<usize, usize> = Graph::new("html_id", "Label", true, HashMap::new());
 
         assert_eq!(
