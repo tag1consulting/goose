@@ -777,7 +777,7 @@ impl GooseAttack {
                                         "changing startup_rate from {} to {}",
                                         self.configuration.startup_time, startup_time
                                     );
-                                    self.configuration.startup_time = startup_time.clone();
+                                    self.configuration.startup_time.clone_from(startup_time);
                                     // If setting startup_time, any existing configuration for a test plan isn't valid.
                                     self.configuration.test_plan = None;
                                     self.reply_to_controller(
@@ -810,7 +810,7 @@ impl GooseAttack {
                                     "changing run_time from {:?} to {}",
                                     self.configuration.run_time, run_time
                                 );
-                                self.configuration.run_time = run_time.clone();
+                                self.configuration.run_time.clone_from(run_time);
                                 // If setting run_time, any existing configuration for a test plan isn't valid.
                                 self.configuration.test_plan = None;
                                 self.reply_to_controller(

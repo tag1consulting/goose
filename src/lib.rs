@@ -1380,7 +1380,9 @@ impl GooseAttack {
                 goose_attack_run_state.user_channels.push(parent_sender);
 
                 // Clone the logger_tx if enabled, otherwise is None.
-                thread_user.logger = goose_attack_run_state.all_threads_logger_tx.clone();
+                thread_user
+                    .logger
+                    .clone_from(&goose_attack_run_state.all_threads_logger_tx);
 
                 // Copy the GooseUser-throttle receiver channel, used by all threads.
                 thread_user.throttle = if self.configuration.throttle_requests > 0 {
