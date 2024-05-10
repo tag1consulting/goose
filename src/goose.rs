@@ -3367,14 +3367,14 @@ mod tests {
         user.set_session_data(session_data);
 
         if let Some(session) = user.get_session_data_mut::<CustomSessionData>() {
-            session.data = "bar".to_owned();
+            "bar".clone_into(&mut session.data);
         }
 
         let session = user.get_session_data_unchecked::<CustomSessionData>();
         assert_eq!(session.data, "bar".to_string());
 
         let session = user.get_session_data_unchecked_mut::<CustomSessionData>();
-        session.data = "foo".to_owned();
+        "foo".clone_into(&mut session.data);
         let session = user.get_session_data_unchecked::<CustomSessionData>();
         assert_eq!(session.data, "foo".to_string());
     }
@@ -3396,7 +3396,7 @@ mod tests {
 
         user.set_session_data(session_data.clone());
 
-        session_data.data = "bar".to_owned();
+        "bar".clone_into(&mut session_data.data);
         user.set_session_data(session_data);
 
         let session = user.get_session_data_unchecked::<CustomSessionData>();
