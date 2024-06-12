@@ -291,12 +291,12 @@ use downcast_rs::{impl_downcast, Downcast};
 use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
-use std::fmt::{Debug, Formatter};
 use url::Url;
 
 use crate::logger::GooseLog;
@@ -828,8 +828,8 @@ trait CloneGooseUserData {
 }
 
 impl<T> CloneGooseUserData for T
-    where
-        T: GooseUserData + Clone + 'static,
+where
+    T: GooseUserData + Clone + 'static,
 {
     fn clone_goose_user_data(&self) -> Box<dyn GooseUserData> {
         Box::new(self.clone())
@@ -913,11 +913,14 @@ impl Clone for GooseUser {
             load_test_hash: self.load_test_hash,
             request_cadence: self.request_cadence.clone(),
             slept: self.slept,
-            session_data: if self.session_data.is_some() { Option::from(self.session_data.clone_goose_user_data()) } else { None },
+            session_data: if self.session_data.is_some() {
+                Option::from(self.session_data.clone_goose_user_data())
+            } else {
+                None
+            },
         }
     }
 }
-
 
 impl Debug for dyn GooseUserData {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
