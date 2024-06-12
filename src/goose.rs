@@ -296,6 +296,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
+use std::fmt::{Debug, Formatter};
 use url::Url;
 
 use crate::logger::GooseLog;
@@ -822,8 +823,28 @@ pub trait GooseUserData: Downcast + Send + Sync + 'static {}
 impl_downcast!(GooseUserData);
 impl<T: Send + Sync + 'static> GooseUserData for T {}
 
+trait CloneGooseUserData {
+    fn clone_goose_user_data(&self) -> Box<dyn GooseUserData>;
+}
+
+impl<T> CloneGooseUserData for T
+    where
+        T: GooseUserData + Clone + 'static,
+{
+    fn clone_goose_user_data(&self) -> Box<dyn GooseUserData> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn GooseUserData> {
+    fn clone(&self) -> Self {
+        self.clone_goose_user_data()
+    }
+}
+
 /// An individual user state, repeatedly running all [`Transaction`](./struct.Transaction.html)s
 /// in a specific [`Scenario`](./struct.Scenario.html).
+#[derive(Debug)]
 pub struct GooseUser {
     /// The Instant when this `GooseUser` client started.
     pub started: Instant,
@@ -870,6 +891,51 @@ pub struct GooseUser {
     /// [`GooseUserData`] trait.
     session_data: Option<Box<dyn GooseUserData>>,
 }
+
+impl Clone for GooseUser {
+    fn clone(&self) -> Self {
+        Self {
+            started: self.started,
+            iterations: self.iterations,
+            scenarios_index: self.scenarios_index,
+            scenario_name: self.scenario_name.clone(),
+            transaction_index: self.transaction_index.clone(),
+            transaction_name: self.transaction_name.clone(),
+            client: self.client.clone(),
+            base_url: self.base_url.clone(),
+            config: self.config.clone(),
+            logger: self.logger.clone(),
+            throttle: self.throttle.clone(),
+            is_throttled: self.is_throttled,
+            metrics_channel: self.metrics_channel.clone(),
+            shutdown_channel: self.shutdown_channel.clone(),
+            weighted_users_index: self.weighted_users_index,
+            load_test_hash: self.load_test_hash,
+            request_cadence: GooseRequestCadence {
+                last_time: self.request_cadence.last_time,
+                delays_since_last_time: self.request_cadence.delays_since_last_time,
+                counter: self.request_cadence.counter,
+                minimum_cadence: self.request_cadence.minimum_cadence,
+                maximum_cadence: self.request_cadence.maximum_cadence,
+                average_cadence: self.request_cadence.average_cadence,
+                total_elapsed: self.request_cadence.total_elapsed,
+                coordinated_omission_mitigation: self.request_cadence.coordinated_omission_mitigation,
+                user_cadence: self.request_cadence.user_cadence,
+                coordinated_omission_counter: self.request_cadence.coordinated_omission_counter,
+            },
+            slept: self.slept,
+            session_data: if self.session_data.is_some() { Option::from(self.session_data.clone_goose_user_data()) } else { None },
+        }
+    }
+}
+
+
+impl Debug for dyn GooseUserData {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+        write!(fmt, "GooseUserData")
+    }
+}
+
 impl GooseUser {
     /// Create a new user state.
     pub fn new(
@@ -3351,7 +3417,7 @@ mod tests {
 
     #[test]
     fn test_get_mut_session_data() {
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         struct CustomSessionData {
             data: String,
         }
