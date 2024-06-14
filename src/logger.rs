@@ -386,7 +386,7 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                         message.scenario_index,
                         message.scenario_name,
                         message.transaction_index,
-                        message.transaction_name,
+                        message.transaction_name.name_for_request(),
                         format!("{:?}", message.raw),
                         message.name,
                         message.final_url,
