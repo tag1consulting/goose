@@ -5,3 +5,4 @@
 **swp
 /Cargo.lock
 /src/docs/*/book
+/.idea
