@@ -102,6 +102,8 @@ pub enum GooseError {
     Reqwest(reqwest::Error),
     /// Wraps a ['tokio::task::JoinError'](https://tokio-rs.github.io/tokio/doc/tokio/task/struct.JoinError.html).
     TokioJoin(tokio::task::JoinError),
+    /// Wraps a ['serde_json::Error'](https://docs.rs/serde_json/*/serde_json/struct.Error.html).
+    Serde(serde_json::Error),
     /// Failed attempt to use code that requires a compile-time feature be enabled.
     FeatureNotEnabled {
         /// The missing compile-time feature.
@@ -160,6 +162,7 @@ impl GooseError {
         match *self {
             GooseError::Io(_) => "io::Error",
             GooseError::Reqwest(_) => "reqwest::Error",
+            GooseError::Serde(_) => "serde_json::Error",
             GooseError::TokioJoin(_) => "tokio::task::JoinError",
             GooseError::FeatureNotEnabled { .. } => "required compile-time feature not enabled",
             GooseError::InvalidHost { .. } => "failed to parse hostname",
@@ -225,6 +228,13 @@ impl From<io::Error> for GooseError {
 impl From<tokio::task::JoinError> for GooseError {
     fn from(err: tokio::task::JoinError) -> GooseError {
         GooseError::TokioJoin(err)
+    }
+}
+
+/// Auto-convert serde_json errors.
+impl From<serde_json::Error> for GooseError {
+    fn from(err: serde_json::Error) -> GooseError {
+        GooseError::Serde(err)
     }
 }
 
@@ -803,17 +813,6 @@ impl GooseAttack {
         self.attack_phase = phase;
     }
 
-    // If enabled, returns the path of the report_file, otherwise returns None.
-    fn get_report_file_path(&mut self) -> Option<String> {
-        // Return if enabled.
-        if !self.configuration.report_file.is_empty() {
-            Some(self.configuration.report_file.to_string())
-        // Otherwise there is no report file.
-        } else {
-            None
-        }
-    }
-
     // Display all scenarios (sorted by machine name).
     fn print_scenarios(&self) {
         let mut scenarios = BTreeMap::new();
@@ -951,8 +950,8 @@ impl GooseAttack {
             );
             print!("{}", self.metrics);
 
-            // Write an html report, if enabled.
-            self.write_html_report().await?;
+            // Write reports
+            self.write_reports().await?;
         }
 
         Ok(self.metrics)
@@ -1162,15 +1161,6 @@ impl GooseAttack {
 
         // Return the parent end of the Controller channel.
         Some(controller_request_rx)
-    }
-
-    // Prepare an asynchronous file writer for `report_file` (if enabled).
-    async fn prepare_report_file(&mut self) -> Result<Option<File>, GooseError> {
-        if let Some(report_file_path) = self.get_report_file_path() {
-            Ok(Some(File::create(&report_file_path).await?))
-        } else {
-            Ok(None)
-        }
     }
 
     // Invoke `test_start` transactions if existing.
@@ -1548,8 +1538,8 @@ impl GooseAttack {
                 if !self.configuration.no_metrics {
                     println!("{}", self.metrics);
                 }
-                // Write an html report, if enabled.
-                self.write_html_report().await?;
+                // Write reports, if enabled.
+                self.write_reports().await?;
                 // Return to an Idle state.
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Idle);
             }
@@ -1734,16 +1724,15 @@ impl GooseAttack {
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
         // If enabled, try to create the report file to confirm access.
-        let _report_file = match self.prepare_report_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
+        for file in &self.configuration.report_file {
+            let _ = File::create(&file)
+                .await
+                .map_err(|err| GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                })
-            }
-        };
+                    value: file.clone(),
+                    detail: format!("Failed to create report file: {err}"),
+                })?;
+        }
 
         // Record when the GooseAttack officially started.
         self.started = Some(time::Instant::now());

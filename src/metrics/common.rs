@@ -12,7 +12,10 @@ use crate::{
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 
+#[derive(Debug, serde::Serialize)]
 pub struct ReportData<'m> {
+    pub raw_metrics: &'m GooseMetrics,
+
     pub raw_request_metrics: Vec<RequestMetric>,
     pub raw_response_metrics: Vec<ResponseMetric>,
 
@@ -72,14 +75,12 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
             name: name.to_string(),
             number_of_requests: total_request_count,
             number_of_failures: request.fail_count,
-            response_time_average: format!(
-                "{:.2}",
-                request.raw_data.total_time as f32 / request.raw_data.counter as f32
-            ),
+            response_time_average: request.raw_data.total_time as f32
+                / request.raw_data.counter as f32,
             response_time_minimum: request.raw_data.minimum_time,
             response_time_maximum: request.raw_data.maximum_time,
-            requests_per_second: format!("{:.2}", requests_per_second),
-            failures_per_second: format!("{:.2}", failures_per_second),
+            requests_per_second,
+            failures_per_second,
         });
 
         // Prepare per-response metrics.
@@ -120,14 +121,12 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
         name: "Aggregated".to_string(),
         number_of_requests: raw_aggregate_total_count,
         number_of_failures: raw_aggregate_fail_count,
-        response_time_average: format!(
-            "{:.2}",
-            raw_aggregate_response_time_counter as f32 / raw_aggregate_total_count as f32
-        ),
+        response_time_average: raw_aggregate_response_time_counter as f32
+            / raw_aggregate_total_count as f32,
         response_time_minimum: raw_aggregate_response_time_minimum,
         response_time_maximum: raw_aggregate_response_time_maximum,
-        requests_per_second: format!("{:.2}", raw_aggregate_requests_per_second),
-        failures_per_second: format!("{:.2}", raw_aggregate_failures_per_second),
+        requests_per_second: raw_aggregate_requests_per_second,
+        failures_per_second: raw_aggregate_failures_per_second,
     });
 
     // Prepare aggregate per-response metrics.
@@ -158,10 +157,10 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
                 co_request_metrics.push(report::CORequestMetric {
                     method: method.to_string(),
                     name: name.to_string(),
-                    response_time_average: format!("{:.2}", co_average),
-                    response_time_standard_deviation: format!(
-                        "{:.2}",
-                        util::standard_deviation(raw_average, co_average)
+                    response_time_average: co_average,
+                    response_time_standard_deviation: util::standard_deviation(
+                        raw_average,
+                        co_average,
                     ),
                     response_time_maximum: coordinated_omission_data.maximum_time,
                 });
@@ -197,14 +196,9 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
         co_request_metrics.push(report::CORequestMetric {
             method: "".to_string(),
             name: "Aggregated".to_string(),
-            response_time_average: format!(
-                "{:.2}",
-                co_aggregate_response_time_counter as f32 / co_aggregate_total_count as f32
-            ),
-            response_time_standard_deviation: format!(
-                "{:.2}",
-                util::standard_deviation(raw_average, co_average),
-            ),
+            response_time_average: co_aggregate_response_time_counter as f32
+                / co_aggregate_total_count as f32,
+            response_time_standard_deviation: util::standard_deviation(raw_average, co_average),
             response_time_maximum: co_aggregate_response_time_maximum,
         });
 
@@ -242,11 +236,11 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
                         name: transaction.scenario_name.to_string(),
                         number_of_requests: 0,
                         number_of_failures: 0,
-                        response_time_average: "".to_string(),
+                        response_time_average: None,
                         response_time_minimum: 0,
                         response_time_maximum: 0,
-                        requests_per_second: "".to_string(),
-                        failures_per_second: "".to_string(),
+                        requests_per_second: None,
+                        failures_per_second: None,
                     });
                 }
                 let total_run_count = transaction.success_count + transaction.fail_count;
@@ -265,11 +259,11 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
                     name: transaction.transaction_name.to_string(),
                     number_of_requests: total_run_count,
                     number_of_failures: transaction.fail_count,
-                    response_time_average: format!("{:.2}", average),
+                    response_time_average: Some(average),
                     response_time_minimum: transaction.min_time,
                     response_time_maximum: transaction.max_time,
-                    requests_per_second: format!("{:.2}", requests_per_second),
-                    failures_per_second: format!("{:.2}", failures_per_second),
+                    requests_per_second: Some(requests_per_second),
+                    failures_per_second: Some(failures_per_second),
                 });
 
                 aggregate_total_count += total_run_count;
@@ -296,14 +290,13 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
             name: "Aggregated".to_string(),
             number_of_requests: aggregate_total_count,
             number_of_failures: aggregate_fail_count,
-            response_time_average: format!(
-                "{:.2}",
-                raw_aggregate_response_time_counter as f32 / aggregate_total_count as f32
+            response_time_average: Some(
+                raw_aggregate_response_time_counter as f32 / aggregate_total_count as f32,
             ),
             response_time_minimum: aggregate_transaction_time_minimum,
             response_time_maximum: aggregate_transaction_time_maximum,
-            requests_per_second: format!("{:.2}", aggregate_requests_per_second),
-            failures_per_second: format!("{:.2}", aggregate_failures_per_second),
+            requests_per_second: Some(aggregate_requests_per_second),
+            failures_per_second: Some(aggregate_failures_per_second),
         });
         Some(transaction_metrics)
     } else {
@@ -333,11 +326,11 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
                 name: scenario.name.to_string(),
                 users: scenario.users.len(),
                 count: scenario.counter,
-                response_time_average: format!("{:.2}", average),
+                response_time_average: average,
                 response_time_minimum: scenario.min_time,
                 response_time_maximum: scenario.max_time,
-                count_per_second: format!("{:.2}", count_per_second),
-                iterations: format!("{:.2}", iterations),
+                count_per_second,
+                iterations,
             });
 
             aggregate_users += scenario.users.len();
@@ -359,14 +352,11 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
             name: "Aggregated".to_string(),
             users: aggregate_users,
             count: aggregate_count,
-            response_time_average: format!(
-                "{:.2}",
-                aggregate_response_time_counter / aggregate_count as f32
-            ),
+            response_time_average: aggregate_response_time_counter / aggregate_count as f32,
             response_time_minimum: aggregate_scenario_time_minimum,
             response_time_maximum: aggregate_scenario_time_maximum,
-            count_per_second: format!("{:.2}", aggregate_count_per_second),
-            iterations: format!("{:.2}", aggregate_iterations),
+            count_per_second: aggregate_count_per_second,
+            iterations: aggregate_iterations,
         });
 
         Some(scenario_metrics)
@@ -416,6 +406,7 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
     };
 
     ReportData {
+        raw_metrics: metrics,
         raw_request_metrics,
         raw_response_metrics,
         co_request_metrics,

@@ -27,9 +27,13 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fmt::Write;
+use std::io::BufWriter;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::{f32, fmt};
+use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 /// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
@@ -2997,46 +3001,95 @@ impl GooseAttack {
         };
     }
 
-    // Write an HTML-formatted report, if enabled.
-    pub(crate) async fn write_html_report(&mut self) -> Result<(), GooseError> {
-        // If enabled, try to create the report file to confirm access.
-        let report_file = match self.prepare_report_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
+    /// Write all requested reports.
+    pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
+        let create = |path: PathBuf| async move {
+            File::create(&path)
+                .await
+                .map_err(|err| GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
+                    value: path.to_string_lossy().to_string(),
+                    detail: format!("Failed to create report file: {}", err),
                 })
-            }
         };
 
+        for report in &self.configuration.report_file {
+            let path = PathBuf::from(report);
+            match path.extension().map(OsStr::to_string_lossy).as_deref() {
+                Some("html") => {
+                    self.write_html_report(create(path).await?, report).await?;
+                }
+                Some("json") => {
+                    self.write_json_report(create(path).await?).await?;
+                }
+                None => {
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report.clone(),
+                        detail: "Missing file extension for report".to_string(),
+                    })
+                }
+                Some(ext) => {
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report.clone(),
+                        detail: format!("Unknown report file type: {ext}"),
+                    })
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Write a JSON report.
+    pub(crate) async fn write_json_report(&self, report_file: File) -> Result<(), GooseError> {
+        let data = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
+
+        serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
+
+        Ok(())
+    }
+
+    // Write an HTML-formatted report.
+    pub(crate) async fn write_html_report(
+        &self,
+        mut report_file: File,
+        path: &str,
+    ) -> Result<(), GooseError> {
         // Only write the report if enabled.
-        if let Some(mut report_file) = report_file {
-            let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
-            // Prepare report summary variables.
-            let users = self.metrics.maximum_users.to_string();
+        let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
-            let mut steps_overview = String::new();
-            for step in self.metrics.history.windows(2) {
-                let (seconds, minutes, hours) = self
-                    .metrics
-                    .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
-                let started = Local
-                    .timestamp_opt(step[0].timestamp.timestamp(), 0)
-                    // @TODO: error handling
-                    .unwrap()
-                    .format("%y-%m-%d %H:%M:%S");
-                let stopped = Local
-                    .timestamp_opt(step[1].timestamp.timestamp(), 0)
-                    // @TODO: error handling
-                    .unwrap()
-                    .format("%y-%m-%d %H:%M:%S");
-                match &step[0].action {
-                    // For maintaining just show the current number of users.
-                    TestPlanStepAction::Maintaining => {
-                        let _ = write!(steps_overview,
+        // Prepare report summary variables.
+        let users = self.metrics.maximum_users.to_string();
+
+        let mut steps_overview = String::new();
+        for step in self.metrics.history.windows(2) {
+            let (seconds, minutes, hours) = self
+                .metrics
+                .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
+            let started = Local
+                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
+                .format("%y-%m-%d %H:%M:%S");
+            let stopped = Local
+                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
+                .format("%y-%m-%d %H:%M:%S");
+            match &step[0].action {
+                // For maintaining just show the current number of users.
+                TestPlanStepAction::Maintaining => {
+                    let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
                             step[0].action,
                             started,
@@ -3046,10 +3099,10 @@ impl GooseAttack {
                             seconds,
                             step[0].users,
                         );
-                    }
-                    // For increasing show the current number of users to the new number of users.
-                    TestPlanStepAction::Increasing => {
-                        let _ = write!(steps_overview,
+                }
+                // For increasing show the current number of users to the new number of users.
+                TestPlanStepAction::Increasing => {
+                    let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
                             step[0].action,
                             started,
@@ -3060,10 +3113,10 @@ impl GooseAttack {
                             step[0].users,
                             step[1].users,
                         );
-                    }
-                    // For decreasing show the new number of users from the current number of users.
-                    TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
-                        let _ = write!(steps_overview,
+                }
+                // For decreasing show the new number of users from the current number of users.
+                TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
+                    let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
                             step[0].action,
                             started,
@@ -3074,173 +3127,168 @@ impl GooseAttack {
                             step[1].users,
                             step[0].users,
                         );
-                    }
-                    TestPlanStepAction::Finished => {
-                        unreachable!("there shouldn't be a step after finished");
-                    }
+                }
+                TestPlanStepAction::Finished => {
+                    unreachable!("there shouldn't be a step after finished");
                 }
             }
-
-            // Build a comma separated list of hosts.
-            let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
-
-            let ReportData {
-                raw_request_metrics,
-                raw_response_metrics,
-                co_request_metrics,
-                co_response_metrics,
-                scenario_metrics,
-                transaction_metrics,
-                errors,
-                status_code_metrics,
-            } = common::prepare_data(
-                ReportOptions {
-                    no_transaction_metrics: self.configuration.no_transaction_metrics,
-                    no_scenario_metrics: self.configuration.no_scenario_metrics,
-                    no_status_codes: self.configuration.no_status_codes,
-                },
-                &self.metrics,
-            );
-
-            // Compile the request metrics template.
-            let mut raw_requests_rows = Vec::new();
-            for metric in raw_request_metrics {
-                raw_requests_rows.push(report::raw_request_metrics_row(metric));
-            }
-
-            // Compile the response metrics template.
-            let mut raw_responses_rows = Vec::new();
-            for metric in raw_response_metrics {
-                raw_responses_rows.push(report::response_metrics_row(metric));
-            }
-
-            let co_requests_template = co_request_metrics
-                .map(|co_request_metrics| {
-                    let co_request_rows = co_request_metrics
-                        .into_iter()
-                        .map(report::coordinated_omission_request_metrics_row)
-                        .join("\n");
-
-                    report::coordinated_omission_request_metrics_template(&co_request_rows)
-                })
-                .unwrap_or_default();
-
-            let co_responses_template = co_response_metrics
-                .map(|co_response_metrics| {
-                    let co_response_rows = co_response_metrics
-                        .into_iter()
-                        .map(report::coordinated_omission_response_metrics_row)
-                        .join("\n");
-
-                    report::coordinated_omission_response_metrics_template(&co_response_rows)
-                })
-                .unwrap_or_default();
-
-            let scenarios_template = scenario_metrics
-                .map(|scenario_metric| {
-                    let scenarios_rows = scenario_metric
-                        .into_iter()
-                        .map(report::scenario_metrics_row)
-                        .join("\n");
-
-                    report::scenario_metrics_template(
-                        &scenarios_rows,
-                        self.graph_data
-                            .get_scenarios_per_second_graph(!self.configuration.no_granular_report)
-                            .get_markup(&self.metrics.history, test_start_time),
-                    )
-                })
-                .unwrap_or_default();
-
-            let transactions_template = transaction_metrics
-                .map(|transaction_metrics| {
-                    let transactions_rows = transaction_metrics
-                        .into_iter()
-                        .map(report::transaction_metrics_row)
-                        .join("\n");
-
-                    report::transaction_metrics_template(
-                        &transactions_rows,
-                        self.graph_data
-                            .get_transactions_per_second_graph(
-                                !self.configuration.no_granular_report,
-                            )
-                            .get_markup(&self.metrics.history, test_start_time),
-                    )
-                })
-                .unwrap_or_default();
-
-            let errors_template = errors
-                .map(|errors| {
-                    let error_rows = errors.into_iter().map(report::error_row).join("\n");
-
-                    report::errors_template(
-                        &error_rows,
-                        self.graph_data
-                            .get_errors_per_second_graph(!self.configuration.no_granular_report)
-                            .get_markup(&self.metrics.history, test_start_time),
-                    )
-                })
-                .unwrap_or_default();
-
-            let status_code_template = status_code_metrics
-                .map(|status_code_metrics| {
-                    // Compile the status_code metrics rows.
-                    let mut status_code_rows = Vec::new();
-                    for metric in status_code_metrics {
-                        status_code_rows.push(report::status_code_metrics_row(metric));
-                    }
-
-                    // Compile the status_code metrics template.
-                    report::status_code_metrics_template(&status_code_rows.join("\n"))
-                })
-                .unwrap_or_default();
-
-            // Compile the report template.
-            let report = report::build_report(
-                &users,
-                &steps_overview,
-                hosts,
-                report::GooseReportTemplates {
-                    raw_requests_template: &raw_requests_rows.join("\n"),
-                    raw_responses_template: &raw_responses_rows.join("\n"),
-                    co_requests_template: &co_requests_template,
-                    co_responses_template: &co_responses_template,
-                    transactions_template: &transactions_template,
-                    scenarios_template: &scenarios_template,
-                    status_codes_template: &status_code_template,
-                    errors_template: &errors_template,
-                    graph_rps_template: &self
-                        .graph_data
-                        .get_requests_per_second_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history, test_start_time),
-                    graph_average_response_time_template: &self
-                        .graph_data
-                        .get_average_response_time_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history, test_start_time),
-                    graph_users_per_second: &self
-                        .graph_data
-                        .get_active_users_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history, test_start_time),
-                },
-            );
-
-            // Write the report to file.
-            if let Err(e) = report_file.write_all(report.as_ref()).await {
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                });
-            };
-            // Be sure the file flushes to disk.
-            report_file.flush().await?;
-
-            info!(
-                "html report file written to: {}",
-                self.get_report_file_path().unwrap()
-            );
         }
+
+        // Build a comma separated list of hosts.
+        let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
+
+        let ReportData {
+            raw_metrics: _,
+            raw_request_metrics,
+            raw_response_metrics,
+            co_request_metrics,
+            co_response_metrics,
+            scenario_metrics,
+            transaction_metrics,
+            errors,
+            status_code_metrics,
+        } = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
+
+        // Compile the request metrics template.
+        let mut raw_requests_rows = Vec::new();
+        for metric in raw_request_metrics {
+            raw_requests_rows.push(report::raw_request_metrics_row(metric));
+        }
+
+        // Compile the response metrics template.
+        let mut raw_responses_rows = Vec::new();
+        for metric in raw_response_metrics {
+            raw_responses_rows.push(report::response_metrics_row(metric));
+        }
+
+        let co_requests_template = co_request_metrics
+            .map(|co_request_metrics| {
+                let co_request_rows = co_request_metrics
+                    .into_iter()
+                    .map(report::coordinated_omission_request_metrics_row)
+                    .join("\n");
+
+                report::coordinated_omission_request_metrics_template(&co_request_rows)
+            })
+            .unwrap_or_default();
+
+        let co_responses_template = co_response_metrics
+            .map(|co_response_metrics| {
+                let co_response_rows = co_response_metrics
+                    .into_iter()
+                    .map(report::coordinated_omission_response_metrics_row)
+                    .join("\n");
+
+                report::coordinated_omission_response_metrics_template(&co_response_rows)
+            })
+            .unwrap_or_default();
+
+        let scenarios_template = scenario_metrics
+            .map(|scenario_metric| {
+                let scenarios_rows = scenario_metric
+                    .into_iter()
+                    .map(report::scenario_metrics_row)
+                    .join("\n");
+
+                report::scenario_metrics_template(
+                    &scenarios_rows,
+                    self.graph_data
+                        .get_scenarios_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                )
+            })
+            .unwrap_or_default();
+
+        let transactions_template = transaction_metrics
+            .map(|transaction_metrics| {
+                let transactions_rows = transaction_metrics
+                    .into_iter()
+                    .map(report::transaction_metrics_row)
+                    .join("\n");
+
+                report::transaction_metrics_template(
+                    &transactions_rows,
+                    self.graph_data
+                        .get_transactions_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                )
+            })
+            .unwrap_or_default();
+
+        let errors_template = errors
+            .map(|errors| {
+                let error_rows = errors.into_iter().map(report::error_row).join("\n");
+
+                report::errors_template(
+                    &error_rows,
+                    self.graph_data
+                        .get_errors_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                )
+            })
+            .unwrap_or_default();
+
+        let status_code_template = status_code_metrics
+            .map(|status_code_metrics| {
+                // Compile the status_code metrics rows.
+                let mut status_code_rows = Vec::new();
+                for metric in status_code_metrics {
+                    status_code_rows.push(report::status_code_metrics_row(metric));
+                }
+
+                // Compile the status_code metrics template.
+                report::status_code_metrics_template(&status_code_rows.join("\n"))
+            })
+            .unwrap_or_default();
+
+        // Compile the report template.
+        let report = report::build_report(
+            &users,
+            &steps_overview,
+            hosts,
+            report::GooseReportTemplates {
+                raw_requests_template: &raw_requests_rows.join("\n"),
+                raw_responses_template: &raw_responses_rows.join("\n"),
+                co_requests_template: &co_requests_template,
+                co_responses_template: &co_responses_template,
+                transactions_template: &transactions_template,
+                scenarios_template: &scenarios_template,
+                status_codes_template: &status_code_template,
+                errors_template: &errors_template,
+                graph_rps_template: &self
+                    .graph_data
+                    .get_requests_per_second_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+                graph_average_response_time_template: &self
+                    .graph_data
+                    .get_average_response_time_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+                graph_users_per_second: &self
+                    .graph_data
+                    .get_active_users_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+            },
+        );
+
+        // Write the report to file.
+        if let Err(e) = report_file.write_all(report.as_ref()).await {
+            return Err(GooseError::InvalidOption {
+                option: "--report-file".to_string(),
+                value: path.to_string(),
+                detail: format!("Failed to create report file: {}", e),
+            });
+        };
+        // Be sure the file flushes to disk.
+        report_file.flush().await?;
+
+        info!("html report file written to: {path}");
 
         Ok(())
     }
@@ -3317,7 +3365,7 @@ pub(crate) fn calculate_response_time_percentile(
     min: usize,
     max: usize,
     percent: f32,
-) -> String {
+) -> usize {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!(
         "percentile: {}, request {} of total {}",
@@ -3330,15 +3378,16 @@ pub(crate) fn calculate_response_time_percentile(
         total_count += counter;
         if total_count >= percentile_request {
             if *value < min {
-                return format_number(min);
+                return min;
             } else if *value > max {
-                return format_number(max);
+                return max;
             } else {
-                return format_number(*value);
+                return *value;
             }
         }
     }
-    format_number(0)
+
+    0
 }
 
 /// Helper to count and aggregate seen status codes.
@@ -3421,21 +3470,42 @@ mod test {
         response_times.insert(2, 1);
         response_times.insert(3, 1);
         // 3 * .5 = 1.5, rounds to 2.
-        assert!(calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5),
+            2
+        );
         response_times.insert(3, 2);
         // 4 * .5 = 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5),
+            2
+        );
         // 4 * .25 = 1
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25) == "1");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25),
+            1
+        );
         // 4 * .75 = 3
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75) == "3");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75),
+            3
+        );
         // 4 * 1 = 4 (and the 4th response time is also 3)
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0) == "3");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0),
+            3
+        );
 
         // 4 * .5 = 2, but uses specified minimum of 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25),
+            2
+        );
         // 4 * .75 = 3, but uses specified maximum of 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75),
+            2
+        );
 
         response_times.insert(10, 25);
         response_times.insert(20, 25);
@@ -3443,9 +3513,18 @@ mod test {
         response_times.insert(50, 25);
         response_times.insert(100, 10);
         response_times.insert(200, 1);
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9) == "50");
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99) == "100");
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999) == "200");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9),
+            50
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99),
+            100
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999),
+            200
+        );
     }
 
     #[test]

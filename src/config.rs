@@ -100,9 +100,9 @@ pub struct GooseConfiguration {
     /// Doesn't display an error summary
     #[options(no_short)]
     pub no_error_summary: bool,
-    /// Create an html-formatted report
+    /// Create a report file
     #[options(no_short, meta = "NAME")]
-    pub report_file: String,
+    pub report_file: Vec<String>,
     /// Disable granular graphs in report file
     #[options(no_short)]
     pub no_granular_report: bool,
@@ -282,7 +282,7 @@ pub(crate) struct GooseDefaults {
     /// An optional default for not displaying an error summary.
     pub no_error_summary: Option<bool>,
     /// An optional default for the html-formatted report file name.
-    pub report_file: Option<String>,
+    pub report_file: Option<Vec<String>>,
     /// An optional default for the flag that disables granular data in HTML report graphs.
     pub no_granular_report: Option<bool>,
     /// An optional default for the requests log file name.
@@ -569,7 +569,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                     Some(value.to_string())
                 }
             }
-            GooseDefault::ReportFile => self.defaults.report_file = Some(value.to_string()),
+            GooseDefault::ReportFile => self.defaults.report_file = Some(vec![value.to_string()]),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
             GooseDefault::Scenarios => {
@@ -1161,6 +1161,24 @@ impl GooseConfigure<String> for GooseConfiguration {
         None
     }
 }
+impl GooseConfigure<Vec<String>> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`String`] value.
+    fn get_value(&self, values: Vec<GooseValue<Vec<String>>>) -> Option<Vec<String>> {
+        for value in values {
+            if let Some(v) = value.value {
+                if value.filter {
+                    continue;
+                } else {
+                    if !value.message.is_empty() {
+                        info!("{} = {:?}", value.message, v)
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+}
 impl GooseConfigure<bool> for GooseConfiguration {
     /// Use [`GooseValue`] to set a [`bool`] value.
     fn get_value(&self, values: Vec<GooseValue<bool>>) -> Option<bool> {
@@ -1563,23 +1581,22 @@ impl GooseConfiguration {
             .unwrap_or(false);
 
         // Configure `report_file`.
-        self.report_file = match self.get_value(vec![
-            // Use --report-file if set.
-            GooseValue {
-                value: Some(self.report_file.to_string()),
-                filter: self.report_file.is_empty(),
-                message: "report_file",
-            },
-            // Otherwise use GooseDefault if set.
-            GooseValue {
-                value: defaults.report_file.clone(),
-                filter: defaults.report_file.is_none(),
-                message: "report_file",
-            },
-        ]) {
-            Some(v) => v,
-            None => "".to_string(),
-        };
+        self.report_file = self
+            .get_value(vec![
+                // Use --report-file if set.
+                GooseValue {
+                    value: Some(self.report_file.clone()),
+                    filter: self.report_file.is_empty(),
+                    message: "report_file",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.report_file.clone(),
+                    filter: defaults.report_file.is_none(),
+                    message: "report_file",
+                },
+            ])
+            .unwrap_or_default();
 
         // Configure `no_granular_report`.
         self.no_debug_body = self
@@ -2013,7 +2030,7 @@ impl GooseConfiguration {
             } else if !self.report_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.report_file`".to_string(),
-                    value: self.report_file.to_string(),
+                    value: format!("{:?}", self.report_file),
                     detail:
                         "`configuration.report_file` can not be set with `configuration.no_metrics`."
                             .to_string(),
@@ -2273,7 +2290,7 @@ mod test {
         assert!(goose_attack.defaults.no_autostart == Some(true));
         assert!(goose_attack.defaults.timeout == Some(timeout));
         assert!(goose_attack.defaults.no_gzip == Some(true));
-        assert!(goose_attack.defaults.report_file == Some(report_file));
+        assert!(goose_attack.defaults.report_file == Some(vec![report_file]));
         assert!(goose_attack.defaults.request_log == Some(request_log));
         assert!(goose_attack.defaults.request_format == Some(GooseLogFormat::Raw));
         assert!(goose_attack.defaults.error_log == Some(error_log));
