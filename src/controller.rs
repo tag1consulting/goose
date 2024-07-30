@@ -33,13 +33,13 @@ use tokio_tungstenite::tungstenite::Message;
 ///      - Commands will be displayed in the help screen in the order defined here, so
 ///        they should be logically grouped.
 ///  2. Add the new command to `ControllerCommand::details` and populate all
-///    `ControllerCommandDetails`, using other commands as an implementation reference.
-///      - The `regex` is used to identify the command, and optionally to extract a
-///        value (for example see `Hatchrate` and `Users`)
-///      - If additional validation is required beyond the regular expression, add
-///        the necessary logic to `ControllerCommand::validate_value`.
+///     `ControllerCommandDetails`, using other commands as an implementation reference.
+///       - The `regex` is used to identify the command, and optionally to extract a
+///         value (for example see `Hatchrate` and `Users`)
+///       - If additional validation is required beyond the regular expression, add
+///         the necessary logic to `ControllerCommand::validate_value`.
 ///  3. Add any necessary parent process logic for the command to
-///    `GooseAttack::handle_controller_requests` (also in this file).
+///     `GooseAttack::handle_controller_requests` (also in this file).
 ///  4. Add a test for the new command in tests/controller.rs.
 #[derive(Clone, Debug, EnumIter, PartialEq, Eq)]
 pub enum ControllerCommand {
@@ -642,10 +642,8 @@ impl GooseAttack {
                                     AttackPhase::Idle => {
                                         let current_users = if !self.test_plan.steps.is_empty() {
                                             self.test_plan.steps[self.test_plan.current].0
-                                        } else if let Some(users) = self.configuration.users {
-                                            users
                                         } else {
-                                            0
+                                            self.configuration.users.unwrap_or_default()
                                         };
                                         info!(
                                             "changing users from {:?} to {}",
@@ -1410,13 +1408,7 @@ impl Controller<ControllerTelnetMessage> for ControllerState {
         raw_value: ControllerTelnetMessage,
     ) -> Result<String, String> {
         let command_string = match str::from_utf8(&raw_value) {
-            Ok(m) => {
-                if let Some(c) = m.lines().next() {
-                    c
-                } else {
-                    ""
-                }
-            }
+            Ok(m) => m.lines().next().unwrap_or_default(),
             Err(e) => {
                 let error = format!("ignoring unexpected input from telnet controller: {}", e);
                 info!("{}", error);

@@ -522,7 +522,7 @@ impl Scenario {
         Scenario {
             name: name.to_string(),
             machine_name: Scenario::get_machine_name(name),
-            scenarios_index: usize::max_value(),
+            scenarios_index: usize::MAX,
             weight: 1,
             transaction_wait: None,
             transactions: Vec::new(),
@@ -961,7 +961,7 @@ impl GooseUser {
             metrics_channel: None,
             shutdown_channel: None,
             // A value of max_value() indicates this user isn't fully initialized yet.
-            weighted_users_index: usize::max_value(),
+            weighted_users_index: usize::MAX,
             load_test_hash,
             request_cadence: GooseRequestCadence::new(),
             slept: 0,
@@ -1144,9 +1144,9 @@ impl GooseUser {
     /// of precedence:
     ///  1. `--host` (host specified on the command line when running load test)
     ///  2. [`Scenario`](./struct.Scenario.html)`.host` (default host defined for the
-    /// current scenario)
+    ///     current scenario)
     ///  3. [`GooseDefault::Host`](../config/enum.GooseDefault.html#variant.Host) (default host
-    /// defined for the current load test)
+    ///     defined for the current load test)
     pub fn build_url(&self, path: &str) -> Result<String, Box<TransactionError>> {
         // If URL includes a host, simply use it.
         if let Ok(parsed_path) = Url::parse(path) {
@@ -2177,7 +2177,7 @@ impl GooseUser {
     ///  - A manually built client is specific to a single Goose thread -- if you are
     ///    generating a large load test with many users, each will need to manually build their
     ///    own client (typically you'd do this in a Transaction that is registered with
-    ///   [`Transaction::set_on_start()`] in each Scenario requiring a custom client;
+    ///    [`Transaction::set_on_start()`] in each Scenario requiring a custom client;
     ///  - Manually building a client will completely replace the automatically built client
     ///    with a brand new one, so any configuration, cookies or headers set in the previously
     ///    built client will be gone;
@@ -2811,7 +2811,7 @@ impl Transaction {
     pub fn new(function: TransactionFunction) -> Self {
         trace!("new transaction");
         Transaction {
-            transactions_index: usize::max_value(),
+            transactions_index: usize::MAX,
             name: "".to_string(),
             weight: 1,
             sequence: 0,
@@ -3081,7 +3081,7 @@ mod tests {
 
         let mut scenario = scenario!("foo");
         assert_eq!(scenario.name, "foo");
-        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.weight, 1);
         assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
@@ -3094,7 +3094,7 @@ mod tests {
         scenario = scenario.register_transaction(transaction!(test_function_a));
         assert_eq!(scenario.transactions.len(), 1);
         assert_eq!(scenario.weighted_transactions.len(), 0);
-        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.weight, 1);
         assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
@@ -3103,7 +3103,7 @@ mod tests {
         scenario = scenario.register_transaction(transaction!(test_function_b));
         assert_eq!(scenario.transactions.len(), 2);
         assert_eq!(scenario.weighted_transactions.len(), 0);
-        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.weight, 1);
         assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
@@ -3112,7 +3112,7 @@ mod tests {
         scenario = scenario.register_transaction(transaction!(test_function_a));
         assert_eq!(scenario.transactions.len(), 3);
         assert_eq!(scenario.weighted_transactions.len(), 0);
-        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.weight, 1);
         assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
@@ -3122,7 +3122,7 @@ mod tests {
         assert_eq!(scenario.weight, 50);
         assert_eq!(scenario.transactions.len(), 3);
         assert_eq!(scenario.weighted_transactions.len(), 0);
-        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.transaction_wait, None);
         assert!(scenario.host.is_none());
 
@@ -3136,7 +3136,7 @@ mod tests {
         assert_eq!(scenario.weight, 5);
         assert_eq!(scenario.transactions.len(), 3);
         assert_eq!(scenario.weighted_transactions.len(), 0);
-        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.transaction_wait, None);
 
         // Host field can be changed.
@@ -3155,7 +3155,7 @@ mod tests {
         assert_eq!(scenario.weight, 5);
         assert_eq!(scenario.transactions.len(), 3);
         assert_eq!(scenario.weighted_transactions.len(), 0);
-        assert_eq!(scenario.scenarios_index, usize::max_value());
+        assert_eq!(scenario.scenarios_index, usize::MAX);
 
         // Wait time can be changed.
         scenario = scenario
@@ -3178,7 +3178,7 @@ mod tests {
 
         // Initialize scenario.
         let mut transaction = transaction!(test_function_a);
-        assert_eq!(transaction.transactions_index, usize::max_value());
+        assert_eq!(transaction.transactions_index, usize::MAX);
         assert_eq!(transaction.name, "".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
@@ -3254,7 +3254,7 @@ mod tests {
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
         let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0, None).unwrap();
         assert_eq!(user.scenarios_index, 0);
-        assert_eq!(user.weighted_users_index, usize::max_value());
+        assert_eq!(user.weighted_users_index, usize::MAX);
 
         // Confirm the URLs are correctly built using the default_host.
         let url = user.build_url("/foo").unwrap();
