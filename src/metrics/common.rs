@@ -13,7 +13,7 @@ use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, serde::Serialize)]
-pub struct ReportData<'m> {
+pub(crate) struct ReportData<'m> {
     pub raw_metrics: &'m GooseMetrics,
 
     pub raw_request_metrics: Vec<RequestMetric>,

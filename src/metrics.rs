@@ -10,10 +10,12 @@
 
 mod common;
 
+pub(crate) use common::ReportData;
+
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario};
 use crate::logger::GooseLog;
-use crate::metrics::common::{ReportData, ReportOptions};
+use crate::metrics::common::ReportOptions;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
@@ -2426,7 +2428,7 @@ impl GooseMetrics {
     }
 
     // Determine the seconds, minutes and hours between two chrono:DateTimes.
-    fn get_seconds_minutes_hours(
+    pub(crate) fn get_seconds_minutes_hours(
         &self,
         start: &chrono::DateTime<chrono::Utc>,
         end: &chrono::DateTime<chrono::Utc>,
@@ -3022,6 +3024,9 @@ impl GooseAttack {
                 Some("json") => {
                     self.write_json_report(create(path).await?).await?;
                 }
+                Some("md") => {
+                    self.write_markdown_report(create(path).await?).await?;
+                }
                 None => {
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
@@ -3056,6 +3061,20 @@ impl GooseAttack {
         serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
 
         Ok(())
+    }
+
+    /// Write a Markdown report.
+    pub(crate) async fn write_markdown_report(&self, report_file: File) -> Result<(), GooseError> {
+        let data = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
+
+        report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)
     }
 
     // Write an HTML-formatted report.

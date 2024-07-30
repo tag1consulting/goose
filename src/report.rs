@@ -1,5 +1,8 @@
 //! Optionally writes an html-formatted summary report after running a load test.
 mod common;
+mod markdown;
+
+pub(crate) use markdown::write_markdown_report;
 
 use crate::{
     metrics::{self, format_number},
