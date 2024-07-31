@@ -4,11 +4,12 @@ mod markdown;
 
 pub(crate) use markdown::write_markdown_report;
 
+use crate::goose::GooseMethod;
 use crate::{
-    metrics::{self, format_number},
+    metrics::{self, DeltaEval, DeltaTo, Value},
     report::common::OrEmpty,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The following templates are necessary to build an html-formatted summary report.
@@ -28,78 +29,151 @@ pub(crate) struct GooseReportTemplates<'a> {
 }
 
 /// Defines the metrics reported about requests.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RequestMetric {
     pub method: String,
     pub name: String,
-    pub number_of_requests: usize,
-    pub number_of_failures: usize,
-    pub response_time_average: f32,
-    pub response_time_minimum: usize,
-    pub response_time_maximum: usize,
-    pub requests_per_second: f32,
-    pub failures_per_second: f32,
+    pub number_of_requests: Value<usize>,
+    pub number_of_failures: Value<usize>,
+    pub response_time_average: Value<f32>,
+    pub response_time_minimum: Value<usize>,
+    pub response_time_maximum: Value<usize>,
+    pub requests_per_second: Value<f32>,
+    pub failures_per_second: Value<f32>,
+}
+
+impl DeltaTo for RequestMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.number_of_requests.eval(other.number_of_requests);
+        self.number_of_requests.eval(other.number_of_requests);
+        self.response_time_average.eval(other.response_time_average);
+        self.response_time_minimum.eval(other.response_time_minimum);
+        self.response_time_maximum.eval(other.response_time_maximum);
+        self.requests_per_second.eval(other.requests_per_second);
+        self.failures_per_second.eval(other.failures_per_second);
+    }
 }
 
 /// Defines the metrics reported about Coordinated Omission requests.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CORequestMetric {
     pub method: String,
     pub name: String,
-    pub response_time_average: f32,
-    pub response_time_standard_deviation: f32,
-    pub response_time_maximum: usize,
+    pub response_time_average: Value<f32>,
+    pub response_time_standard_deviation: Value<f32>,
+    pub response_time_maximum: Value<usize>,
+}
+
+impl DeltaTo for CORequestMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.response_time_average.eval(other.response_time_average);
+        self.response_time_standard_deviation
+            .eval(other.response_time_standard_deviation);
+        self.response_time_maximum.eval(other.response_time_maximum);
+    }
 }
 
 /// Defines the metrics reported about responses.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ResponseMetric {
     pub method: String,
     pub name: String,
-    pub percentile_50: usize,
-    pub percentile_60: usize,
-    pub percentile_70: usize,
-    pub percentile_80: usize,
-    pub percentile_90: usize,
-    pub percentile_95: usize,
-    pub percentile_99: usize,
-    pub percentile_100: usize,
+    pub percentile_50: Value<usize>,
+    pub percentile_60: Value<usize>,
+    pub percentile_70: Value<usize>,
+    pub percentile_80: Value<usize>,
+    pub percentile_90: Value<usize>,
+    pub percentile_95: Value<usize>,
+    pub percentile_99: Value<usize>,
+    pub percentile_100: Value<usize>,
+}
+
+impl DeltaTo for ResponseMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.percentile_50.eval(other.percentile_50);
+        self.percentile_60.eval(other.percentile_60);
+        self.percentile_70.eval(other.percentile_70);
+        self.percentile_80.eval(other.percentile_80);
+        self.percentile_90.eval(other.percentile_90);
+        self.percentile_95.eval(other.percentile_95);
+        self.percentile_99.eval(other.percentile_99);
+        self.percentile_100.eval(other.percentile_100);
+    }
 }
 
 /// Defines the metrics reported about transactions.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TransactionMetric {
     pub is_scenario: bool,
     pub transaction: String,
     pub name: String,
-    pub number_of_requests: usize,
-    pub number_of_failures: usize,
-    pub response_time_average: Option<f32>,
-    pub response_time_minimum: usize,
-    pub response_time_maximum: usize,
-    pub requests_per_second: Option<f32>,
-    pub failures_per_second: Option<f32>,
+    pub number_of_requests: Value<usize>,
+    pub number_of_failures: Value<usize>,
+    pub response_time_average: Option<Value<f32>>,
+    pub response_time_minimum: Value<usize>,
+    pub response_time_maximum: Value<usize>,
+    pub requests_per_second: Option<Value<f32>>,
+    pub failures_per_second: Option<Value<f32>>,
+}
+
+impl DeltaTo for TransactionMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.number_of_requests.eval(other.number_of_requests);
+        self.number_of_failures.eval(other.number_of_failures);
+        self.response_time_average.eval(other.response_time_average);
+        self.response_time_minimum.eval(other.response_time_minimum);
+        self.response_time_maximum.eval(other.response_time_maximum);
+        self.requests_per_second.eval(other.requests_per_second);
+        self.failures_per_second.eval(other.failures_per_second);
+    }
 }
 
 /// Defines the metrics reported about scenarios.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ScenarioMetric {
     pub name: String,
-    pub users: usize,
-    pub count: usize,
-    pub response_time_average: f32,
-    pub response_time_minimum: usize,
-    pub response_time_maximum: usize,
-    pub count_per_second: f32,
-    pub iterations: f32,
+    pub users: Value<usize>,
+    pub count: Value<usize>,
+    pub response_time_average: Value<f32>,
+    pub response_time_minimum: Value<usize>,
+    pub response_time_maximum: Value<usize>,
+    pub count_per_second: Value<f32>,
+    pub iterations: Value<f32>,
+}
+
+impl DeltaTo for ScenarioMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.users.eval(other.users);
+        self.count.eval(other.count);
+        self.response_time_average.eval(other.response_time_average);
+        self.response_time_minimum.eval(other.response_time_minimum);
+        self.response_time_maximum.eval(other.response_time_maximum);
+        self.count_per_second.eval(other.count_per_second);
+        self.iterations.eval(other.iterations);
+    }
 }
 
 /// Defines the metrics reported about status codes.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct StatusCodeMetric {
     pub method: String,
     pub name: String,
     pub status_codes: String,
+}
+
+/// Defines the metrics report about errors
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct ErrorMetric {
+    pub method: GooseMethod,
+    pub name: String,
+    pub error: String,
+    pub occurrences: Value<usize>,
+}
+
+impl DeltaTo for ErrorMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.occurrences.eval(other.occurrences);
+    }
 }
 
 /// Helper to generate a single response metric.
@@ -127,14 +201,14 @@ pub(crate) fn get_response_metric(
     ResponseMetric {
         method: method.to_string(),
         name: name.to_string(),
-        percentile_50: percentiles[0],
-        percentile_60: percentiles[1],
-        percentile_70: percentiles[2],
-        percentile_80: percentiles[3],
-        percentile_90: percentiles[4],
-        percentile_95: percentiles[5],
-        percentile_99: percentiles[6],
-        percentile_100: percentiles[7],
+        percentile_50: percentiles[0].into(),
+        percentile_60: percentiles[1].into(),
+        percentile_70: percentiles[2].into(),
+        percentile_80: percentiles[3].into(),
+        percentile_90: percentiles[4].into(),
+        percentile_95: percentiles[5].into(),
+        percentile_99: percentiles[6].into(),
+        percentile_100: percentiles[7].into(),
     }
 }
 
@@ -181,14 +255,14 @@ pub(crate) fn response_metrics_row(metric: ResponseMetric) -> String {
         </tr>"#,
         method = metric.method,
         name = metric.name,
-        percentile_50 = format_number(metric.percentile_50),
-        percentile_60 = format_number(metric.percentile_60),
-        percentile_70 = format_number(metric.percentile_70),
-        percentile_80 = format_number(metric.percentile_80),
-        percentile_90 = format_number(metric.percentile_90),
-        percentile_95 = format_number(metric.percentile_95),
-        percentile_99 = format_number(metric.percentile_99),
-        percentile_100 = format_number(metric.percentile_100),
+        percentile_50 = metric.percentile_50,
+        percentile_60 = metric.percentile_60,
+        percentile_70 = metric.percentile_70,
+        percentile_80 = metric.percentile_80,
+        percentile_90 = metric.percentile_90,
+        percentile_95 = metric.percentile_95,
+        percentile_99 = metric.percentile_99,
+        percentile_100 = metric.percentile_100,
     )
 }
 
@@ -284,14 +358,14 @@ pub(crate) fn coordinated_omission_response_metrics_row(metric: ResponseMetric) 
         </tr>"#,
         method = metric.method,
         name = metric.name,
-        percentile_50 = format_number(metric.percentile_50),
-        percentile_60 = format_number(metric.percentile_60),
-        percentile_70 = format_number(metric.percentile_70),
-        percentile_80 = format_number(metric.percentile_80),
-        percentile_90 = format_number(metric.percentile_90),
-        percentile_95 = format_number(metric.percentile_95),
-        percentile_99 = format_number(metric.percentile_99),
-        percentile_100 = format_number(metric.percentile_100),
+        percentile_50 = metric.percentile_50,
+        percentile_60 = metric.percentile_60,
+        percentile_70 = metric.percentile_70,
+        percentile_80 = metric.percentile_80,
+        percentile_90 = metric.percentile_90,
+        percentile_95 = metric.percentile_95,
+        percentile_99 = metric.percentile_99,
+        percentile_100 = metric.percentile_100,
     )
 }
 
@@ -386,8 +460,8 @@ pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
         </tr>"#,
             transaction = metric.transaction,
             name = metric.name,
-            number_of_requests = format_number(metric.number_of_requests),
-            number_of_failures = format_number(metric.number_of_failures),
+            number_of_requests = metric.number_of_requests,
+            number_of_failures = metric.number_of_failures,
             response_time_average = OrEmpty(metric.response_time_average),
             response_time_minimum = metric.response_time_minimum,
             response_time_maximum = metric.response_time_maximum,
@@ -442,8 +516,8 @@ pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
             <td>{iterations:.2}</td>
         </tr>"#,
         name = metric.name,
-        users = format_number(metric.users),
-        count = format_number(metric.count),
+        users = metric.users,
+        count = metric.count,
         response_time_average = metric.response_time_average,
         response_time_minimum = metric.response_time_minimum,
         response_time_maximum = metric.response_time_maximum,
@@ -478,7 +552,7 @@ pub(crate) fn errors_template(error_rows: &str, graph: String) -> String {
 }
 
 /// Build an individual error row in the html report.
-pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
+pub fn error_row(error: &ErrorMetric) -> String {
     format!(
         r#"<tr>
         <td>{occurrences}</td>

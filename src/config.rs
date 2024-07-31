@@ -103,6 +103,9 @@ pub struct GooseConfiguration {
     /// Create reports, can be used multiple times (supports .html, .htm, .md, .json)
     #[options(no_short, meta = "NAME")]
     pub report_file: Vec<String>,
+    /// An optional baseline, for rendering the report
+    #[options(no_short, meta = "NAME")]
+    pub baseline_file: Option<String>,
     /// Disable granular graphs in report file
     #[options(no_short)]
     pub no_granular_report: bool,
@@ -283,6 +286,8 @@ pub(crate) struct GooseDefaults {
     pub no_error_summary: Option<bool>,
     /// An optional default for the html-formatted report file name.
     pub report_file: Option<Vec<String>>,
+    /// An optional baseline file for the reports.
+    pub baseline_file: Option<String>,
     /// An optional default for the flag that disables granular data in HTML report graphs.
     pub no_granular_report: Option<bool>,
     /// An optional default for the requests log file name.
@@ -1597,6 +1602,21 @@ impl GooseConfiguration {
                 },
             ])
             .unwrap_or_default();
+
+        self.baseline_file = self.get_value(vec![
+            // Use --baseline-file if set.
+            GooseValue {
+                value: self.baseline_file.clone(),
+                filter: self.baseline_file.is_none(),
+                message: "baseline_file",
+            },
+            // Otherwise, use GooseDefault if set.
+            GooseValue {
+                value: defaults.baseline_file.clone(),
+                filter: defaults.baseline_file.is_none(),
+                message: "baseline_file",
+            },
+        ]);
 
         // Configure `no_granular_report`.
         self.no_debug_body = self
