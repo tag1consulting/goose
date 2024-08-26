@@ -3018,7 +3018,7 @@ impl GooseAttack {
         for report in &self.configuration.report_file {
             let path = PathBuf::from(report);
             match path.extension().map(OsStr::to_string_lossy).as_deref() {
-                Some("html") => {
+                Some("html" | "htm") => {
                     self.write_html_report(create(path).await?, report).await?;
                 }
                 Some("json") => {
