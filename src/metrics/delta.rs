@@ -1,3 +1,4 @@
+use num_format::ToFormattedStr;
 use std::fmt::{Debug, Display, Formatter, Write};
 
 pub trait DeltaValue: Copy + Debug + Display {
@@ -138,6 +139,18 @@ impl<T: DeltaValue> Display for Value<T> {
 /// Build a delta to a baseline
 pub trait DeltaTo {
     fn delta_to(&mut self, other: &Self);
+}
+
+pub struct Formatted<T>(pub T);
+
+impl<T: ToFormattedStr> Display for Formatted<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use num_format::{Locale, ToFormattedString};
+
+        f.write_str(&self.0.to_formatted_string(&Locale::en))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
