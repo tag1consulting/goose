@@ -61,7 +61,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::{atomic::AtomicUsize, Arc, RwLock};
 use std::time::{self, Duration};
 use std::{fmt, io};
-use tokio::fs::File;
 
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
@@ -1723,16 +1722,8 @@ impl GooseAttack {
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
-        // If enabled, try to create the report file to confirm access.
-        for file in &self.configuration.report_file {
-            let _ = File::create(&file)
-                .await
-                .map_err(|err| GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: file.clone(),
-                    detail: format!("Failed to create report file: {err}"),
-                })?;
-        }
+        // Try to create the requested report files, to confirm access.
+        self.create_reports().await?;
 
         // Record when the GooseAttack officially started.
         self.started = Some(time::Instant::now());

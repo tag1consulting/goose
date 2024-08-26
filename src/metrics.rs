@@ -3003,8 +3003,11 @@ impl GooseAttack {
         };
     }
 
-    /// Write all requested reports.
-    pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
+    /// Process all requested reports.
+    ///
+    /// If `write` is true, then also write the data. Otherwise just create the files to ensure
+    /// we have access.
+    async fn process_reports(&self, write: bool) -> Result<(), GooseError> {
         let create = |path: PathBuf| async move {
             File::create(&path)
                 .await
@@ -3019,13 +3022,22 @@ impl GooseAttack {
             let path = PathBuf::from(report);
             match path.extension().map(OsStr::to_string_lossy).as_deref() {
                 Some("html" | "htm") => {
-                    self.write_html_report(create(path).await?, report).await?;
+                    let file = create(path).await?;
+                    if write {
+                        self.write_html_report(file, report).await?;
+                    }
                 }
                 Some("json") => {
-                    self.write_json_report(create(path).await?).await?;
+                    let file = create(path).await?;
+                    if write {
+                        self.write_json_report(file).await?;
+                    }
                 }
                 Some("md") => {
-                    self.write_markdown_report(create(path).await?).await?;
+                    let file = create(path).await?;
+                    if write {
+                        self.write_markdown_report(file).await?;
+                    }
                 }
                 None => {
                     return Err(GooseError::InvalidOption {
@@ -3045,6 +3057,16 @@ impl GooseAttack {
         }
 
         Ok(())
+    }
+
+    /// Create all requested reports, to ensure we have access.
+    pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
+        self.process_reports(false).await
+    }
+
+    /// Write all requested reports.
+    pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
+        self.process_reports(true).await
     }
 
     /// Write a JSON report.
