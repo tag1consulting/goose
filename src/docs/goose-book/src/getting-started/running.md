@@ -14,7 +14,7 @@ Error: InvalidOption { option: "--host", value: "", detail: "A host must be defi
 
 The load test fails with an error as it hasn't been told the host you want to load test.
 
-So, let's try again, this time passing in the `--host` flag. We will also add the `--report-file` flag, [which will generate a HTML report](common.html#writing-an-html-formatted-report), and `--no-reset-metrics` to preserve all information including the load test startup. The same information will also [be printed to the command line](metrics.md) (without graphs). After running for a few seconds, press `ctrl-c` one time to gracefully stop the load test:
+So, let's try again, this time passing in the `--host` flag. We will also add the `--report-file` flag with a `.html` file extension, [which will generate an HTML report](common.html#writing-an-html-formatted-report), and `--no-reset-metrics` to preserve all information including the load test startup. The same information will also [be printed to the command line](metrics.md) (without graphs). After running for a few seconds, press `ctrl-c` one time to gracefully stop the load test:
 
 ```bash
 % cargo run --release -- --host http://umami.ddev.site --report-file=report.html --no-reset-metrics

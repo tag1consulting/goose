@@ -100,7 +100,7 @@ pub struct GooseConfiguration {
     /// Doesn't display an error summary
     #[options(no_short)]
     pub no_error_summary: bool,
-    /// Create a report file
+    /// Create reports, can be used multiple times (supports .html, .htm, .md, .json)
     #[options(no_short, meta = "NAME")]
     pub report_file: Vec<String>,
     /// Disable granular graphs in report file
