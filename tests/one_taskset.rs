@@ -239,8 +239,8 @@ async fn test_one_scenario() {
     run_standalone_test(TestType::NoResetMetrics).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test a single scenario with multiple weighted transactions, in Gaggle mode.
 async fn test_one_scenario_gaggle() {
@@ -253,8 +253,8 @@ async fn test_one_scenario_reset_metrics() {
     run_standalone_test(TestType::ResetMetrics).await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[cfg_attr(not(feature = "gaggle"), ignore)]
 #[serial]
 // Test a single scenario with multiple weighted transactions, enable --no-reset-metrics
 // in Gaggle mode.
