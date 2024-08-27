@@ -8,9 +8,14 @@
 //! contained [`TransactionMetrics`], [`GooseRequestMetrics`], and
 //! [`GooseErrorMetrics`] are displayed in tables.
 
+mod common;
+
+pub(crate) use common::ReportData;
+
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario};
 use crate::logger::GooseLog;
+use crate::metrics::common::ReportOptions;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
@@ -24,9 +29,13 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fmt::Write;
+use std::io::BufWriter;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::{f32, fmt};
+use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 /// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
@@ -2419,7 +2428,7 @@ impl GooseMetrics {
     }
 
     // Determine the seconds, minutes and hours between two chrono:DateTimes.
-    fn get_seconds_minutes_hours(
+    pub(crate) fn get_seconds_minutes_hours(
         &self,
         start: &chrono::DateTime<chrono::Utc>,
         end: &chrono::DateTime<chrono::Utc>,
@@ -2994,46 +3003,134 @@ impl GooseAttack {
         };
     }
 
-    // Write an HTML-formatted report, if enabled.
-    pub(crate) async fn write_html_report(&mut self) -> Result<(), GooseError> {
-        // If enabled, try to create the report file to confirm access.
-        let report_file = match self.prepare_report_file().await {
-            Ok(f) => f,
-            Err(e) => {
-                return Err(GooseError::InvalidOption {
+    /// Process all requested reports.
+    ///
+    /// If `write` is true, then also write the data. Otherwise just create the files to ensure
+    /// we have access.
+    async fn process_reports(&self, write: bool) -> Result<(), GooseError> {
+        let create = |path: PathBuf| async move {
+            File::create(&path)
+                .await
+                .map_err(|err| GooseError::InvalidOption {
                     option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
+                    value: path.to_string_lossy().to_string(),
+                    detail: format!("Failed to create report file: {}", err),
                 })
-            }
         };
 
+        for report in &self.configuration.report_file {
+            let path = PathBuf::from(report);
+            match path.extension().map(OsStr::to_string_lossy).as_deref() {
+                Some("html" | "htm") => {
+                    let file = create(path).await?;
+                    if write {
+                        self.write_html_report(file, report).await?;
+                    }
+                }
+                Some("json") => {
+                    let file = create(path).await?;
+                    if write {
+                        self.write_json_report(file).await?;
+                    }
+                }
+                Some("md") => {
+                    let file = create(path).await?;
+                    if write {
+                        self.write_markdown_report(file).await?;
+                    }
+                }
+                None => {
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report.clone(),
+                        detail: "Missing file extension for report".to_string(),
+                    })
+                }
+                Some(ext) => {
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report.clone(),
+                        detail: format!("Unknown report file type: {ext}"),
+                    })
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create all requested reports, to ensure we have access.
+    pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
+        self.process_reports(false).await
+    }
+
+    /// Write all requested reports.
+    pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
+        self.process_reports(true).await
+    }
+
+    /// Write a JSON report.
+    pub(crate) async fn write_json_report(&self, report_file: File) -> Result<(), GooseError> {
+        let data = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
+
+        serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
+
+        Ok(())
+    }
+
+    /// Write a Markdown report.
+    pub(crate) async fn write_markdown_report(&self, report_file: File) -> Result<(), GooseError> {
+        let data = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
+
+        report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)
+    }
+
+    // Write an HTML-formatted report.
+    pub(crate) async fn write_html_report(
+        &self,
+        mut report_file: File,
+        path: &str,
+    ) -> Result<(), GooseError> {
         // Only write the report if enabled.
-        if let Some(mut report_file) = report_file {
-            let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
-            // Prepare report summary variables.
-            let users = self.metrics.maximum_users.to_string();
+        let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
-            let mut steps_overview = String::new();
-            for step in self.metrics.history.windows(2) {
-                let (seconds, minutes, hours) = self
-                    .metrics
-                    .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
-                let started = Local
-                    .timestamp_opt(step[0].timestamp.timestamp(), 0)
-                    // @TODO: error handling
-                    .unwrap()
-                    .format("%y-%m-%d %H:%M:%S");
-                let stopped = Local
-                    .timestamp_opt(step[1].timestamp.timestamp(), 0)
-                    // @TODO: error handling
-                    .unwrap()
-                    .format("%y-%m-%d %H:%M:%S");
-                match &step[0].action {
-                    // For maintaining just show the current number of users.
-                    TestPlanStepAction::Maintaining => {
-                        let _ = write!(steps_overview,
+        // Prepare report summary variables.
+        let users = self.metrics.maximum_users.to_string();
+
+        let mut steps_overview = String::new();
+        for step in self.metrics.history.windows(2) {
+            let (seconds, minutes, hours) = self
+                .metrics
+                .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
+            let started = Local
+                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
+                .format("%y-%m-%d %H:%M:%S");
+            let stopped = Local
+                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
+                .format("%y-%m-%d %H:%M:%S");
+            match &step[0].action {
+                // For maintaining just show the current number of users.
+                TestPlanStepAction::Maintaining => {
+                    let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
                             step[0].action,
                             started,
@@ -3043,10 +3140,10 @@ impl GooseAttack {
                             seconds,
                             step[0].users,
                         );
-                    }
-                    // For increasing show the current number of users to the new number of users.
-                    TestPlanStepAction::Increasing => {
-                        let _ = write!(steps_overview,
+                }
+                // For increasing show the current number of users to the new number of users.
+                TestPlanStepAction::Increasing => {
+                    let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
                             step[0].action,
                             started,
@@ -3057,10 +3154,10 @@ impl GooseAttack {
                             step[0].users,
                             step[1].users,
                         );
-                    }
-                    // For decreasing show the new number of users from the current number of users.
-                    TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
-                        let _ = write!(steps_overview,
+                }
+                // For decreasing show the new number of users from the current number of users.
+                TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
+                    let _ = write!(steps_overview,
                             "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
                             step[0].action,
                             started,
@@ -3071,479 +3168,116 @@ impl GooseAttack {
                             step[1].users,
                             step[0].users,
                         );
-                    }
-                    TestPlanStepAction::Finished => {
-                        unreachable!("there shouldn't be a step after finished");
-                    }
+                }
+                TestPlanStepAction::Finished => {
+                    unreachable!("there shouldn't be a step after finished");
                 }
             }
+        }
 
-            // Build a comma separated list of hosts.
-            let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
+        // Build a comma separated list of hosts.
+        let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
 
-            // Prepare requests and responses variables.
-            let mut raw_request_metrics = Vec::new();
-            let mut co_request_metrics = Vec::new();
-            let mut raw_response_metrics = Vec::new();
-            let mut co_response_metrics = Vec::new();
-            let mut raw_aggregate_total_count = 0;
-            let mut co_aggregate_total_count = 0;
-            let mut raw_aggregate_fail_count = 0;
-            let mut raw_aggregate_response_time_counter: usize = 0;
-            let mut raw_aggregate_response_time_minimum: usize = 0;
-            let mut raw_aggregate_response_time_maximum: usize = 0;
-            let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-            let mut co_aggregate_response_time_counter: usize = 0;
-            let mut co_aggregate_response_time_maximum: usize = 0;
-            let mut co_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-            let mut co_data = false;
-            for (request_key, request) in self.metrics.requests.iter().sorted() {
-                // Determine whether or not to include Coordinated Omission data.
-                if !co_data && request.coordinated_omission_data.is_some() {
-                    co_data = true;
-                }
-                let method = format!("{}", request.method);
-                // The request_key is "{method} {name}", so by stripping the "{method} "
-                // prefix we get the name.
-                let name = request_key
-                    .strip_prefix(&format!("{} ", request.method))
-                    .unwrap()
-                    .to_string();
-                let total_request_count = request.success_count + request.fail_count;
-                let (requests_per_second, failures_per_second) = per_second_calculations(
-                    self.metrics.duration,
-                    total_request_count,
-                    request.fail_count,
-                );
-                // Prepare per-request metrics.
-                raw_request_metrics.push(report::RequestMetric {
-                    method: method.to_string(),
-                    name: name.to_string(),
-                    number_of_requests: total_request_count,
-                    number_of_failures: request.fail_count,
-                    response_time_average: format!(
-                        "{:.2}",
-                        request.raw_data.total_time as f32 / request.raw_data.counter as f32
-                    ),
-                    response_time_minimum: request.raw_data.minimum_time,
-                    response_time_maximum: request.raw_data.maximum_time,
-                    requests_per_second: format!("{:.2}", requests_per_second),
-                    failures_per_second: format!("{:.2}", failures_per_second),
-                });
+        let ReportData {
+            raw_metrics: _,
+            raw_request_metrics,
+            raw_response_metrics,
+            co_request_metrics,
+            co_response_metrics,
+            scenario_metrics,
+            transaction_metrics,
+            errors,
+            status_code_metrics,
+        } = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
 
-                // Prepare per-response metrics.
-                raw_response_metrics.push(report::get_response_metric(
-                    &method,
-                    &name,
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                ));
+        // Compile the request metrics template.
+        let mut raw_requests_rows = Vec::new();
+        for metric in raw_request_metrics {
+            raw_requests_rows.push(report::raw_request_metrics_row(metric));
+        }
 
-                // Collect aggregated request and response metrics.
-                raw_aggregate_total_count += total_request_count;
-                raw_aggregate_fail_count += request.fail_count;
-                raw_aggregate_response_time_counter += request.raw_data.total_time;
-                raw_aggregate_response_time_minimum = update_min_time(
-                    raw_aggregate_response_time_minimum,
-                    request.raw_data.minimum_time,
-                );
-                raw_aggregate_response_time_maximum = update_max_time(
-                    raw_aggregate_response_time_maximum,
-                    request.raw_data.maximum_time,
-                );
-                raw_aggregate_response_times =
-                    merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
-            }
+        // Compile the response metrics template.
+        let mut raw_responses_rows = Vec::new();
+        for metric in raw_response_metrics {
+            raw_responses_rows.push(report::response_metrics_row(metric));
+        }
 
-            // Prepare aggregate per-request metrics.
-            let (raw_aggregate_requests_per_second, raw_aggregate_failures_per_second) =
-                per_second_calculations(
-                    self.metrics.duration,
-                    raw_aggregate_total_count,
-                    raw_aggregate_fail_count,
-                );
-            raw_request_metrics.push(report::RequestMetric {
-                method: "".to_string(),
-                name: "Aggregated".to_string(),
-                number_of_requests: raw_aggregate_total_count,
-                number_of_failures: raw_aggregate_fail_count,
-                response_time_average: format!(
-                    "{:.2}",
-                    raw_aggregate_response_time_counter as f32 / raw_aggregate_total_count as f32
-                ),
-                response_time_minimum: raw_aggregate_response_time_minimum,
-                response_time_maximum: raw_aggregate_response_time_maximum,
-                requests_per_second: format!("{:.2}", raw_aggregate_requests_per_second),
-                failures_per_second: format!("{:.2}", raw_aggregate_failures_per_second),
-            });
+        let co_requests_template = co_request_metrics
+            .map(|co_request_metrics| {
+                let co_request_rows = co_request_metrics
+                    .into_iter()
+                    .map(report::coordinated_omission_request_metrics_row)
+                    .join("\n");
 
-            // Prepare aggregate per-response metrics.
-            raw_response_metrics.push(report::get_response_metric(
-                "",
-                "Aggregated",
-                &raw_aggregate_response_times,
-                raw_aggregate_total_count,
-                raw_aggregate_response_time_minimum,
-                raw_aggregate_response_time_maximum,
-            ));
+                report::coordinated_omission_request_metrics_template(&co_request_rows)
+            })
+            .unwrap_or_default();
 
-            // Compile the request metrics template.
-            let mut raw_requests_rows = Vec::new();
-            for metric in raw_request_metrics {
-                raw_requests_rows.push(report::raw_request_metrics_row(metric));
-            }
+        let co_responses_template = co_response_metrics
+            .map(|co_response_metrics| {
+                let co_response_rows = co_response_metrics
+                    .into_iter()
+                    .map(report::coordinated_omission_response_metrics_row)
+                    .join("\n");
 
-            // Compile the response metrics template.
-            let mut raw_responses_rows = Vec::new();
-            for metric in raw_response_metrics {
-                raw_responses_rows.push(report::response_metrics_row(metric));
-            }
+                report::coordinated_omission_response_metrics_template(&co_response_rows)
+            })
+            .unwrap_or_default();
 
-            let co_requests_template: String;
-            let co_responses_template: String;
-            if co_data {
-                for (request_key, request) in self.metrics.requests.iter().sorted() {
-                    if let Some(coordinated_omission_data) =
-                        request.coordinated_omission_data.as_ref()
-                    {
-                        let method = format!("{}", request.method);
-                        // The request_key is "{method} {name}", so by stripping the "{method} "
-                        // prefix we get the name.
-                        let name = request_key
-                            .strip_prefix(&format!("{} ", request.method))
-                            .unwrap()
-                            .to_string();
-                        let raw_average =
-                            request.raw_data.total_time as f32 / request.raw_data.counter as f32;
-                        let co_average = coordinated_omission_data.total_time as f32
-                            / coordinated_omission_data.counter as f32;
-                        // Prepare per-request metrics.
-                        co_request_metrics.push(report::CORequestMetric {
-                            method: method.to_string(),
-                            name: name.to_string(),
-                            response_time_average: format!("{:.2}", co_average),
-                            response_time_standard_deviation: format!(
-                                "{:.2}",
-                                util::standard_deviation(raw_average, co_average)
-                            ),
-                            response_time_maximum: coordinated_omission_data.maximum_time,
-                        });
+        let scenarios_template = scenario_metrics
+            .map(|scenario_metric| {
+                let scenarios_rows = scenario_metric
+                    .into_iter()
+                    .map(report::scenario_metrics_row)
+                    .join("\n");
 
-                        // Prepare per-response metrics.
-                        co_response_metrics.push(report::get_response_metric(
-                            &method,
-                            &name,
-                            &coordinated_omission_data.times,
-                            coordinated_omission_data.counter,
-                            coordinated_omission_data.minimum_time,
-                            coordinated_omission_data.maximum_time,
-                        ));
-
-                        // Collect aggregated request and response metrics.
-                        co_aggregate_response_time_counter += coordinated_omission_data.total_time;
-                        co_aggregate_response_time_maximum = update_max_time(
-                            co_aggregate_response_time_maximum,
-                            coordinated_omission_data.maximum_time,
-                        );
-                        co_aggregate_response_times = merge_times(
-                            co_aggregate_response_times,
-                            coordinated_omission_data.times.clone(),
-                        );
-                    }
-                    let total_request_count = request.success_count + request.fail_count;
-                    co_aggregate_total_count += total_request_count;
-                }
-                let co_average =
-                    co_aggregate_response_time_counter as f32 / co_aggregate_total_count as f32;
-                let raw_average =
-                    raw_aggregate_response_time_counter as f32 / raw_aggregate_total_count as f32;
-                co_request_metrics.push(report::CORequestMetric {
-                    method: "".to_string(),
-                    name: "Aggregated".to_string(),
-                    response_time_average: format!(
-                        "{:.2}",
-                        co_aggregate_response_time_counter as f32 / co_aggregate_total_count as f32
-                    ),
-                    response_time_standard_deviation: format!(
-                        "{:.2}",
-                        util::standard_deviation(raw_average, co_average),
-                    ),
-                    response_time_maximum: co_aggregate_response_time_maximum,
-                });
-
-                // Prepare aggregate per-response metrics.
-                co_response_metrics.push(report::get_response_metric(
-                    "",
-                    "Aggregated",
-                    &co_aggregate_response_times,
-                    co_aggregate_total_count,
-                    raw_aggregate_response_time_minimum,
-                    co_aggregate_response_time_maximum,
-                ));
-
-                // Compile the co_request metrics rows.
-                let mut co_request_rows = Vec::new();
-                for metric in co_request_metrics {
-                    co_request_rows.push(report::coordinated_omission_request_metrics_row(metric));
-                }
-
-                // Compile the status_code metrics template.
-                co_requests_template = report::coordinated_omission_request_metrics_template(
-                    &co_request_rows.join("\n"),
-                );
-
-                // Compile the co_request metrics rows.
-                let mut co_response_rows = Vec::new();
-                for metric in co_response_metrics {
-                    co_response_rows
-                        .push(report::coordinated_omission_response_metrics_row(metric));
-                }
-
-                // Compile the status_code metrics template.
-                co_responses_template = report::coordinated_omission_response_metrics_template(
-                    &co_response_rows.join("\n"),
-                );
-            } else {
-                // If --status-codes is not enabled, return an empty template.
-                co_requests_template = "".to_string();
-                co_responses_template = "".to_string();
-            }
-
-            // Only build the transactions template if --no-transaction-metrics isn't enabled.
-            let transactions_template: String;
-            if !self.configuration.no_transaction_metrics {
-                let mut transaction_metrics = Vec::new();
-                let mut aggregate_total_count = 0;
-                let mut aggregate_fail_count = 0;
-                let mut aggregate_transaction_time_counter: usize = 0;
-                let mut aggregate_transaction_time_minimum: usize = 0;
-                let mut aggregate_transaction_time_maximum: usize = 0;
-                let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
-                for (scenario_counter, scenario) in self.metrics.transactions.iter().enumerate() {
-                    for (transaction_counter, transaction) in scenario.iter().enumerate() {
-                        if transaction_counter == 0 {
-                            // Only the scenario_name is used for scenarios.
-                            transaction_metrics.push(report::TransactionMetric {
-                                is_scenario: true,
-                                transaction: "".to_string(),
-                                name: transaction.scenario_name.to_string(),
-                                number_of_requests: 0,
-                                number_of_failures: 0,
-                                response_time_average: "".to_string(),
-                                response_time_minimum: 0,
-                                response_time_maximum: 0,
-                                requests_per_second: "".to_string(),
-                                failures_per_second: "".to_string(),
-                            });
-                        }
-                        let total_run_count = transaction.success_count + transaction.fail_count;
-                        let (requests_per_second, failures_per_second) = per_second_calculations(
-                            self.metrics.duration,
-                            total_run_count,
-                            transaction.fail_count,
-                        );
-                        let average = match transaction.counter {
-                            0 => 0.00,
-                            _ => transaction.total_time as f32 / transaction.counter as f32,
-                        };
-                        transaction_metrics.push(report::TransactionMetric {
-                            is_scenario: false,
-                            transaction: format!("{}.{}", scenario_counter, transaction_counter),
-                            name: transaction.transaction_name.to_string(),
-                            number_of_requests: total_run_count,
-                            number_of_failures: transaction.fail_count,
-                            response_time_average: format!("{:.2}", average),
-                            response_time_minimum: transaction.min_time,
-                            response_time_maximum: transaction.max_time,
-                            requests_per_second: format!("{:.2}", requests_per_second),
-                            failures_per_second: format!("{:.2}", failures_per_second),
-                        });
-
-                        aggregate_total_count += total_run_count;
-                        aggregate_fail_count += transaction.fail_count;
-                        aggregate_transaction_times =
-                            merge_times(aggregate_transaction_times, transaction.times.clone());
-                        aggregate_transaction_time_counter += &transaction.counter;
-                        aggregate_transaction_time_minimum = update_min_time(
-                            aggregate_transaction_time_minimum,
-                            transaction.min_time,
-                        );
-                        aggregate_transaction_time_maximum = update_max_time(
-                            aggregate_transaction_time_maximum,
-                            transaction.max_time,
-                        );
-                    }
-                }
-
-                let (aggregate_requests_per_second, aggregate_failures_per_second) =
-                    per_second_calculations(
-                        self.metrics.duration,
-                        aggregate_total_count,
-                        aggregate_fail_count,
-                    );
-                transaction_metrics.push(report::TransactionMetric {
-                    is_scenario: false,
-                    transaction: "".to_string(),
-                    name: "Aggregated".to_string(),
-                    number_of_requests: aggregate_total_count,
-                    number_of_failures: aggregate_fail_count,
-                    response_time_average: format!(
-                        "{:.2}",
-                        raw_aggregate_response_time_counter as f32 / aggregate_total_count as f32
-                    ),
-                    response_time_minimum: aggregate_transaction_time_minimum,
-                    response_time_maximum: aggregate_transaction_time_maximum,
-                    requests_per_second: format!("{:.2}", aggregate_requests_per_second),
-                    failures_per_second: format!("{:.2}", aggregate_failures_per_second),
-                });
-                let mut transactions_rows = Vec::new();
-                // Compile the transaction metrics template.
-                for metric in transaction_metrics {
-                    transactions_rows.push(report::transaction_metrics_row(metric));
-                }
-
-                transactions_template = report::transaction_metrics_template(
-                    &transactions_rows.join("\n"),
-                    self.graph_data
-                        .get_transactions_per_second_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history, test_start_time),
-                );
-            } else {
-                transactions_template = "".to_string();
-            }
-
-            // Only build the scenarios template if --no-senario-metrics isn't enabled.
-            let scenarios_template: String;
-            if !self.configuration.no_scenario_metrics {
-                let mut scenario_metrics = Vec::new();
-                let mut aggregate_users = 0;
-                let mut aggregate_count = 0;
-                let mut aggregate_scenario_time_counter: usize = 0;
-                let mut aggregate_scenario_time_minimum: usize = 0;
-                let mut aggregate_scenario_time_maximum: usize = 0;
-                let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut aggregate_iterations = 0.0;
-                let mut aggregate_response_time_counter = 0.0;
-                for scenario in &self.metrics.scenarios {
-                    let (count_per_second, _failures_per_second) =
-                        per_second_calculations(self.metrics.duration, scenario.counter, 0);
-                    let average = match scenario.counter {
-                        0 => 0.00,
-                        _ => scenario.total_time as f32 / scenario.counter as f32,
-                    };
-                    let iterations = scenario.counter as f32 / scenario.users.len() as f32;
-                    scenario_metrics.push(report::ScenarioMetric {
-                        name: scenario.name.to_string(),
-                        users: scenario.users.len(),
-                        count: scenario.counter,
-                        response_time_average: format!("{:.2}", average),
-                        response_time_minimum: scenario.min_time,
-                        response_time_maximum: scenario.max_time,
-                        count_per_second: format!("{:.2}", count_per_second),
-                        iterations: format!("{:.2}", iterations),
-                    });
-
-                    aggregate_users += scenario.users.len();
-                    aggregate_count += scenario.counter;
-                    aggregate_scenario_times =
-                        merge_times(aggregate_scenario_times, scenario.times.clone());
-                    aggregate_scenario_time_counter += &scenario.counter;
-                    aggregate_scenario_time_minimum =
-                        update_min_time(aggregate_scenario_time_minimum, scenario.min_time);
-                    aggregate_scenario_time_maximum =
-                        update_max_time(aggregate_scenario_time_maximum, scenario.max_time);
-                    aggregate_iterations += iterations;
-                    aggregate_response_time_counter += scenario.total_time as f32;
-                }
-
-                let (aggregate_count_per_second, _aggregate_failures_per_second) =
-                    per_second_calculations(self.metrics.duration, aggregate_count, 0);
-                scenario_metrics.push(report::ScenarioMetric {
-                    name: "Aggregated".to_string(),
-                    users: aggregate_users,
-                    count: aggregate_count,
-                    response_time_average: format!(
-                        "{:.2}",
-                        aggregate_response_time_counter / aggregate_count as f32
-                    ),
-                    response_time_minimum: aggregate_scenario_time_minimum,
-                    response_time_maximum: aggregate_scenario_time_maximum,
-                    count_per_second: format!("{:.2}", aggregate_count_per_second),
-                    iterations: format!("{:.2}", aggregate_iterations),
-                });
-                let mut scenarios_rows = Vec::new();
-                // Compile the scenario metrics template.
-                for metric in scenario_metrics {
-                    scenarios_rows.push(report::scenario_metrics_row(metric));
-                }
-
-                scenarios_template = report::scenario_metrics_template(
-                    &scenarios_rows.join("\n"),
+                report::scenario_metrics_template(
+                    &scenarios_rows,
                     self.graph_data
                         .get_scenarios_per_second_graph(!self.configuration.no_granular_report)
                         .get_markup(&self.metrics.history, test_start_time),
-                );
-            } else {
-                scenarios_template = "".to_string();
-            }
+                )
+            })
+            .unwrap_or_default();
 
-            // Only build the transactions template if --no-transaction-metrics isn't enabled.
-            let errors_template: String = if !self.metrics.errors.is_empty() {
-                let mut error_rows = Vec::new();
-                for error in self.metrics.errors.values() {
-                    error_rows.push(report::error_row(error));
-                }
+        let transactions_template = transaction_metrics
+            .map(|transaction_metrics| {
+                let transactions_rows = transaction_metrics
+                    .into_iter()
+                    .map(report::transaction_metrics_row)
+                    .join("\n");
+
+                report::transaction_metrics_template(
+                    &transactions_rows,
+                    self.graph_data
+                        .get_transactions_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                )
+            })
+            .unwrap_or_default();
+
+        let errors_template = errors
+            .map(|errors| {
+                let error_rows = errors.into_iter().map(report::error_row).join("\n");
 
                 report::errors_template(
-                    &error_rows.join("\n"),
+                    &error_rows,
                     self.graph_data
                         .get_errors_per_second_graph(!self.configuration.no_granular_report)
                         .get_markup(&self.metrics.history, test_start_time),
                 )
-            } else {
-                "".to_string()
-            };
+            })
+            .unwrap_or_default();
 
-            // Only build the status_code template if --no-status-codes is not enabled.
-            let status_code_template: String = if !self.configuration.no_status_codes {
-                let mut status_code_metrics = Vec::new();
-                let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
-                for (request_key, request) in self.metrics.requests.iter().sorted() {
-                    let method = format!("{}", request.method);
-                    // The request_key is "{method} {name}", so by stripping the "{method} "
-                    // prefix we get the name.
-                    let name = request_key
-                        .strip_prefix(&format!("{} ", request.method))
-                        .unwrap()
-                        .to_string();
-
-                    // Build a list of status codes, and update the aggregate record.
-                    let codes = prepare_status_codes(
-                        &request.status_code_counts,
-                        &mut Some(&mut aggregated_status_code_counts),
-                    );
-
-                    // Add a row of data for the status code table.
-                    status_code_metrics.push(report::StatusCodeMetric {
-                        method,
-                        name,
-                        status_codes: codes,
-                    });
-                }
-
-                // Build a list of aggregate status codes.
-                let aggregated_codes =
-                    prepare_status_codes(&aggregated_status_code_counts, &mut None);
-
-                // Add a final row of aggregate data for the status code table.
-                status_code_metrics.push(report::StatusCodeMetric {
-                    method: "".to_string(),
-                    name: "Aggregated".to_string(),
-                    status_codes: aggregated_codes,
-                });
-
+        let status_code_template = status_code_metrics
+            .map(|status_code_metrics| {
                 // Compile the status_code metrics rows.
                 let mut status_code_rows = Vec::new();
                 for metric in status_code_metrics {
@@ -3552,56 +3286,50 @@ impl GooseAttack {
 
                 // Compile the status_code metrics template.
                 report::status_code_metrics_template(&status_code_rows.join("\n"))
-            } else {
-                // If --status-codes is not enabled, return an empty template.
-                "".to_string()
-            };
+            })
+            .unwrap_or_default();
 
-            // Compile the report template.
-            let report = report::build_report(
-                &users,
-                &steps_overview,
-                hosts,
-                report::GooseReportTemplates {
-                    raw_requests_template: &raw_requests_rows.join("\n"),
-                    raw_responses_template: &raw_responses_rows.join("\n"),
-                    co_requests_template: &co_requests_template,
-                    co_responses_template: &co_responses_template,
-                    transactions_template: &transactions_template,
-                    scenarios_template: &scenarios_template,
-                    status_codes_template: &status_code_template,
-                    errors_template: &errors_template,
-                    graph_rps_template: &self
-                        .graph_data
-                        .get_requests_per_second_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history, test_start_time),
-                    graph_average_response_time_template: &self
-                        .graph_data
-                        .get_average_response_time_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history, test_start_time),
-                    graph_users_per_second: &self
-                        .graph_data
-                        .get_active_users_graph(!self.configuration.no_granular_report)
-                        .get_markup(&self.metrics.history, test_start_time),
-                },
-            );
+        // Compile the report template.
+        let report = report::build_report(
+            &users,
+            &steps_overview,
+            hosts,
+            report::GooseReportTemplates {
+                raw_requests_template: &raw_requests_rows.join("\n"),
+                raw_responses_template: &raw_responses_rows.join("\n"),
+                co_requests_template: &co_requests_template,
+                co_responses_template: &co_responses_template,
+                transactions_template: &transactions_template,
+                scenarios_template: &scenarios_template,
+                status_codes_template: &status_code_template,
+                errors_template: &errors_template,
+                graph_rps_template: &self
+                    .graph_data
+                    .get_requests_per_second_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+                graph_average_response_time_template: &self
+                    .graph_data
+                    .get_average_response_time_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+                graph_users_per_second: &self
+                    .graph_data
+                    .get_active_users_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+            },
+        );
 
-            // Write the report to file.
-            if let Err(e) = report_file.write_all(report.as_ref()).await {
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: self.get_report_file_path().unwrap(),
-                    detail: format!("Failed to create report file: {}", e),
-                });
-            };
-            // Be sure the file flushes to disk.
-            report_file.flush().await?;
+        // Write the report to file.
+        if let Err(e) = report_file.write_all(report.as_ref()).await {
+            return Err(GooseError::InvalidOption {
+                option: "--report-file".to_string(),
+                value: path.to_string(),
+                detail: format!("Failed to create report file: {}", e),
+            });
+        };
+        // Be sure the file flushes to disk.
+        report_file.flush().await?;
 
-            info!(
-                "html report file written to: {}",
-                self.get_report_file_path().unwrap()
-            );
-        }
+        info!("html report file written to: {path}");
 
         Ok(())
     }
@@ -3678,7 +3406,7 @@ pub(crate) fn calculate_response_time_percentile(
     min: usize,
     max: usize,
     percent: f32,
-) -> String {
+) -> usize {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!(
         "percentile: {}, request {} of total {}",
@@ -3691,15 +3419,16 @@ pub(crate) fn calculate_response_time_percentile(
         total_count += counter;
         if total_count >= percentile_request {
             if *value < min {
-                return format_number(min);
+                return min;
             } else if *value > max {
-                return format_number(max);
+                return max;
             } else {
-                return format_number(*value);
+                return *value;
             }
         }
     }
-    format_number(0)
+
+    0
 }
 
 /// Helper to count and aggregate seen status codes.
@@ -3782,21 +3511,42 @@ mod test {
         response_times.insert(2, 1);
         response_times.insert(3, 1);
         // 3 * .5 = 1.5, rounds to 2.
-        assert!(calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5),
+            2
+        );
         response_times.insert(3, 2);
         // 4 * .5 = 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5),
+            2
+        );
         // 4 * .25 = 1
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25) == "1");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25),
+            1
+        );
         // 4 * .75 = 3
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75) == "3");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75),
+            3
+        );
         // 4 * 1 = 4 (and the 4th response time is also 3)
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0) == "3");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0),
+            3
+        );
 
         // 4 * .5 = 2, but uses specified minimum of 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25),
+            2
+        );
         // 4 * .75 = 3, but uses specified maximum of 2
-        assert!(calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75) == "2");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75),
+            2
+        );
 
         response_times.insert(10, 25);
         response_times.insert(20, 25);
@@ -3804,9 +3554,18 @@ mod test {
         response_times.insert(50, 25);
         response_times.insert(100, 10);
         response_times.insert(200, 1);
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9) == "50");
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99) == "100");
-        assert!(calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999) == "200");
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9),
+            50
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99),
+            100
+        );
+        assert_eq!(
+            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999),
+            200
+        );
     }
 
     #[test]

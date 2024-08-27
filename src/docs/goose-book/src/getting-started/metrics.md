@@ -289,30 +289,38 @@ All 9 users hatched.
  ------------------------------------------------------------------------------
 ```
 
-## HTML metrics
-In addition to the above metrics displayed on the CLI, we've also told Goose to create an HTML report.
+## Metrics reports
+In addition to the above metrics displayed on the CLI, we've also told Goose to create reports on other formats, like Markdown, JSON, or HTML.
 
-### Overview
+It is possible to create one or more reports at the same time, using one or more `--report-file` arguments. The type of report is chosen by the file extension. An unsupported file extension will lead to an error.
+
+The following subsections describe the reports on more detail.
+
+### HTML report
+
+#### Overview
 The HTML report starts with a brief overview table, offering the same information found in the [ASCII overview](#ascii-metrics) above:
 ![Metrics overview](metrics-overview.jpg)
 
-### Requests
+**NOTE:** The HTML report includes some graphs that rely on the [eCharts JavaScript library](https://echarts.apache.org). The HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.
+
+#### Requests
 Next the report includes a graph of all requests made during the duration of the load test. By default, the graph includes an aggregated average, as well as per-request details. It's possible to click on the request names at the top of the graph to hide/show specific requests on the graphs. In this case, the graph shows that most requests made by the load test were for static assets.
 
 Below the graph is a table that shows per-request details, only partially included in this screenshot:
 ![Request metrics](metrics-requests.jpg)
 
-### Response times
+#### Response times
 The next graph shows the response times measured for each request made. In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
 
 Below the graph is a table that shows per-request details:
 ![Response time metrics](metrics-response-time.jpg)
 
-### Status codes
+#### Status codes
 All status codes returned by the server are displayed in a table, per-request and in aggregate. In our simple test, we received only `200 OK` responses.
 ![Status code metrics](metrics-status-codes.jpg)
 
-### Transactions
+#### Transactions
 The next graph summarizes all Transactions run during the load test. One or more requests are grouped logically inside Transactions. For example, the Transaction named `0.0 anon /` includes an anonymous (not-logged-in) request for the front page, as well as requests for all static assets found on the front page.
 
 Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Task to be considered failed. For example, the logic may be written to fail the Transaction of the html request fails, but not if one or more static asset requests fail.
@@ -320,7 +328,7 @@ Whereas a Request automatically fails based on the web server response code, the
 This graph is also followed by a table showing details on all Transactions, partially shown here:
 ![Transaction metrics](metrics-transactions.jpg)
 
-### Scenarios
+#### Scenarios
 The next graph summarizes all Scenarios run during the load test. One or more Transactions are grouped logically inside Scenarios.
 
 For example, the Scenario named `Anonymous English user` includes the above `anon /` Transaction, the `anon /en/basicpage`, and all the rest of the Transactions requesting pages in English.
@@ -330,9 +338,17 @@ It is followed by a table, shown in entirety here because this load test only ha
 As our example only ran for 60 seconds, and the `Admin user` Scenario took >30 seconds to run once, the load test only ran completely through this scenario one time, also reflected in the following table:
 ![Scenario metrics](metrics-scenarios.jpg)
 
-### Users
+#### Users
 The final graph shows how many users were running at the various stages of the load test. As configured, Goose quickly ramped up to 9 users, then sustained that level of traffic for a minute before shutting down:
 ![User metrics](metrics-users.jpg)
+
+### Markdown report
+
+The Markdown report follows the structure of the [HTML report](#html-report). However, it does not include the chart elements.
+
+### JSON report
+
+The JSON report is a dump of the internal metrics collection. It is a JSON serialization of the `ReportData` structure. Mainly having a field named `raw_metrics`, carrying the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html).
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).

@@ -52,6 +52,7 @@ url = "2"
 [features]
 default = ["reqwest/default-tls"]
 rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls"]
+gaggle = []
 
 [dev-dependencies]
 httpmock = "0.6"

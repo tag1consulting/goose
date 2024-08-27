@@ -1,11 +1,15 @@
 //! Optionally writes an html-formatted summary report after running a load test.
+mod common;
+mod markdown;
 
-use crate::metrics;
+pub(crate) use markdown::write_markdown_report;
 
-use std::collections::BTreeMap;
-use std::mem;
-
+use crate::{
+    metrics::{self, format_number},
+    report::common::OrEmpty,
+};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
@@ -30,11 +34,11 @@ pub(crate) struct RequestMetric {
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
-    pub response_time_average: String,
+    pub response_time_average: f32,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    pub requests_per_second: String,
-    pub failures_per_second: String,
+    pub requests_per_second: f32,
+    pub failures_per_second: f32,
 }
 
 /// Defines the metrics reported about Coordinated Omission requests.
@@ -42,8 +46,8 @@ pub(crate) struct RequestMetric {
 pub(crate) struct CORequestMetric {
     pub method: String,
     pub name: String,
-    pub response_time_average: String,
-    pub response_time_standard_deviation: String,
+    pub response_time_average: f32,
+    pub response_time_standard_deviation: f32,
     pub response_time_maximum: usize,
 }
 
@@ -52,14 +56,14 @@ pub(crate) struct CORequestMetric {
 pub(crate) struct ResponseMetric {
     pub method: String,
     pub name: String,
-    pub percentile_50: String,
-    pub percentile_60: String,
-    pub percentile_70: String,
-    pub percentile_80: String,
-    pub percentile_90: String,
-    pub percentile_95: String,
-    pub percentile_99: String,
-    pub percentile_100: String,
+    pub percentile_50: usize,
+    pub percentile_60: usize,
+    pub percentile_70: usize,
+    pub percentile_80: usize,
+    pub percentile_90: usize,
+    pub percentile_95: usize,
+    pub percentile_99: usize,
+    pub percentile_100: usize,
 }
 
 /// Defines the metrics reported about transactions.
@@ -70,11 +74,11 @@ pub(crate) struct TransactionMetric {
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
-    pub response_time_average: String,
+    pub response_time_average: Option<f32>,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    pub requests_per_second: String,
-    pub failures_per_second: String,
+    pub requests_per_second: Option<f32>,
+    pub failures_per_second: Option<f32>,
 }
 
 /// Defines the metrics reported about scenarios.
@@ -83,14 +87,15 @@ pub(crate) struct ScenarioMetric {
     pub name: String,
     pub users: usize,
     pub count: usize,
-    pub response_time_average: String,
+    pub response_time_average: f32,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    pub count_per_second: String,
-    pub iterations: String,
+    pub count_per_second: f32,
+    pub iterations: f32,
 }
 
 /// Defines the metrics reported about status codes.
+#[derive(Debug, serde::Serialize)]
 pub(crate) struct StatusCodeMetric {
     pub method: String,
     pub name: String,
@@ -122,14 +127,14 @@ pub(crate) fn get_response_metric(
     ResponseMetric {
         method: method.to_string(),
         name: name.to_string(),
-        percentile_50: mem::take(&mut percentiles[0]),
-        percentile_60: mem::take(&mut percentiles[1]),
-        percentile_70: mem::take(&mut percentiles[2]),
-        percentile_80: mem::take(&mut percentiles[3]),
-        percentile_90: mem::take(&mut percentiles[4]),
-        percentile_95: mem::take(&mut percentiles[5]),
-        percentile_99: mem::take(&mut percentiles[6]),
-        percentile_100: mem::take(&mut percentiles[7]),
+        percentile_50: percentiles[0],
+        percentile_60: percentiles[1],
+        percentile_70: percentiles[2],
+        percentile_80: percentiles[3],
+        percentile_90: percentiles[4],
+        percentile_95: percentiles[5],
+        percentile_99: percentiles[6],
+        percentile_100: percentiles[7],
     }
 }
 
@@ -141,11 +146,11 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
         <td>{name}</td>
         <td>{number_of_requests}</td>
         <td>{number_of_failures}</td>
-        <td>{response_time_average}</td>
+        <td>{response_time_average:.2}</td>
         <td>{response_time_minimum}</td>
         <td>{response_time_maximum}</td>
-        <td>{requests_per_second}</td>
-        <td>{failures_per_second}</td>
+        <td>{requests_per_second:.2}</td>
+        <td>{failures_per_second:.2}</td>
     </tr>"#,
         method = metric.method,
         name = metric.name,
@@ -176,14 +181,14 @@ pub(crate) fn response_metrics_row(metric: ResponseMetric) -> String {
         </tr>"#,
         method = metric.method,
         name = metric.name,
-        percentile_50 = metric.percentile_50,
-        percentile_60 = metric.percentile_60,
-        percentile_70 = metric.percentile_70,
-        percentile_80 = metric.percentile_80,
-        percentile_90 = metric.percentile_90,
-        percentile_95 = metric.percentile_95,
-        percentile_99 = metric.percentile_99,
-        percentile_100 = metric.percentile_100,
+        percentile_50 = format_number(metric.percentile_50),
+        percentile_60 = format_number(metric.percentile_60),
+        percentile_70 = format_number(metric.percentile_70),
+        percentile_80 = format_number(metric.percentile_80),
+        percentile_90 = format_number(metric.percentile_90),
+        percentile_95 = format_number(metric.percentile_95),
+        percentile_99 = format_number(metric.percentile_99),
+        percentile_100 = format_number(metric.percentile_100),
     )
 }
 
@@ -219,8 +224,8 @@ pub(crate) fn coordinated_omission_request_metrics_row(metric: CORequestMetric) 
         r#"<tr>
             <td>{method}</td>
             <td>{name}</td>
-            <td>{average})</td>
-            <td>{standard_deviation}</td>
+            <td>{average:.2})</td>
+            <td>{standard_deviation:.2}</td>
             <td>{maximum}</td>
         </tr>"#,
         method = metric.method,
@@ -279,14 +284,14 @@ pub(crate) fn coordinated_omission_response_metrics_row(metric: ResponseMetric) 
         </tr>"#,
         method = metric.method,
         name = metric.name,
-        percentile_50 = metric.percentile_50,
-        percentile_60 = metric.percentile_60,
-        percentile_70 = metric.percentile_70,
-        percentile_80 = metric.percentile_80,
-        percentile_90 = metric.percentile_90,
-        percentile_95 = metric.percentile_95,
-        percentile_99 = metric.percentile_99,
-        percentile_100 = metric.percentile_100,
+        percentile_50 = format_number(metric.percentile_50),
+        percentile_60 = format_number(metric.percentile_60),
+        percentile_70 = format_number(metric.percentile_70),
+        percentile_80 = format_number(metric.percentile_80),
+        percentile_90 = format_number(metric.percentile_90),
+        percentile_95 = format_number(metric.percentile_95),
+        percentile_99 = format_number(metric.percentile_99),
+        percentile_100 = format_number(metric.percentile_100),
     )
 }
 
@@ -373,21 +378,21 @@ pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
             <td colspan="2">{transaction} {name}</strong></td>
             <td>{number_of_requests}</td>
             <td>{number_of_failures}</td>
-            <td>{response_time_average}</td>
+            <td>{response_time_average:.2}</td>
             <td>{response_time_minimum}</td>
             <td>{response_time_maximum}</td>
-            <td>{requests_per_second}</td>
-            <td>{failures_per_second}</td>
+            <td>{requests_per_second:.2}</td>
+            <td>{failures_per_second:.2}</td>
         </tr>"#,
             transaction = metric.transaction,
             name = metric.name,
-            number_of_requests = metrics::format_number(metric.number_of_requests),
-            number_of_failures = metrics::format_number(metric.number_of_failures),
-            response_time_average = metric.response_time_average,
+            number_of_requests = format_number(metric.number_of_requests),
+            number_of_failures = format_number(metric.number_of_failures),
+            response_time_average = OrEmpty(metric.response_time_average),
             response_time_minimum = metric.response_time_minimum,
             response_time_maximum = metric.response_time_maximum,
-            requests_per_second = metric.requests_per_second,
-            failures_per_second = metric.failures_per_second,
+            requests_per_second = OrEmpty(metric.requests_per_second),
+            failures_per_second = OrEmpty(metric.failures_per_second),
         )
     }
 }
@@ -430,15 +435,15 @@ pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
             <td colspan="2">{name}</strong></td>
             <td>{users}</td>
             <td>{count}</td>
-            <td>{response_time_average}</td>
+            <td>{response_time_average:.2}</td>
             <td>{response_time_minimum}</td>
             <td>{response_time_maximum}</td>
-            <td>{count_per_second}</td>
-            <td>{iterations}</td>
+            <td>{count_per_second:.2}</td>
+            <td>{iterations:.2}</td>
         </tr>"#,
         name = metric.name,
-        users = metrics::format_number(metric.users),
-        count = metrics::format_number(metric.count),
+        users = format_number(metric.users),
+        count = format_number(metric.count),
         response_time_average = metric.response_time_average,
         response_time_minimum = metric.response_time_minimum,
         response_time_maximum = metric.response_time_maximum,

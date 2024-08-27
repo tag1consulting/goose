@@ -18,7 +18,7 @@ The following defaults can be configured with a `&str`:
  - host: `GooseDefault::Host`
  - set a per-request timeout: `GooseDefault::Timeout`
  - users to start per second: `GooseDefault::HatchRate`
- - html-formatted report file name: `GooseDefault::ReportFile`
+ - report file names: `GooseDefault::ReportFile`
  - goose log file name: `GooseDefault::GooseLog`
  - request log file name: `GooseDefault::RequestLog`
  - transaction log file name: `GooseDefault::TransactionLog`
@@ -62,7 +62,7 @@ The following defaults can be configured with a `bool`:
  - enable Manager mode: `GooseDefault::Manager`
  - enable Worker mode: `GooseDefault::Worker`
  - ignore load test checksum: `GooseDefault::NoHashCheck`
- - do not collect granular data in the HTML report: `GooseDefault::NoGranularData`
+ - do not collect granular data in the reports: `GooseDefault::NoGranularData`
 
 The following defaults can be configured with a `GooseLogFormat`:
  - request log file format: `GooseDefault::RequestFormat`

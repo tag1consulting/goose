@@ -33,7 +33,7 @@ Metrics:
   --no-scenario-metrics       Doesn't track scenario metrics
   --no-print-metrics          Doesn't display metrics at end of load test
   --no-error-summary          Doesn't display an error summary
-  --report-file NAME          Create an html-formatted report
+  --report-file NAME          Create reports, can be used multiple times (supports .html, .htm, .md, .json)
   --no-granular-report        Disable granular graphs in report file
   -R, --request-log NAME      Sets request log file name
   --request-format FORMAT     Sets request log format (csv, json, raw, pretty)

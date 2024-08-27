@@ -82,9 +82,13 @@ cargo run --release -- --iterations 5
 
 ## Writing An HTML-formatted Report
 
-By default, Goose displays [text-formatted metrics](metrics.md) when a load test finishes. It can also optionally write an HTML-formatted report if you enable the `--report-file <NAME>` run-time option, where `<NAME>` is an absolute or relative path to the report file to generate. Any file that already exists at the specified path will be overwritten.
+By default, Goose displays [text-formatted metrics](metrics.md) when a load test finishes.
 
-The HTML report includes some graphs that rely on the [eCharts JavaScript library](https://echarts.apache.org). The HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.
+It can also optionally write one or more reports in HTML, Markdown, or JSON format. For that, you need to provide one or more `--report-file <FILE>` run-time options. All requested reports will be written.
+
+The value of `<FILE>` is an absolute or relative path to the report file to generate. The file extension will evaluate the type of report to write. Any file that already exists at the specified path will be overwritten.
+
+For more information, see [Metrics Reports](metrics.md#metrics-reports).
 
 ![Requests per second graph](rps.png)
 
@@ -93,4 +97,11 @@ _Write an HTML-formatted report to `report.html` when the load test finishes._
 
 ```bash
 cargo run --release -- --report-file report.html
+```
+
+### HTML & Markdown report example
+_Write a Markdown and an HTML-formatted report when the load test finishes._
+
+```bash
+cargo run --release -- --report-file report.md --report-file report.html
 ```
