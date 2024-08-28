@@ -34,6 +34,7 @@ Metrics:
   --no-print-metrics          Doesn't display metrics at end of load test
   --no-error-summary          Doesn't display an error summary
   --report-file NAME          Create reports, can be used multiple times (supports .html, .htm, .md, .json)
+  --baseline-file NAME        An optional baseline JSON report, for rendering the reports with deltas
   --no-granular-report        Disable granular graphs in report file
   -R, --request-log NAME      Sets request log file name
   --request-format FORMAT     Sets request log format (csv, json, raw, pretty)

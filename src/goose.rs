@@ -670,7 +670,7 @@ pub enum GooseUserCommand {
 }
 
 /// Supported HTTP methods.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Ord, PartialOrd)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Ord, PartialOrd, Hash)]
 pub enum GooseMethod {
     Delete,
     Get,
