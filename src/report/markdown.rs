@@ -1,3 +1,4 @@
+use crate::metrics::format_value;
 use crate::{
     metrics::ReportData,
     report::{
@@ -162,6 +163,14 @@ impl<W: Write> Markdown<'_, '_, W> {
             writeln!(
                 self.w,
                 r#"| {method} | {name} | {percentile_50} | {percentile_60 } | {percentile_70 } | {percentile_80} | {percentile_90} | {percentile_95} | {percentile_99} | {percentile_100} |"#,
+                percentile_50 = format_value(percentile_50),
+                percentile_60 = format_value(percentile_60),
+                percentile_70 = format_value(percentile_70),
+                percentile_80 = format_value(percentile_80),
+                percentile_90 = format_value(percentile_90),
+                percentile_95 = format_value(percentile_95),
+                percentile_99 = format_value(percentile_99),
+                percentile_100 = format_value(percentile_100),
             )?;
         }
 

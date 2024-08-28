@@ -1,9 +1,14 @@
-use num_format::ToFormattedStr;
+use num_format::{Format, ToFormattedString};
 use std::fmt::{Debug, Display, Formatter, Write};
 
+/// A value that can be used to provide a delta
+///
+/// As the actual value can be an unsigned type, we require an associated type which defines the
+/// type of the delta.
 pub trait DeltaValue: Copy + Debug + Display {
     type Delta: Copy + Display;
 
+    /// Generate the delta between this and the provided value
     fn delta(self, value: Self) -> Self::Delta;
 
     /// It's positive if it's not negative or zero
@@ -23,7 +28,7 @@ impl DeltaValue for usize {
             if delta > 9223372036854775808
             /* the absolute value of isize::MIN as usize */
             {
-                // ... which is too big to fix into the negative space of isize, so we limit to isize::MIN
+                // ... which is too big to fit into the negative space of isize, so we limit to isize::MIN
                 isize::MIN
             } else {
                 // ... which fits, so we return the negative value
@@ -49,6 +54,7 @@ impl DeltaValue for f32 {
     }
 }
 
+/// A value, being either a plain value of a value with delta to a baseline
 #[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub(crate) enum Value<T: DeltaValue> {
@@ -76,6 +82,29 @@ impl<T: DeltaValue> Value<T> {
                     value: *value,
                     delta: value.delta(other),
                 }
+            }
+        }
+    }
+}
+
+impl<T> Value<T>
+where
+    T: DeltaValue<Delta: ToFormattedString> + ToFormattedString,
+{
+    pub fn formatted_number(&self, format: &impl Format) -> String {
+        match self {
+            Self::Plain(value) => value.to_formatted_string(format),
+            Self::Delta { value, delta } => {
+                let s = if T::is_delta_positive(*delta) {
+                    "+"
+                } else {
+                    ""
+                };
+                format!(
+                    "{} ({s}{})",
+                    value.to_formatted_string(format),
+                    delta.to_formatted_string(format)
+                )
             }
         }
     }
@@ -141,22 +170,11 @@ pub trait DeltaTo {
     fn delta_to(&mut self, other: &Self);
 }
 
-pub struct Formatted<T>(pub T);
-
-impl<T: ToFormattedStr> Display for Formatted<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use num_format::{Locale, ToFormattedString};
-
-        f.write_str(&self.0.to_formatted_string(&Locale::en))?;
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::metrics::Value;
+    use num_format::Locale;
 
     #[test]
     fn eval_optional() {
@@ -179,6 +197,56 @@ mod test {
                 value
             },
             None
+        );
+    }
+
+    #[test]
+    fn delta_to_string() {
+        assert_eq!(format!("{}", 0.delta(10)), "-10");
+        assert_eq!(format!("{}", 10.delta(10)), "0");
+        assert_eq!(format!("{}", 10.delta(0)), "10");
+    }
+
+    #[test]
+    fn value_to_string() {
+        fn value<T: DeltaValue>(value: T, baseline: T) -> Value<T> {
+            let mut result = Value::from(value);
+            result.diff(baseline);
+            result
+        }
+
+        assert_eq!(format!("{}", value(0, 1000)), "0 (-1000)");
+        assert_eq!(format!("{}", value(1000, 1000)), "1000 (0)");
+        assert_eq!(format!("{}", value(1000, 0)), "1000 (+1000)");
+    }
+
+    #[test]
+    fn value_with_delta_to_string_num() {
+        fn value<T: DeltaValue>(value: T, baseline: T) -> Value<T> {
+            let mut result = Value::from(value);
+            result.diff(baseline);
+            result
+        }
+
+        assert_eq!(
+            format!("{}", value(0, 1000).formatted_number(&Locale::en)),
+            "0 (-1,000)"
+        );
+        assert_eq!(
+            format!("{}", value(1000, 1000).formatted_number(&Locale::en)),
+            "1,000 (0)"
+        );
+        assert_eq!(
+            format!("{}", value(1000, 0).formatted_number(&Locale::en)),
+            "1,000 (+1,000)"
+        );
+    }
+
+    #[test]
+    fn value_to_string_num() {
+        assert_eq!(
+            format!("{}", Value::from(1000).formatted_number(&Locale::en)),
+            "1,000"
         );
     }
 }
