@@ -3445,7 +3445,8 @@ pub(crate) fn format_number(number: usize) -> String {
 /// Format large value in locale appropriate style.
 pub(crate) fn format_value<T>(value: &Value<T>) -> String
 where
-    T: DeltaValue<Delta: ToFormattedString> + ToFormattedString,
+    T: DeltaValue + ToFormattedString,
+    <T as DeltaValue>::Delta: ToFormattedString,
 {
     value.formatted_number(&Locale::en)
 }
