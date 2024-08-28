@@ -96,7 +96,8 @@ impl<T: DeltaValue> Value<T> {
 
 impl<T> Value<T>
 where
-    T: DeltaValue<Delta: ToFormattedString> + ToFormattedString,
+    T: DeltaValue + ToFormattedString,
+    <T as DeltaValue>::Delta: ToFormattedString,
 {
     pub fn formatted_number(&self, format: &impl Format) -> String {
         match self {
