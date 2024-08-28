@@ -3360,7 +3360,15 @@ fn determine_precision(value: f32) -> usize {
 
 /// Format large number in locale appropriate style.
 pub(crate) fn format_number(number: usize) -> String {
-    (number).to_formatted_string(&Locale::en)
+    number.to_formatted_string(&Locale::en)
+}
+
+/// Format large value in locale appropriate style.
+pub(crate) fn format_value<T>(value: &Value<T>) -> String
+where
+    T: DeltaValue<Delta: ToFormattedString> + ToFormattedString,
+{
+    value.formatted_number(&Locale::en)
 }
 
 /// A helper function that merges together times.

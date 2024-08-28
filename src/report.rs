@@ -4,9 +4,9 @@ mod markdown;
 
 pub(crate) use markdown::write_markdown_report;
 
-use crate::goose::GooseMethod;
 use crate::{
-    metrics::{self, DeltaEval, DeltaTo, Value},
+    goose::GooseMethod,
+    metrics::{self, format_value, DeltaEval, DeltaTo, Value},
     report::common::OrEmpty,
 };
 use serde::{Deserialize, Serialize};
@@ -255,14 +255,14 @@ pub(crate) fn response_metrics_row(metric: ResponseMetric) -> String {
         </tr>"#,
         method = metric.method,
         name = metric.name,
-        percentile_50 = metric.percentile_50,
-        percentile_60 = metric.percentile_60,
-        percentile_70 = metric.percentile_70,
-        percentile_80 = metric.percentile_80,
-        percentile_90 = metric.percentile_90,
-        percentile_95 = metric.percentile_95,
-        percentile_99 = metric.percentile_99,
-        percentile_100 = metric.percentile_100,
+        percentile_50 = format_value(&metric.percentile_50),
+        percentile_60 = format_value(&metric.percentile_60),
+        percentile_70 = format_value(&metric.percentile_70),
+        percentile_80 = format_value(&metric.percentile_80),
+        percentile_90 = format_value(&metric.percentile_90),
+        percentile_95 = format_value(&metric.percentile_95),
+        percentile_99 = format_value(&metric.percentile_99),
+        percentile_100 = format_value(&metric.percentile_100),
     )
 }
 
@@ -358,14 +358,14 @@ pub(crate) fn coordinated_omission_response_metrics_row(metric: ResponseMetric) 
         </tr>"#,
         method = metric.method,
         name = metric.name,
-        percentile_50 = metric.percentile_50,
-        percentile_60 = metric.percentile_60,
-        percentile_70 = metric.percentile_70,
-        percentile_80 = metric.percentile_80,
-        percentile_90 = metric.percentile_90,
-        percentile_95 = metric.percentile_95,
-        percentile_99 = metric.percentile_99,
-        percentile_100 = metric.percentile_100,
+        percentile_50 = format_value(&metric.percentile_50),
+        percentile_60 = format_value(&metric.percentile_60),
+        percentile_70 = format_value(&metric.percentile_70),
+        percentile_80 = format_value(&metric.percentile_80),
+        percentile_90 = format_value(&metric.percentile_90),
+        percentile_95 = format_value(&metric.percentile_95),
+        percentile_99 = format_value(&metric.percentile_99),
+        percentile_100 = format_value(&metric.percentile_100),
     )
 }
 
@@ -460,8 +460,8 @@ pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
         </tr>"#,
             transaction = metric.transaction,
             name = metric.name,
-            number_of_requests = metric.number_of_requests,
-            number_of_failures = metric.number_of_failures,
+            number_of_requests = format_value(&metric.number_of_requests),
+            number_of_failures = format_value(&metric.number_of_failures),
             response_time_average = OrEmpty(metric.response_time_average),
             response_time_minimum = metric.response_time_minimum,
             response_time_maximum = metric.response_time_maximum,
@@ -516,8 +516,8 @@ pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
             <td>{iterations:.2}</td>
         </tr>"#,
         name = metric.name,
-        users = metric.users,
-        count = metric.count,
+        users = format_value(&metric.users),
+        count = format_value(&metric.count),
         response_time_average = metric.response_time_average,
         response_time_minimum = metric.response_time_minimum,
         response_time_maximum = metric.response_time_maximum,
