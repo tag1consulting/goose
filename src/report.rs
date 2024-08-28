@@ -6,7 +6,7 @@ pub(crate) use markdown::write_markdown_report;
 
 use crate::{
     goose::GooseMethod,
-    metrics::{self, format_value, DeltaEval, DeltaTo, Value},
+    metrics::{self, format_value, DeltaEval, DeltaTo, NullableFloat, Value},
     report::common::OrEmpty,
 };
 use serde::{Deserialize, Serialize};
@@ -35,11 +35,11 @@ pub(crate) struct RequestMetric {
     pub name: String,
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
-    pub response_time_average: Value<f32>,
+    pub response_time_average: Value<NullableFloat>,
     pub response_time_minimum: Value<usize>,
     pub response_time_maximum: Value<usize>,
-    pub requests_per_second: Value<f32>,
-    pub failures_per_second: Value<f32>,
+    pub requests_per_second: Value<NullableFloat>,
+    pub failures_per_second: Value<NullableFloat>,
 }
 
 impl DeltaTo for RequestMetric {
@@ -59,8 +59,8 @@ impl DeltaTo for RequestMetric {
 pub(crate) struct CORequestMetric {
     pub method: String,
     pub name: String,
-    pub response_time_average: Value<f32>,
-    pub response_time_standard_deviation: Value<f32>,
+    pub response_time_average: Value<NullableFloat>,
+    pub response_time_standard_deviation: Value<NullableFloat>,
     pub response_time_maximum: Value<usize>,
 }
 
@@ -109,11 +109,11 @@ pub(crate) struct TransactionMetric {
     pub name: String,
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
-    pub response_time_average: Option<Value<f32>>,
+    pub response_time_average: Option<Value<NullableFloat>>,
     pub response_time_minimum: Value<usize>,
     pub response_time_maximum: Value<usize>,
-    pub requests_per_second: Option<Value<f32>>,
-    pub failures_per_second: Option<Value<f32>>,
+    pub requests_per_second: Option<Value<NullableFloat>>,
+    pub failures_per_second: Option<Value<NullableFloat>>,
 }
 
 impl DeltaTo for TransactionMetric {
@@ -134,11 +134,11 @@ pub(crate) struct ScenarioMetric {
     pub name: String,
     pub users: Value<usize>,
     pub count: Value<usize>,
-    pub response_time_average: Value<f32>,
+    pub response_time_average: Value<NullableFloat>,
     pub response_time_minimum: Value<usize>,
     pub response_time_maximum: Value<usize>,
-    pub count_per_second: Value<f32>,
-    pub iterations: Value<f32>,
+    pub count_per_second: Value<NullableFloat>,
+    pub iterations: Value<NullableFloat>,
 }
 
 impl DeltaTo for ScenarioMetric {

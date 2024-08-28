@@ -2,11 +2,10 @@ use super::{
     delta::*, merge_times, per_second_calculations, prepare_status_codes, update_max_time,
     update_min_time, GooseMetrics,
 };
-use crate::report::ErrorMetric;
 use crate::{
     report::{
-        get_response_metric, CORequestMetric, RequestMetric, ResponseMetric, ScenarioMetric,
-        StatusCodeMetric, TransactionMetric,
+        get_response_metric, CORequestMetric, ErrorMetric, RequestMetric, ResponseMetric,
+        ScenarioMetric, StatusCodeMetric, TransactionMetric,
     },
     util, GooseError,
 };

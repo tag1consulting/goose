@@ -10,9 +10,11 @@
 
 mod common;
 mod delta;
+mod nullable;
 
 pub(crate) use common::{load_baseline_file, ReportData};
 pub(crate) use delta::*;
+pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario};
