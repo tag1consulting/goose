@@ -1,3 +1,4 @@
+use crate::metrics::NullableFloat;
 use num_format::{Format, ToFormattedString};
 use std::fmt::{Debug, Display, Formatter, Write};
 
@@ -65,6 +66,12 @@ pub(crate) enum Value<T: DeltaValue> {
 impl<T: DeltaValue> From<T> for Value<T> {
     fn from(value: T) -> Self {
         Self::Plain(value)
+    }
+}
+
+impl From<f32> for Value<NullableFloat> {
+    fn from(value: f32) -> Self {
+        Self::Plain(NullableFloat(value))
     }
 }
 
