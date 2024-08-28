@@ -352,3 +352,15 @@ The JSON report is a dump of the internal metrics collection. It is a JSON seria
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).
+
+## Baseline deltas
+
+It is possible to use a previously generated JSON report as a baseline for reports. In addition to the actual values, this will then also show the difference from the last.
+
+To use this, you will need to:
+
+* Create a baseline report by running it at least once using `--report-file report.json`
+* Then start adding `--baseline-file report.json` to later runs
+
+It is possible to still keep generating a JSON report at the same time as using a baseline file. So that you can
+create the next basefile in the same step.
