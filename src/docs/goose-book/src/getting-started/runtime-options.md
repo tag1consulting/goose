@@ -34,6 +34,7 @@ Metrics:
   --no-print-metrics          Doesn't display metrics at end of load test
   --no-error-summary          Doesn't display an error summary
   --report-file NAME          Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
+  --baseline-file NAME        An optional baseline JSON report, for rendering the reports with deltas
   --no-granular-report        Disable granular graphs in report file
   --pdf-print-html PATH       path to generate PDF-optimized HTML
   --pdf-scale SCALE           Sets PDF scale factor (0.1-2.0)
