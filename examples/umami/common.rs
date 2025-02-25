@@ -1,8 +1,7 @@
 use goose::goose::GooseResponse;
 use goose::prelude::*;
 
-use rand::prelude::IteratorRandom;
-use rand::seq::SliceRandom;
+use rand::prelude::*;
 use regex::Regex;
 
 /// The Umami website defines three content types.
@@ -392,10 +391,10 @@ pub fn random_words(count: usize, english: bool) -> Vec<String> {
             ContentType::Recipe,
             ContentType::Recipe,
         ];
-        let content_type = content_types.choose(&mut rand::thread_rng());
+        let content_type = content_types.choose(&mut rand::rng());
         // Then randomly select a node of this content type.
         let nodes = get_nodes(content_type.unwrap());
-        let page = nodes.choose(&mut rand::thread_rng());
+        let page = nodes.choose(&mut rand::rng());
         // Randomly select a word from the title to use in our search.
         let title = if english {
             page.unwrap().title_en
@@ -403,7 +402,7 @@ pub fn random_words(count: usize, english: bool) -> Vec<String> {
             page.unwrap().title_es
         };
         let words = title.split_whitespace();
-        let word = words.choose(&mut rand::thread_rng()).unwrap();
+        let word = words.choose(&mut rand::rng()).unwrap();
         // Remove ' to avoid encoding/decoding issues when validating later.
         let cleaned_word = word.replace("&#039;", "");
         random_words.push(cleaned_word.to_string());

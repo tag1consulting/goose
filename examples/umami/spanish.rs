@@ -2,7 +2,7 @@ use goose::prelude::*;
 
 use crate::common;
 
-use rand::seq::SliceRandom;
+use rand::prelude::*;
 
 /// Load the front page in Spanish and all static assets found on the page.
 pub async fn front_page_es(user: &mut GooseUser) -> TransactionResult {
@@ -23,7 +23,7 @@ pub async fn recipe_listing_es(user: &mut GooseUser) -> TransactionResult {
 /// Load a random recipe in Spanish and all static assets found on the page.
 pub async fn recipe_es(user: &mut GooseUser) -> TransactionResult {
     let nodes = common::get_nodes(&common::ContentType::Recipe);
-    let recipe = nodes.choose(&mut rand::thread_rng());
+    let recipe = nodes.choose(&mut rand::rng());
     let goose = user.get(recipe.unwrap().url_es).await?;
     common::validate_and_load_static_assets(user, goose, recipe.unwrap().title_es).await?;
 
@@ -41,7 +41,7 @@ pub async fn article_listing_es(user: &mut GooseUser) -> TransactionResult {
 /// Load a random article in Spanish and all static assets found on the page.
 pub async fn article_es(user: &mut GooseUser) -> TransactionResult {
     let nodes = common::get_nodes(&common::ContentType::Article);
-    let article = nodes.choose(&mut rand::thread_rng());
+    let article = nodes.choose(&mut rand::rng());
     let goose = user.get(article.unwrap().url_es).await?;
     common::validate_and_load_static_assets(user, goose, article.unwrap().title_es).await?;
 
@@ -51,7 +51,7 @@ pub async fn article_es(user: &mut GooseUser) -> TransactionResult {
 /// Load a basic page in Spanish and all static assets found on the page.
 pub async fn basic_page_es(user: &mut GooseUser) -> TransactionResult {
     let nodes = common::get_nodes(&common::ContentType::BasicPage);
-    let page = nodes.choose(&mut rand::thread_rng());
+    let page = nodes.choose(&mut rand::rng());
     let goose = user.get(page.unwrap().url_es).await?;
     common::validate_and_load_static_assets(user, goose, page.unwrap().title_es).await?;
 
@@ -75,7 +75,7 @@ pub async fn search_es(user: &mut GooseUser) -> TransactionResult {
 /// Load category listing by a random term in Spanish and all static assets found on the page.
 pub async fn term_listing_es(user: &mut GooseUser) -> TransactionResult {
     let terms = common::get_terms();
-    let term = terms.choose(&mut rand::thread_rng());
+    let term = terms.choose(&mut rand::rng());
     let goose = user.get(term.unwrap().url_es).await?;
     common::validate_and_load_static_assets(user, goose, term.unwrap().title_es).await?;
 
