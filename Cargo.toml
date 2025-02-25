@@ -59,4 +59,4 @@ httpmock = "0.7"
 native-tls = "0.2"
 nix = { version = "0.29", features = ["signal"] }
 rustls = "0.22"
-serial_test = "2.0"
+serial_test = "3.2"
