@@ -54,8 +54,7 @@ pub mod util;
 
 use gumdrop::Options;
 use lazy_static::lazy_static;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::prelude::*;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{atomic::AtomicUsize, Arc, RwLock};
@@ -730,7 +729,7 @@ impl GooseAttack {
             GooseScheduler::Random => {
                 // Allocate scenarios randomly.
                 loop {
-                    let scenario = available_scenarios.choose_mut(&mut rand::thread_rng());
+                    let scenario = available_scenarios.choose_mut(&mut rand::rng());
                     match scenario {
                         Some(set) => {
                             if let Some(s) = set.pop() {
@@ -1165,46 +1164,36 @@ impl GooseAttack {
     // Invoke `test_start` transactions if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // First run global test_start_transaction, if defined.
-        match &self.test_start_transaction {
-            Some(t) => {
-                info!("running test_start_transaction");
-                // Create a one-time-use User to run the test_start_transaction.
-                let base_url = goose::get_base_url(
-                    self.get_configuration_host(),
-                    None,
-                    self.defaults.host.clone(),
-                )?;
-                let mut user = GooseUser::single(base_url, &self.configuration)?;
-                let function = &t.function;
-                let _ = function(&mut user).await;
-            }
-            // No test_start_transaction defined, nothing to do.
-            None => (),
+        if let Some(t) = &self.test_start_transaction {
+            info!("running test_start_transaction");
+            // Create a one-time-use User to run the test_start_transaction.
+            let base_url = goose::get_base_url(
+                self.get_configuration_host(),
+                None,
+                self.defaults.host.clone(),
+            )?;
+            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let function = &t.function;
+            let _ = function(&mut user).await;
         }
-
         Ok(())
     }
 
     // Invoke `test_stop` transactions if existing.
     async fn run_test_stop(&self) -> Result<(), GooseError> {
         // First run global test_stop_transaction, if defined.
-        match &self.test_stop_transaction {
-            Some(t) => {
-                info!("running test_stop_transaction");
-                // Create a one-time-use User to run the test_stop_transaction.
-                let base_url = goose::get_base_url(
-                    self.get_configuration_host(),
-                    None,
-                    self.defaults.host.clone(),
-                )?;
-                let mut user = GooseUser::single(base_url, &self.configuration)?;
-                let function = &t.function;
-                let _ = function(&mut user).await;
-            }
-            // No test_stop_transaction defined, nothing to do.
-            None => (),
+        if let Some(t) = &self.test_stop_transaction {
+            info!("running test_stop_transaction");
+            // Create a one-time-use User to run the test_stop_transaction.
+            let base_url = goose::get_base_url(
+                self.get_configuration_host(),
+                None,
+                self.defaults.host.clone(),
+            )?;
+            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let function = &t.function;
+            let _ = function(&mut user).await;
         }
-
         Ok(())
     }
 
@@ -2137,7 +2126,7 @@ fn schedule_unsequenced_transactions(
 
                 let mut transactions_clone = transactions.clone();
                 if scheduler == &GooseScheduler::Random {
-                    transactions_clone.shuffle(&mut thread_rng());
+                    transactions_clone.shuffle(&mut rand::rng());
                 }
                 weighted_transactions.append(&mut transactions_clone);
             }

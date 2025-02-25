@@ -1545,7 +1545,7 @@ impl GooseUser {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn request<'a>(
+    pub async fn request(
         &mut self,
         mut request: GooseRequest<'_>,
     ) -> Result<GooseResponse, Box<TransactionError>> {

@@ -791,7 +791,8 @@ async fn make_request(test_state: &mut TestState, command: &str) {
                 serde_json::to_string(&ControllerWebSocketRequest {
                     request: command.to_string(),
                 })
-                .unwrap(),
+                .unwrap()
+                .into(),
             ))
             .await
             .unwrap()

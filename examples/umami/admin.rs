@@ -2,7 +2,7 @@ use goose::prelude::*;
 
 use crate::common;
 
-use rand::seq::SliceRandom;
+use rand::prelude::*;
 use std::env;
 
 /// Log into the website.
@@ -110,7 +110,7 @@ pub async fn log_in(user: &mut GooseUser) -> TransactionResult {
 pub async fn edit_article(user: &mut GooseUser) -> TransactionResult {
     // First, load a random article.
     let nodes = common::get_nodes(&common::ContentType::Article);
-    let article = nodes.choose(&mut rand::thread_rng());
+    let article = nodes.choose(&mut rand::rng());
     let goose = user.get(article.unwrap().url_en).await?;
     common::validate_and_load_static_assets(user, goose, article.unwrap().title_en).await?;
 

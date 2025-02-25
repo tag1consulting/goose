@@ -22,7 +22,7 @@ pub(crate) fn write_markdown_report<W: Write>(
     Markdown { w, data }.write()
 }
 
-impl<'m, 'w, W: Write> Markdown<'m, 'w, W> {
+impl<W: Write> Markdown<'_, '_, W> {
     pub fn write(mut self) -> Result<(), GooseError> {
         self.write_header()?;
         self.write_plan_overview()?;
