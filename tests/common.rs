@@ -12,7 +12,7 @@ type WorkerHandles = Vec<tokio::task::JoinHandle<GooseMetrics>>;
 
 /// Not all functions are used by all tests, so we enable allow(dead_code) to avoid
 /// compiler warnings during testing.
-
+///
 /// The following options are configured by default, if not set to a custom value
 /// and if not building a Worker configuration:
 ///  --host <mock-server>
