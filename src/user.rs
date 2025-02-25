@@ -72,7 +72,7 @@ pub(crate) async fn user_main(
                 // If the transaction_wait is defined, wait for a random time between transaction.
                 if let Some((min, max)) = thread_scenario.transaction_wait {
                     // Total time left to wait before running the next transaction.
-                    let mut wait_time = rand::thread_rng().gen_range(min..=max).as_millis();
+                    let mut wait_time = rand::rng().random_range(min..=max).as_millis();
                     // Track the time slept for Coordinated Omission Mitigation.
                     let sleep_timer = time::Instant::now();
                     // Never sleep more than 500 milliseconds, allowing a sleeping transaction to shut

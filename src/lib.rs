@@ -54,8 +54,7 @@ pub mod util;
 
 use gumdrop::Options;
 use lazy_static::lazy_static;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::prelude::*;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{atomic::AtomicUsize, Arc, RwLock};
@@ -730,7 +729,7 @@ impl GooseAttack {
             GooseScheduler::Random => {
                 // Allocate scenarios randomly.
                 loop {
-                    let scenario = available_scenarios.choose_mut(&mut rand::thread_rng());
+                    let scenario = available_scenarios.choose_mut(&mut rand::rng());
                     match scenario {
                         Some(set) => {
                             if let Some(s) = set.pop() {
@@ -2137,7 +2136,7 @@ fn schedule_unsequenced_transactions(
 
                 let mut transactions_clone = transactions.clone();
                 if scheduler == &GooseScheduler::Random {
-                    transactions_clone.shuffle(&mut thread_rng());
+                    transactions_clone.shuffle(&mut rand::rng());
                 }
                 weighted_transactions.append(&mut transactions_clone);
             }
