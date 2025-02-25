@@ -1465,6 +1465,7 @@ trait ControllerExecuteCommand<T> {
     // if the request was successful or not.
     async fn write_to_socket(&self, socket: &mut T, response_message: Result<String, String>);
 }
+
 #[async_trait]
 impl ControllerExecuteCommand<tokio::net::TcpStream> for ControllerState {
     // Run the command received from a telnet Controller request.
@@ -1527,6 +1528,7 @@ impl ControllerExecuteCommand<tokio::net::TcpStream> for ControllerState {
         };
     }
 }
+
 #[async_trait]
 impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
     // Run the command received from a WebSocket Controller request.
@@ -1546,7 +1548,7 @@ impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
                 && socket
                     .send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
                         code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
-                        reason: std::borrow::Cow::Borrowed("exit"),
+                        reason: "exit".into(),
                     })))
                     .await
                     .is_err()
@@ -1588,7 +1590,7 @@ impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
             && socket
                 .send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
                     code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
-                    reason: std::borrow::Cow::Borrowed("shutdown"),
+                    reason: "shutdown".into(),
                 })))
                 .await
                 .is_err()
@@ -1624,7 +1626,7 @@ impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
                     // Success is true if there is no error, false if there is an error.
                     success,
                 }) {
-                    Ok(json) => json,
+                    Ok(json) => json.into(),
                     Err(e) => {
                         warn!("failed to json encode response: {}", e);
                         return;
