@@ -354,11 +354,7 @@ pub fn ms_timer_expired(started: time::Instant, elapsed: usize) -> bool {
 /// assert_eq!(util::get_hatch_rate(None), 1.0);
 /// ```
 pub fn get_hatch_rate(hatch_rate: Option<String>) -> f32 {
-    if let Some(value) = get_float_from_string(hatch_rate) {
-        value
-    } else {
-        1.0
-    }
+    get_float_from_string(hatch_rate).unwrap_or(1.0)
 }
 
 /// Convert optional string to f32, otherwise return None.

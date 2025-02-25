@@ -1164,46 +1164,36 @@ impl GooseAttack {
     // Invoke `test_start` transactions if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // First run global test_start_transaction, if defined.
-        match &self.test_start_transaction {
-            Some(t) => {
-                info!("running test_start_transaction");
-                // Create a one-time-use User to run the test_start_transaction.
-                let base_url = goose::get_base_url(
-                    self.get_configuration_host(),
-                    None,
-                    self.defaults.host.clone(),
-                )?;
-                let mut user = GooseUser::single(base_url, &self.configuration)?;
-                let function = &t.function;
-                let _ = function(&mut user).await;
-            }
-            // No test_start_transaction defined, nothing to do.
-            None => (),
+        if let Some(t) = &self.test_start_transaction {
+            info!("running test_start_transaction");
+            // Create a one-time-use User to run the test_start_transaction.
+            let base_url = goose::get_base_url(
+                self.get_configuration_host(),
+                None,
+                self.defaults.host.clone(),
+            )?;
+            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let function = &t.function;
+            let _ = function(&mut user).await;
         }
-
         Ok(())
     }
 
     // Invoke `test_stop` transactions if existing.
     async fn run_test_stop(&self) -> Result<(), GooseError> {
         // First run global test_stop_transaction, if defined.
-        match &self.test_stop_transaction {
-            Some(t) => {
-                info!("running test_stop_transaction");
-                // Create a one-time-use User to run the test_stop_transaction.
-                let base_url = goose::get_base_url(
-                    self.get_configuration_host(),
-                    None,
-                    self.defaults.host.clone(),
-                )?;
-                let mut user = GooseUser::single(base_url, &self.configuration)?;
-                let function = &t.function;
-                let _ = function(&mut user).await;
-            }
-            // No test_stop_transaction defined, nothing to do.
-            None => (),
+        if let Some(t) = &self.test_stop_transaction {
+            info!("running test_stop_transaction");
+            // Create a one-time-use User to run the test_stop_transaction.
+            let base_url = goose::get_base_url(
+                self.get_configuration_host(),
+                None,
+                self.defaults.host.clone(),
+            )?;
+            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let function = &t.function;
+            let _ = function(&mut user).await;
         }
-
         Ok(())
     }
 
