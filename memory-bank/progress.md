@@ -32,8 +32,8 @@
 
 Based on the codebase analysis, these features appear to be actively developed or recently implemented:
 
+- **Gaggle Restoration**: Reimplementing distributed load testing functionality (currently disabled)
 - **Enhanced Report Formats**: More comprehensive reporting options
-- **Gaggle Mode Improvements**: Distributed load testing capabilities
 - **Additional Controller Commands**: More granular runtime control
 - **Custom Validation Helpers**: Simplifying response validation patterns
 - **Example Expansion**: More demonstration scenarios for users
@@ -42,6 +42,7 @@ Based on the codebase analysis, these features appear to be actively developed o
 
 Potential challenges identified from the code examination:
 
+- **Gaggle Functionality Disabled**: Distributed load testing via Gaggle is currently disabled as of Goose 0.17.0
 - **Resource Consumption**: High user counts require significant system resources
 - **Complex Configuration**: Many options can lead to configuration challenges
 - **Learning Curve**: Requires Rust knowledge for custom test scenarios
@@ -52,6 +53,11 @@ Potential challenges identified from the code examination:
 
 Potential future enhancements based on code comments and design patterns:
 
+- **Gaggle Implementation Options**:
+  - **Hydro Integration**: Using Rust's distributed programming framework
+  - **Zenoh Protocol**: Implementing Zero Overhead Network Protocol for efficiency
+  - **gRPC/Tonic**: Leveraging Google's RPC system with Rust support
+  - **Other Alternatives**: Exploring Cap'n Proto or Tarpc as potential solutions
 - **Enhanced UI Integration**: Better web-based control interfaces
 - **Additional Metrics Exporters**: Support for more metrics storage systems
 - **Advanced Rate Shaping**: More sophisticated traffic patterns

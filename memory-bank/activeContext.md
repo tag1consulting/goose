@@ -20,6 +20,7 @@ From examining the codebase, recent developments include:
 ## Next Steps
 Based on the code analysis, potential next steps for the project may include:
 
+- **Restoring Gaggle Functionality**: Reimplementing distributed load testing capabilities that were removed in v0.17.0
 - Enhancing the report generation capabilities and visualizations
 - Expanding controller functionality for more granular test control
 - Improving documentation and examples for advanced features
@@ -32,6 +33,7 @@ Based on the code analysis, potential next steps for the project may include:
 - **Async Model**: Using Tokio for asynchronous execution provides efficient resource usage but requires careful error handling
 - **Metrics Collection**: Balancing detailed metrics collection against performance overhead
 - **Controller Interfaces**: Providing multiple interface options (telnet/WebSocket) for flexibility
+- **Gaggle Replacement**: Evaluating distributed systems technologies (Hydro, Zenoh, gRPC/Tonic) to replace the previous nng-based implementation
 
 ### Design Considerations
 - **API Usability**: Maintaining a clear and intuitive API despite complex internal mechanics
