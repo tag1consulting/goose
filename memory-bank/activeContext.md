@@ -26,6 +26,7 @@ Based on the code analysis, potential next steps for the project may include:
 - Improving documentation and examples for advanced features
 - Adding more sophisticated transaction validation capabilities
 - Developing additional tools for test result analysis
+- **AI-Assisted Code Reviews**: Implement GooseBot for automated PR feedback to enhance code quality and consistency (see [aiCodeReviewPlan.md](./aiCodeReviewPlan.md))
 
 ## Active Decisions and Considerations
 
