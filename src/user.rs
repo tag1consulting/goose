@@ -129,7 +129,7 @@ pub(crate) async fn user_main(
                 } else {
                     "iterations"
                 };
-                // Provide visual indication that a GooseUSer has completed the confifgured
+                // Provide visual indication that a GooseUser has completed the configured
                 // number of iterations.
                 info!(
                     "user {} completed {} {} of {}...",
