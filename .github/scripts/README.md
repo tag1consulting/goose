@@ -51,15 +51,15 @@ GooseBot runs automatically on new PRs and PR updates. You can also trigger it m
 
 To customize the review process:
 
-- Edit prompt templates in `prompts/v1/`
+- Edit prompt templates in `.github/prompts/v1/`
 - Add new review scopes by creating additional prompt files
 - Modify the file filtering patterns in the workflow file
 
 ## Prompt Development
 
-GooseBot uses versioned prompt templates stored in the `prompts/` directory. To create a new review scope:
+GooseBot uses versioned prompt templates stored in the `.github/prompts/` directory. To create a new review scope:
 
-1. Create a new file in `prompts/v1/` named `<scope>_review.md`
+1. Create a new file in `.github/prompts/v1/` named `<scope>_review.md`
 2. Format it following the existing clarity review template
 3. Update the workflow to use your new scope
 

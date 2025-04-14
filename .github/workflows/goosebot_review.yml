@@ -42,7 +42,7 @@ jobs:
           pip install anthropic==0.45.2 PyGithub==2.6.0
       
       - name: Make script executable
-        run: chmod +x scripts/goosebot_review.py
+        run: chmod +x .github/scripts/goosebot_review.py
       
       - name: Run GooseBot Review
         env:
@@ -62,4 +62,4 @@ jobs:
           echo "Running GooseBot review for PR #$PR_NUMBER with scope: $SCOPE"
           
           # Run the review script
-          python scripts/goosebot_review.py --pr "$PR_NUMBER" --scope "$SCOPE" --debug
+          python .github/scripts/goosebot_review.py --pr "$PR_NUMBER" --scope "$SCOPE" --debug

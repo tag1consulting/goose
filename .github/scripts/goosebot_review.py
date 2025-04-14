@@ -160,7 +160,7 @@ def load_prompt_template(scope: str, version: str = "v1") -> str:
     Returns:
         The prompt template as a string
     """
-    template_path = f"prompts/{version}/{scope}_review.md"
+    template_path = f".github/prompts/{version}/{scope}_review.md"
     
     try:
         with open(template_path, 'r') as f:
