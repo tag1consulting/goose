@@ -44,6 +44,15 @@ jobs:
       - name: Make script executable
         run: chmod +x .github/scripts/goosebot_review.py
       
+      - name: Debug Environment (Safe)
+        run: |
+          echo "ANTHROPIC_API_KEY exists: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
+          echo "ANTHROPIC_API_URL exists: ${{ secrets.ANTHROPIC_API_URL != '' }}"
+          echo "Python version: $(python --version)"
+          echo "Working directory: $(pwd)"
+          echo "List of environment variables (names only):"
+          env | cut -d= -f1
+      
       - name: Run GooseBot Review
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -60,6 +69,10 @@ jobs:
           
           # Log what we're doing
           echo "Running GooseBot review for PR #$PR_NUMBER with scope: $SCOPE"
+          
+          # Run the review script with explicit printing of environment variable status
+          echo "ANTHROPIC_API_KEY set: ${{ env.ANTHROPIC_API_KEY != '' }}"
+          echo "ANTHROPIC_API_URL set: ${{ env.ANTHROPIC_API_URL != '' }}"
           
           # Run the review script
           python .github/scripts/goosebot_review.py --pr "$PR_NUMBER" --scope "$SCOPE" --debug

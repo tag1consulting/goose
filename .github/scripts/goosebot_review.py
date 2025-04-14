@@ -270,6 +270,11 @@ def call_anthropic_api(prompt: str, token_tracker: TokenUsageTracker, max_tokens
     Returns:
         Dictionary with the API response and token usage
     """
+    # Simple environment variable debugging
+    logger.info("Checking API environment variables:")
+    logger.info(f"ANTHROPIC_API_KEY present in environment: {'ANTHROPIC_API_KEY' in os.environ}")
+    logger.info(f"ANTHROPIC_API_URL present in environment: {'ANTHROPIC_API_URL' in os.environ}")
+    
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         logger.error("ANTHROPIC_API_KEY environment variable not set")
