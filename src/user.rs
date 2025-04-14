@@ -96,7 +96,7 @@ pub(crate) async fn user_main(
                         };
 
                         debug!(
-                            "user {} from {} sleeping {:?} ...",
+                            "[user {}]: from {} sleeping {:?} ...",
                             thread_number, thread_scenario.name, sleep_duration
                         );
 
@@ -153,7 +153,7 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user: {}]: launching on_stop {} transaction from {}",
+                "[user {}]: launching on_stop {} transaction from {}",
                 thread_number, thread_transaction_name, thread_scenario.name
             );
             // Invoke the transaction function.
