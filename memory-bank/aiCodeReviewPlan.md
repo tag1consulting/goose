@@ -39,9 +39,12 @@ GooseBot will enhance Goose's development process by:
          contents: read
        steps:
          - uses: actions/checkout@v3
+           with:
+             fetch-depth: 0  # Get full history for better context
          - name: GooseBot Review - PR Clarity
            env:
              ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+             ANTHROPIC_API_URL: ${{ secrets.ANTHROPIC_API_URL }}  # For internal hosted version
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
              PR_REVIEW_WHITELIST: "*.rs,*.md"
              PR_REVIEW_BLACKLIST: "tests/*,benches/*"
@@ -54,6 +57,12 @@ GooseBot will enhance Goose's development process by:
    - Sends to LLM with prompt focused on documentation clarity
    - Posts results as a PR comment
 4. Configure as non-blocking (informational only)
+5. Include prompt version tracking metadata
+
+**Integration with Existing CI Workflow:**
+- Run GooseBot as a separate workflow parallel to existing CI
+- Use the same checkout action as the existing workflow
+- Ensure completion timing aligns with early CI checks
 
 **Expected Outcome**: Contributors receive automated comments from "GooseBot" with suggestions to improve PR descriptions.
 
@@ -112,6 +121,7 @@ GooseBot will enhance Goose's development process by:
    - Add override mechanisms for maintainers
 4. Establish continuous improvement process for prompts
 5. Document the system for contributors
+6. Support multiple LLM providers/models for comparison and fallback
 
 **Expected Outcome**: GooseBot becomes a mature part of the CI pipeline with optional enforcement capabilities.
 
@@ -283,6 +293,198 @@ The implementation will be structured for reusability:
 4. Implement feature flags for different AI checks
 5. Keep the system decoupled from Goose application code
 
+### Testing Strategy
+To ensure GooseBot's reliability, we'll implement a comprehensive testing approach:
+
+1. **Unit Tests**:
+   - Test file filtering logic
+   - Test line position mapping
+   - Test comment formatting
+   - Test GitHub API interaction (with mocks)
+   
+2. **Integration Tests**:
+   - Create test PR workflows that validate end-to-end functionality
+   - Test with synthetic PR content
+   - Mock LLM API responses for predictable testing
+   
+3. **Regression Tests**:
+   - Maintain a collection of sample PRs with expected outcomes
+   - Compare GooseBot output against expected baselines
+   
+4. **Self-Review Tests**:
+   - GooseBot should review its own PRs for code quality
+   - Implement a validation step to ensure PR comments are well-formed
+   
+5. **Implementation**:
+   ```yaml
+   name: GooseBot Self-Test
+   on:
+     pull_request:
+       paths:
+         - 'scripts/goosebot_*.py'
+         - '.github/workflows/goosebot*.yml'
+   jobs:
+     test-goosebot:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v3
+         - name: Run GooseBot Unit Tests
+           run: |
+             python -m unittest discover -s scripts/tests
+         - name: Run GooseBot Integration Tests
+           run: |
+             python scripts/tests/integration_test.py
+   ```
+
+### Prompt Version Control
+To manage LLM prompts effectively:
+
+1. **Prompt Repository**:
+   - Store prompts as versioned template files
+   - Include metadata (version, author, date, purpose)
+   - Support multiple language models
+   
+2. **Version Tagging**:
+   - Embed version information in each prompt
+   - Record prompt version in review comments
+   - Track prompt performance metrics by version
+   
+3. **A/B Testing**:
+   - Support parallel prompt testing on similar PRs
+   - Gather metrics on prompt effectiveness
+   - Framework for comparing prompt versions
+   
+4. **Implementation**:
+   ```python
+   class PromptTemplate:
+       def __init__(self, template_path, version, model):
+           self.template_path = template_path
+           self.version = version
+           self.model = model
+           self.metadata = {}
+           self._load()
+           
+       def _load(self):
+           with open(self.template_path, "r") as f:
+               content = f.read()
+               # Parse metadata from comments
+               # Load template content
+               
+       def render(self, **kwargs):
+           # Render template with parameters
+           # Add version metadata
+           # Return formatted prompt
+   ```
+
+### Feedback Loop Metrics
+To measure and improve GooseBot's effectiveness:
+
+1. **Feedback Collection**:
+   - Add reaction buttons to GooseBot comments
+   - Track when suggestions are accepted/rejected
+   - Collect user feedback through slash commands
+   
+2. **Metrics Dashboard**:
+   - Track suggestion acceptance rate
+   - Measure comment quality and relevance
+   - Monitor performance across different code areas
+   
+3. **Continuous Improvement**:
+   - Use feedback to refine prompts
+   - Adjust review focus based on what helps most
+   - Regular review of metrics with maintainers
+   
+4. **Implementation**:
+   ```python
+   def track_feedback(comment_id, feedback_type):
+       """Record feedback on a GooseBot comment"""
+       # Store in database or log
+       # Update metrics
+       
+   def process_reaction(reaction, comment_id):
+       """Process GitHub reaction on comment"""
+       if reaction == "+1":
+           track_feedback(comment_id, "positive")
+       elif reaction == "-1":
+           track_feedback(comment_id, "negative")
+   ```
+
+### Cost Management
+To control API usage costs effectively:
+
+1. **Usage Monitoring**:
+   - Track token usage per PR review
+   - Set daily/monthly limits
+   - Alert on unusual usage patterns
+   
+2. **Optimization Strategies**:
+   - Chunk large PRs intelligently
+   - Filter unnecessary files (e.g., generated code)
+   - Cache LLM responses where applicable
+   - Adjust verbosity based on PR size
+   
+3. **Budget Controls**:
+   - Implement token caps per PR
+   - Prioritize reviews based on PR size/importance
+   - Support different review depths based on PR type
+   
+4. **Implementation**:
+   ```python
+   class TokenUsageTracker:
+       def __init__(self, budget_limit):
+           self.budget_limit = budget_limit
+           self.current_usage = 0
+           
+       def can_process(self, estimated_tokens):
+           return self.current_usage + estimated_tokens <= self.budget_limit
+           
+       def record_usage(self, prompt_tokens, completion_tokens):
+           usage = prompt_tokens + completion_tokens
+           self.current_usage += usage
+           return self.current_usage
+   ```
+
+### Fallback Mechanisms
+To ensure reliability when the LLM service is unavailable:
+
+1. **Service Health Checks**:
+   - Monitor LLM API availability
+   - Check response times and quality
+   - Detect truncated or malformed responses
+   
+2. **Multi-Provider Support**:
+   - Support multiple LLM providers (Anthropic, OpenAI, etc.)
+   - Implement provider rotation for reliability
+   - Fallback to alternative models when primary is unavailable
+   
+3. **Graceful Degradation**:
+   - Perform basic reviews without LLM if needed
+   - Skip complex analysis but maintain simple checks
+   - Clear error reporting when service is unavailable
+   
+4. **Implementation**:
+   ```python
+   class LLMProvider:
+       def __init__(self, providers_config):
+           self.providers = self._load_providers(providers_config)
+           self.primary = providers_config.get("primary", "anthropic")
+           
+       def get_provider(self):
+           """Get current working provider"""
+           # Try primary first
+           if self._check_health(self.primary):
+               return self.providers[self.primary]
+               
+           # Try fallbacks in order
+           for name, provider in self.providers.items():
+               if name != self.primary and self._check_health(name):
+                   logger.warning(f"Using fallback provider {name}")
+                   return provider
+                   
+           # No working providers
+           raise NoAvailableProviderError("All LLM providers unavailable")
+   ```
+
 ### Security and Control Mechanisms
 To ensure security and control costs:
 
@@ -331,7 +533,11 @@ The following documentation updates will be made:
 5. Create contributor documentation on working with GooseBot
 
 ## Next Steps
-1. Set up API access and tokens (Anthropic API key)
+1. Set up API access and tokens (Anthropic API key for internal hosted instance)
 2. Implement Phase 1 (PR clarity)
+   - Create Python script for PR analysis
+   - Implement GitHub workflow file
+   - Develop initial prompt templates
+   - Test on sample PRs
 3. Gather feedback from maintainers
 4. Proceed to subsequent phases based on success

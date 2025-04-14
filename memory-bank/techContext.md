@@ -79,3 +79,13 @@
 - In-code documentation with rustdoc
 - The Goose Book for comprehensive guidance
 - Examples demonstrating various usage patterns
+
+### Code Quality Process
+- Manual code reviews for all pull requests
+- Clippy for static code analysis
+- Formatting verification with rustfmt
+- GooseBot AI-assisted code reviews for automated feedback on:
+  - Documentation clarity
+  - Code quality and best practices
+  - Performance considerations
+  - Security implications
