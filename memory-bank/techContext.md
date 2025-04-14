@@ -79,3 +79,22 @@
 - In-code documentation with rustdoc
 - The Goose Book for comprehensive guidance
 - Examples demonstrating various usage patterns
+
+### Code Quality Process
+- Manual code reviews for all pull requests
+- Clippy for static code analysis
+- Formatting verification with rustfmt
+- GooseBot AI-assisted code reviews for automated feedback on:
+  - Documentation clarity and PR quality (implemented in Phase 1)
+  - Code quality and best practices (planned for Phase 2)
+  - Performance considerations (planned for Phase 3)
+  - Security implications (planned for Phase 3)
+  
+### GooseBot AI Code Review
+- **Implementation**: Python-based GitHub Actions workflow
+- **Dependencies**: Anthropic Claude API, PyGithub
+- **Integration**: Automated PR reviews triggered by PR events
+- **Context-Aware**: Reads memory-bank for project understanding
+- **Prompt Templates**: Versioned templates with explicit scope
+- **File Filtering**: Configurable patterns to include/exclude files
+- **Token Management**: Budget tracking to control API costs

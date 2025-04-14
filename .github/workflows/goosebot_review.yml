@@ -1,0 +1,80 @@
+name: GooseBot PR Review
+
+on:
+  # Use pull_request_target instead of pull_request to access secrets
+  # This runs in the context of the base repo instead of the fork
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  # Manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: number
+      scope:
+        description: 'Review scope (clarity, quality, etc.)'
+        required: false
+        default: 'clarity'
+        type: string
+
+jobs:
+  ai-review:
+    name: GooseBot AI Review
+    runs-on: ubuntu-latest
+    # Permissions needed for reading content and writing PR comments
+    permissions:
+      contents: read
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch full history for better context
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install anthropic==0.45.2 PyGithub==2.6.0
+      
+      - name: Make script executable
+        run: chmod +x .github/scripts/goosebot_review.py
+      
+      - name: Debug Environment (Safe)
+        run: |
+          echo "ANTHROPIC_API_KEY exists: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
+          echo "ANTHROPIC_API_URL exists: ${{ secrets.ANTHROPIC_API_URL != '' }}"
+          echo "Python version: $(python --version)"
+          echo "Working directory: $(pwd)"
+          echo "List of environment variables (names only):"
+          env | cut -d= -f1
+      
+      - name: Run GooseBot Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_URL: ${{ secrets.ANTHROPIC_API_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Configure file filtering
+          PR_REVIEW_WHITELIST: "*.rs,*.md,*.py,*.toml,*.yml,*.yaml"
+          PR_REVIEW_BLACKLIST: "tests/*,benches/*,target/*"
+          # Optional token budget limit
+          TOKEN_BUDGET: "100000"
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.inputs.pr_number }}"
+          SCOPE="${{ github.event.inputs.scope || 'clarity' }}"
+          
+          # Log what we're doing
+          echo "Running GooseBot review for PR #$PR_NUMBER with scope: $SCOPE"
+          
+          # Run the review script with explicit printing of environment variable status
+          echo "ANTHROPIC_API_KEY set: ${{ env.ANTHROPIC_API_KEY != '' }}"
+          echo "ANTHROPIC_API_URL set: ${{ env.ANTHROPIC_API_URL != '' }}"
+          
+          # Run the review script
+          python .github/scripts/goosebot_review.py --pr "$PR_NUMBER" --scope "$SCOPE" --debug
