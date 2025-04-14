@@ -98,3 +98,9 @@
 - **Prompt Templates**: Versioned templates with explicit scope
 - **File Filtering**: Configurable patterns to include/exclude files
 - **Token Management**: Budget tracking to control API costs
+- **Model Versioning Strategy**: Uses specific model versions (e.g., claude-3-sonnet-20240229) rather than "-latest" suffix for:
+  - Predictable responses and consistent behavior
+  - Stable token usage and cost management
+  - Avoiding unexpected breaking changes
+  - Reproducible reviews and debugging
+  - Note: Requires manual updates when models are deprecated (current model expires July 2025)
