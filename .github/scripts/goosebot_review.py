@@ -276,8 +276,11 @@ def call_anthropic_api(prompt: str, token_tracker: TokenUsageTracker, max_tokens
     logger.info(f"ANTHROPIC_API_URL present in environment: {'ANTHROPIC_API_URL' in os.environ}")
     
     api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error("ANTHROPIC_API_KEY environment variable not set")
+    # Check if the key exists AND has a non-empty value
+    if api_key is None or api_key.strip() == "":
+        logger.error("ANTHROPIC_API_KEY environment variable not set or is empty")
+        logger.info("Please ensure the secret is set correctly in GitHub repository settings")
+        logger.info("See: https://github.com/tag1consulting/goose/settings/secrets/actions")
         sys.exit(1)
     
     # Get custom API URL if set
