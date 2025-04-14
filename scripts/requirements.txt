@@ -1,0 +1,2 @@
+anthropic==0.45.2
+PyGithub==2.6.0
