@@ -69,7 +69,7 @@ pub(crate) async fn user_main(
                     break 'launch_transactions;
                 }
 
-                // If the transaction_wait is defined, wait for a random time between transaction.
+                // If the transaction_wait is defined, wait for a random time between transactions.
                 if let Some((min, max)) = thread_scenario.transaction_wait {
                     // Total time left to wait before running the next transaction.
                     let mut wait_time = rand::rng().random_range(min..=max).as_millis();
