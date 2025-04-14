@@ -72,7 +72,8 @@ Potential future enhancements based on code comments and design patterns:
     - Python script integrates with Anthropic API
     - Templates for clarity reviews optimized for maximum brevity
     - Provides "no issues found" response when documentation is adequate
-    - Initial testing successful with ultra-concise output format
+    - Enhanced to generate concrete examples based on actual code changes
+    - Initial testing successful with specific, directly usable suggestions
   - Phase 2 planned (code quality and style)
   - Phase 3 planned (specialized multi-agent reviews)
   - Phase 4 planned (refinement and optional enforcement)

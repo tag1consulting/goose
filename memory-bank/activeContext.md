@@ -29,6 +29,7 @@ Based on the code analysis, potential next steps for the project may include:
 - **AI-Assisted Code Reviews**: 
   - Completed implementation of GooseBot Phase 1 for automated PR clarity reviews; initial testing successful
   - Improved GooseBot output format to be extremely concise, focused only on essential issues
+  - Enhanced prompts to provide concrete, specific suggestions based on actual code changes
   - Added explicit "no issues found" response when PR documentation is adequate
   - Additional review scopes planned for future phases (see [aiCodeReviewPlan.md](./aiCodeReviewPlan.md) for full implementation plan)
   - Update Claude model before July 2025 deprecation date
