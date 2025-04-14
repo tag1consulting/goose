@@ -1,7 +1,9 @@
 name: GooseBot PR Review
 
 on:
-  pull_request:
+  # Use pull_request_target instead of pull_request to access secrets
+  # This runs in the context of the base repo instead of the fork
+  pull_request_target:
     types: [opened, synchronize, reopened]
   # Manual trigger for testing
   workflow_dispatch:

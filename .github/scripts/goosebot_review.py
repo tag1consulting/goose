@@ -275,6 +275,11 @@ def call_anthropic_api(prompt: str, token_tracker: TokenUsageTracker, max_tokens
     logger.info(f"ANTHROPIC_API_KEY present in environment: {'ANTHROPIC_API_KEY' in os.environ}")
     logger.info(f"ANTHROPIC_API_URL present in environment: {'ANTHROPIC_API_URL' in os.environ}")
     
+    # Check if key has content without revealing it
+    debug_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    logger.info(f"ANTHROPIC_API_KEY length: {len(debug_key)}")
+    logger.info(f"ANTHROPIC_API_KEY first 4 chars: {debug_key[:4] if len(debug_key) > 4 else 'empty'}")
+    
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     # Check if the key exists AND has a non-empty value
     if api_key is None or api_key.strip() == "":
