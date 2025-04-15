@@ -33,9 +33,9 @@ FORMAT 1 (IF YOU FIND ISSUES - MAXIMUM 2 ISSUES):
 ```
 ### GooseBot
 
-Title suggestion → Consider: "Add string error type support for transaction functions"
+Title suggestion: Consider "Add string error type support for transaction functions"
 
-Description enhancement → Consider adding: "This improves error handling flexibility by letting developers return custom error messages when the predefined variants aren't suitable."
+Description enhancement: Consider adding "This improves error handling flexibility by letting developers return custom error messages when the predefined variants aren't suitable."
 ```
 
 FORMAT 2 (IF NO ISSUES):
