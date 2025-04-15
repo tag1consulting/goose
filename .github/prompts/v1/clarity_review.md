@@ -21,32 +21,28 @@ Check project context:
 {project_context}
 
 CRITICAL INSTRUCTIONS:
-- For description improvements, provide CONCRETE EXAMPLES BASED ON ACTUAL CODE CHANGES
-- For typo fixes, specify exactly what was fixed and where
-- Make suggestions proportional to change complexity (simpler changes need simpler descriptions)
-- Avoid generic advice - show exactly what text to use
-- Follow file paths and code syntax precisely
+- Provide high-level, conceptual suggestions that enhance understanding
+- NEVER mention specific file paths, line numbers, or code syntax 
+- Build upon existing descriptions - don't start from scratch
+- Focus on explaining the purpose and impact of changes
+- Suggestions should help readers understand WHY the change is valuable
 
 RESPOND IN EXACTLY ONE OF THESE TWO FORMATS:
 
 FORMAT 1 (IF YOU FIND ISSUES - MAXIMUM 2 ISSUES):
 ```
-### GooseBot PR Clarity Review
+### GooseBot
 
-**Title needs specificity** → Change "Fix typo" to "Fix typo in GooseUser configuration comment"
+Title suggestion → Consider: "Add string error type support for transaction functions"
 
-**Description needs details** → Replace with: "Fixed typo in src/user.rs: corrected 'confifgured' to 'configured'"
-
-GooseBot v1.0.0 | [Feedback](https://github.com/tag1consulting/goose/issues/new?title=GooseBot%20Feedback)
+Description enhancement → Consider adding: "This improves error handling flexibility by letting developers return custom error messages when the predefined variants aren't suitable."
 ```
 
 FORMAT 2 (IF NO ISSUES):
 ```
-### GooseBot PR Clarity Review
+### GooseBot
 
 PR documentation looks good. No clarity issues found.
-
-GooseBot v1.0.0 | [Feedback](https://github.com/tag1consulting/goose/issues/new?title=GooseBot%20Feedback)
 ```
 
-BE EXTREMELY BRIEF. ALWAYS PROVIDE CONCRETE EXAMPLES BASED ON ACTUAL CODE CHANGES.
+PROVIDE CONCEPTUAL SUGGESTIONS THAT EXPLAIN THE PURPOSE AND VALUE OF CHANGES.
