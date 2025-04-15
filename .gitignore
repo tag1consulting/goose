@@ -6,3 +6,5 @@
 /Cargo.lock
 /src/docs/*/book
 /.idea
+/.env
+/.venv

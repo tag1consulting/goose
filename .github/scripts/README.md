@@ -10,6 +10,39 @@ GooseBot is an AI-powered code review assistant for the Goose load testing frame
 - Filters files based on configurable patterns
 - Posts reviews as PR comments
 
+## Local Testing
+
+### Setup
+
+```bash
+# 1. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On macOS/Linux
+
+# 2. Install the required dependencies
+pip install -r .github/scripts/requirements.txt
+
+# 3. Create a .env file in the project root
+echo "GITHUB_TOKEN=your_github_token_here" > .env
+echo "ANTHROPIC_API_KEY=your_anthropic_key_here" >> .env
+```
+
+### Usage
+
+```bash
+# Run with PR number
+.github/scripts/test_goosebot.py 616
+
+# Full GitHub PR URL
+.github/scripts/test_goosebot.py https://github.com/tag1consulting/goose/pull/616
+
+# Custom prompt file
+.github/scripts/test_goosebot.py 616 --prompt-file my_prompt.md 
+
+# Show full prompt (debug mode)
+.github/scripts/test_goosebot.py 616 --debug
+```
+
 ## Setup Instructions
 
 ### 1. GitHub Secrets Configuration
