@@ -71,9 +71,12 @@ Potential future enhancements based on code comments and design patterns:
     - GitHub Actions workflow ready
     - Python script integrates with Anthropic API
     - Templates for clarity reviews optimized for maximum brevity
+    - GitHub Markdown-compatible format for better rendering
+    - Focus on conceptual suggestions explaining value rather than specific file changes
+    - Guidance to enhance existing descriptions rather than replace them
+    - Local testing tool with .env support for rapid prompt iteration
     - Provides "no issues found" response when documentation is adequate
-    - Enhanced to generate concrete examples based on actual code changes
-    - Initial testing successful with specific, directly usable suggestions
+    - Production testing successful with concise, meaningful suggestions
   - Phase 2 planned (code quality and style)
   - Phase 3 planned (specialized multi-agent reviews)
   - Phase 4 planned (refinement and optional enforcement)
