@@ -66,7 +66,7 @@ use crate::controller::{ControllerProtocol, ControllerRequest};
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
-use crate::metrics::{GooseMetric, GooseMetrics};
+use crate::metrics::{load_baseline_file, GooseMetric, GooseMetrics};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 
 /// Constant defining Goose's default telnet Controller port.
@@ -1710,6 +1710,16 @@ impl GooseAttack {
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
+
+        // If enabled, try loading the baseline
+        if let Some(baseline_file) = &self.configuration.baseline_file {
+            let _data =
+                load_baseline_file(baseline_file).map_err(|err| GooseError::InvalidOption {
+                    option: "--baseline-file".to_string(),
+                    value: baseline_file.to_string(),
+                    detail: err.to_string(),
+                });
+        }
 
         // Try to create the requested report files, to confirm access.
         self.create_reports().await?;
