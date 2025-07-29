@@ -414,9 +414,6 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
         scenario_metrics,
         transaction_metrics,
         status_code_metrics,
-        errors: metrics
-            .errors
-            .is_empty()
-            .then(|| metrics.errors.values().collect::<Vec<_>>()),
+        errors: (!metrics.errors.is_empty()).then(|| metrics.errors.values().collect::<Vec<_>>()),
     }
 }
