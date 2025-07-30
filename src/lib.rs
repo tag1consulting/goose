@@ -659,9 +659,9 @@ impl GooseAttack {
                     u = scenario.weight;
                 } else {
                     v = scenario.weight;
-                    trace!("calculating greatest common denominator of {} and {}", u, v);
+                    trace!("calculating greatest common denominator of {u} and {v}");
                     u = util::gcd(u, v);
-                    trace!("inner gcd: {}", u);
+                    trace!("inner gcd: {u}");
                 }
             }
         }

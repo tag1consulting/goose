@@ -740,8 +740,7 @@ impl GooseConfiguration {
                 }
                 Err(e) => {
                     error!(
-                        "failed to create {} ({}): {}",
-                        log_file_type, log_file_path, e
+                        "failed to create {log_file_type} ({log_file_path}): {e}"
                     );
                     None
                 }
@@ -761,7 +760,7 @@ impl GooseConfiguration {
         {
             Ok(_) => (),
             Err(e) => {
-                warn!("failed to write to {}: {}", &self.debug_log, e);
+                warn!("failed to write to {}: {e}", &self.debug_log);
             }
         }
     }
