@@ -214,7 +214,7 @@ impl ControllerCommand {
                 regex: r"(?i)^config$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Config(config) = response {
-                        Ok(format!("{:#?}", config))
+                        Ok(format!("{config:#?}"))
                     } else {
                         Err("error loading configuration".to_string())
                     }
@@ -1013,7 +1013,7 @@ impl FromStr for ControllerCommand {
         // This happens any time the controller receives an invalid command.
         if matches.is_empty() {
             Err(GooseError::InvalidControllerCommand {
-                detail: format!("unrecognized controller command: '{}'.", s),
+                detail: format!("unrecognized controller command: '{s}'."),
             })
         // This shouldn't ever happen, but if it does report all available information.
         } else if matches.len() > 1 {
@@ -1023,8 +1023,7 @@ impl FromStr for ControllerCommand {
             }
             Err(GooseError::InvalidControllerCommand {
                 detail: format!(
-                    "matched multiple controller commands: '{}' ({:?}).",
-                    s, matched_commands
+                    "matched multiple controller commands: '{s}' ({matched_commands:?})."
                 ),
             })
         // Only one command matched.
@@ -1388,7 +1387,7 @@ impl ControllerState {
         // Await response from parent.
         match response_rx.await {
             Ok(value) => Ok(value.response),
-            Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
+            Err(e) => Err(format!("one-shot channel dropped without reply: {e}")),
         }
     }
 }
@@ -1410,7 +1409,7 @@ impl Controller<ControllerTelnetMessage> for ControllerState {
         let command_string = match str::from_utf8(&raw_value) {
             Ok(m) => m.lines().next().unwrap_or_default(),
             Err(e) => {
-                let error = format!("ignoring unexpected input from telnet controller: {}", e);
+                let error = format!("ignoring unexpected input from telnet controller: {e}");
                 info!("{}", error);
                 return Err(error);
             }

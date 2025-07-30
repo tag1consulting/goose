@@ -350,8 +350,6 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 xAxis: '{stopped}'
                             }}
                         ],"#,
-                        started = started,
-                        stopped = stopped,
                     );
                 }
                 // For decreasing show the new number of users from the current number of users.
@@ -385,8 +383,6 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 xAxis: '{stopped}'
                             }}
                         ],"#,
-                        started = started,
-                        stopped = stopped,
                     );
                 }
                 _ => {}

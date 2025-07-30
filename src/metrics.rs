@@ -115,7 +115,7 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
             Ok(GooseCoordinatedOmissionMitigation::Disabled)
         } else {
             Err(GooseError::InvalidOption {
-                option: format!("GooseCoordinatedOmissionMitigation::{:?}", s),
+                option: format!("GooseCoordinatedOmissionMitigation::{s:?}"),
                 value: s.to_string(),
                 detail:
                     "Invalid co_mitigation, expected: average, disabled, maximum, median, or minimum"
@@ -1159,7 +1159,7 @@ impl GooseMetrics {
             );
 
             // Include a blank line after printing running metrics.
-            println!("{}", self);
+            println!("{self}");
         }
     }
 
@@ -2538,13 +2538,13 @@ impl GooseMetrics {
             }
             1 => {
                 for host in &self.hosts {
-                    writeln!(fmt, "\n Target host: {}", host)?;
+                    writeln!(fmt, "\n Target host: {host}")?;
                 }
             }
             _ => {
                 writeln!(fmt, "\n Target hosts: ")?;
                 for host in &self.hosts {
-                    writeln!(fmt, " - {}", host,)?;
+                    writeln!(fmt, " - {host}",)?;
                 }
             }
         }
@@ -2748,7 +2748,7 @@ impl GooseAttack {
                             );
                         } else {
                             println!(
-                                "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
+                                "All {users} users hatched, resetting metrics (disable with --no-reset-metrics).\n"
                             );
                         }
                     }
@@ -3014,7 +3014,7 @@ impl GooseAttack {
                 .map_err(|err| GooseError::InvalidOption {
                     option: "--report-file".to_string(),
                     value: path.to_string_lossy().to_string(),
-                    detail: format!("Failed to create report file: {}", err),
+                    detail: format!("Failed to create report file: {err}"),
                 })
         };
 
@@ -3323,7 +3323,7 @@ impl GooseAttack {
             return Err(GooseError::InvalidOption {
                 option: "--report-file".to_string(),
                 value: path.to_string(),
-                detail: format!("Failed to create report file: {}", e),
+                detail: format!("Failed to create report file: {e}"),
             });
         };
         // Be sure the file flushes to disk.

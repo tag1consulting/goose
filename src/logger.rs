@@ -230,7 +230,7 @@ impl FromStr for GooseLogFormat {
             Ok(GooseLogFormat::Pretty)
         } else {
             Err(GooseError::InvalidOption {
-                option: format!("GooseLogFormat::{:?}", s),
+                option: format!("GooseLogFormat::{s:?}"),
                 value: s.to_string(),
                 detail: "Invalid log_format, expected: csv, json, or raw".to_string(),
             })
@@ -314,9 +314,9 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
                 // Use serde_json to create JSON.
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseRawRequest structure.
-                GooseLogFormat::Raw => format!("{:?}", message),
+                GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseRawRequest structure.
-                GooseLogFormat::Pretty => format!("{:#?}", message),
+                GooseLogFormat::Pretty => format!("{message:#?}"),
                 // Csv format with `,` separator and `"` quotes.
                 GooseLogFormat::Csv => {
                     // @TODO: properly handle Option<>; flatten raw request in own columns
@@ -343,9 +343,9 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
                 // Use serde_json to create JSON.
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseErrorMetric structure.
-                GooseLogFormat::Raw => format!("{:?}", message),
+                GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseErrorMetric structure.
-                GooseLogFormat::Pretty => format!("{:#?}", message),
+                GooseLogFormat::Pretty => format!("{message:#?}"),
                 // Csv format with `,` separator and `"` quotes.
                 GooseLogFormat::Csv => {
                     format_csv_row!(
@@ -376,9 +376,9 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                 // Use serde_json to create JSON.
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for GooseRequestMetric structure.
-                GooseLogFormat::Raw => format!("{:?}", message),
+                GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseRequestMetric structure.
-                GooseLogFormat::Pretty => format!("{:#?}", message),
+                GooseLogFormat::Pretty => format!("{message:#?}"),
                 // Csv format with `,` separator and `"` quotes.
                 GooseLogFormat::Csv => {
                     format_csv_row!(
@@ -417,9 +417,9 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
                 // Use serde_json to create JSON.
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for TransactionMetric structure.
-                GooseLogFormat::Raw => format!("{:?}", message),
+                GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for TransactionMetric structure.
-                GooseLogFormat::Pretty => format!("{:#?}", message),
+                GooseLogFormat::Pretty => format!("{message:#?}"),
                 // Csv format with `,` separator and `"` quotes.
                 GooseLogFormat::Csv => {
                     format_csv_row!(
@@ -449,9 +449,9 @@ impl GooseLogger<ScenarioMetric> for GooseConfiguration {
                 // Use serde_json to create JSON.
                 GooseLogFormat::Json => json!(message).to_string(),
                 // Raw format is Debug output for ScenarioMetric structure.
-                GooseLogFormat::Raw => format!("{:?}", message),
+                GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for ScenarioMetric structure.
-                GooseLogFormat::Pretty => format!("{:#?}", message),
+                GooseLogFormat::Pretty => format!("{message:#?}"),
                 // Csv format with `,` separator and `"` quotes.
                 GooseLogFormat::Csv => {
                     format_csv_row!(
@@ -756,7 +756,7 @@ impl GooseConfiguration {
         formatted_message: String,
     ) {
         match log_file
-            .write(format!("{}\n", formatted_message).as_ref())
+            .write(format!("{formatted_message}\n").as_ref())
             .await
         {
             Ok(_) => (),
