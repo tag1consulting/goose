@@ -127,11 +127,11 @@ fn validate_one_scenario(
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", INDEX_PATH))
+        .get(&format!("GET {INDEX_PATH}"))
         .unwrap();
     let about_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", ABOUT_PATH))
+        .get(&format!("GET {ABOUT_PATH}"))
         .unwrap();
 
     // There should not have been any failures during this test.

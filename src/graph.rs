@@ -1698,10 +1698,7 @@ mod test {
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-"#,
-            html_id = html_id,
-            y_axis_label = y_axis_label,
-            main_series_label = main_series_label
+"#
         )
     }
 

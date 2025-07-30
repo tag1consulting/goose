@@ -110,7 +110,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
                     // This will automatically get written to the error log if enabled, and will
                     // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
-                        &format!("front_page: failed to parse page: {}", e),
+                        &format!("front_page: failed to parse page: {e}"),
                         &mut goose.request,
                         Some(headers),
                         None,
@@ -122,7 +122,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
             // This will automatically get written to the error log if enabled, and will
             // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
-                &format!("front_page: no response from server: {}", e),
+                &format!("front_page: no response from server: {e}"),
                 &mut goose.request,
                 None,
                 None,
@@ -176,7 +176,7 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> TransactionResult {
 
                     // Log the user in.
                     let uid: usize = rand::rng().random_range(3..5_002);
-                    let username = format!("user{}", uid);
+                    let username = format!("user{uid}");
                     let params = [
                         ("name", username.as_str()),
                         ("pass", "12345"),
@@ -191,7 +191,7 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> TransactionResult {
                     // This will automatically get written to the error log if enabled, and will
                     // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
-                        &format!("login: unexpected error when loading /user page: {}", e),
+                        &format!("login: unexpected error when loading /user page: {e}"),
                         &mut goose.request,
                         Some(headers),
                         None,
@@ -204,7 +204,7 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> TransactionResult {
             // This will automatically get written to the error log if enabled, and will
             // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
-                &format!("login: no response from server: {}", e),
+                &format!("login: no response from server: {e}"),
                 &mut goose.request,
                 None,
                 None,

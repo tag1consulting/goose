@@ -74,7 +74,7 @@ pub async fn get_redirect(user: &mut GooseUser) -> TransactionResult {
             }
             Err(e) => {
                 return user.set_failure(
-                    format!("unexpected error parsing about page: {}", e).as_str(),
+                    format!("unexpected error parsing about page: {e}").as_str(),
                     &mut goose.request,
                     None,
                     None,
