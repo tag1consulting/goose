@@ -645,10 +645,9 @@ impl GooseAttack {
                                         } else {
                                             self.configuration.users.unwrap_or_default()
                                         };
-                                        info!(
-                                            "changing users from {:?} to {}",
-                                            current_users, new_users
-                                        );
+                                info!(
+                                    "changing users from {current_users:?} to {new_users}"
+                                );
                                         self.configuration.users = Some(new_users);
                                         self.reply_to_controller(
                                             message,
@@ -660,8 +659,8 @@ impl GooseAttack {
                                     | AttackPhase::Decrease
                                     | AttackPhase::Maintain => {
                                         info!(
-                                            "changing users from {} to {}",
-                                            goose_attack_run_state.active_users, new_users
+                                            "changing users from {} to {new_users}",
+                                            goose_attack_run_state.active_users
                                         );
                                         // Determine how long has elapsed since this step started.
                                         let elapsed = self.step_elapsed() as usize;
@@ -768,7 +767,7 @@ impl GooseAttack {
                                 if let Some(startup_time) = &message.request.value {
                                     // If hatch_rate was already set, unset it first.
                                     if let Some(hatch_rate) = &self.configuration.hatch_rate {
-                                        info!("resetting hatch_rate from {} to None", hatch_rate);
+                                        info!("resetting hatch_rate from {hatch_rate} to None");
                                         self.configuration.hatch_rate = None;
                                     }
                                     info!(
@@ -876,7 +875,7 @@ impl GooseAttack {
                                         }
                                     }
                                     Err(e) => {
-                                        warn!("Controller provided invalid test_plan: {}", e);
+                                        warn!("Controller provided invalid test_plan: {e}");
                                         self.reply_to_controller(
                                             message,
                                             ControllerResponseMessage::Bool(false),
