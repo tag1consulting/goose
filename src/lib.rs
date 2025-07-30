@@ -2100,9 +2100,7 @@ fn schedule_unsequenced_transactions(
                     .take(transactions_len)
                 {
                     if let Some(transaction) = transactions.pop() {
-                        debug!(
-                            "allocating transaction from Transaction {transaction_index}"
-                        );
+                        debug!("allocating transaction from Transaction {transaction_index}");
                         weighted_transactions.push(transaction);
                     }
                 }
