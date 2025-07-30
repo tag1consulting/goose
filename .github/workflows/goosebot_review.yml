@@ -1,11 +1,12 @@
 name: GooseBot PR Review
 
 on:
-  # Use pull_request_target instead of pull_request to access secrets
-  # This runs in the context of the base repo instead of the fork
-  pull_request_target:
-    types: [opened, synchronize, reopened]
-  # Manual trigger for testing
+  # Automatic triggers disabled due to model deprecation causing noise on every PR
+  # See: https://github.com/tag1consulting/goose/issues/623
+  # pull_request_target:
+  #   types: [opened, synchronize, reopened]
+  
+  # Manual trigger for optional use
   workflow_dispatch:
     inputs:
       pr_number:
@@ -59,6 +60,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_API_URL: ${{ secrets.ANTHROPIC_API_URL }}
+          ANTHROPIC_MODEL: "claude-sonnet-4-20250514"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Configure file filtering
           PR_REVIEW_WHITELIST: "*.rs,*.md,*.py,*.toml,*.yml,*.yaml"

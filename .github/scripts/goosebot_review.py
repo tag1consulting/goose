@@ -313,9 +313,12 @@ def call_anthropic_api(prompt: str, token_tracker: TokenUsageTracker, max_tokens
             
         client = anthropic.Anthropic(**client_kwargs)
         
-        # Use Claude Sonnet 3.7 model
+        # Use Claude Sonnet 4 model (configurable via environment variable)
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        logger.info(f"Using model: {model}")
+        
         response = client.messages.create(
-            model="claude-3-sonnet-20240229",
+            model=model,
             max_tokens=max_tokens,
             system="You are GooseBot, an AI assistant that helps with code reviews for the Goose load testing framework. Be concise and helpful.",
             messages=[

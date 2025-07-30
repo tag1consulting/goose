@@ -35,7 +35,7 @@ Based on the code analysis, potential next steps for the project may include:
   - Created local testing tool with .env support for faster prompt iteration
   - Added explicit "no issues found" response when PR documentation is adequate
   - Additional review scopes planned for future phases (see [aiCodeReviewPlan.md](./aiCodeReviewPlan.md) for full implementation plan)
-  - Update Claude model before July 2025 deprecation date
+  - ✓ Updated Claude model from deprecated claude-3-sonnet-20240229 to claude-sonnet-4-20250514 (Issue #623)
 
 ## Active Decisions and Considerations
 
