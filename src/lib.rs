@@ -659,14 +659,14 @@ impl GooseAttack {
                     u = scenario.weight;
                 } else {
                     v = scenario.weight;
-                    trace!("calculating greatest common denominator of {} and {}", u, v);
+                    trace!("calculating greatest common denominator of {u} and {v}");
                     u = util::gcd(u, v);
-                    trace!("inner gcd: {}", u);
+                    trace!("inner gcd: {u}");
                 }
             }
         }
         // 'u' will always be the greatest common divisor
-        debug!("gcd: {}", u);
+        debug!("gcd: {u}");
 
         // Build a vector of vectors to be used to schedule users.
         let mut available_scenarios = Vec::with_capacity(self.scenarios.len());
@@ -706,7 +706,7 @@ impl GooseAttack {
                         .take(scenarios_len)
                     {
                         if let Some(scenario) = scenarios.pop() {
-                            debug!("allocating 1 user from Scenario {}", scenario_index);
+                            debug!("allocating 1 user from Scenario {scenario_index}");
                             weighted_scenarios.push(scenario);
                         }
                     }
@@ -783,7 +783,7 @@ impl GooseAttack {
                 )?);
                 user_count += 1;
                 if user_count == total_users {
-                    debug!("created {} weighted_users", user_count);
+                    debug!("created {user_count} weighted_users");
                     return Ok(weighted_users);
                 }
             }
@@ -1415,7 +1415,7 @@ impl GooseAttack {
                 } else {
                     Duration::from_millis(goose_attack_run_state.adjust_user_in_ms as u64)
                 };
-                debug!("sleeping {:?}...", sleep_duration);
+                debug!("sleeping {sleep_duration:?}...");
                 goose_attack_run_state.drift_timer =
                     util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer)
                         .await;
@@ -1488,7 +1488,7 @@ impl GooseAttack {
                     .unwrap()
                     .send(None)
                 {
-                    warn!("unexpected error telling logger thread to exit: {}", e);
+                    warn!("unexpected error telling logger thread to exit: {e}");
                 };
                 // Take logger out of the GooseAttackRunState object so it can be
                 // consumed by tokio::join!().
@@ -1604,7 +1604,7 @@ impl GooseAttack {
                 } else {
                     Duration::from_millis(goose_attack_run_state.adjust_user_in_ms as u64)
                 };
-                debug!("sleeping {:?}...", sleep_duration);
+                debug!("sleeping {sleep_duration:?}...");
                 goose_attack_run_state.drift_timer =
                     util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer)
                         .await;
@@ -1740,7 +1740,7 @@ impl GooseAttack {
                         // Sleep then check for further instructions.
                         if goose_attack_run_state.idle_status_displayed {
                             let sleep_duration = Duration::from_millis(250);
-                            debug!("sleeping {:?}...", sleep_duration);
+                            debug!("sleeping {sleep_duration:?}...");
                             goose_attack_run_state.drift_timer = util::sleep_minus_drift(
                                 sleep_duration,
                                 goose_attack_run_state.drift_timer,
@@ -1853,10 +1853,7 @@ fn allocate_transactions(
     WeightedTransactions,
     WeightedTransactions,
 ) {
-    debug!(
-        "allocating Transactions on GooseUsers with {:?} scheduler",
-        scheduler
-    );
+    debug!("allocating Transactions on GooseUsers with {scheduler:?} scheduler");
 
     // A BTreeMap of Vectors allows us to group and sort transactions per sequence value.
     let mut sequenced_transactions: SequencedTransactions = BTreeMap::new();
@@ -1921,13 +1918,13 @@ fn allocate_transactions(
             u = transaction.weight;
         } else {
             v = transaction.weight;
-            trace!("calculating greatest common denominator of {} and {}", u, v);
+            trace!("calculating greatest common denominator of {u} and {v}");
             u = util::gcd(u, v);
-            trace!("inner gcd: {}", u);
+            trace!("inner gcd: {u}");
         }
     }
     // 'u' will always be the greatest common divisor
-    debug!("gcd: {}", u);
+    debug!("gcd: {u}");
 
     // Apply weights to sequenced transactions.
     let weighted_sequenced_on_start_transactions =
@@ -2100,10 +2097,7 @@ fn schedule_unsequenced_transactions(
                     .take(transactions_len)
                 {
                     if let Some(transaction) = transactions.pop() {
-                        debug!(
-                            "allocating transaction from Transaction {}",
-                            transaction_index
-                        );
+                        debug!("allocating transaction from Transaction {transaction_index}");
                         weighted_transactions.push(transaction);
                     }
                 }

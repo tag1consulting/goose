@@ -750,7 +750,7 @@ impl GooseDebug {
             // If request is defined, clone it.
             request: request.cloned(),
             // If header is defined, convert it to a string.
-            header: header.map(|h| format!("{:?}", h)),
+            header: header.map(|h| format!("{h:?}")),
             // If header is defined, convert from &str to string.
             body: body.map(|b| b.to_string()),
         }
@@ -1583,7 +1583,7 @@ impl GooseUser {
         let path = match Url::parse(built_request.url().as_ref()) {
             Ok(u) => u.path().to_string(),
             Err(e) => {
-                error!("failed to parse url: {}", e);
+                error!("failed to parse url: {e}");
                 "".to_string()
             }
         };
@@ -1592,7 +1592,7 @@ impl GooseUser {
         // and the debug log.
         let mut headers: Vec<String> = Vec::new();
         for header in built_request.headers() {
-            headers.push(format!("{:?}", header));
+            headers.push(format!("{header:?}"));
         }
 
         // If enabled, grab a copy of the request body, included in the request log and
@@ -1659,12 +1659,12 @@ impl GooseUser {
                     // Record a failure if the expected status code was not returned.
                     if status_code != expect_status_code {
                         request_metric.success = false;
-                        request_metric.error = format!("{}: {}", status_code, request_name);
+                        request_metric.error = format!("{status_code}: {request_name}");
                     }
                 // Otherwise record a failure if the returned status code was not a success.
                 } else if !status_code.is_success() {
                     request_metric.success = false;
-                    request_metric.error = format!("{}: {}", status_code, request_name);
+                    request_metric.error = format!("{status_code}: {request_name}");
                 }
 
                 // Load test user was redirected.
@@ -1764,10 +1764,7 @@ impl GooseUser {
 
             if self.request_cadence.counter > 3 {
                 if self.request_cadence.coordinated_omission_counter < 0 {
-                    debug!(
-                        "user {} enabled coordinated omission mitigation",
-                        thread_number
-                    );
+                    debug!("user {thread_number} enabled coordinated omission mitigation");
                     self.request_cadence.coordinated_omission_counter += 1;
                 }
                 // Calculate the expected cadence for this Transaction request.
@@ -1790,8 +1787,7 @@ impl GooseUser {
                 };
                 if elapsed > (cadence * 2) {
                     debug!(
-                        "user {}: coordinated_omission_mitigation: elapsed({}) > cadence({})",
-                        thread_number, elapsed, cadence
+                        "user {thread_number}: coordinated_omission_mitigation: elapsed({elapsed}) > cadence({cadence})"
                     );
                     self.request_cadence.coordinated_omission_counter += 1;
                     self.request_cadence.coordinated_omission_mitigation = elapsed;
@@ -1828,7 +1824,7 @@ impl GooseUser {
                 && request_metric.response_time > self.request_cadence.user_cadence
             {
                 let transaction_name = if let Some(transaction_name) = &self.transaction_name {
-                    format!(", transaction name: \"{}\"", transaction_name)
+                    format!(", transaction name: \"{transaction_name}\"")
                 } else {
                     "".to_string()
                 };
@@ -2022,7 +2018,7 @@ impl GooseUser {
         self.log_debug(tag, Some(&*request), headers, body)?;
 
         // Print log to stdout.
-        info!("set_failure: {}", tag);
+        info!("set_failure: {tag}");
 
         Err(Box::new(TransactionError::RequestFailed {
             raw_request: request.clone(),
@@ -2720,9 +2716,9 @@ fn clean_reqwest_error(e: &reqwest::Error, request_name: &str) -> String {
     };
 
     if let Some(ref e) = std::error::Error::source(e) {
-        format!("{} {}: {}", kind, request_name, e)
+        format!("{kind} {request_name}: {e}")
     } else {
-        format!("{} {}", kind, request_name)
+        format!("{kind} {request_name}")
     }
 }
 

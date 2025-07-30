@@ -233,7 +233,7 @@ fn validate_test(is_builder: bool, mock_endpoints: &[Mock], goose_metrics: Goose
     // Validate GET requests.
     let get_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", GET_PATH))
+        .get(&format!("GET {GET_PATH}"))
         .unwrap();
     assert!(get_metrics.path == GET_PATH);
     assert!(get_metrics.method == GooseMethod::Get);
@@ -243,7 +243,7 @@ fn validate_test(is_builder: bool, mock_endpoints: &[Mock], goose_metrics: Goose
     // Validate POST requests.
     let post_metrics = goose_metrics
         .requests
-        .get(&format!("POST {}", POST_PATH))
+        .get(&format!("POST {POST_PATH}"))
         .unwrap();
     assert!(post_metrics.path == POST_PATH);
     assert!(post_metrics.method == GooseMethod::Post);
@@ -253,7 +253,7 @@ fn validate_test(is_builder: bool, mock_endpoints: &[Mock], goose_metrics: Goose
     // Validate HEAD requests.
     let head_metrics = goose_metrics
         .requests
-        .get(&format!("HEAD {}", HEAD_PATH))
+        .get(&format!("HEAD {HEAD_PATH}"))
         .unwrap();
     assert!(head_metrics.path == HEAD_PATH);
     assert!(head_metrics.method == GooseMethod::Head);
@@ -263,7 +263,7 @@ fn validate_test(is_builder: bool, mock_endpoints: &[Mock], goose_metrics: Goose
     // Validate DELETE requests.
     let patch_metrics = goose_metrics
         .requests
-        .get(&format!("DELETE {}", DELETE_PATH))
+        .get(&format!("DELETE {DELETE_PATH}"))
         .unwrap();
     assert!(patch_metrics.path == DELETE_PATH);
     assert!(patch_metrics.method == GooseMethod::Delete);
@@ -275,7 +275,7 @@ fn validate_test(is_builder: bool, mock_endpoints: &[Mock], goose_metrics: Goose
         // Validate PATCH requests.
         let patch_metrics = goose_metrics
             .requests
-            .get(&format!("PATCH {}", PATCH_PATH))
+            .get(&format!("PATCH {PATCH_PATH}"))
             .unwrap();
         assert!(patch_metrics.path == PATCH_PATH);
         assert!(patch_metrics.method == GooseMethod::Patch);
@@ -285,7 +285,7 @@ fn validate_test(is_builder: bool, mock_endpoints: &[Mock], goose_metrics: Goose
         // Validate PUT requests.
         let patch_metrics = goose_metrics
             .requests
-            .get(&format!("PUT {}", PUT_PATH))
+            .get(&format!("PUT {PUT_PATH}"))
             .unwrap();
         assert!(patch_metrics.path == PUT_PATH);
         assert!(patch_metrics.method == GooseMethod::Put);

@@ -94,11 +94,11 @@ fn validate_test(
 
     let index_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", INDEX_PATH))
+        .get(&format!("GET {INDEX_PATH}"))
         .unwrap();
     let about_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", ABOUT_PATH))
+        .get(&format!("GET {ABOUT_PATH}"))
         .unwrap();
 
     // Confirm that Goose and the server saw the same number of page loads.
@@ -393,11 +393,11 @@ async fn test_no_defaults() {
             "--request-log",
             &requests_file,
             "--request-format",
-            &format!("{:?}", LOG_FORMAT),
+            &format!("{LOG_FORMAT:?}"),
             "--debug-log",
             &debug_file,
             "--debug-format",
-            &format!("{:?}", LOG_FORMAT),
+            &format!("{LOG_FORMAT:?}"),
             "--no-debug-body",
             "--throttle-requests",
             &THROTTLE_REQUESTS.to_string(),
@@ -476,17 +476,17 @@ async fn test_no_defaults_gaggle() {
                 "--request-log",
                 &worker_requests_file,
                 "--request-format",
-                &format!("{:?}", LOG_FORMAT),
+                &format!("{LOG_FORMAT:?}"),
                 "--debug-log",
                 &worker_debug_file,
                 "--debug-format",
-                &format!("{:?}", LOG_FORMAT),
+                &format!("{LOG_FORMAT:?}"),
                 "--no-debug-body",
                 "--throttle-requests",
                 &THROTTLE_REQUESTS.to_string(),
             ],
         );
-        println!("{:#?}", worker_configuration);
+        println!("{worker_configuration:#?}");
         worker_handles.push(tokio::spawn(
             crate::GooseAttack::initialize_with_config(worker_configuration)
                 .unwrap()
@@ -634,11 +634,11 @@ async fn test_plan_no_defaults() {
             "--request-log",
             &requests_file,
             "--request-format",
-            &format!("{:?}", LOG_FORMAT),
+            &format!("{LOG_FORMAT:?}"),
             "--debug-log",
             &debug_file,
             "--debug-format",
-            &format!("{:?}", LOG_FORMAT),
+            &format!("{LOG_FORMAT:?}"),
             "--no-debug-body",
             "--throttle-requests",
             &THROTTLE_REQUESTS.to_string(),

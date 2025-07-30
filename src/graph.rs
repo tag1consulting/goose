@@ -96,10 +96,7 @@ impl GraphData {
         let value = self
             .requests_per_second
             .initialize_or_increment(key, second, 1);
-        debug!(
-            "incremented second {} for requests per second counter: {}",
-            second, value
-        );
+        debug!("incremented second {second} for requests per second counter: {value}");
     }
 
     /// Record errors per second metric.
@@ -108,10 +105,7 @@ impl GraphData {
             .errors_per_second
             .initialize_or_increment(key, second, 1);
 
-        debug!(
-            "incremented second {} for errors per second counter: {}",
-            second, value
-        );
+        debug!("incremented second {second} for errors per second counter: {value}");
     }
 
     /// Record average response time per second metric.
@@ -350,8 +344,6 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 xAxis: '{stopped}'
                             }}
                         ],"#,
-                        started = started,
-                        stopped = stopped,
                     );
                 }
                 // For decreasing show the new number of users from the current number of users.
@@ -385,8 +377,6 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                                 xAxis: '{stopped}'
                             }}
                         ],"#,
-                        started = started,
-                        stopped = stopped,
                     );
                 }
                 _ => {}
@@ -1702,10 +1692,7 @@ mod test {
                                 lineStyle: {{ color: '#2c664f' }},
                                 areaStyle: {{ color: '#378063' }},
                                 markArea: {{
-"#,
-            html_id = html_id,
-            y_axis_label = y_axis_label,
-            main_series_label = main_series_label
+"#
         )
     }
 

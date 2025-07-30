@@ -255,7 +255,7 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
                 };
                 transaction_metrics.push(report::TransactionMetric {
                     is_scenario: false,
-                    transaction: format!("{}.{}", scenario_counter, transaction_counter),
+                    transaction: format!("{scenario_counter}.{transaction_counter}"),
                     name: transaction.transaction_name.to_string(),
                     number_of_requests: total_run_count,
                     number_of_failures: transaction.fail_count,

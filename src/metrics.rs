@@ -115,7 +115,7 @@ impl FromStr for GooseCoordinatedOmissionMitigation {
             Ok(GooseCoordinatedOmissionMitigation::Disabled)
         } else {
             Err(GooseError::InvalidOption {
-                option: format!("GooseCoordinatedOmissionMitigation::{:?}", s),
+                option: format!("GooseCoordinatedOmissionMitigation::{s:?}"),
                 value: s.to_string(),
                 detail:
                     "Invalid co_mitigation, expected: average, disabled, maximum, median, or minimum"
@@ -513,17 +513,17 @@ impl GooseRequestMetricAggregate {
         let counter = match self.status_code_counts.get(&status_code) {
             // We've seen this status code before, increment counter.
             Some(c) => {
-                debug!("got {:?} counter: {}", status_code, c);
+                debug!("got {status_code:?} counter: {c}");
                 *c + 1
             }
             // First time we've seen this status code, initialize counter.
             None => {
-                debug!("no match for counter: {}", status_code);
+                debug!("no match for counter: {status_code}");
                 1
             }
         };
         self.status_code_counts.insert(status_code, counter);
-        debug!("incremented {} counter: {}", status_code, counter);
+        debug!("incremented {status_code} counter: {counter}");
     }
 }
 
@@ -640,16 +640,16 @@ impl GooseRequestMetricTimingData {
         let counter = match self.times.get(&rounded_time) {
             // We've seen this elapsed time before, increment counter.
             Some(c) => {
-                debug!("got {:?} counter: {}", rounded_time, c);
+                debug!("got {rounded_time:?} counter: {c}");
                 *c + 1
             }
             // First time we've seen this elapsed time, initialize counter.
             None => {
-                debug!("no match for counter: {}", rounded_time);
+                debug!("no match for counter: {rounded_time}");
                 1
             }
         };
-        debug!("incremented {} counter: {}", rounded_time, counter);
+        debug!("incremented {rounded_time} counter: {counter}");
         self.times.insert(rounded_time, counter);
     }
 }
@@ -833,7 +833,7 @@ impl TransactionMetricAggregate {
             None => 1,
         };
         self.times.insert(rounded_time, counter);
-        debug!("incremented {} counter: {}", rounded_time, counter);
+        debug!("incremented {rounded_time} counter: {counter}");
     }
 }
 /// Aggregated per-scenario metrics updated each time a scenario is run.
@@ -920,7 +920,7 @@ impl ScenarioMetricAggregate {
             None => 1,
         };
         self.times.insert(rounded_time, counter);
-        debug!("incremented {} counter: {}", rounded_time, counter);
+        debug!("incremented {rounded_time} counter: {counter}");
     }
 }
 /// All metrics optionally collected during a Goose load test.
@@ -1159,7 +1159,7 @@ impl GooseMetrics {
             );
 
             // Include a blank line after printing running metrics.
-            println!("{}", self);
+            println!("{self}");
         }
     }
 
@@ -2538,13 +2538,13 @@ impl GooseMetrics {
             }
             1 => {
                 for host in &self.hosts {
-                    writeln!(fmt, "\n Target host: {}", host)?;
+                    writeln!(fmt, "\n Target host: {host}")?;
                 }
             }
             _ => {
                 writeln!(fmt, "\n Target hosts: ")?;
                 for host in &self.hosts {
-                    writeln!(fmt, " - {}", host,)?;
+                    writeln!(fmt, " - {host}",)?;
                 }
             }
         }
@@ -2748,7 +2748,7 @@ impl GooseAttack {
                             );
                         } else {
                             println!(
-                                "All {} users hatched, resetting metrics (disable with --no-reset-metrics).\n", users
+                                "All {users} users hatched, resetting metrics (disable with --no-reset-metrics).\n"
                             );
                         }
                     }
@@ -2960,9 +2960,9 @@ impl GooseAttack {
                     error: raw_request.error.clone(),
                 }))) {
                     if let flume::SendError(Some(ref message)) = e {
-                        info!("Failed to write to error log (receiver dropped?): flume::SendError({:?})", message);
+                        info!("Failed to write to error log (receiver dropped?): flume::SendError({message:?})");
                     } else {
-                        info!("Failed to write to error log: (receiver dropped?) {:?}", e);
+                        info!("Failed to write to error log: (receiver dropped?) {e:?}");
                     }
                 }
             }
@@ -3014,7 +3014,7 @@ impl GooseAttack {
                 .map_err(|err| GooseError::InvalidOption {
                     option: "--report-file".to_string(),
                     value: path.to_string_lossy().to_string(),
-                    detail: format!("Failed to create report file: {}", err),
+                    detail: format!("Failed to create report file: {err}"),
                 })
         };
 
@@ -3323,7 +3323,7 @@ impl GooseAttack {
             return Err(GooseError::InvalidOption {
                 option: "--report-file".to_string(),
                 value: path.to_string(),
-                detail: format!("Failed to create report file: {}", e),
+                detail: format!("Failed to create report file: {e}"),
             });
         };
         // Be sure the file flushes to disk.
@@ -3408,10 +3408,7 @@ pub(crate) fn calculate_response_time_percentile(
     percent: f32,
 ) -> usize {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
-    debug!(
-        "percentile: {}, request {} of total {}",
-        percent, percentile_request, total_requests
-    );
+    debug!("percentile: {percent}, request {percentile_request} of total {total_requests}");
 
     let mut total_count: usize = 0;
 

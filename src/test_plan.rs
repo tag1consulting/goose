@@ -122,7 +122,7 @@ impl FromStr for TestPlan {
                 steps.push((left, right));
             } else {
                 // Logger isn't initialized yet, provide helpful debug output.
-                eprintln!("ERROR: invalid `configuration.test_plan` value: '{}'", line);
+                eprintln!("ERROR: invalid `configuration.test_plan` value: '{line}'");
                 eprintln!("  Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"");
                 eprintln!("    {{users}} must be an integer, ie \"100\"");
                 eprintln!("    {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc");

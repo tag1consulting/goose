@@ -53,7 +53,7 @@ impl fmt::Display for TestType {
             TestType::Debug => "debug",
             TestType::All => "all",
         };
-        write!(f, "{}", printable)
+        write!(f, "{printable}")
     }
 }
 

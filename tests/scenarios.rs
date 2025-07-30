@@ -134,7 +134,7 @@ fn validate_loadtest(
             // Get scenarioa1 metrics.
             let scenarioa1_metrics = goose_metrics
                 .requests
-                .get(&format!("GET {}", SCENARIOA1))
+                .get(&format!("GET {SCENARIOA1}"))
                 .unwrap();
             // Confirm that the path and method are correct in the statistics.
             assert!(scenarioa1_metrics.path == SCENARIOA1);
@@ -147,7 +147,7 @@ fn validate_loadtest(
             // Get scenarioa2 metrics.
             let scenarioa2_metrics = goose_metrics
                 .requests
-                .get(&format!("GET {}", SCENARIOA2))
+                .get(&format!("GET {SCENARIOA2}"))
                 .unwrap();
             // Confirm that the path and method are correct in the statistics.
             assert!(scenarioa2_metrics.path == SCENARIOA2);

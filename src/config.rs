@@ -222,7 +222,7 @@ impl FromStr for Scenarios {
                 active.push(scenario);
             } else {
                 // Logger isn't initialized yet, provide helpful debug output.
-                eprintln!("ERROR: invalid `configuration.scenarios` value: '{}'", line);
+                eprintln!("ERROR: invalid `configuration.scenarios` value: '{line}'");
                 eprintln!("  Expected format: --scenarios \"{{one}},{{two}},{{three}}\"");
                 eprintln!("    {{one}}, {{two}}, {{three}}, etc must be alphanumeric");
                 eprintln!("    To view valid scenario names invoke `--scenarios-list`");
@@ -594,11 +594,10 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected usize value, received &str",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected usize value, received &str"
                     ),
                 });
             }
@@ -620,11 +619,10 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoGranularData
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected bool value, received &str",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected bool value, received &str"
                     ),
                 });
             }
@@ -634,21 +632,19 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ScenarioFormat
             | GooseDefault::RequestFormat => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected GooseLogFormat value, received &str",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseLogFormat value, received &str"
                     ),
                 });
             }
             GooseDefault::CoordinatedOmissionMitigation => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected GooseCoordinatedOmissionMitigation value, received &str",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseCoordinatedOmissionMitigation value, received &str"
                     ),
                 });
             }
@@ -687,11 +683,10 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected &str value, received usize",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected &str value, received usize"
                     ),
                 })
             }
@@ -712,11 +707,10 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoGranularData
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected bool value, received usize",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected bool value, received usize"
                     ),
                 })
             }
@@ -726,21 +720,19 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected GooseLogFormat value, received usize",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseLogFormat value, received usize"
                     ),
                 });
             }
             GooseDefault::CoordinatedOmissionMitigation => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected GooseCoordinatedOmissionMitigation value, received usize",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseCoordinatedOmissionMitigation value, received usize"
                     ),
                 });
             }
@@ -786,11 +778,10 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected &str value, received bool",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected &str value, received bool"
                     ),
                 })
             }
@@ -806,11 +797,10 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected usize value, received bool",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected usize value, received bool"
                     ),
                 })
             }
@@ -820,21 +810,19 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected GooseLogFormat value, received bool",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseLogFormat value, received bool"
                     ),
                 });
             }
             GooseDefault::CoordinatedOmissionMitigation => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
+                    option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {}) expected GooseCoordinatedOmissionMitigation value, received bool",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseCoordinatedOmissionMitigation value, received bool"
                     ),
                 });
             }
@@ -869,11 +857,10 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoGranularData
             | GooseDefault::AcceptInvalidCerts  => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected bool value, received GooseCoordinatedOmissionMitigation",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected bool value, received GooseCoordinatedOmissionMitigation"
                     ),
                 })
             }
@@ -893,11 +880,10 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected &str value, received GooseCoordinatedOmissionMitigation",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected &str value, received GooseCoordinatedOmissionMitigation"
                     ),
                 })
             }
@@ -913,11 +899,10 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected usize value, received GooseCoordinatedOmissionMitigation",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseCoordinatedOmissionMitigation"
                     ),
                 })
             }
@@ -927,11 +912,10 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ScenarioFormat
             | GooseDefault::TransactionFormat => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected GooseLogFormat value, received GooseCoordinatedOmissionMitigation",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected GooseLogFormat value, received GooseCoordinatedOmissionMitigation"
                     ),
                 })
             }
@@ -970,11 +954,10 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoGranularData
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected bool value, received GooseCoordinatedOmissionMitigation",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected bool value, received GooseCoordinatedOmissionMitigation"
                     ),
                 })
             }
@@ -994,11 +977,10 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected &str value, received GooseCoordinatedOmissionMitigation",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected &str value, received GooseCoordinatedOmissionMitigation"
                     ),
                 })
             }
@@ -1014,21 +996,19 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected usize value, received GooseCoordinatedOmissionMitigation",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseCoordinatedOmissionMitigation"
                     ),
                 })
             }
             GooseDefault::CoordinatedOmissionMitigation => {
                 return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{:?}", key),
-                    value: format!("{:?}", value),
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{:?}, {:?}) expected GooseCoordinatedOmissionMitigation value, received GooseLogFormat",
-                        key, value
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received GooseLogFormat"
                     ),
                 })
             }
@@ -1357,7 +1337,7 @@ impl GooseConfiguration {
             Ok(ap) => Some(ap.get()),
             Err(e) => {
                 // Default to 1 user if unable to detect number of CPUs.
-                info!("failed to detect available_parallelism: {}", e);
+                info!("failed to detect available_parallelism: {e}");
                 Some(1)
             }
         };
@@ -2147,7 +2127,7 @@ impl GooseConfiguration {
             ]) {
                 Ok(_) => (),
                 Err(e) => {
-                    info!("failed to initialize CombinedLogger: {}", e);
+                    info!("failed to initialize CombinedLogger: {e}");
                 }
             }
             info!("Writing to log file: {}", log_to_file.display());
@@ -2155,13 +2135,13 @@ impl GooseConfiguration {
             match CombinedLogger::init(vec![SimpleLogger::new(debug_level, Config::default())]) {
                 Ok(_) => (),
                 Err(e) => {
-                    info!("failed to initialize CombinedLogger: {}", e);
+                    info!("failed to initialize CombinedLogger: {e}");
                 }
             }
         }
 
-        info!("Output verbosity level: {}", debug_level);
-        info!("Logfile verbosity level: {}", log_level);
+        info!("Output verbosity level: {debug_level}");
+        info!("Logfile verbosity level: {log_level}");
     }
 }
 

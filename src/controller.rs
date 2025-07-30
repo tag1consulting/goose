@@ -214,7 +214,7 @@ impl ControllerCommand {
                 regex: r"(?i)^config$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Config(config) = response {
-                        Ok(format!("{:#?}", config))
+                        Ok(format!("{config:#?}"))
                     } else {
                         Err("error loading configuration".to_string())
                     }
@@ -242,7 +242,7 @@ impl ControllerCommand {
                 regex: r"(?i)^(exit|quit|q)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible EXIT command";
-                    error!("{}", e);
+                    error!("{e}");
                     Err(e.to_string())
                 }),
             },
@@ -268,7 +268,7 @@ impl ControllerCommand {
                 regex: r"(?i)^(help|\?)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible HELP command";
-                    error!("{}", e);
+                    error!("{e}");
                     Err(e.to_string())
                 }),
             },
@@ -646,8 +646,7 @@ impl GooseAttack {
                                             self.configuration.users.unwrap_or_default()
                                         };
                                         info!(
-                                            "changing users from {:?} to {}",
-                                            current_users, new_users
+                                            "changing users from {current_users:?} to {new_users}"
                                         );
                                         self.configuration.users = Some(new_users);
                                         self.reply_to_controller(
@@ -660,8 +659,8 @@ impl GooseAttack {
                                     | AttackPhase::Decrease
                                     | AttackPhase::Maintain => {
                                         info!(
-                                            "changing users from {} to {}",
-                                            goose_attack_run_state.active_users, new_users
+                                            "changing users from {} to {new_users}",
+                                            goose_attack_run_state.active_users
                                         );
                                         // Determine how long has elapsed since this step started.
                                         let elapsed = self.step_elapsed() as usize;
@@ -768,7 +767,7 @@ impl GooseAttack {
                                 if let Some(startup_time) = &message.request.value {
                                     // If hatch_rate was already set, unset it first.
                                     if let Some(hatch_rate) = &self.configuration.hatch_rate {
-                                        info!("resetting hatch_rate from {} to None", hatch_rate);
+                                        info!("resetting hatch_rate from {hatch_rate} to None");
                                         self.configuration.hatch_rate = None;
                                     }
                                     info!(
@@ -876,7 +875,7 @@ impl GooseAttack {
                                         }
                                     }
                                     Err(e) => {
-                                        warn!("Controller provided invalid test_plan: {}", e);
+                                        warn!("Controller provided invalid test_plan: {e}");
                                         self.reply_to_controller(
                                             message,
                                             ControllerResponseMessage::Bool(false),
@@ -902,7 +901,7 @@ impl GooseAttack {
                 }
                 Err(e) => {
                     // Errors can be ignored, they happen any time there are no messages.
-                    debug!("error receiving message: {}", e);
+                    debug!("error receiving message: {e}");
                 }
             }
         };
@@ -956,12 +955,9 @@ pub(crate) async fn controller_main(
     };
 
     // All controllers use a TcpListener port.
-    debug!(
-        "preparing to bind {:?} controller to: {}",
-        protocol, address
-    );
+    debug!("preparing to bind {protocol:?} controller to: {address}");
     let listener = TcpListener::bind(&address).await?;
-    info!("{:?} controller listening on: {}", protocol, address);
+    info!("{protocol:?} controller listening on: {address}");
 
     // Counter increments each time a controller client connects with this protocol.
     let mut thread_id: u32 = 0;
@@ -1013,7 +1009,7 @@ impl FromStr for ControllerCommand {
         // This happens any time the controller receives an invalid command.
         if matches.is_empty() {
             Err(GooseError::InvalidControllerCommand {
-                detail: format!("unrecognized controller command: '{}'.", s),
+                detail: format!("unrecognized controller command: '{s}'."),
             })
         // This shouldn't ever happen, but if it does report all available information.
         } else if matches.len() > 1 {
@@ -1023,8 +1019,7 @@ impl FromStr for ControllerCommand {
             }
             Err(GooseError::InvalidControllerCommand {
                 detail: format!(
-                    "matched multiple controller commands: '{}' ({:?}).",
-                    s, matched_commands
+                    "matched multiple controller commands: '{s}' ({matched_commands:?})."
                 ),
             })
         // Only one command matched.
@@ -1279,7 +1274,7 @@ impl ControllerState {
                 let stream = match tokio_tungstenite::accept_async(socket).await {
                     Ok(s) => s,
                     Err(e) => {
-                        info!("invalid WebSocket handshake: {}", e);
+                        info!("invalid WebSocket handshake: {e}");
                         return;
                     }
                 };
@@ -1388,7 +1383,7 @@ impl ControllerState {
         // Await response from parent.
         match response_rx.await {
             Ok(value) => Ok(value.response),
-            Err(e) => Err(format!("one-shot channel dropped without reply: {}", e)),
+            Err(e) => Err(format!("one-shot channel dropped without reply: {e}")),
         }
     }
 }
@@ -1410,8 +1405,8 @@ impl Controller<ControllerTelnetMessage> for ControllerState {
         let command_string = match str::from_utf8(&raw_value) {
             Ok(m) => m.lines().next().unwrap_or_default(),
             Err(e) => {
-                let error = format!("ignoring unexpected input from telnet controller: {}", e);
-                info!("{}", error);
+                let error = format!("ignoring unexpected input from telnet controller: {e}");
+                info!("{error}");
                 return Err(error);
             }
         };
@@ -1628,14 +1623,14 @@ impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
                 }) {
                     Ok(json) => json.into(),
                     Err(e) => {
-                        warn!("failed to json encode response: {}", e);
+                        warn!("failed to json encode response: {e}");
                         return;
                     }
                 },
             ))
             .await
         {
-            info!("failed to write data to websocket: {}", e);
+            info!("failed to write data to websocket: {e}");
         }
     }
 }

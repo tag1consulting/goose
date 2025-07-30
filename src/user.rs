@@ -12,8 +12,8 @@ pub(crate) async fn user_main(
     thread_receiver: flume::Receiver<GooseUserCommand>,
 ) {
     info!(
-        "launching user {} from {}...",
-        thread_number, thread_scenario.name
+        "launching user {thread_number} from {}...",
+        thread_scenario.name
     );
 
     // User is starting, first invoke the weighted on_start transactions.
@@ -25,8 +25,8 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user {}]: launching on_start {} transaction from {}",
-                thread_number, thread_transaction_name, thread_scenario.name
+                "[user {thread_number}]: launching on_start {thread_transaction_name} transaction from {}",
+                thread_scenario.name
             );
             // Invoke the transaction function.
             let _todo = invoke_transaction_function(
@@ -53,8 +53,8 @@ pub(crate) async fn user_main(
                 // Determine which transaction we're going to run next.
                 let function = &thread_scenario.transactions[*thread_transaction_index].function;
                 debug!(
-                    "[user {}]: launching {} transaction from {}",
-                    thread_number, thread_transaction_name, thread_scenario.name
+                    "[user {thread_number}]: launching {thread_transaction_name} transaction from {}",
+                    thread_scenario.name
                 );
                 // Invoke the transaction function.
                 let _todo = invoke_transaction_function(
@@ -96,8 +96,8 @@ pub(crate) async fn user_main(
                         };
 
                         debug!(
-                            "user {} from {} sleeping {:?} ...",
-                            thread_number, thread_scenario.name, sleep_duration
+                            "user {thread_number} from {} sleeping {sleep_duration:?} ...",
+                            thread_scenario.name
                         );
 
                         tokio::time::sleep(sleep_duration).await;
@@ -132,8 +132,8 @@ pub(crate) async fn user_main(
                 // Provide visual indication that a GooseUSer has completed the confifgured
                 // number of iterations.
                 info!(
-                    "user {} completed {} {} of {}...",
-                    thread_number, thread_user.iterations, pluralize, thread_scenario.name,
+                    "user {thread_number} completed {} {pluralize} of {}...",
+                    thread_user.iterations, thread_scenario.name,
                 );
                 // Attempt to notify the parent this thread is shutting down.
                 if let Some(shutdown_channel) = thread_user.shutdown_channel.clone() {
@@ -153,8 +153,8 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user: {}]: launching on_stop {} transaction from {}",
-                thread_number, thread_transaction_name, thread_scenario.name
+                "[user: {thread_number}]: launching on_stop {thread_transaction_name} transaction from {}",
+                thread_scenario.name
             );
             // Invoke the transaction function.
             let _todo = invoke_transaction_function(
@@ -169,8 +169,8 @@ pub(crate) async fn user_main(
 
     // Optional debug output when exiting.
     info!(
-        "exiting user {} from {}...",
-        thread_number, thread_scenario.name
+        "exiting user {thread_number} from {}...",
+        thread_scenario.name
     );
 }
 
@@ -184,7 +184,7 @@ fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
                 return true;
             }
             command => {
-                debug!("ignoring unexpected GooseUserCommand: {:?}", command);
+                debug!("ignoring unexpected GooseUserCommand: {command:?}");
             }
         }
         message = thread_receiver.try_recv();

@@ -96,7 +96,7 @@ pub async fn set_cookie(user: &mut GooseUser) -> TransactionResult {
     // Set the Cookie.
     let request_builder = user
         .get_request_builder(&GooseMethod::Post, &cookie_path)?
-        .header("Cookie", format!("{}=foo", cookie_name));
+        .header("Cookie", format!("{cookie_name}=foo"));
     let goose_request = GooseRequest::builder()
         .set_request_builder(request_builder)
         .build();
@@ -126,10 +126,10 @@ pub async fn validate_cookie(user: &mut GooseUser) -> TransactionResult {
 
 // All tests in this file run against common endpoints.
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
-    let cookie_path_0 = format!("{}0", COOKIE_PATH);
-    let cookie_path_1 = format!("{}1", COOKIE_PATH);
-    let cookie_path_2 = format!("{}2", COOKIE_PATH);
-    let cookie_path_3 = format!("{}3", COOKIE_PATH);
+    let cookie_path_0 = format!("{COOKIE_PATH}0");
+    let cookie_path_1 = format!("{COOKIE_PATH}1");
+    let cookie_path_2 = format!("{COOKIE_PATH}2");
+    let cookie_path_3 = format!("{COOKIE_PATH}3");
     vec![
         // Set up SESSION_PATH, store in vector at POST_SESSION_KEY.
         server.mock(|when, then| {

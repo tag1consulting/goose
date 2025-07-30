@@ -213,7 +213,6 @@ pub(crate) fn coordinated_omission_request_metrics_template(co_requests_rows: &s
             </tbody>
         </table>
     </div>"#,
-        co_requests_rows = co_requests_rows,
     )
 }
 
@@ -262,7 +261,6 @@ pub(crate) fn coordinated_omission_response_metrics_template(co_responses_rows: 
             </tbody>
         </table>
     </div>"#,
-        co_responses_rows = co_responses_rows,
     )
 }
 
@@ -314,7 +312,6 @@ pub(crate) fn status_code_metrics_template(status_code_rows: &str) -> String {
             </tbody>
         </table>
     </div>"#,
-        status_code_rows = status_code_rows,
     )
 }
 
@@ -358,8 +355,6 @@ pub(crate) fn transaction_metrics_template(transaction_rows: &str, graph: String
             </tbody>
         </table>
     </div>"#,
-        transaction_rows = transaction_rows,
-        graph = graph,
     )
 }
 
@@ -423,8 +418,6 @@ pub(crate) fn scenario_metrics_template(scenario_rows: &str, graph: String) -> S
             </tbody>
         </table>
     </div>"#,
-        scenario_rows = scenario_rows,
-        graph = graph,
     )
 }
 
@@ -472,8 +465,6 @@ pub(crate) fn errors_template(error_rows: &str, graph: String) -> String {
             </tbody>
         </table>
     </div>"#,
-        error_rows = error_rows,
-        graph = graph,
     )
 }
 

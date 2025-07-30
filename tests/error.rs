@@ -89,11 +89,11 @@ fn validate_error(
     // Get request metrics.
     let index_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", INDEX_PATH))
+        .get(&format!("GET {INDEX_PATH}"))
         .unwrap();
     let a_404_metrics = goose_metrics
         .requests
-        .get(&format!("GET {}", A_404_PATH))
+        .get(&format!("GET {A_404_PATH}"))
         .unwrap();
 
     // Get error metrics.
