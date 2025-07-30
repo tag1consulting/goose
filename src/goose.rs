@@ -1764,9 +1764,7 @@ impl GooseUser {
 
             if self.request_cadence.counter > 3 {
                 if self.request_cadence.coordinated_omission_counter < 0 {
-                    debug!(
-                        "user {thread_number} enabled coordinated omission mitigation"
-                    );
+                    debug!("user {thread_number} enabled coordinated omission mitigation");
                     self.request_cadence.coordinated_omission_counter += 1;
                 }
                 // Calculate the expected cadence for this Transaction request.

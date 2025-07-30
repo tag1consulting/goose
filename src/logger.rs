@@ -739,9 +739,7 @@ impl GooseConfiguration {
                     Some(BufWriter::with_capacity(buffer_capacity, f))
                 }
                 Err(e) => {
-                    error!(
-                        "failed to create {log_file_type} ({log_file_path}): {e}"
-                    );
+                    error!("failed to create {log_file_type} ({log_file_path}): {e}");
                     None
                 }
             }
