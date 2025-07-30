@@ -1337,7 +1337,7 @@ impl GooseConfiguration {
             Ok(ap) => Some(ap.get()),
             Err(e) => {
                 // Default to 1 user if unable to detect number of CPUs.
-                info!("failed to detect available_parallelism: {}", e);
+                info!("failed to detect available_parallelism: {e}");
                 Some(1)
             }
         };
@@ -2127,7 +2127,7 @@ impl GooseConfiguration {
             ]) {
                 Ok(_) => (),
                 Err(e) => {
-                    info!("failed to initialize CombinedLogger: {}", e);
+                    info!("failed to initialize CombinedLogger: {e}");
                 }
             }
             info!("Writing to log file: {}", log_to_file.display());
@@ -2135,13 +2135,13 @@ impl GooseConfiguration {
             match CombinedLogger::init(vec![SimpleLogger::new(debug_level, Config::default())]) {
                 Ok(_) => (),
                 Err(e) => {
-                    info!("failed to initialize CombinedLogger: {}", e);
+                    info!("failed to initialize CombinedLogger: {e}");
                 }
             }
         }
 
-        info!("Output verbosity level: {}", debug_level);
-        info!("Logfile verbosity level: {}", log_level);
+        info!("Output verbosity level: {debug_level}");
+        info!("Logfile verbosity level: {log_level}");
     }
 }
 

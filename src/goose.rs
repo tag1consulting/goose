@@ -1583,7 +1583,7 @@ impl GooseUser {
         let path = match Url::parse(built_request.url().as_ref()) {
             Ok(u) => u.path().to_string(),
             Err(e) => {
-                error!("failed to parse url: {}", e);
+                error!("failed to parse url: {e}");
                 "".to_string()
             }
         };
@@ -1765,8 +1765,7 @@ impl GooseUser {
             if self.request_cadence.counter > 3 {
                 if self.request_cadence.coordinated_omission_counter < 0 {
                     debug!(
-                        "user {} enabled coordinated omission mitigation",
-                        thread_number
+                        "user {thread_number} enabled coordinated omission mitigation"
                     );
                     self.request_cadence.coordinated_omission_counter += 1;
                 }
@@ -1790,8 +1789,7 @@ impl GooseUser {
                 };
                 if elapsed > (cadence * 2) {
                     debug!(
-                        "user {}: coordinated_omission_mitigation: elapsed({}) > cadence({})",
-                        thread_number, elapsed, cadence
+                        "user {thread_number}: coordinated_omission_mitigation: elapsed({elapsed}) > cadence({cadence})"
                     );
                     self.request_cadence.coordinated_omission_counter += 1;
                     self.request_cadence.coordinated_omission_mitigation = elapsed;
@@ -2022,7 +2020,7 @@ impl GooseUser {
         self.log_debug(tag, Some(&*request), headers, body)?;
 
         // Print log to stdout.
-        info!("set_failure: {}", tag);
+        info!("set_failure: {tag}");
 
         Err(Box::new(TransactionError::RequestFailed {
             raw_request: request.clone(),

@@ -242,7 +242,7 @@ impl ControllerCommand {
                 regex: r"(?i)^(exit|quit|q)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible EXIT command";
-                    error!("{}", e);
+                    error!("{e}");
                     Err(e.to_string())
                 }),
             },
@@ -268,7 +268,7 @@ impl ControllerCommand {
                 regex: r"(?i)^(help|\?)$",
                 process_response: Box::new(|_| {
                     let e = "received an impossible HELP command";
-                    error!("{}", e);
+                    error!("{e}");
                     Err(e.to_string())
                 }),
             },
