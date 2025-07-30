@@ -735,7 +735,7 @@ impl GooseConfiguration {
         } else {
             match File::create(log_file_path).await {
                 Ok(f) => {
-                    info!("writing {} to: {}", log_file_type, log_file_path);
+                    info!("writing {log_file_type} to: {log_file_path}");
                     Some(BufWriter::with_capacity(buffer_capacity, f))
                 }
                 Err(e) => {

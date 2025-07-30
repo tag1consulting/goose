@@ -96,10 +96,7 @@ impl GraphData {
         let value = self
             .requests_per_second
             .initialize_or_increment(key, second, 1);
-        debug!(
-            "incremented second {} for requests per second counter: {}",
-            second, value
-        );
+        debug!("incremented second {second} for requests per second counter: {value}");
     }
 
     /// Record errors per second metric.
@@ -108,10 +105,7 @@ impl GraphData {
             .errors_per_second
             .initialize_or_increment(key, second, 1);
 
-        debug!(
-            "incremented second {} for errors per second counter: {}",
-            second, value
-        );
+        debug!("incremented second {second} for errors per second counter: {value}");
     }
 
     /// Record average response time per second metric.

@@ -34,7 +34,7 @@ pub fn parse_timespan(time_str: &str) -> usize {
     match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
         Ok(t) => {
-            trace!("{} is integer: {} seconds", time_str, t);
+            trace!("{time_str} is integer: {t} seconds");
             t
         }
         // Otherwise use a regex to extract hours, minutes and seconds from string.
@@ -55,13 +55,7 @@ pub fn parse_timespan(time_str: &str) -> usize {
                 None => 0,
             };
             let total = hours * 60 * 60 + minutes * 60 + seconds;
-            trace!(
-                "{} hours {} minutes {} seconds: {} seconds",
-                hours,
-                minutes,
-                seconds,
-                total
-            );
+            trace!("{hours} hours {minutes} minutes {seconds} seconds: {total} seconds");
             total
         }
     }
@@ -383,7 +377,7 @@ pub fn get_float_from_string(string: Option<String>) -> Option<f32> {
         Some(s) => match s.parse::<f32>() {
             Ok(value) => Some(value),
             Err(e) => {
-                warn!("failed to convert {} to float: {}", s, e);
+                warn!("failed to convert {s} to float: {e}");
                 None
             }
         },
@@ -438,7 +432,7 @@ pub(crate) fn setup_ctrlc_handler() {
             // of the ctrl-c handler.
             let mut canceled = CANCELED.write().unwrap();
             *canceled = false;
-            info!("reset ctrl-c handler: {}", e);
+            info!("reset ctrl-c handler: {e}");
         }
     }
 }

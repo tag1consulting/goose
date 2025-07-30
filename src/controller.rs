@@ -645,9 +645,9 @@ impl GooseAttack {
                                         } else {
                                             self.configuration.users.unwrap_or_default()
                                         };
-                                info!(
-                                    "changing users from {current_users:?} to {new_users}"
-                                );
+                                        info!(
+                                            "changing users from {current_users:?} to {new_users}"
+                                        );
                                         self.configuration.users = Some(new_users);
                                         self.reply_to_controller(
                                             message,
@@ -901,7 +901,7 @@ impl GooseAttack {
                 }
                 Err(e) => {
                     // Errors can be ignored, they happen any time there are no messages.
-                    debug!("error receiving message: {}", e);
+                    debug!("error receiving message: {e}");
                 }
             }
         };
@@ -955,12 +955,9 @@ pub(crate) async fn controller_main(
     };
 
     // All controllers use a TcpListener port.
-    debug!(
-        "preparing to bind {:?} controller to: {}",
-        protocol, address
-    );
+    debug!("preparing to bind {protocol:?} controller to: {address}");
     let listener = TcpListener::bind(&address).await?;
-    info!("{:?} controller listening on: {}", protocol, address);
+    info!("{protocol:?} controller listening on: {address}");
 
     // Counter increments each time a controller client connects with this protocol.
     let mut thread_id: u32 = 0;
@@ -1277,7 +1274,7 @@ impl ControllerState {
                 let stream = match tokio_tungstenite::accept_async(socket).await {
                     Ok(s) => s,
                     Err(e) => {
-                        info!("invalid WebSocket handshake: {}", e);
+                        info!("invalid WebSocket handshake: {e}");
                         return;
                     }
                 };
@@ -1409,7 +1406,7 @@ impl Controller<ControllerTelnetMessage> for ControllerState {
             Ok(m) => m.lines().next().unwrap_or_default(),
             Err(e) => {
                 let error = format!("ignoring unexpected input from telnet controller: {e}");
-                info!("{}", error);
+                info!("{error}");
                 return Err(error);
             }
         };
@@ -1626,14 +1623,14 @@ impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
                 }) {
                     Ok(json) => json.into(),
                     Err(e) => {
-                        warn!("failed to json encode response: {}", e);
+                        warn!("failed to json encode response: {e}");
                         return;
                     }
                 },
             ))
             .await
         {
-            info!("failed to write data to websocket: {}", e);
+            info!("failed to write data to websocket: {e}");
         }
     }
 }

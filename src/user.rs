@@ -184,7 +184,7 @@ fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
                 return true;
             }
             command => {
-                debug!("ignoring unexpected GooseUserCommand: {:?}", command);
+                debug!("ignoring unexpected GooseUserCommand: {command:?}");
             }
         }
         message = thread_receiver.try_recv();
