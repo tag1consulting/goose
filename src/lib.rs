@@ -1921,13 +1921,13 @@ fn allocate_transactions(
             u = transaction.weight;
         } else {
             v = transaction.weight;
-            trace!("calculating greatest common denominator of {} and {}", u, v);
+            trace!("calculating greatest common denominator of {u} and {v}");
             u = util::gcd(u, v);
-            trace!("inner gcd: {}", u);
+            trace!("inner gcd: {u}");
         }
     }
     // 'u' will always be the greatest common divisor
-    debug!("gcd: {}", u);
+    debug!("gcd: {u}");
 
     // Apply weights to sequenced transactions.
     let weighted_sequenced_on_start_transactions =
@@ -2101,8 +2101,7 @@ fn schedule_unsequenced_transactions(
                 {
                     if let Some(transaction) = transactions.pop() {
                         debug!(
-                            "allocating transaction from Transaction {}",
-                            transaction_index
+                            "allocating transaction from Transaction {transaction_index}"
                         );
                         weighted_transactions.push(transaction);
                     }
