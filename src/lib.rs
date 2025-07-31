@@ -689,7 +689,7 @@ impl GooseAttack {
         }
 
         info!(
-            "[scheduler]: allocating transactions and scenarios with {:?} scheduler",
+            "allocating transactions and scenarios with {:?} scheduler",
             self.scheduler
         );
 
@@ -706,7 +706,7 @@ impl GooseAttack {
                         .take(scenarios_len)
                     {
                         if let Some(scenario) = scenarios.pop() {
-                            debug!("[scheduler]: allocating 1 user from Scenario {scenario_index}");
+                            debug!("allocating 1 user from Scenario {scenario_index}");
                             weighted_scenarios.push(scenario);
                         }
                     }
@@ -755,7 +755,7 @@ impl GooseAttack {
 
         // Allocate a state for each user that will be launched.
         info!(
-            "[scheduler]: initializing {} user states...",
+            "initializing {} user states...",
             self.test_plan.total_users()
         );
 
@@ -783,7 +783,7 @@ impl GooseAttack {
                 )?);
                 user_count += 1;
                 if user_count == total_users {
-                    debug!("[scheduler]: created {user_count} weighted_users");
+                    debug!("created {user_count} weighted_users");
                     return Ok(weighted_users);
                 }
             }

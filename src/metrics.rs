@@ -474,7 +474,7 @@ pub struct GooseRequestMetricAggregate {
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
     pub(crate) fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
-        trace!("[metrics]: new request");
+        trace!("new request");
         GooseRequestMetricAggregate {
             path: path.to_string(),
             method,
@@ -513,17 +513,17 @@ impl GooseRequestMetricAggregate {
         let counter = match self.status_code_counts.get(&status_code) {
             // We've seen this status code before, increment counter.
             Some(c) => {
-                debug!("[metrics]: got {status_code:?} counter: {c}");
+                debug!("got {status_code:?} counter: {c}");
                 *c + 1
             }
             // First time we've seen this status code, initialize counter.
             None => {
-                debug!("[metrics]: no match for counter: {status_code}");
+                debug!("no match for counter: {status_code}");
                 1
             }
         };
         self.status_code_counts.insert(status_code, counter);
-        debug!("[metrics]: incremented {status_code} counter: {counter}");
+        debug!("incremented {status_code} counter: {counter}");
     }
 }
 

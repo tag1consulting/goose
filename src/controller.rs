@@ -721,10 +721,7 @@ impl GooseAttack {
                                     }
                                 }
                             } else {
-                                warn!(
-                                    "[controller]: didn't provide users: {:#?}",
-                                    &message.request
-                                );
+                                warn!("Controller didn't provide users: {:#?}", &message.request);
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(false),
@@ -958,9 +955,9 @@ pub(crate) async fn controller_main(
     };
 
     // All controllers use a TcpListener port.
-    debug!("[controller]: preparing to bind {protocol:?} to: {address}");
+    debug!("preparing to bind {protocol:?} controller to: {address}");
     let listener = TcpListener::bind(&address).await?;
-    info!("[controller]: {protocol:?} listening on: {address}");
+    info!("{protocol:?} controller listening on: {address}");
 
     // Counter increments each time a controller client connects with this protocol.
     let mut thread_id: u32 = 0;
