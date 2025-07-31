@@ -95,7 +95,7 @@ pub fn build_load_test(
     stop_transaction: Option<&Transaction>,
 ) -> GooseAttack {
     // First set up the common base configuration.
-    let mut goose = crate::GooseAttack::initialize_with_config(configuration).unwrap();
+    let mut goose = GooseAttack::initialize_with_config(configuration).unwrap();
 
     for scenario in scenarios {
         goose = goose.register_scenario(scenario.clone());

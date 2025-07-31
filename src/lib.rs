@@ -47,7 +47,7 @@ pub mod logger;
 pub mod metrics;
 pub mod prelude;
 mod report;
-mod test_plan;
+pub mod test_plan;
 mod throttle;
 mod user;
 pub mod util;
