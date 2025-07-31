@@ -1563,7 +1563,10 @@ impl GooseUser {
         // If throttle-requests is enabled...
         if self.is_throttled && self.throttle.is_some() {
             // ...wait until there's room to add a token to the throttle channel before proceeding.
-            debug!("GooseUser: waiting on throttle");
+            debug!(
+                "[user {}]: waiting on throttle",
+                self.weighted_users_index + 1
+            );
             // Will result in TransactionError::RequestCanceled if this fails.
             if let Err(e) = self.throttle.clone().unwrap().send_async(true).await {
                 return Err(Box::new(e.into()));
