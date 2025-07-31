@@ -16,11 +16,11 @@ use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
 /// Internal data structure representing a test plan.
 #[derive(Options, Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TestPlan {
+pub struct TestPlan {
     // A test plan is a vector of tuples each indicating a # of users and milliseconds.
-    pub(crate) steps: Vec<(usize, usize)>,
+    pub steps: Vec<(usize, usize)>,
     // Which step of the test_plan is currently running.
-    pub(crate) current: usize,
+    pub current: usize,
 }
 
 /// Automatically represent all load tests internally as a test plan.
@@ -29,7 +29,7 @@ pub(crate) struct TestPlan {
 /// automatically converted to a `Vec<(usize, usize)>` test plan.
 impl TestPlan {
     /// Create a new, empty TestPlan structure.
-    pub(crate) fn new() -> TestPlan {
+    pub fn new() -> TestPlan {
         TestPlan {
             steps: Vec::new(),
             current: 0,
@@ -81,7 +81,7 @@ impl TestPlan {
     }
 
     // Determine the total number of users required by the test plan.
-    pub(crate) fn total_users(&self) -> usize {
+    pub fn total_users(&self) -> usize {
         let mut total_users: usize = 0;
         let mut previous: usize = 0;
         for step in &self.steps {
