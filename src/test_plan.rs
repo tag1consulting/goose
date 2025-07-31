@@ -23,6 +23,12 @@ pub struct TestPlan {
     pub current: usize,
 }
 
+impl Default for TestPlan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Automatically represent all load tests internally as a test plan.
 ///
 /// Load tests launched using `--users`, `--startup-time`, `--hatch-rate`, and/or `--run-time` are
