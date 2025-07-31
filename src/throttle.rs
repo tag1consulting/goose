@@ -29,7 +29,7 @@ pub async fn throttle_main(
         tokens_per_duration = 1;
     }
 
-    info!("throttle allowing {tokens_per_duration} request(s) every {sleep_duration:?}");
+    info!("[throttle]: allowing {tokens_per_duration} request(s) every {sleep_duration:?}");
 
     // One or more token gets removed from the throttle_receiver bucket at regular
     // intervals. The throttle_drift variable tracks how much time is spent on
@@ -38,13 +38,13 @@ pub async fn throttle_main(
 
     // Loop and remove tokens from channel at controlled rate until load test ends.
     loop {
-        debug!("throttle removing {tokens_per_duration} token(s) from channel");
+        debug!("[throttle]: removing {tokens_per_duration} token(s) from channel");
         throttle_drift = util::sleep_minus_drift(sleep_duration, throttle_drift).await;
 
         // A message will be received when the load test is over.
         if parent_receiver.try_recv().is_ok() {
             // Close throttle channel to prevent any further requests.
-            info!("load test complete, closing throttle channel");
+            info!("[throttle]: load test complete, closing throttle channel");
             drop(throttle_receiver);
             break;
         }
@@ -53,7 +53,7 @@ pub async fn throttle_main(
         for token in 0..tokens_per_duration {
             // If the channel is empty, we will get an error, so stop trying to remove tokens.
             if throttle_receiver.try_recv().is_err() {
-                debug!("empty channel, exit after removing {token} tokens");
+                debug!("[throttle]: empty channel, exit after removing {token} tokens");
                 break;
             }
         }
