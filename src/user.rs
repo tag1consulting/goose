@@ -12,7 +12,7 @@ pub(crate) async fn user_main(
     thread_receiver: flume::Receiver<GooseUserCommand>,
 ) {
     info!(
-        "launching user {thread_number} from {}...",
+        "[user {thread_number}]: launching user from {}",
         thread_scenario.name
     );
 
@@ -96,7 +96,7 @@ pub(crate) async fn user_main(
                         };
 
                         debug!(
-                            "user {thread_number} from {} sleeping {sleep_duration:?} ...",
+                            "[user {thread_number}]: from {} sleeping {sleep_duration:?}",
                             thread_scenario.name
                         );
 
@@ -132,7 +132,7 @@ pub(crate) async fn user_main(
                 // Provide visual indication that a GooseUSer has completed the confifgured
                 // number of iterations.
                 info!(
-                    "user {thread_number} completed {} {pluralize} of {}...",
+                    "[user {thread_number}]: completed {} {pluralize} of {}",
                     thread_user.iterations, thread_scenario.name,
                 );
                 // Attempt to notify the parent this thread is shutting down.
@@ -153,7 +153,7 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user: {thread_number}]: launching on_stop {thread_transaction_name} transaction from {}",
+                "[user {thread_number}]: launching on_stop {thread_transaction_name} transaction from {}",
                 thread_scenario.name
             );
             // Invoke the transaction function.
@@ -169,7 +169,7 @@ pub(crate) async fn user_main(
 
     // Optional debug output when exiting.
     info!(
-        "exiting user {thread_number} from {}...",
+        "[user {thread_number}]: exiting from {}",
         thread_scenario.name
     );
 }

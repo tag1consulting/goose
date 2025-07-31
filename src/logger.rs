@@ -1,5 +1,47 @@
 //! An optional thread for writing logs.
 //!
+//! ## Logging Standards
+//!
+//! For consistency across the codebase, all logging (debug, info, warn, error, trace) should follow these format standards:
+//!
+//! ### User-related Log Messages
+//! Use the format: `[user {}]: message content`
+//! ```rust
+//! use log::{info, debug};
+//! let user_id = 1;
+//! let scenario_name = "LoadTest";
+//! let transaction_name = "login";
+//! info!("[user {}]: launching user from {}", user_id, scenario_name);
+//! debug!("[user {}]: launching {} transaction from {}", user_id, transaction_name, scenario_name);
+//! ```
+//!
+//! ### Component-specific Log Messages  
+//! Use the format: `[component]: message content`
+//! ```rust
+//! use log::{info, warn, error};
+//! let count = 10;
+//! let scenario_index = 0;
+//! let err = std::io::Error::new(std::io::ErrorKind::Other, "file not found");
+//! info!("[scheduler]: allocating {} users from Scenario {}", count, scenario_index);
+//! warn!("[controller]: failed to send response via one-shot channel");
+//! error!("[throttle]: failed to create log file: {}", err);
+//! ```
+//!
+//! ### System-level Messages
+//! Use the format: `[system]: message content` for general system operations
+//! ```rust
+//! use log::info;
+//! #[derive(Debug)]
+//! enum Phase { Starting, Running, Stopping }
+//! let phase = Phase::Starting;
+//! info!("[system]: entering GooseAttack phase: {:?}", phase);
+//! info!("[system]: load test complete, closing throttle channel");
+//! ```
+//!
+//! This standardization improves log readability, makes filtering easier, and provides consistent structure across all log levels.
+//!
+//! ## Log Files
+//!
 //! Goose can generate a number of log files during a load test, enabled through any combination of
 //! the following run time options:
 //!  - `--debug-log`, `--request-log`, `--transaction-log`, `--scenario-log`
@@ -735,11 +777,11 @@ impl GooseConfiguration {
         } else {
             match File::create(log_file_path).await {
                 Ok(f) => {
-                    info!("writing {log_file_type} to: {log_file_path}");
+                    info!("[logger]: writing {log_file_type} to: {log_file_path}");
                     Some(BufWriter::with_capacity(buffer_capacity, f))
                 }
                 Err(e) => {
-                    error!("failed to create {log_file_type} ({log_file_path}): {e}");
+                    error!("[logger]: failed to create {log_file_type} ({log_file_path}): {e}");
                     None
                 }
             }
@@ -889,31 +931,34 @@ impl GooseConfiguration {
 
         // Flush debug logs to disk if enabled.
         if let Some(debug_log_file) = debug_log.as_mut() {
-            info!("flushing debug_log: {}", &self.debug_log);
+            info!("[logger]: flushing debug_log: {}", &self.debug_log);
             let _ = debug_log_file.flush().await;
         };
 
         // Flush requests log to disk if enabled.
         if let Some(requests_log_file) = request_log.as_mut() {
-            info!("flushing request_log: {}", &self.request_log);
+            info!("[logger]: flushing request_log: {}", &self.request_log);
             let _ = requests_log_file.flush().await;
         }
 
         // Flush transaction log to disk if enabled.
         if let Some(transactions_log_file) = transaction_log.as_mut() {
-            info!("flushing transaction_log: {}", &self.transaction_log);
+            info!(
+                "[logger]: flushing transaction_log: {}",
+                &self.transaction_log
+            );
             let _ = transactions_log_file.flush().await;
         }
 
         // Flush scenario log to disk if enabled.
         if let Some(scenarios_log_file) = scenario_log.as_mut() {
-            info!("flushing scenario: {}", &self.scenario_log);
+            info!("[logger]: flushing scenario: {}", &self.scenario_log);
             let _ = scenarios_log_file.flush().await;
         }
 
         // Flush error logs to disk if enabled.
         if let Some(error_log_file) = error_log.as_mut() {
-            info!("flushing error_log: {}", &self.error_log);
+            info!("[logger]: flushing error_log: {}", &self.error_log);
             let _ = error_log_file.flush().await;
         };
 
