@@ -27,11 +27,12 @@ num-format = "0.4"
 rand = "0.9"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = [
-    "cookies",
     "gzip",
     "json",
 ] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = [
+    "derive",
+] }
 serde_json = "1.0"
 simplelog = "0.12"
 strum = "0.27"
@@ -50,9 +51,9 @@ tungstenite = "0.26"
 url = "2"
 
 [features]
-default = ["reqwest/default-tls"]
-rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls"]
-gaggle = []
+default = ["reqwest/default-tls", "cookies"]
+rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls", "cookies"]
+cookies = ["reqwest/cookies"]
 
 [dev-dependencies]
 httpmock = "0.7"

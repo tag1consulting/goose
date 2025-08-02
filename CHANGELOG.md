@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.18.0-dev
+ - [#578](https://github.com/tag1consulting/goose/pull/578) add type-safe client builder for cookie configuration, optimize startup with shared clients
+
 ## 0.18.0
  - update all dependencies
  - [#565](https://github.com/tag1consulting/goose/pull/565) add `--accept-invalid-certs` to skip validation of https certificates
