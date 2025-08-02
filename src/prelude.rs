@@ -7,6 +7,7 @@
 //! use goose::prelude::*;
 //! ```
 
+pub use crate::client::{ClientStrategy, GooseClientBuilder};
 pub use crate::config::{GooseDefault, GooseDefaultType};
 pub use crate::goose::{
     GooseMethod, GooseRequest, GooseUser, Scenario, Transaction, TransactionError,
