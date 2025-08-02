@@ -136,11 +136,43 @@ pub(crate) fn add_print_css(html_content: &str) -> String {
                 height: auto !important;
             }
             
+            /* Enhanced table page break controls */
             table {
                 page-break-inside: avoid;
+                break-inside: avoid;
                 border-collapse: collapse;
                 width: 100% !important;
                 font-size: 11px;
+                margin-bottom: 20px;
+            }
+            
+            /* Ensure table headers repeat on new pages if table must break */
+            thead {
+                display: table-header-group;
+            }
+            
+            /* Prevent orphaned headers */
+            thead tr {
+                page-break-after: avoid;
+                break-after: avoid;
+            }
+            
+            /* Keep table sections together when possible */
+            tbody {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            /* Prevent single rows from being orphaned */
+            tr {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            /* For very large tables, allow breaking but optimize it */
+            tbody tr {
+                orphans: 3; /* Minimum 3 rows at bottom of page */
+                widows: 3;  /* Minimum 3 rows at top of page */
             }
             
             th, td {
@@ -154,16 +186,26 @@ pub(crate) fn add_print_css(html_content: &str) -> String {
                 font-weight: bold;
             }
             
-            .goose-graph {
-                max-width: 100% !important;
-                height: auto !important;
+            /* Keep entire table containers together when possible */
+            .requests, .responses, .transactions, .scenarios, .status_codes, .errors, .CO {
                 page-break-inside: avoid;
-                margin: 10px 0;
+                break-inside: avoid;
+                margin-bottom: 30px;
             }
             
+            /* Keep section headings with their content */
             h1, h2, h3 {
                 page-break-after: avoid;
+                break-after: avoid;
+                page-break-inside: avoid;
+                break-inside: avoid;
                 color: #333 !important;
+            }
+            
+            /* Keep headings with at least some following content */
+            h2 + div, h2 + table {
+                page-break-before: avoid;
+                break-before: avoid;
             }
             
             h1 {
@@ -183,22 +225,54 @@ pub(crate) fn add_print_css(html_content: &str) -> String {
                 margin: 12px 0 6px 0;
             }
             
-            .goose-metrics-summary {
+            /* Charts and graphs */
+            .chart, .graph {
                 page-break-inside: avoid;
+                break-inside: avoid;
                 margin: 15px 0;
+                max-width: 100% !important;
+                height: auto !important;
             }
             
-            .goose-requests-table,
-            .goose-transactions-table,
-            .goose-scenarios-table {
+            .goose-graph {
+                max-width: 100% !important;
+                height: auto !important;
                 page-break-inside: avoid;
+                break-inside: avoid;
                 margin: 10px 0;
+            }
+            
+            /* Charts container */
+            .charts-container .chart {
+                page-break-inside: avoid;
+                break-inside: avoid;
+                margin-bottom: 20px;
             }
             
             /* Ensure charts and graphs don't break */
             canvas, svg {
                 max-width: 100% !important;
                 height: auto !important;
+            }
+            
+            /* Info sections */
+            .info {
+                page-break-inside: avoid;
+                break-inside: avoid;
+                margin-bottom: 20px;
+            }
+            
+            /* Plan overview table */
+            .info table {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            /* Users section */
+            .users {
+                page-break-inside: avoid;
+                break-inside: avoid;
+                margin-bottom: 30px;
             }
             
             /* Hide interactive elements that don't make sense in PDF */
@@ -210,6 +284,12 @@ pub(crate) fn add_print_css(html_content: &str) -> String {
             .small-text, .footnote {
                 font-size: 10px;
                 color: #666;
+            }
+            
+            /* Prevent very small orphaned content */
+            p, div {
+                orphans: 2;
+                widows: 2;
             }
         </style>
     "#;
