@@ -48,9 +48,12 @@ tokio = { version = "1", features = [
 tokio-tungstenite = "0.26"
 tungstenite = "0.26"
 url = "2"
+headless_chrome = { version = "1.0", features = ["fetch"], optional = true }
+urlencoding = { version = "2.1", optional = true }
 
 [features]
 default = ["reqwest/default-tls"]
+pdf-reports = ["headless_chrome", "urlencoding"]
 rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls"]
 gaggle = []
 
