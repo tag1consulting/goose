@@ -40,13 +40,17 @@ GooseAttack::initialize()?
     .execute().await?;
 ```
 
-## Legacy Feature Flag Approach
+## Performance Considerations
 
-If you prefer to disable cookies at compile time, you can still use the feature flag approach in `Cargo.toml`:
+### Individual Clients (Default)
+- **Memory usage**: Higher (one client per user)
+- **Cookie support**: Full cookie jar per user
+- **Use cases**: Applications requiring session management, user authentication
 
-```toml
-[dependencies]
-goose = { version = "^0.18", default-features = false, features = ["reqwest/default-tls"] }
-```
+### Shared Client (Optimized)
+- **Memory usage**: Lower (single shared client)
+- **Cookie support**: None
+- **Performance**: Optimized for high user counts (1000+ users)
+- **Use cases**: Stateless API testing, high-scale load tests
 
-However, the type-safe client builder approach is recommended as it provides better compile-time safety and more flexible configuration options.
+The type-safe client builder approach provides compile-time safety and prevents invalid configurations, making it the preferred method for configuring cookie behavior.
