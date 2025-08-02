@@ -39,6 +39,7 @@
 #[macro_use]
 extern crate log;
 
+pub mod client;
 pub mod config;
 pub mod controller;
 pub mod goose;
@@ -61,6 +62,7 @@ use std::sync::{atomic::AtomicUsize, Arc, RwLock};
 use std::time::{self, Duration};
 use std::{fmt, io};
 
+use crate::client::ClientStrategy;
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::controller::{ControllerProtocol, ControllerRequest};
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction};
@@ -379,6 +381,8 @@ pub struct GooseAttack {
     metrics: GooseMetrics,
     /// All data for report graphs.
     graph_data: GraphData,
+    /// Optional client strategy for HTTP client creation.
+    client_strategy: Option<ClientStrategy>,
 }
 
 /// Goose's internal global state.
@@ -409,6 +413,7 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            client_strategy: None,
         })
     }
 
@@ -445,6 +450,7 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            client_strategy: None,
         })
     }
 
@@ -510,6 +516,85 @@ impl GooseAttack {
     pub fn set_scheduler(mut self, scheduler: GooseScheduler) -> Self {
         self.scheduler = scheduler;
         self
+    }
+
+    /// Set a client strategy for cookies-enabled HTTP client creation.
+    ///
+    /// This allows individual clients per user, each with their own cookie jar.
+    /// This is the default behavior when no client builder is specified.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
+    ///     // Use individual clients with custom timeout
+    ///     GooseAttack::initialize()?
+    ///         .set_client_builder_with_cookies(
+    ///             GooseClientBuilder::new()
+    ///                 .timeout(Duration::from_secs(30))
+    ///         )
+    ///         .register_scenario(scenario!("ExampleScenario")
+    ///             .register_transaction(transaction!(example_transaction))
+    ///         );
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_client_builder_with_cookies(
+        mut self,
+        builder: crate::client::GooseClientBuilder<crate::client::CookiesEnabled>,
+    ) -> Self {
+        self.client_strategy = Some(builder.build_strategy());
+        self
+    }
+
+    /// Set a client strategy for cookies-disabled HTTP client creation.
+    ///
+    /// This uses a shared client across all users for better performance
+    /// and lower memory usage, at the cost of not supporting cookies.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
+    ///     // Use shared client without cookies for better performance
+    ///     GooseAttack::initialize()?
+    ///         .set_client_builder_without_cookies(
+    ///             GooseClientBuilder::new()
+    ///                 .without_cookies()
+    ///                 .timeout(Duration::from_secs(30))
+    ///         )?
+    ///         .register_scenario(scenario!("ExampleScenario")
+    ///             .register_transaction(transaction!(example_transaction))
+    ///         );
+    ///
+    ///     Ok(())
+    /// }
+    ///
+    /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
+    ///     let _goose = user.get("/foo").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_client_builder_without_cookies(
+        mut self,
+        builder: crate::client::GooseClientBuilder<crate::client::CookiesDisabled>,
+    ) -> Result<Self, GooseError> {
+        self.client_strategy = Some(builder.build_strategy()?);
+        Ok(self)
     }
 
     /// A load test must contain one or more [`Scenario`](./goose/struct.Scenario.html)s
@@ -759,24 +844,24 @@ impl GooseAttack {
             self.test_plan.total_users()
         );
 
-        // Create a single Reqwest Client to share if `cookies` are disabled.
-        #[cfg(not(feature = "cookies"))]
-        let reqwest_client = goose::create_reqwest_client(&self.configuration)?;
-
         let mut weighted_users = Vec::new();
         let mut user_count = 0;
         loop {
             for scenarios_index in &weighted_scenarios {
-                // If the `cookies` feature is enabled, create a new reqwest client
-                // for each GooseUser, giving each their own CookieJar.
-                #[cfg(feature = "cookies")]
-                let client = goose::create_reqwest_client(&self.configuration)?;
-
-                // If the `cookies` feature is disabled, create a single client (see
-                // above, the client is created outside this loop) and clone it for each
-                // GooseUser.
-                #[cfg(not(feature = "cookies"))]
-                let client = reqwest_client.clone();
+                // Create client based on the configured strategy
+                let client = match &self.client_strategy {
+                    Some(ClientStrategy::Individual(config)) => {
+                        crate::client::create_reqwest_client_with_cookies(config)?
+                    }
+                    Some(ClientStrategy::Shared(client)) => {
+                        // Extract the Client from the Arc
+                        client.as_ref().clone()
+                    }
+                    None => {
+                        // Default behavior: create individual clients with cookies
+                        goose::create_reqwest_client(&self.configuration)?
+                    }
+                };
 
                 debug!(
                     "creating user state: {} ({})",
@@ -1373,9 +1458,7 @@ impl GooseAttack {
                 goose_attack_run_state.user_channels.push(parent_sender);
 
                 // Clone the logger_tx if enabled, otherwise is None.
-                thread_user
-                    .logger
-                    .clone_from(&goose_attack_run_state.all_threads_logger_tx);
+                thread_user.logger = goose_attack_run_state.all_threads_logger_tx.clone();
 
                 // Copy the GooseUser-throttle receiver channel, used by all threads.
                 thread_user.throttle = if self.configuration.throttle_requests > 0 {
