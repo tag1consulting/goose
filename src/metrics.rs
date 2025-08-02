@@ -3085,6 +3085,21 @@ impl GooseAttack {
                         self.write_markdown_report(file).await?;
                     }
                 }
+                #[cfg(feature = "pdf-reports")]
+                Some("pdf") => {
+                    let file = create(path).await?;
+                    if write {
+                        self.write_pdf_report(file, report).await?;
+                    }
+                }
+                #[cfg(not(feature = "pdf-reports"))]
+                Some("pdf") => {
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report.clone(),
+                        detail: "PDF reports require the 'pdf-reports' feature. Rebuild with --features pdf-reports".to_string(),
+                    });
+                }
                 None => {
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
@@ -3388,6 +3403,277 @@ impl GooseAttack {
         info!("html report file written to: {path}");
 
         Ok(())
+    }
+
+    /// Write a PDF report.
+    #[cfg(feature = "pdf-reports")]
+    pub(crate) async fn write_pdf_report(
+        &self,
+        _report_file: File,
+        path: &str,
+    ) -> Result<(), GooseError> {
+        use crate::report::pdf::{add_print_css, generate_pdf_from_html};
+        use std::path::Path;
+
+        // Generate HTML report first
+        let test_start_time = self.metrics.history.first().unwrap().timestamp;
+
+        // Prepare report summary variables.
+        let users = self.metrics.maximum_users.to_string();
+
+        let mut steps_overview = String::new();
+        for step in self.metrics.history.windows(2) {
+            let (seconds, minutes, hours) = self
+                .metrics
+                .get_seconds_minutes_hours(&step[0].timestamp, &step[1].timestamp);
+            let started = Local
+                .timestamp_opt(step[0].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
+                .format("%y-%m-%d %H:%M:%S");
+            let stopped = Local
+                .timestamp_opt(step[1].timestamp.timestamp(), 0)
+                // @TODO: error handling
+                .unwrap()
+                .format("%y-%m-%d %H:%M:%S");
+            match &step[0].action {
+                // For maintaining just show the current number of users.
+                TestPlanStepAction::Maintaining => {
+                    let _ = write!(steps_overview,
+                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
+                            step[0].action,
+                            started,
+                            stopped,
+                            hours,
+                            minutes,
+                            seconds,
+                            step[0].users,
+                        );
+                }
+                // For increasing show the current number of users to the new number of users.
+                TestPlanStepAction::Increasing => {
+                    let _ = write!(steps_overview,
+                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
+                            step[0].action,
+                            started,
+                            stopped,
+                            hours,
+                            minutes,
+                            seconds,
+                            step[0].users,
+                            step[1].users,
+                        );
+                }
+                // For decreasing show the new number of users from the current number of users.
+                TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
+                    let _ = write!(steps_overview,
+                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
+                            step[0].action,
+                            started,
+                            stopped,
+                            hours,
+                            minutes,
+                            seconds,
+                            step[1].users,
+                            step[0].users,
+                        );
+                }
+                TestPlanStepAction::Finished => {
+                    unreachable!("there shouldn't be a step after finished");
+                }
+            }
+        }
+
+        // Build a comma separated list of hosts.
+        let hosts = &self.metrics.hosts.clone().into_iter().join(", ");
+
+        let ReportData {
+            raw_metrics: _,
+            raw_request_metrics,
+            raw_response_metrics,
+            co_request_metrics,
+            co_response_metrics,
+            scenario_metrics,
+            transaction_metrics,
+            errors,
+            status_code_metrics,
+        } = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
+
+        // Compile the request metrics template.
+        let mut raw_requests_rows = Vec::new();
+        for metric in raw_request_metrics {
+            raw_requests_rows.push(report::raw_request_metrics_row(metric));
+        }
+
+        // Compile the response metrics template.
+        let mut raw_responses_rows = Vec::new();
+        for metric in raw_response_metrics {
+            raw_responses_rows.push(report::response_metrics_row(metric));
+        }
+
+        let co_requests_template = co_request_metrics
+            .map(|co_request_metrics| {
+                let co_request_rows = co_request_metrics
+                    .into_iter()
+                    .map(report::coordinated_omission_request_metrics_row)
+                    .join("\n");
+
+                report::coordinated_omission_request_metrics_template(&co_request_rows)
+            })
+            .unwrap_or_default();
+
+        let co_responses_template = co_response_metrics
+            .map(|co_response_metrics| {
+                let co_response_rows = co_response_metrics
+                    .into_iter()
+                    .map(report::coordinated_omission_response_metrics_row)
+                    .join("\n");
+
+                report::coordinated_omission_response_metrics_template(&co_response_rows)
+            })
+            .unwrap_or_default();
+
+        let scenarios_template = scenario_metrics
+            .map(|scenario_metric| {
+                let scenarios_rows = scenario_metric
+                    .into_iter()
+                    .map(report::scenario_metrics_row)
+                    .join("\n");
+
+                report::scenario_metrics_template(
+                    &scenarios_rows,
+                    self.graph_data
+                        .get_scenarios_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                )
+            })
+            .unwrap_or_default();
+
+        let transactions_template = transaction_metrics
+            .map(|transaction_metrics| {
+                let transactions_rows = transaction_metrics
+                    .into_iter()
+                    .map(report::transaction_metrics_row)
+                    .join("\n");
+
+                report::transaction_metrics_template(
+                    &transactions_rows,
+                    self.graph_data
+                        .get_transactions_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                )
+            })
+            .unwrap_or_default();
+
+        let errors_template = errors
+            .map(|errors| {
+                let error_rows = errors.into_iter().map(report::error_row).join("\n");
+
+                report::errors_template(
+                    &error_rows,
+                    self.graph_data
+                        .get_errors_per_second_graph(!self.configuration.no_granular_report)
+                        .get_markup(&self.metrics.history, test_start_time),
+                )
+            })
+            .unwrap_or_default();
+
+        let status_code_template = status_code_metrics
+            .map(|status_code_metrics| {
+                // Compile the status_code metrics rows.
+                let mut status_code_rows = Vec::new();
+                for metric in status_code_metrics {
+                    status_code_rows.push(report::status_code_metrics_row(metric));
+                }
+
+                // Compile the status_code metrics template.
+                report::status_code_metrics_template(&status_code_rows.join("\n"))
+            })
+            .unwrap_or_default();
+
+        // Compile the HTML report template.
+        let html_report = report::build_report(
+            &users,
+            &steps_overview,
+            hosts,
+            report::GooseReportTemplates {
+                raw_requests_template: &raw_requests_rows.join("\n"),
+                raw_responses_template: &raw_responses_rows.join("\n"),
+                co_requests_template: &co_requests_template,
+                co_responses_template: &co_responses_template,
+                transactions_template: &transactions_template,
+                scenarios_template: &scenarios_template,
+                status_codes_template: &status_code_template,
+                errors_template: &errors_template,
+                graph_rps_template: &self
+                    .graph_data
+                    .get_requests_per_second_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+                graph_average_response_time_template: &self
+                    .graph_data
+                    .get_average_response_time_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+                graph_users_per_second: &self
+                    .graph_data
+                    .get_active_users_graph(!self.configuration.no_granular_report)
+                    .get_markup(&self.metrics.history, test_start_time),
+            },
+        );
+
+        // Add print-optimized CSS for better PDF output
+        let print_optimized_html = add_print_css(&html_report);
+
+        // Create PDF options from configuration
+        #[cfg(feature = "pdf-reports")]
+        let pdf_options = {
+            use crate::config::{PdfOptions, PdfPageSize};
+
+            let page_size = match self.configuration.pdf_page_size.as_str() {
+                "letter" => PdfPageSize::Letter,
+                "legal" => PdfPageSize::Legal,
+                "a3" => PdfPageSize::A3,
+                _ => PdfPageSize::A4, // default
+            };
+
+            PdfOptions {
+                page_size,
+                margin_top: self.configuration.pdf_margin,
+                margin_bottom: self.configuration.pdf_margin,
+                margin_left: self.configuration.pdf_margin,
+                margin_right: self.configuration.pdf_margin,
+                compress: !self.configuration.pdf_no_compress,
+                scale: self.configuration.pdf_scale,
+            }
+        };
+
+        // Generate PDF from HTML using the PDF configuration
+        generate_pdf_from_html(&print_optimized_html, Path::new(path), &pdf_options)?;
+
+        info!("pdf report file written to: {path}");
+
+        Ok(())
+    }
+
+    /// Write a PDF report (feature not enabled).
+    #[cfg(not(feature = "pdf-reports"))]
+    #[allow(dead_code)]
+    pub(crate) async fn write_pdf_report(
+        &self,
+        _report_file: File,
+        path: &str,
+    ) -> Result<(), GooseError> {
+        Err(GooseError::InvalidOption {
+            option: "--report-file".to_string(),
+            value: path.to_string(),
+            detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
+        })
     }
 }
 

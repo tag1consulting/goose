@@ -198,6 +198,22 @@ pub struct GooseConfiguration {
     /// Disables validation of https certificates
     #[options(no_short)]
     pub accept_invalid_certs: bool,
+    /// Sets PDF page size (a4, letter, legal, a3)
+    #[cfg(feature = "pdf-reports")]
+    #[options(no_short, meta = "SIZE", default = "a4")]
+    pub pdf_page_size: String,
+    /// Sets PDF margins in inches
+    #[cfg(feature = "pdf-reports")]
+    #[options(no_short, meta = "INCHES", default = "0.4")]
+    pub pdf_margin: f64,
+    /// Sets PDF scale factor (0.1-2.0)
+    #[cfg(feature = "pdf-reports")]
+    #[options(no_short, meta = "SCALE", default = "0.8")]
+    pub pdf_scale: f64,
+    /// Disable PDF compression
+    #[cfg(feature = "pdf-reports")]
+    #[options(no_short)]
+    pub pdf_no_compress: bool,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.
@@ -236,6 +252,30 @@ impl FromStr for Scenarios {
         // The listed scenarios are only valid if the logic gets this far.
         Ok(Scenarios { active })
     }
+}
+
+/// Defines PDF page size options for PDF report generation.
+#[cfg(feature = "pdf-reports")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PdfPageSize {
+    A4,
+    Letter,
+    Legal,
+    A3,
+    Custom { width: f64, height: f64 },
+}
+
+/// PDF-specific configuration options for report generation.
+#[cfg(feature = "pdf-reports")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PdfOptions {
+    pub page_size: PdfPageSize,
+    pub margin_top: f64,
+    pub margin_bottom: f64,
+    pub margin_left: f64,
+    pub margin_right: f64,
+    pub compress: bool,
+    pub scale: f64,
 }
 
 /// Optional default values for Goose run-time options.
