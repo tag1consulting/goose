@@ -3412,7 +3412,8 @@ impl GooseAttack {
         _report_file: File,
         path: &str,
     ) -> Result<(), GooseError> {
-        use crate::report::pdf::{add_print_css, generate_pdf_from_html};
+        use crate::config::PdfPageSize;
+        use crate::report::pdf::{add_print_css_with_page_size, generate_pdf_from_html};
         use std::path::Path;
 
         // Generate HTML report first
@@ -3627,8 +3628,17 @@ impl GooseAttack {
             },
         );
 
+        // Determine page size from configuration
+        let page_size = match self.configuration.pdf_page_size.as_str() {
+            "a4" => PdfPageSize::A4,
+            "letter" => PdfPageSize::Letter,
+            "legal" => PdfPageSize::Legal,
+            "a3" => PdfPageSize::A3,
+            _ => PdfPageSize::Unlimited, // default
+        };
+
         // Add print-optimized CSS for better PDF output
-        let print_optimized_html = add_print_css(&html_report);
+        let print_optimized_html = add_print_css_with_page_size(&html_report, &page_size);
 
         // Create PDF options from configuration
         #[cfg(feature = "pdf-reports")]
@@ -3636,10 +3646,11 @@ impl GooseAttack {
             use crate::config::{PdfOptions, PdfPageSize};
 
             let page_size = match self.configuration.pdf_page_size.as_str() {
+                "a4" => PdfPageSize::A4,
                 "letter" => PdfPageSize::Letter,
                 "legal" => PdfPageSize::Legal,
                 "a3" => PdfPageSize::A3,
-                _ => PdfPageSize::A4, // default
+                _ => PdfPageSize::Unlimited, // default
             };
 
             PdfOptions {
