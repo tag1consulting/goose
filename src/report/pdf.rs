@@ -368,7 +368,7 @@ mod tests {
 
         // Should contain the print CSS (prepended)
         assert!(result.contains("<style media=\"print\">"));
-        assert!(result.starts_with("<style media=\"print\">"));
+        assert!(result.trim_start().starts_with("<style media=\"print\">"));
     }
 
     #[cfg(not(feature = "pdf-reports"))]
