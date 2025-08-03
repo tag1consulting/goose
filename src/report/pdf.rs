@@ -84,9 +84,25 @@ pub(crate) fn generate_pdf_from_html(
         PdfPageSize::Unlimited => {
             // For unlimited pages, dynamically calculate content height and set appropriate dimensions
 
-            // Simplified measurement - just get content height with NO added padding
+            // More accurate measurement using the actual content bounds
             let content_height_script = r#"
-                document.body.scrollHeight / 96; // Convert pixels to inches, NO padding
+                (function() {
+                    // Get all elements in the document
+                    const elements = document.querySelectorAll('*');
+                    let maxBottom = 0;
+                    
+                    // Find the lowest bottom position of any element
+                    for (let element of elements) {
+                        const rect = element.getBoundingClientRect();
+                        const bottom = rect.bottom + window.scrollY;
+                        if (bottom > maxBottom) {
+                            maxBottom = bottom;
+                        }
+                    }
+                    
+                    // Convert pixels to inches (96 DPI) and add minimal buffer
+                    return (maxBottom + 5) / 96; // 5px buffer to prevent clipping
+                })();
             "#;
 
             let content_height_inches = tab
@@ -102,7 +118,7 @@ pub(crate) fn generate_pdf_from_html(
                 .unwrap_or(11.0); // Default to Letter height if measurement fails
 
             // Use the exact measurement with NO additional padding
-            let pdf_height = content_height_inches.max(11.0); // At least Letter height
+            let pdf_height = content_height_inches; // Use actual content height
 
             tab.print_to_pdf(Some(headless_chrome::types::PrintToPdfOptions {
                 landscape: Some(false),
@@ -111,10 +127,10 @@ pub(crate) fn generate_pdf_from_html(
                 scale: Some(pdf_options.scale),
                 paper_width: Some(8.5),         // Standard width in inches
                 paper_height: Some(pdf_height), // Dynamic height based on content
-                margin_top: Some(pdf_options.margin_top),
-                margin_bottom: Some(pdf_options.margin_bottom),
-                margin_left: Some(pdf_options.margin_left),
-                margin_right: Some(pdf_options.margin_right),
+                margin_top: Some(0.1),          // Minimal margins to reduce white space
+                margin_bottom: Some(0.1),       // Minimal margins to reduce white space
+                margin_left: Some(0.1),         // Minimal margins to reduce white space
+                margin_right: Some(0.1),        // Minimal margins to reduce white space
                 page_ranges: None,
                 ignore_invalid_page_ranges: Some(false),
                 header_template: None,
@@ -191,14 +207,14 @@ pub(crate) fn add_print_css_with_page_size(html_content: &str, page_size: &PdfPa
         PdfPageSize::Unlimited => {
             r#"
             @page {
-                margin: 0.5in;
+                margin: 0.1in;
                 size: auto;
             }"#
         }
         _ => {
             r#"
             @page {
-                margin: 0.5in;
+                margin: 0.1in;
                 size: auto;
             }"#
         }
@@ -210,8 +226,8 @@ pub(crate) fn add_print_css_with_page_size(html_content: &str, page_size: &PdfPa
             r#"
             /* Force unlimited page layout - disable ALL page breaking */
             @page {
+                margin: 0.1in;
                 size: auto;
-                margin: 0.5in;
             }
 
             /* Disable ALL page breaking for all elements */
