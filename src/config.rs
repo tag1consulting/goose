@@ -198,9 +198,9 @@ pub struct GooseConfiguration {
     /// Disables validation of https certificates
     #[options(no_short)]
     pub accept_invalid_certs: bool,
-    /// Sets PDF page size (a4, letter, legal, a3)
+    /// Sets PDF page size (unlimited, a4, letter, legal, a3)
     #[cfg(feature = "pdf-reports")]
-    #[options(no_short, meta = "SIZE", default = "a4")]
+    #[options(no_short, meta = "SIZE", default = "unlimited")]
     pub pdf_page_size: String,
     /// Sets PDF margins in inches
     #[cfg(feature = "pdf-reports")]
@@ -262,6 +262,7 @@ pub enum PdfPageSize {
     Letter,
     Legal,
     A3,
+    Unlimited,
     Custom { width: f64, height: f64 },
 }
 
