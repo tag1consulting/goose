@@ -213,7 +213,8 @@ pub(crate) fn add_print_css(html_content: &str) -> String {
                 break-inside: avoid !important;
             }
         </style>
-        "#.to_string();
+        "#
+    .to_string();
 
     // Insert CSS before </head> or prepend if no head tag
     if let Some(head_end) = html_content.find("</head>") {
