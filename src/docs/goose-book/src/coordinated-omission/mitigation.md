@@ -76,14 +76,13 @@ Significant differences between these metrics indicate CO events occurred during
 
 ## Choosing Your Mitigation Strategy
 
-Goose offers four CO mitigation modes via the `--co-mitigation` flag:
+Goose offers three CO mitigation modes via the `--co-mitigation` flag:
 
 | Mode | Use Case | Behavior |
 |------|----------|----------|
 | `disabled` | Custom analysis, external CO handling | No adjustment, raw data only |
 | `average` (default) | General performance testing | Uses average response time as baseline |
 | `minimum` | Strict SLA compliance, microservices | Uses minimum response time as baseline |
-| `maximum` | Conservative testing, worst-case analysis | Uses maximum response time as baseline |
 
 ### When to Use Each Mode
 
@@ -99,11 +98,6 @@ Goose offers four CO mitigation modes via the `--co-mitigation` flag:
 - You want balanced synthetic data generation
 - General performance regression testing
 
-**Use `maximum` when:**
-- Conservative performance testing
-- Analyzing worst-case scenarios
-- You want minimal synthetic data generation
-- Testing systems with high variance
 
 **Use `disabled` when:**
 - Implementing custom CO mitigation

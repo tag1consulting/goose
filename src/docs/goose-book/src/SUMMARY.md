@@ -37,6 +37,7 @@
 - [Coordinated Omission](coordinated-omission/overview.md)
     - [Mitigation](coordinated-omission/mitigation.md)
     - [Metrics](coordinated-omission/metrics.md)
+    - [Practical Examples](coordinated-omission/examples.md)
 
 - [Configuration](config/overview.md)
     - [Defaults](config/defaults.md)
