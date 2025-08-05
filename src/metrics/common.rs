@@ -1,6 +1,6 @@
 use super::{
     merge_times, per_second_calculations, prepare_status_codes, report, update_max_time,
-    update_min_time, GooseErrorMetricAggregate, GooseMetrics,
+    update_min_time, CoMetricsSummary, GooseErrorMetricAggregate, GooseMetrics,
 };
 use crate::{
     report::{
@@ -28,6 +28,8 @@ pub(crate) struct ReportData<'m> {
     pub status_code_metrics: Option<Vec<StatusCodeMetric>>,
 
     pub errors: Option<Vec<&'m GooseErrorMetricAggregate>>,
+
+    pub coordinated_omission_metrics: Option<CoMetricsSummary>,
 }
 
 pub struct ReportOptions {
@@ -415,5 +417,9 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
         transaction_metrics,
         status_code_metrics,
         errors: (!metrics.errors.is_empty()).then(|| metrics.errors.values().collect::<Vec<_>>()),
+        coordinated_omission_metrics: metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .map(|co| co.get_summary()),
     }
 }

@@ -25,6 +25,7 @@ pub(crate) struct GooseReportTemplates<'a> {
     pub graph_rps_template: &'a str,
     pub graph_average_response_time_template: &'a str,
     pub graph_users_per_second: &'a str,
+    pub co_metrics_template: &'a str,
 }
 
 /// Defines the metrics reported about requests.
@@ -480,6 +481,74 @@ pub fn error_row(error: &metrics::GooseErrorMetricAggregate) -> String {
     )
 }
 
+/// If enhanced CO metrics are available, add a CO metrics summary table to the html report.
+pub(crate) fn coordinated_omission_metrics_template(
+    co_summary: &metrics::CoMetricsSummary,
+) -> String {
+    let severity_rows = co_summary
+        .severity_breakdown
+        .iter()
+        .map(|(severity, count)| {
+            format!(
+                r#"<tr>
+                    <td>{severity:?}</td>
+                    <td>{count}</td>
+                </tr>"#
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    format!(
+        r#"<div class="co-metrics">
+        <h2>Coordinated Omission Event Metrics</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th colspan="2">Summary</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Total CO Events</td>
+                    <td>{}</td>
+                </tr>
+                <tr>
+                    <td>Events per minute</td>
+                    <td>{:.2}</td>
+                </tr>
+                <tr>
+                    <td>Actual requests</td>
+                    <td>{}</td>
+                </tr>
+                <tr>
+                    <td>Synthetic requests</td>
+                    <td>{} ({:.1}%)</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <table style="margin-top: 20px;">
+            <thead>
+                <tr>
+                    <th>Severity</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
+            <tbody>
+                {}
+            </tbody>
+        </table>
+    </div>"#,
+        co_summary.total_co_events,
+        co_summary.events_per_minute,
+        format_number(co_summary.actual_requests as usize),
+        format_number(co_summary.synthetic_requests as usize),
+        co_summary.synthetic_percentage,
+        severity_rows
+    )
+}
+
 /// Build the html report.
 pub(crate) fn build_report(
     users: &str,
@@ -649,6 +718,8 @@ pub(crate) fn build_report(
 
         {errors_template}
 
+        {co_metrics_template}
+
     </div>
 </body>
 </html>"#,
@@ -668,5 +739,6 @@ pub(crate) fn build_report(
         graph_rps_template = templates.graph_rps_template,
         graph_average_response_time_template = templates.graph_average_response_time_template,
         graph_users_per_second = templates.graph_users_per_second,
+        co_metrics_template = templates.co_metrics_template,
     )
 }

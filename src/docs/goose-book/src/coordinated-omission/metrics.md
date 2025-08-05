@@ -37,7 +37,9 @@ The following example was "contrived". The [`drupal_memcache`](../example/drupal
  Aggregated               |      432.98 |     294.11 |       3,390 |         14
  ```
 
-From these two tables, it is clear that there was a statistically significant event affecting the load testing metrics. In particular, note that the standard deviation between the "raw" average and the "adjusted" average is considerably larger than the "raw" average, calling into questing whether or not your load test was "valid". (The answer to that question depends very much on your specific goals and load test.)
+From these two tables, we can observe a notable difference between the raw and adjusted metrics. The standard deviation between the "raw" average and the "adjusted" average is considerably larger than the "raw" average, indicating that a performance event occurred that affected request timing. Whether this indicates a "valid" load test depends on your specific goals and testing context.
+
+**Note**: It is beyond the scope of Goose to test for statistically significant changes in the right-tail, or other locations, of the distribution of response times. Goose produces the raw data you need to conduct these tests. For detailed statistical analysis, consider using tools like the Kolmogorov-Smirnov or Anderson-Darling tests to compare distributions. Keep in mind that CO-adjusted data is derived from raw data and thus not statistically independent.
 
 Goose also shows multiple percentile graphs, again showing first the "raw" metrics followed by the "adjusted" metrics. The "raw" graph would suggest that less than 1% of the requests for the `GET (Anon) node page` were slow, and less than 0.1% of the requests for the `GET (Auth) node page` were slow. However, through Coordinated Omission Mitigation we can see that statistically this would have actually affected all requests, and for authenticated users the impact is visible on >25% of the requests.
 

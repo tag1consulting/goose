@@ -9,8 +9,10 @@
 //! [`GooseErrorMetrics`] are displayed in tables.
 
 mod common;
+pub mod coordinated_omission;
 
 pub(crate) use common::ReportData;
+pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario};
@@ -1070,6 +1072,11 @@ pub struct GooseMetrics {
     pub errors: GooseErrorMetrics,
     /// Tracks all hosts that the load test is run against.
     pub hosts: HashSet<String>,
+    /// Enhanced Coordinated Omission metrics tracking.
+    ///
+    /// Tracks CO events, synthetic vs actual requests, and provides detailed
+    /// analysis of coordinated omission impact on the load test.
+    pub coordinated_omission_metrics: Option<CoordinatedOmissionMetrics>,
     /// Flag indicating whether or not these are the final metrics, used to determine
     /// which metrics should be displayed. Defaults to false.
     pub(crate) final_metrics: bool,
@@ -2570,7 +2577,7 @@ impl Serialize for GooseMetrics {
     where
         S: Serializer,
     {
-        let mut s = serializer.serialize_struct("GooseMetrics", 10)?;
+        let mut s = serializer.serialize_struct("GooseMetrics", 11)?;
         s.serialize_field("hash", &self.hash)?;
         s.serialize_field("duration", &self.duration)?;
         s.serialize_field("maximum_users", &self.maximum_users)?;
@@ -2581,6 +2588,10 @@ impl Serialize for GooseMetrics {
         s.serialize_field("final_metrics", &self.final_metrics)?;
         s.serialize_field("display_status_codes", &self.display_status_codes)?;
         s.serialize_field("display_metrics", &self.display_metrics)?;
+        s.serialize_field(
+            "coordinated_omission_metrics",
+            &self.coordinated_omission_metrics,
+        )?;
         s.end()
     }
 }
@@ -2600,7 +2611,15 @@ impl fmt::Display for GooseMetrics {
         self.fmt_percentiles(fmt)?;
         self.fmt_status_codes(fmt)?;
         self.fmt_errors(fmt)?;
-        self.fmt_overview(fmt)
+
+        // Display enhanced coordinated omission metrics if available (before overview)
+        if let Some(co_metrics) = &self.coordinated_omission_metrics {
+            write!(fmt, "{co_metrics}")?;
+        }
+
+        self.fmt_overview(fmt)?;
+
+        Ok(())
     }
 }
 
@@ -2857,6 +2876,28 @@ impl GooseAttack {
                     if request_metric.coordinated_omission_elapsed > 0
                         && request_metric.user_cadence > 0
                     {
+                        // Track the CO event if CO metrics tracking is enabled
+                        if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                            // Calculate how many synthetic requests will be injected
+                            let synthetic_count = (request_metric.coordinated_omission_elapsed
+                                as i64
+                                - request_metric.user_cadence as i64
+                                - request_metric.response_time as i64)
+                                / request_metric.user_cadence as i64;
+
+                            if synthetic_count > 0 {
+                                co_metrics.record_co_event(
+                                    std::time::Duration::from_millis(request_metric.user_cadence),
+                                    std::time::Duration::from_millis(
+                                        request_metric.coordinated_omission_elapsed,
+                                    ),
+                                    synthetic_count as u32,
+                                    request_metric.user,
+                                    request_metric.scenario_name.clone(),
+                                );
+                            }
+                        }
+
                         // Build a statistically generated coordinated_omissiom metric starting
                         // with the metric that was sent by the affected GooseUser.
                         let mut co_metric = request_metric.clone();
@@ -2878,6 +2919,11 @@ impl GooseAttack {
                         }
                     // Otherwise this is an actual request, record it normally.
                     } else {
+                        // Track the actual request in CO metrics if enabled
+                        if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                            co_metrics.record_actual_request();
+                        }
+
                         // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
                         // `GooseMetrics.requests`, and write to the requests log if enabled.
                         self.record_request_metric(&request_metric).await;
@@ -3188,6 +3234,7 @@ impl GooseAttack {
             transaction_metrics,
             errors,
             status_code_metrics,
+            coordinated_omission_metrics: _,
         } = common::prepare_data(
             ReportOptions {
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
@@ -3230,6 +3277,14 @@ impl GooseAttack {
                 report::coordinated_omission_response_metrics_template(&co_response_rows)
             })
             .unwrap_or_default();
+
+        let co_metrics_template =
+            if let Some(co_metrics) = &self.metrics.coordinated_omission_metrics {
+                let co_summary = co_metrics.get_summary();
+                report::coordinated_omission_metrics_template(&co_summary)
+            } else {
+                String::new()
+            };
 
         let scenarios_template = scenario_metrics
             .map(|scenario_metric| {
@@ -3315,6 +3370,7 @@ impl GooseAttack {
                     .graph_data
                     .get_active_users_graph(!self.configuration.no_granular_report)
                     .get_markup(&self.metrics.history, test_start_time),
+                co_metrics_template: &co_metrics_template,
             },
         );
 

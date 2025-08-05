@@ -1683,6 +1683,15 @@ impl GooseAttack {
             }
             // Only display status codes if not disaled.
             self.metrics.display_status_codes = !self.configuration.no_status_codes;
+
+            // Initialize CO tracker if mitigation is enabled
+            if let Some(co_mitigation) = &self.configuration.co_mitigation {
+                if co_mitigation != &metrics::GooseCoordinatedOmissionMitigation::Disabled {
+                    self.metrics.coordinated_omission_metrics = Some(
+                        metrics::CoordinatedOmissionMetrics::new(co_mitigation.clone()),
+                    );
+                }
+            }
         }
 
         // Reset the run state.
