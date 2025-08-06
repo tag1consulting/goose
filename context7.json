@@ -1,0 +1,37 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Goose - Rust Load Testing Framework",
+  "description": "A powerful, fast, and scalable load testing framework built with Rust that simulates realistic user behavior to identify performance bottlenecks in web applications",
+  "excludeFolders": [
+    "target",
+    "tests",
+    ".github",
+    ".qodo",
+    ".venv",
+    "memory-bank",
+    "src/docs/goose-book/book"
+  ],
+  "excludeFiles": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "*.log",
+    "*.lock",
+    "report.html",
+    "report.pdf",
+    "*.rs.bk",
+    "sample_goosebot_*.md",
+    "todo.md"
+  ],
+  "rules": [
+    "Goose is a Rust-based load testing framework",
+    "Uses async/await patterns for concurrent user simulations",
+    "Supports distributed load testing via Gaggle mode (currently being reimplemented)",
+    "Provides comprehensive metrics including coordinated omission mitigation",
+    "Integrates with various reporting formats: HTML, Markdown, JSON",
+    "PDF report generation coming soon (see issue #628)",
+    "Includes WebSocket and Telnet controllers for runtime control",
+    "Features flexible test plans with complex load patterns",
+    "Supports both native-tls and rustls for HTTPS requests"
+  ],
+  "previousVersions": []
+}
