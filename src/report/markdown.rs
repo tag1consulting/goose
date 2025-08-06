@@ -32,6 +32,7 @@ impl<W: Write> Markdown<'_, '_, W> {
         self.write_transaction_metrics()?;
         self.write_scenario_metrics()?;
         self.write_error_metrics()?;
+        self.write_coordinated_omission_metrics()?;
 
         Ok(())
     }
@@ -303,6 +304,81 @@ impl<W: Write> Markdown<'_, '_, W> {
         } in errors
         {
             writeln!(self.w, r#"| {method} | {name} | {occurrences} | {error} |"#)?;
+        }
+
+        Ok(())
+    }
+
+    fn write_coordinated_omission_metrics(&mut self) -> Result<(), GooseError> {
+        let Some(co_metrics) = &self.data.coordinated_omission_metrics else {
+            return Ok(());
+        };
+
+        write!(
+            self.w,
+            r#"
+## Coordinated Omission Metrics
+
+"#
+        )?;
+
+        // Overall metrics
+        writeln!(self.w, "**Overall Metrics:**")?;
+        writeln!(self.w, "- Total CO Events: {}", co_metrics.total_co_events)?;
+        writeln!(
+            self.w,
+            "- Synthetic Requests Generated: {}",
+            format_number(co_metrics.synthetic_requests as usize)
+        )?;
+        writeln!(
+            self.w,
+            "- Actual Requests: {}",
+            format_number(co_metrics.actual_requests as usize)
+        )?;
+        writeln!(
+            self.w,
+            "- Synthetic Percentage: {:.1}%",
+            co_metrics.synthetic_percentage
+        )?;
+        writeln!(self.w)?;
+
+        // Severity breakdown
+        writeln!(self.w, "**Severity Breakdown:**")?;
+        writeln!(self.w, "- Minor (2-5x): {}", co_metrics.minor_count)?;
+        writeln!(self.w, "- Moderate (5-10x): {}", co_metrics.moderate_count)?;
+        writeln!(self.w, "- Severe (10-20x): {}", co_metrics.severe_count)?;
+        writeln!(self.w, "- Critical (>20x): {}", co_metrics.critical_count)?;
+        writeln!(self.w)?;
+
+        // Per-user breakdown if available
+        if !co_metrics.per_user_events.is_empty() {
+            writeln!(self.w, "**Per-User CO Events:**")?;
+            writeln!(self.w)?;
+            writeln!(self.w, "| User | CO Events | Severity Breakdown |")?;
+            writeln!(self.w, "| ---: | --------: | ------------------ |")?;
+
+            for (user_id, count, severity) in &co_metrics.per_user_events {
+                writeln!(self.w, "| {user_id} | {count} | {severity} |")?;
+            }
+            writeln!(self.w)?;
+        }
+
+        // Per-scenario breakdown if available
+        if !co_metrics.per_scenario_events.is_empty() {
+            writeln!(self.w, "**Per-Scenario CO Events:**")?;
+            writeln!(self.w)?;
+            writeln!(self.w, "| Scenario | CO Events | Synthetic Requests |")?;
+            writeln!(self.w, "| -------- | --------: | -----------------: |")?;
+
+            for (scenario, count, synthetic) in &co_metrics.per_scenario_events {
+                writeln!(
+                    self.w,
+                    "| {} | {} | {} |",
+                    scenario,
+                    count,
+                    format_number(*synthetic)
+                )?;
+            }
         }
 
         Ok(())

@@ -148,3 +148,66 @@ pub fn cleanup_files(files: Vec<&str>) {
         }
     }
 }
+
+/// Configure mock server to trigger CO events predictably.
+#[allow(dead_code)]
+pub fn setup_co_triggering_server(server: &MockServer) -> httpmock::Mock {
+    use httpmock::Method::GET;
+    use std::time::Duration;
+
+    server.mock(|when, then| {
+        when.method(GET).path("/");
+        then.status(200).delay(Duration::from_millis(50)); // Base delay that should trigger CO events
+    })
+}
+
+/// Validate CO metrics meet expected criteria.
+#[allow(dead_code)]
+pub fn validate_co_metrics(
+    metrics: &goose::metrics::GooseMetrics,
+    expected_events: usize,
+    min_synthetic_pct: f32,
+) {
+    assert!(
+        metrics.coordinated_omission_metrics.is_some(),
+        "CO metrics should be present"
+    );
+    let co_metrics = metrics.coordinated_omission_metrics.as_ref().unwrap();
+    assert!(
+        co_metrics.co_events.len() >= expected_events,
+        "Expected at least {} CO events, found {}",
+        expected_events,
+        co_metrics.co_events.len()
+    );
+    assert!(
+        co_metrics.synthetic_percentage >= min_synthetic_pct,
+        "Expected at least {:.1}% synthetic requests, found {:.1}%",
+        min_synthetic_pct,
+        co_metrics.synthetic_percentage
+    );
+}
+
+/// Helper to run load test with CO-specific setup.
+#[allow(dead_code)]
+pub fn run_load_test_with_co(
+    config: goose::config::GooseConfiguration,
+) -> impl std::future::Future<Output = goose::metrics::GooseMetrics> {
+    use goose::prelude::*;
+
+    async move {
+        // Define a simple test transaction
+        async fn get_index(user: &mut GooseUser) -> TransactionResult {
+            let _goose = user.get("/").await?;
+            Ok(())
+        }
+
+        let goose_attack = build_load_test(
+            config,
+            vec![scenario!("Test").register_transaction(transaction!(get_index))],
+            None,
+            None,
+        );
+
+        run_load_test(goose_attack, None).await
+    }
+}
