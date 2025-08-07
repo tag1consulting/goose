@@ -341,6 +341,8 @@ pub enum TransactionError {
     Reqwest(reqwest::Error),
     /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
     Url(url::ParseError),
+    /// A generic, custom error in cases where the [`TransactionFunction`] cannot turn any of the others.
+    Custom(String),
     /// The request failed.
     RequestFailed {
         /// The [`GooseRequestMetric`](./struct.GooseRequestMetric.html) that failed.
@@ -377,6 +379,7 @@ impl TransactionError {
         match *self {
             TransactionError::Reqwest(_) => "reqwest::Error",
             TransactionError::Url(_) => "url::ParseError",
+            TransactionError::Custom(_) => "custom error",
             TransactionError::RequestFailed { .. } => "request failed",
             TransactionError::RequestCanceled { .. } => {
                 "request canceled because throttled load test ended"
