@@ -138,7 +138,7 @@ pub async fn validate_cookie(user: &mut GooseUser) -> TransactionResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
     let cookie_path_0 = format!("{COOKIE_PATH}0");
     let cookie_path_1 = format!("{COOKIE_PATH}1");
     let cookie_path_2 = format!("{COOKIE_PATH}2");
