@@ -3497,6 +3497,7 @@ impl GooseAttack {
             transaction_metrics,
             errors,
             status_code_metrics,
+            coordinated_omission_metrics: _,
         } = common::prepare_data(
             ReportOptions {
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
@@ -3539,6 +3540,14 @@ impl GooseAttack {
                 report::coordinated_omission_response_metrics_template(&co_response_rows)
             })
             .unwrap_or_default();
+
+        let co_metrics_template =
+            if let Some(co_metrics) = &self.metrics.coordinated_omission_metrics {
+                let co_summary = co_metrics.get_summary();
+                report::coordinated_omission_metrics_template(&co_summary)
+            } else {
+                String::new()
+            };
 
         let scenarios_template = scenario_metrics
             .map(|scenario_metric| {
@@ -3624,6 +3633,7 @@ impl GooseAttack {
                     .graph_data
                     .get_active_users_graph(!self.configuration.no_granular_report)
                     .get_markup(&self.metrics.history, test_start_time),
+                co_metrics_template: &co_metrics_template,
             },
         );
 
