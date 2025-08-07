@@ -34,6 +34,7 @@
 //! ### Individual Clients with Custom Configuration
 //! ```rust
 //! use goose::prelude::*;
+//! use goose::client::GooseClientBuilder;
 //! use std::time::Duration;
 //!
 //! #[tokio::main]
@@ -55,6 +56,7 @@
 //! ### Optimized Performance (Shared Client)
 //! ```rust
 //! use goose::prelude::*;
+//! use goose::client::GooseClientBuilder;
 //! use std::time::Duration;
 //!
 //! #[tokio::main]
@@ -77,7 +79,7 @@
 //! ## Type Safety Examples
 //!
 //! ```rust
-//! use goose::prelude::*;
+//! use goose::client::GooseClientBuilder;
 //! use std::time::Duration;
 //!
 //! // ✅ This compiles - cookie methods available on CookiesEnabled state
@@ -311,7 +313,7 @@ pub(crate) fn create_reqwest_client_without_cookies(
         .user_agent(&config.user_agent)
         .gzip(config.gzip);
 
-    #[cfg(any(feature = "default-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     {
         client_builder = client_builder.danger_accept_invalid_certs(config.accept_invalid_certs);
     }
@@ -325,6 +327,7 @@ pub(crate) fn create_reqwest_client_without_cookies(
 }
 
 /// Create a reqwest client with cookie support.
+#[allow(dead_code)]
 pub(crate) fn create_reqwest_client_with_cookies(
     config: &GooseClientConfig,
 ) -> Result<Client, reqwest::Error> {
@@ -332,7 +335,7 @@ pub(crate) fn create_reqwest_client_with_cookies(
         .user_agent(&config.user_agent)
         .gzip(config.gzip);
 
-    #[cfg(any(feature = "default-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     {
         client_builder = client_builder.danger_accept_invalid_certs(config.accept_invalid_certs);
     }
