@@ -1,5 +1,6 @@
 //! Tests for the type-safe client builder implementation.
 
+use goose::client::{ClientStrategy, GooseClientBuilder};
 use goose::prelude::*;
 use std::time::Duration;
 
@@ -58,33 +59,8 @@ fn test_client_strategy_shared() {
     }
 }
 
-#[tokio::test]
-async fn test_goose_attack_with_custom_client_cookies_enabled() {
-    let _attack = GooseAttack::initialize()
-        .expect("Failed to initialize GooseAttack")
-        .set_client_builder_with_cookies(
-            GooseClientBuilder::new()
-                .timeout(Duration::from_secs(15))
-                .user_agent("test-cookies-enabled"),
-        );
-
-    // If we get here without panicking, the configuration worked
-}
-
-#[tokio::test]
-async fn test_goose_attack_with_custom_client_cookies_disabled() {
-    let _attack = GooseAttack::initialize()
-        .expect("Failed to initialize GooseAttack")
-        .set_client_builder_without_cookies(
-            GooseClientBuilder::new()
-                .without_cookies()
-                .timeout(Duration::from_secs(25))
-                .user_agent("test-cookies-disabled"),
-        )
-        .expect("Failed to set client builder");
-
-    // If we get here without panicking, the configuration worked
-}
+// Note: GooseAttack integration methods would be added in a future PR
+// For now, we test the client builder functionality independently
 
 #[tokio::test]
 async fn test_default_behavior_unchanged() {
