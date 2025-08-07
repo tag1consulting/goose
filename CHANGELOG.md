@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.18.1-dev
+
 ## 0.18.0
  - update all dependencies
  - [#565](https://github.com/tag1consulting/goose/pull/565) add `--accept-invalid-certs` to skip validation of https certificates

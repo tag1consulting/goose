@@ -85,7 +85,7 @@ pub async fn stop_one(user: &mut GooseUser) -> TransactionResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
     vec![
         // First set up ONE_PATH, store in vector at ONE_KEY.
         server.mock(|when, then| {

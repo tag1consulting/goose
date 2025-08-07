@@ -30,7 +30,7 @@ pub struct Term<'a> {
 }
 
 /// Returns a vector of all nodes of a specified content type.
-pub fn get_nodes(content_type: &ContentType) -> Vec<Node> {
+pub fn get_nodes(content_type: &ContentType) -> Vec<Node<'_>> {
     match content_type {
         ContentType::Article => {
             vec![
