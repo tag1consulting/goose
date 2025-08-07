@@ -14,6 +14,12 @@ use headless_chrome::{Browser, LaunchOptions};
 use std::{ffi::OsStr, fs, path::Path};
 
 /// Generate a PDF report from HTML content using headless Chrome
+/// 
+/// # Thread Safety Note
+/// This function temporarily modifies the global log level to reduce Chrome's verbose output.
+/// It is designed for single-threaded use at the end of load tests when generating the final
+/// report. Since Goose generates only one report at test completion, concurrent PDF generation
+/// is not a concern for the intended use case.
 #[cfg(feature = "pdf-reports")]
 pub(crate) fn generate_pdf_from_html(
     html_content: &str,
@@ -24,6 +30,8 @@ pub(crate) fn generate_pdf_from_html(
     let original_log_level = log::max_level();
 
     // Temporarily reduce log level just for Chrome operations
+    // NOTE: This modifies the global log level but is safe for our use case since
+    // PDF generation only occurs once at the end of a load test
     log::set_max_level(log::LevelFilter::Error);
 
     // Launch headless Chrome
@@ -90,7 +98,12 @@ pub(crate) fn generate_pdf_from_html(
                 }
             }
             
-            return (maxBottom + 5) / 96; // 5px buffer, convert to inches
+            // Use document.documentElement.scrollHeight as fallback for robustness
+            // This ensures we capture content that might not be in the normal document flow
+            const scrollHeight = document.documentElement.scrollHeight / 96; // Convert to inches
+            const calculatedHeight = (maxBottom + 5) / 96; // 5px buffer, convert to inches
+            
+            return Math.max(calculatedHeight, scrollHeight);
         })();
     "#;
 
