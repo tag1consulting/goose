@@ -41,6 +41,13 @@ jobs:
   build:
     name: build and run tests
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - ""  # No features (minimal build)
+          - "cookies"
+          - "rustls-tls"
+          - "all-features"  # Keep existing all-features test
 
     steps:
     - name: Checkout code
@@ -54,25 +61,57 @@ jobs:
       with:
         toolchain: stable
     
-    - name: 🔨 Build
+    - name: 🔨 Build (no default features)
+      if: ${{ matrix.features == '' }}
+      uses: actions-rs/cargo@v1
+      with:
+        command: build 
+        args: --verbose --no-default-features
+    
+    - name: 🔨 Build (specific features)
+      if: ${{ matrix.features != '' && matrix.features != 'all-features' }}
+      uses: actions-rs/cargo@v1
+      with:
+        command: build 
+        args: --verbose --no-default-features --features "${{ matrix.features }}"
+    
+    - name: 🔨 Build (all features)
+      if: ${{ matrix.features == 'all-features' }}
       uses: actions-rs/cargo@v1
       with:
         command: build 
         args: --verbose --all-features
     
     - name: 📖 Docs
+      if: ${{ matrix.features == 'all-features' }}
       uses: actions-rs/cargo@v1
       with:
         command: rustdoc 
         args: --lib --all-features --examples
     
-    - name: 🔎 Test
+    - name: 🔎 Test (no default features)
+      if: ${{ matrix.features == '' }}
+      uses: actions-rs/cargo@v1
+      with:
+        command: test 
+        args: --verbose --no-default-features
+    
+    - name: 🔎 Test (specific features)
+      if: ${{ matrix.features != '' && matrix.features != 'all-features' }}
+      uses: actions-rs/cargo@v1
+      with:
+        command: test 
+        args: --verbose --no-default-features --features "${{ matrix.features }}"
+    
+    - name: 🔎 Test (all features)
+      if: ${{ matrix.features == 'all-features' }}
       uses: actions-rs/cargo@v1
       with:
         command: test 
         args: --verbose --all-features
     
     - name: 🔎 timezone-sensitive tests in non UTC (GMT-5)
+      if: ${{ matrix.features == 'all-features' }}
       uses: actions-rs/cargo@v1
       env:
         TZ: std +5

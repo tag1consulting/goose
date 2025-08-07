@@ -51,7 +51,7 @@ fn configure_mock_endpoints<'a>() -> Vec<LoadtestEndpoint<'a>> {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
     // Get common configuration for building endpoints and the load test itself.
     let test_endpoints = configure_mock_endpoints();
 

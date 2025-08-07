@@ -78,7 +78,7 @@ pub async fn get_about(user: &mut GooseUser) -> TransactionResult {
 }
 
 // All tests in this file run against the following common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
     vec![
         // First set up INDEX_PATH, store in vector at INDEX_KEY.
         server.mock(|when, then| {

@@ -141,7 +141,7 @@ pub async fn delete_nobuilder(user: &mut GooseUser) -> TransactionResult {
 }
 
 // All tests in this file run against common endpoints.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
     vec![
         // First set up GET_PATH, store in vector at GET_KEY.
         server.mock(|when, then| {

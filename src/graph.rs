@@ -157,7 +157,7 @@ impl GraphData {
     }
 
     /// Generate active users graph.
-    pub(crate) fn get_active_users_graph(&self, granular_data: bool) -> Graph<usize, usize> {
+    pub(crate) fn get_active_users_graph(&self, granular_data: bool) -> Graph<'_, usize, usize> {
         self.create_graph_from_single_data(
             "graph-active-users",
             "Active users #",
@@ -167,7 +167,7 @@ impl GraphData {
     }
 
     /// Generate requests per second graph.
-    pub(crate) fn get_requests_per_second_graph(&self, granular_data: bool) -> Graph<u32, u32> {
+    pub(crate) fn get_requests_per_second_graph(&self, granular_data: bool) -> Graph<'_, u32, u32> {
         self.create_graph_from_data(
             "graph-rps",
             "Requests #",
@@ -180,7 +180,7 @@ impl GraphData {
     pub(crate) fn get_average_response_time_graph(
         &self,
         granular_data: bool,
-    ) -> Graph<MovingAverage, f32> {
+    ) -> Graph<'_, MovingAverage, f32> {
         self.create_graph_from_data(
             "graph-avg-response-time",
             "Response time [ms]",
@@ -193,7 +193,7 @@ impl GraphData {
     pub(crate) fn get_transactions_per_second_graph(
         &self,
         granular_data: bool,
-    ) -> Graph<usize, usize> {
+    ) -> Graph<'_, usize, usize> {
         self.create_graph_from_single_data(
             "graph-tps",
             "Transactions #",
@@ -206,7 +206,7 @@ impl GraphData {
     pub(crate) fn get_scenarios_per_second_graph(
         &self,
         granular_data: bool,
-    ) -> Graph<usize, usize> {
+    ) -> Graph<'_, usize, usize> {
         self.create_graph_from_single_data(
             "graph-sps",
             "Scenarios #",
@@ -216,7 +216,7 @@ impl GraphData {
     }
 
     /// Generate errors per second graph.
-    pub(crate) fn get_errors_per_second_graph(&self, granular_data: bool) -> Graph<u32, u32> {
+    pub(crate) fn get_errors_per_second_graph(&self, granular_data: bool) -> Graph<'_, u32, u32> {
         self.create_graph_from_data(
             "graph-eps",
             "Errors #",

@@ -56,7 +56,7 @@ pub async fn get_scenariob2(user: &mut GooseUser) -> TransactionResult {
 }
 
 // All tests in this file run against a common endpoint.
-fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock> {
+fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
     vec![
         // SCENARIOA1 is stored in vector at SCENARIOA1_KEY.
         server.mock(|when, then| {

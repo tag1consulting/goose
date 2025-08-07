@@ -38,7 +38,7 @@ pub struct ReportOptions {
     pub no_status_codes: bool,
 }
 
-pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportData {
+pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportData<'_> {
     // Prepare requests and responses variables.
     let mut raw_request_metrics = Vec::new();
     let mut co_request_metrics = Vec::new();

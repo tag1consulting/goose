@@ -204,7 +204,7 @@ impl ControllerCommand {
     ///    (and optionally to grab a value being set).
     ///  - `process_response` contains a boxed closure that receives the parent process
     ///    response to the command and responds to the controller appropriately.
-    fn details(&self) -> ControllerCommandDetails {
+    fn details(&self) -> ControllerCommandDetails<'_> {
         match self {
             ControllerCommand::Config => ControllerCommandDetails {
                 help: ControllerHelp {
