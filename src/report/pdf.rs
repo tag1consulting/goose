@@ -14,7 +14,7 @@ use headless_chrome::{Browser, LaunchOptions};
 use std::{ffi::OsStr, fs, path::Path};
 
 /// Generate a PDF report from HTML content using headless Chrome
-/// 
+///
 /// # Thread Safety Note
 /// This function temporarily modifies the global log level to reduce Chrome's verbose output.
 /// It is designed for single-threaded use at the end of load tests when generating the final
