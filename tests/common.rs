@@ -151,7 +151,7 @@ pub fn cleanup_files(files: Vec<&str>) {
 
 /// Configure mock server to trigger CO events predictably.
 #[allow(dead_code)]
-pub fn setup_co_triggering_server(server: &MockServer) -> httpmock::Mock {
+pub fn setup_co_triggering_server(server: &MockServer) -> httpmock::Mock<'_> {
     use httpmock::Method::GET;
     use std::time::Duration;
 
