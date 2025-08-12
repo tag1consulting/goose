@@ -44,3 +44,38 @@ cat debug.log | head -n 1 | jaq -r .body > page.html
 ```
 
 This HTML page can then be viewed in a web browser. You may need to disable JavaScript.
+
+## Killswitch
+
+Goose provides a killswitch mechanism to programmatically stop a load test when specific conditions are met. This is useful for protecting your systems and ensuring tests stop automatically when problems are detected.
+
+### Common Use Cases
+
+* **Error Rate Threshold**: Stop when error rate exceeds acceptable limits
+* **Response Time SLA Monitoring**: Halt testing when latency violates requirements  
+* **Health Check Integration**: Monitor system health endpoints and stop on failure
+* **Resource Exhaustion Detection**: Stop when detecting connection pool or memory issues
+* **Sitemap Traversal Completion**: Stop after fully crawling a site's pages
+* **Data Set Processing**: Stop when all test data has been consumed
+* **External Signal Integration**: Stop based on monitoring system alerts
+
+### Example: Service Unavailable Detection
+
+```rust
+use goose::prelude::*;
+
+async fn check_availability(user: &mut GooseUser) -> TransactionResult {
+    let mut response = user.get("/api/endpoint").await?;
+    
+    // Stop the test if server returns 503 Service Unavailable
+    if let Ok(response) = response.response {
+        if response.status() == 503 {
+            goose::trigger_killswitch("Server returned 503: Service Unavailable");
+        }
+    }
+    
+    Ok(())
+}
+```
+
+You can also check if the killswitch has been triggered using `goose::is_killswitch_triggered()` to conditionally execute cleanup code or skip certain operations.
