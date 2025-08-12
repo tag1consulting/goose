@@ -25,7 +25,8 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user {thread_number}]: launching on_start {thread_transaction_name} transaction from {}",
+                "[user {thread_number}]: launching on_start {} transaction from {}",
+                thread_transaction_name.name_for_transaction(),
                 thread_scenario.name
             );
             // Invoke the transaction function.
@@ -53,7 +54,9 @@ pub(crate) async fn user_main(
                 // Determine which transaction we're going to run next.
                 let function = &thread_scenario.transactions[*thread_transaction_index].function;
                 debug!(
-                    "[user {thread_number}]: launching {thread_transaction_name} transaction from {}",
+                    "[user {}]: launching {} transaction from {}",
+                    thread_number,
+                    thread_transaction_name.name_for_transaction(),
                     thread_scenario.name
                 );
                 // Invoke the transaction function.
@@ -153,7 +156,8 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user {thread_number}]: launching on_stop {thread_transaction_name} transaction from {}",
+                "[user {thread_number}]: launching on_stop {} transaction from {}",
+                thread_transaction_name.name_for_transaction(),
                 thread_scenario.name
             );
             // Invoke the transaction function.

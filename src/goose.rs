@@ -3221,7 +3221,6 @@ mod tests {
         let mut transaction = transaction!(test_function_a);
         assert_eq!(transaction.transactions_index, usize::MAX);
         assert_eq!(transaction.name.name_for_transaction(), "".to_string());
-        assert_eq!(transaction.name, "".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
         assert!(!transaction.on_start);

@@ -15,7 +15,7 @@ pub(crate) use common::ReportData;
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 
 use crate::config::GooseDefaults;
-use crate::goose::{get_base_url, GooseMethod, Scenario};
+use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
 use crate::logger::GooseLog;
 use crate::metrics::common::ReportOptions;
 use crate::report;
@@ -335,7 +335,7 @@ pub struct TransactionDetail<'a> {
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
     pub transaction_index: &'a str,
     /// An optional name for the transaction.
-    pub transaction_name: &'a str,
+    pub transaction_name: TransactionName,
 }
 
 /// How many milliseconds the load test has been running.
@@ -358,7 +358,7 @@ pub struct GooseRequestMetric {
     /// Stored as string, `""` is no transaction, while `0` is the first `Scenario.transaction`.
     pub transaction_index: String,
     /// The optional transaction name.
-    pub transaction_name: String,
+    pub transaction_name: TransactionName,
     /// The raw request that the GooseClient made.
     pub raw: GooseRawRequest,
     /// The optional name of the request.
@@ -400,7 +400,7 @@ impl GooseRequestMetric {
             scenario_index: transaction_detail.scenario_index,
             scenario_name: transaction_detail.scenario_name.to_string(),
             transaction_index: transaction_detail.transaction_index.to_string(),
-            transaction_name: transaction_detail.transaction_name.to_string(),
+            transaction_name: transaction_detail.transaction_name,
             raw,
             name: name.to_string(),
             final_url: "".to_string(),
@@ -749,7 +749,7 @@ pub struct TransactionMetricAggregate {
     /// indicating which transaction this is.
     pub transaction_index: usize,
     /// An optional name for the transaction.
-    pub transaction_name: String,
+    pub transaction_name: TransactionName,
     /// Per-run-time counters, tracking how often transactions take a given time to complete.
     pub times: BTreeMap<usize, usize>,
     /// The shortest run-time for this transaction.
@@ -771,13 +771,13 @@ impl TransactionMetricAggregate {
         scenario_index: usize,
         scenario_name: &str,
         transaction_index: usize,
-        transaction_name: &str,
+        transaction_name: TransactionName,
     ) -> Self {
         TransactionMetricAggregate {
             scenario_index,
             scenario_name: scenario_name.to_string(),
             transaction_index,
-            transaction_name: transaction_name.to_string(),
+            transaction_name,
             times: BTreeMap::new(),
             min_time: 0,
             max_time: 0,
@@ -1106,7 +1106,7 @@ impl GooseMetrics {
                             scenario.scenarios_index,
                             &scenario.name,
                             transaction.transactions_index,
-                            &transaction.name,
+                            transaction.name.clone(),
                         ));
                     }
                     self.transactions.push(transaction_vector);
@@ -1373,7 +1373,7 @@ impl GooseMetrics {
                             &format!(
                                 "  {}: {}",
                                 transaction.transaction_index + 1,
-                                transaction.transaction_name
+                                transaction.transaction_name.name_for_transaction()
                             ),
                             24
                         ),
@@ -1397,7 +1397,7 @@ impl GooseMetrics {
                             &format!(
                                 "  {}: {}",
                                 transaction.transaction_index + 1,
-                                transaction.transaction_name
+                                transaction.transaction_name.name_for_transaction()
                             ),
                             24
                         ),
@@ -1550,7 +1550,7 @@ impl GooseMetrics {
                         &format!(
                             "  {}: {}",
                             transaction.transaction_index + 1,
-                            transaction.transaction_name
+                            transaction.transaction_name.name_for_transaction()
                         ),
                         24
                     ),
@@ -3656,7 +3656,9 @@ mod test {
                 scenario_index: 0,
                 scenario_name: "LoadTestUser",
                 transaction_index: 5.to_string().as_str(),
-                transaction_name: "front page",
+                transaction_name: TransactionName::InheritNameByRequests(
+                    "front page".to_string().to_string(),
+                ),
             },
             "/",
             0,
@@ -3666,7 +3668,10 @@ mod test {
         assert_eq!(request_metric.scenario_index, 0);
         assert_eq!(request_metric.scenario_name, "LoadTestUser");
         assert_eq!(request_metric.transaction_index, "5");
-        assert_eq!(request_metric.transaction_name, "front page");
+        assert_eq!(
+            request_metric.transaction_name.name_for_transaction(),
+            "front page"
+        );
         assert_eq!(request_metric.raw.url, PATH.to_string());
         assert_eq!(request_metric.name, "/".to_string());
         assert_eq!(request_metric.response_time, 0);
