@@ -92,7 +92,6 @@ fn test_builder_method_chaining() {
         .user_agent("chained-test")
         .gzip(true)
         .accept_invalid_certs(false)
-        .cookie_store(true)
         .without_cookies()
         .with_cookies()
         .timeout(Duration::from_secs(60));
@@ -106,10 +105,7 @@ fn test_state_transitions() {
     let builder = builder.without_cookies(); // CookiesDisabled
 
     // Test transition back to enabled
-    let builder = builder.with_cookies(); // CookiesEnabled
-
-    // Should be able to call cookie methods again
-    let _builder = builder.cookie_store(true);
+    let _builder = builder.with_cookies(); // CookiesEnabled
 }
 
 #[tokio::test]
@@ -184,12 +180,12 @@ fn test_performance_optimization_different_strategies() {
 
 #[test]
 fn test_compile_time_safety_demonstration() {
-    // Demonstrate that cookie methods work correctly on both states
+    // Demonstrate that the type-safe builder works correctly with different states
 
-    // ✅ Cookie methods available on CookiesEnabled state
+    // ✅ Standard methods available on CookiesEnabled state (default)
     let _cookies_enabled = GooseClientBuilder::new()
-        .cookie_store(true) // This compiles
-        .timeout(Duration::from_secs(30));
+        .timeout(Duration::from_secs(30))
+        .user_agent("test-enabled");
 
     // ✅ Shared methods available on both states
     let _cookies_disabled = GooseClientBuilder::new()
@@ -199,16 +195,14 @@ fn test_compile_time_safety_demonstration() {
 
     // ✅ State transitions work seamlessly
     let _transitioning = GooseClientBuilder::new()
-        .cookie_store(true) // Available on CookiesEnabled
+        .timeout(Duration::from_secs(15)) // Available on CookiesEnabled
         .without_cookies() // Transition to CookiesDisabled
         .timeout(Duration::from_secs(20)) // Available on both
         .with_cookies() // Transition back to CookiesEnabled
-        .cookie_store(true); // Available again
+        .timeout(Duration::from_secs(25)); // Available again
 
-    // Note: The following would NOT compile (demonstrates type safety):
-    // let _invalid = GooseClientBuilder::new()
-    //     .without_cookies()
-    //     .cookie_store(true);  // Error: method not found on CookiesDisabled
+    // Note: The type system prevents calling cookie-specific methods
+    // on CookiesDisabled state, ensuring compile-time safety
 }
 
 // Mock transaction for testing
