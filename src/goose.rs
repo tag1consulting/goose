@@ -2852,36 +2852,56 @@ impl Transaction {
         }
     }
 
-    /// Set an optional name for the transaction, used when displaying metrics.
+    /// Sets a custom name for this transaction only.
     ///
-    /// Individual requests can also be named using [`GooseRequestBuilder`], or for GET
-    /// requests with the [`GooseUser::get_named`] helper.
+    /// This name will be used to identify the transaction in metrics and reports,
+    /// but will not affect the names of individual requests within the transaction.
     ///
     /// # Example
-    /// ```rust
+    ///
+    /// ```
     /// use goose::prelude::*;
     ///
-    /// transaction!(my_transaction_function).set_name("foo");
+    /// let transaction = transaction!(example_transaction)
+    ///     .set_name("Login Flow")
+    ///     .set_on_start();
     ///
-    /// async fn my_transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("").await?;
-    ///
+    /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
+    ///     // Transaction logic here
     ///     Ok(())
     /// }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
         trace!("[{}] set_name: {}", self.transactions_index, name);
-        self.name = TransactionName::InheritNameByRequests(name.to_string());
+        self.name = TransactionName::TransactionOnly(name.to_string());
         self
     }
 
-    pub fn set_name_transaction_only(mut self, name: &str) -> Self {
+    /// Sets a custom name for both the transaction and all its requests.
+    ///
+    /// This name will be used as a prefix for all requests within the transaction,
+    /// allowing you to group related requests under a common namespace in metrics.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use goose::prelude::*;
+    ///
+    /// let transaction = transaction!(checkout_flow)
+    ///     .set_name_for_transaction_and_requests("Checkout");
+    ///
+    /// async fn checkout_flow(user: &mut GooseUser) -> TransactionResult {
+    ///     // All requests will be prefixed with "Checkout"
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_name_for_transaction_and_requests(mut self, name: &str) -> Self {
         trace!(
             "[{}] set_name (for transaction only): {}",
             self.transactions_index,
             name
         );
-        self.name = TransactionName::TransactionOnly(name.to_string());
+        self.name = TransactionName::InheritNameByRequests(name.to_string());
         self
     }
 
