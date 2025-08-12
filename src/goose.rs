@@ -3521,4 +3521,58 @@ mod tests {
         let session = user.get_session_data_unchecked::<CustomSessionData>();
         assert_eq!(session.data, "bar".to_string());
     }
+
+    #[test]
+    fn test_transaction_name_request_naming() {
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+
+        // Test 1: TransactionOnly variant should NOT use transaction name for requests
+        user.transaction_name = Some(TransactionName::TransactionOnly(
+            "my_transaction".to_string(),
+        ));
+
+        // Create a request without a name
+        let request = GooseRequest::builder().path("/test/path").build();
+
+        // When TransactionOnly is used, get_request_name should return the path
+        let request_name = user.get_request_name(&request);
+        assert_eq!(
+            request_name, "/test/path",
+            "TransactionOnly should not inherit name to requests"
+        );
+
+        // Test 2: InheritNameByRequests variant SHOULD use transaction name for requests
+        user.transaction_name = Some(TransactionName::InheritNameByRequests(
+            "inherited_name".to_string(),
+        ));
+
+        let request_name = user.get_request_name(&request);
+        assert_eq!(
+            request_name, "inherited_name",
+            "InheritNameByRequests should inherit name to requests"
+        );
+
+        // Test 3: Request with explicit name should always use its own name
+        let named_request = GooseRequest::builder()
+            .path("/test/path")
+            .name("explicit_request_name")
+            .build();
+
+        let request_name = user.get_request_name(&named_request);
+        assert_eq!(
+            request_name, "explicit_request_name",
+            "Explicitly named request should use its own name"
+        );
+
+        // Test 4: No transaction name should fall back to path
+        user.transaction_name = None;
+
+        let request_name = user.get_request_name(&request);
+        assert_eq!(
+            request_name, "/test/path",
+            "Without transaction name, should use path"
+        );
+    }
 }
