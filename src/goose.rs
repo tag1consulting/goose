@@ -2814,7 +2814,7 @@ impl TransactionName {
         }
     }
     pub fn default_value() -> Self {
-        Self::InheritNameByRequests("".to_string())
+        Self::TransactionOnly("".to_string())
     }
 }
 
