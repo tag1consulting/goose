@@ -51,8 +51,13 @@ tungstenite = "0.26"
 url = "2"
 
 [features]
+# Include cookies by default for backward compatibility and expected behavior in web load testing
 default = ["reqwest/default-tls", "cookies"]
+# Include cookies with rustls-tls to maintain consistent behavior regardless of TLS backend choice.
+# This ensures users don't lose cookie functionality when switching from native-tls to rustls-tls
+# for performance or dependency reasons. Cookie handling is logically independent of TLS implementation.
 rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls", "cookies"]
+# Cookie support - can be completely disabled by compiling with --no-default-features for maximum performance
 cookies = ["reqwest/cookies"]
 
 [dev-dependencies]
