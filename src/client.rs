@@ -82,9 +82,8 @@
 //! use goose::client::GooseClientBuilder;
 //! use std::time::Duration;
 //!
-//! // ✅ This compiles - cookie methods available on CookiesEnabled state
+//! // ✅ This compiles - cookies are enabled by default on CookiesEnabled state
 //! let cookies_enabled = GooseClientBuilder::new()
-//!     .cookie_store(true)  // Available
 //!     .timeout(Duration::from_secs(30));
 //!
 //! // ✅ This compiles - shared methods available on both states  
@@ -98,13 +97,12 @@
 //! //     .without_cookies()
 //! //     .cookie_store(true);  // Error: method not found
 //!
-//! // ✅ State transitions work seamlessly
-//! let transitioning = GooseClientBuilder::new()
-//!     .cookie_store(true)      // Available on CookiesEnabled
-//!     .without_cookies()       // Transition to CookiesDisabled
-//!     .timeout(Duration::from_secs(20))  // Available on both
-//!     .with_cookies()          // Transition back to CookiesEnabled
-//!     .cookie_store(true);     // Available again
+//! // ✅ State transitions work seamlessly\
+//! let transitioning = GooseClientBuilder::new()  // Cookies enabled by default\
+//!     .without_cookies()       // Transition to CookiesDisabled\
+//!     .timeout(Duration::from_secs(20))  // Available on both\
+//!     .with_cookies()          // Transition back to CookiesEnabled\
+//!     .timeout(Duration::from_secs(15)); // Continue configuring
 //! ```
 //!
 //! ## Performance Considerations
@@ -234,15 +232,6 @@ impl GooseClientBuilder<CookiesEnabled> {
         }
     }
 
-    /// Configure cookie behavior (only available when cookies are enabled).
-    /// This method exists for API completeness but doesn't change behavior
-    /// since cookies are already enabled in this state.
-    pub fn cookie_store(self, _enabled: bool) -> Self {
-        // Cookies are already enabled in this state, so this is a no-op
-        // but provides API consistency
-        self
-    }
-
     /// Build the client strategy for cookies-enabled configuration.
     pub fn build_strategy(self) -> ClientStrategy {
         ClientStrategy::Individual(self.config)
@@ -344,10 +333,8 @@ pub(crate) fn create_reqwest_client_with_cookies(
         client_builder = client_builder.timeout(timeout);
     }
 
-    #[cfg(feature = "cookies")]
-    {
-        client_builder = client_builder.cookie_store(true);
-    }
+    // Enable cookie store - this calls reqwest's cookie_store method
+    client_builder = client_builder.cookie_store(true);
 
     client_builder.build()
 }
@@ -361,17 +348,11 @@ mod tests {
         // Start with cookies enabled
         let builder = GooseClientBuilder::new();
 
-        // Can call cookie_store method
-        let builder = builder.cookie_store(true);
-
         // Can transition to cookies disabled
         let builder = builder.without_cookies();
 
         // Can transition back to cookies enabled
-        let builder = builder.with_cookies();
-
-        // Can call cookie_store method again
-        let _builder = builder.cookie_store(true);
+        let _builder = builder.with_cookies();
     }
 
     #[test]

@@ -2154,14 +2154,8 @@ impl GooseUser {
     /// static APP_USER_AGENT: &str = "goose/0.18.0";
     ///
     /// let mut builder = Client::builder()
-    ///   .user_agent(APP_USER_AGENT);
-    ///
-    /// #[cfg(feature = "cookies")]
-    /// {
-    ///   builder = builder.cookie_store(true);
-    /// }
-    ///
-    /// let builder = builder
+    ///   .user_agent(APP_USER_AGENT)
+    ///   .cookie_store(true)  // Enable cookies by default
     ///   .gzip(true)
     ///   .timeout(Duration::from_secs(60));
     /// ```
