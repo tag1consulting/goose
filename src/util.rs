@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time;
 use url::Url;
 
-use crate::{GooseError, CANCELED};
+use crate::{is_killswitch_triggered, trigger_killswitch, GooseError, CANCELED};
 
 /// Parse a string representing a time span and return the number of seconds.
 ///
@@ -417,13 +417,12 @@ pub fn is_valid_host(host: &str) -> Result<bool, GooseError> {
 pub(crate) fn setup_ctrlc_handler() {
     match ctrlc::set_handler(move || {
         // We've caught a ctrl-c, determine if it's the first time or an additional time.
-        if *CANCELED.read().unwrap() {
+        if is_killswitch_triggered() {
             warn!("caught another ctrl-c, exiting immediately...");
             std::process::exit(1);
         } else {
             warn!("caught ctrl-c, stopping...");
-            let mut canceled = CANCELED.write().unwrap();
-            *canceled = true;
+            trigger_killswitch("SIGINT received");
         }
     }) {
         Ok(_) => (),

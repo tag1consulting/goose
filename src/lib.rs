@@ -83,6 +83,53 @@ lazy_static! {
     static ref CANCELED: Arc<RwLock<bool>> = Arc::new(RwLock::new(false));
 }
 
+/// Trigger the killswitch to stop the load test run.
+///
+/// This function sets the global CANCELED flag to true, which will cause
+/// the test to stop gracefully at the next check point.
+///
+/// # Arguments
+///
+/// * `reason` - A string describing why the test is being stopped
+///
+/// # Example
+///
+/// ```
+/// use goose::trigger_killswitch;
+///
+/// // Stop the test due to high error rate
+/// trigger_killswitch("Error rate exceeded 50% threshold");
+/// ```
+pub fn trigger_killswitch(reason: &str) {
+    match CANCELED.write() {
+        Ok(mut canceled) => {
+            if !*canceled {
+                info!("Killswitch triggered: {}", reason);
+            }
+            *canceled = true;
+        }
+        Err(poisoned) => {
+            // If the lock is poisoned, we can still write to it
+            let mut canceled = poisoned.into_inner();
+            if !*canceled {
+                info!("Killswitch triggered: {}", reason);
+            }
+            *canceled = true;
+        }
+    }
+}
+
+/// Check if the killswitch has been triggered.
+pub fn is_killswitch_triggered() -> bool {
+    match CANCELED.read() {
+        Ok(canceled) => *canceled,
+        Err(poisoned) => {
+            // If the lock is poisoned, we can still read from it
+            *poisoned.into_inner()
+        }
+    }
+}
+
 /// Internal representation of a weighted transaction list.
 type WeightedTransactions = Vec<(usize, String)>;
 
@@ -1825,7 +1872,7 @@ impl GooseAttack {
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
                 && !goose_attack_run_state.canceling
-                && *CANCELED.read().unwrap()
+                && is_killswitch_triggered()
             {
                 // Shutdown after stopping as the load test was canceled.
                 goose_attack_run_state.shutdown_after_stop = true;
@@ -2137,4 +2184,44 @@ fn schedule_unsequenced_transactions(
     }
 
     weighted_transactions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_killswitch_functions() {
+        // Reset the killswitch state for testing
+        *CANCELED.write().unwrap() = false;
+
+        // Initially, killswitch should not be triggered
+        assert!(
+            !is_killswitch_triggered(),
+            "Killswitch should initially be false"
+        );
+
+        // Trigger the killswitch with a reason
+        trigger_killswitch("Test reason: threshold exceeded");
+
+        // Verify killswitch is now triggered
+        assert!(
+            is_killswitch_triggered(),
+            "Killswitch should be true after triggering"
+        );
+
+        // Trigger again with a different reason (should not log since already triggered)
+        trigger_killswitch("Test reason: second trigger");
+
+        // Verify it's still triggered
+        assert!(is_killswitch_triggered(), "Killswitch should remain true");
+
+        // Reset for other tests
+        *CANCELED.write().unwrap() = false;
+
+        assert!(
+            !is_killswitch_triggered(),
+            "Killswitch should be false after reset"
+        );
+    }
 }
