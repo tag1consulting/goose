@@ -2155,9 +2155,13 @@ impl GooseUser {
     ///
     /// let mut builder = Client::builder()
     ///   .user_agent(APP_USER_AGENT)
-    ///   .cookie_store(true)  // Enable cookies by default
     ///   .gzip(true)
     ///   .timeout(Duration::from_secs(60));
+    ///
+    /// #[cfg(feature = "cookies")]
+    /// {
+    ///     builder = builder.cookie_store(true);  // Enable cookies by default
+    /// }
     /// ```
     ///
     /// Alternatively, you can use this function to manually build a
