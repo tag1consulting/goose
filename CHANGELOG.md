@@ -1,6 +1,13 @@
 # Changelog
 
 ## 0.18.1-dev
+ - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
+ - [#630](https://github.com/tag1consulting/goose/pull/630) enhanced coordinated omission metrics with severity classification, detailed tracking, and comprehensive documentation
+ - [#632](https://github.com/tag1consulting/goose/pull/632) add Context7 support for enhanced AI code assistant integration
+ - [#627](https://github.com/tag1consulting/goose/pull/627) add comprehensive test coverage for test plan parsing, implement `Default` for `TestPlan`
+ - [#625](https://github.com/tag1consulting/goose/pull/625) standardize logging format across codebase with consistent module prefixes
+ - [#633](https://github.com/tag1consulting/goose/pull/633), [#622](https://github.com/tag1consulting/goose/pull/622) fix clippy warnings for latest Rust version
+ - [#620](https://github.com/tag1consulting/goose/pull/620) fix error graph display in HTML report
 
 ## 0.18.0
  - update all dependencies
