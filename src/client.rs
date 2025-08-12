@@ -334,7 +334,10 @@ pub(crate) fn create_reqwest_client_with_cookies(
     }
 
     // Enable cookie store - this calls reqwest's cookie_store method
-    client_builder = client_builder.cookie_store(true);
+    #[cfg(feature = "cookies")]
+    {
+        client_builder = client_builder.cookie_store(true);
+    }
 
     client_builder.build()
 }
