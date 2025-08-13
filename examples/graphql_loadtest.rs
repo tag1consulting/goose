@@ -176,7 +176,6 @@ mod tests {
         assert_eq!(mutation_transaction.name, "Mutation");
     }
 
-
     #[test]
     fn test_scenario_creation() {
         // Test that the scenario can be created properly
