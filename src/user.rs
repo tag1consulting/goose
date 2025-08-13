@@ -237,7 +237,7 @@ async fn invoke_transaction_function(
         thread_user.started.elapsed().as_millis(),
         thread_user.scenarios_index,
         thread_transaction_index,
-        thread_transaction_name.name_for_transaction(),
+        thread_transaction_name.name_for_transaction().to_string(),
         thread_user.weighted_users_index,
     );
     // Store details about the currently running transaction for logging purposes.

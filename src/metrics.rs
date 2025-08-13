@@ -3521,6 +3521,8 @@ pub(crate) fn prepare_status_codes(
 
 #[cfg(test)]
 mod test {
+    use std::borrow::Cow;
+
     use super::*;
 
     #[test]
@@ -3656,9 +3658,9 @@ mod test {
                 scenario_index: 0,
                 scenario_name: "LoadTestUser",
                 transaction_index: 5.to_string().as_str(),
-                transaction_name: TransactionName::InheritNameByRequests(
-                    "front page".to_string().to_string(),
-                ),
+                transaction_name: TransactionName::InheritNameByRequests(Cow::Borrowed(
+                    "front page",
+                )),
             },
             "/",
             0,

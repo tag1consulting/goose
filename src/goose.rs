@@ -291,6 +291,7 @@ use downcast_rs::{impl_downcast, Downcast};
 use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -1906,7 +1907,7 @@ impl GooseUser {
                 if let Some(transaction_name) = &self.transaction_name {
                     let request_name = transaction_name.name_for_request();
                     if !request_name.is_empty() {
-                        return request_name;
+                        return request_name.to_string();
                     }
                 }
                 request.path.to_string()
@@ -2796,25 +2797,25 @@ pub type TransactionFunction = Arc<
 
 #[derive(Clone, Deserialize, Serialize, Hash, PartialEq, Eq, Debug)]
 pub enum TransactionName {
-    InheritNameByRequests(String),
-    TransactionOnly(String),
+    InheritNameByRequests(Cow<'static, str>),
+    TransactionOnly(Cow<'static, str>),
 }
 
 impl TransactionName {
-    pub fn name_for_transaction(&self) -> String {
+    pub fn name_for_transaction(&self) -> &str {
         match self {
-            TransactionName::InheritNameByRequests(v) => v.to_string(),
-            TransactionName::TransactionOnly(v) => v.to_string(),
+            TransactionName::InheritNameByRequests(v) => v.as_ref(),
+            TransactionName::TransactionOnly(v) => v.as_ref(),
         }
     }
-    pub fn name_for_request(&self) -> String {
+    pub fn name_for_request(&self) -> &str {
         match self {
-            TransactionName::InheritNameByRequests(v) => v.to_string(),
-            TransactionName::TransactionOnly(_) => "".to_string(),
+            TransactionName::InheritNameByRequests(v) => v.as_ref(),
+            TransactionName::TransactionOnly(_) => "",
         }
     }
     pub fn default_value() -> Self {
-        Self::TransactionOnly("".to_string())
+        Self::TransactionOnly(Cow::Borrowed(""))
     }
 }
 
@@ -2873,7 +2874,7 @@ impl Transaction {
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
         trace!("[{}] set_name: {}", self.transactions_index, name);
-        self.name = TransactionName::TransactionOnly(name.to_string());
+        self.name = TransactionName::TransactionOnly(Cow::Owned(name.to_string()));
         self
     }
 
@@ -2901,7 +2902,7 @@ impl Transaction {
             self.transactions_index,
             name
         );
-        self.name = TransactionName::InheritNameByRequests(name.to_string());
+        self.name = TransactionName::InheritNameByRequests(Cow::Owned(name.to_string()));
         self
     }
 
@@ -3529,9 +3530,9 @@ mod tests {
             GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
         // Test 1: TransactionOnly variant should NOT use transaction name for requests
-        user.transaction_name = Some(TransactionName::TransactionOnly(
-            "my_transaction".to_string(),
-        ));
+        user.transaction_name = Some(TransactionName::TransactionOnly(Cow::Borrowed(
+            "my_transaction",
+        )));
 
         // Create a request without a name
         let request = GooseRequest::builder().path("/test/path").build();
@@ -3544,9 +3545,9 @@ mod tests {
         );
 
         // Test 2: InheritNameByRequests variant SHOULD use transaction name for requests
-        user.transaction_name = Some(TransactionName::InheritNameByRequests(
-            "inherited_name".to_string(),
-        ));
+        user.transaction_name = Some(TransactionName::InheritNameByRequests(Cow::Borrowed(
+            "inherited_name",
+        )));
 
         let request_name = user.get_request_name(&request);
         assert_eq!(
