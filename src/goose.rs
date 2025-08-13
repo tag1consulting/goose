@@ -1643,7 +1643,7 @@ impl GooseUser {
         let mut request_metric = GooseRequestMetric::new(
             raw_request,
             transaction_detail,
-            request_name.as_str(),
+            request_name,
             self.started.elapsed().as_millis(),
             self.weighted_users_index,
         );
@@ -1701,7 +1701,7 @@ impl GooseUser {
                 warn!("{:?}: {}", &path, e);
                 request_metric.success = false;
                 request_metric.set_status_code(None);
-                request_metric.error = clean_reqwest_error(e, request_name.as_str());
+                request_metric.error = clean_reqwest_error(e, request_name);
             }
         };
 
@@ -1898,19 +1898,19 @@ impl GooseUser {
 
     /// If `request_name` is set, unwrap and use this. Otherwise, if the Transaction has a name
     /// set use it. Otherwise use the path.
-    fn get_request_name(&self, request: &GooseRequest) -> String {
+    fn get_request_name<'a>(&'a self, request: &'a GooseRequest) -> &'a str {
         match request.name {
             // If a request.name is set, unwrap and return it.
-            Some(rn) => rn.to_string(),
+            Some(rn) => rn,
             None => {
                 // Otherwise determine if the current Transaction is named, and if so return it.
                 if let Some(transaction_name) = &self.transaction_name {
                     let request_name = transaction_name.name_for_request();
                     if !request_name.is_empty() {
-                        return request_name.to_string();
+                        return request_name;
                     }
                 }
-                request.path.to_string()
+                request.path
             }
         }
     }
