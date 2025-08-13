@@ -681,7 +681,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost => {
+            | GooseDefault::WebSocketHost
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -776,7 +777,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost => {
+            | GooseDefault::WebSocketHost
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -878,7 +880,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost => {
+            | GooseDefault::WebSocketHost
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -975,7 +978,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost => {
+            | GooseDefault::WebSocketHost
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
