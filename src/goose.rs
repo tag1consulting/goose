@@ -947,7 +947,11 @@ impl GooseUser {
 
         let client = match reqwest_client {
             Some(c) => c,
-            None => create_reqwest_client(configuration)?,
+            // Use the new unified client creation function for consistency
+            None => {
+                let config = crate::client::GooseClientConfig::from(configuration);
+                crate::client::create_reqwest_client_with_cookies(&config)?
+            }
         };
 
         Ok(GooseUser {
@@ -2160,13 +2164,17 @@ impl GooseUser {
     /// use reqwest::Client;
     /// use core::time::Duration;
     ///
-    /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+    /// static APP_USER_AGENT: &str = "goose/0.18.0";
     ///
-    /// let builder = Client::builder()
+    /// let mut builder = Client::builder()
     ///   .user_agent(APP_USER_AGENT)
-    ///   .cookie_store(true)
     ///   .gzip(true)
     ///   .timeout(Duration::from_secs(60));
+    ///
+    /// #[cfg(feature = "cookies")]
+    /// {
+    ///     builder = builder.cookie_store(true);  // Enable cookies by default
+    /// }
     /// ```
     ///
     /// Alternatively, you can use this function to manually build a
@@ -2213,10 +2221,16 @@ impl GooseUser {
     ///     headers.insert("X-Custom-Header", header::HeaderValue::from_str("custom value").unwrap());
     ///
     ///     // Build a custom client.
-    ///     let builder = Client::builder()
+    ///     let mut builder = Client::builder()
     ///         .default_headers(headers)
-    ///         .user_agent("custom user agent")
-    ///         .cookie_store(true)
+    ///         .user_agent("custom user agent");
+    ///
+    ///     #[cfg(feature = "cookies")]
+    ///     {
+    ///         builder = builder.cookie_store(true);
+    ///     }
+    ///
+    ///     let builder = builder
     ///         .gzip(true)
     ///         .timeout(Duration::from_secs(30));
     ///
@@ -2255,6 +2269,8 @@ impl GooseUser {
     ///
     /// ## Example
     /// ```rust
+    /// # #[cfg(feature = "cookies")]
+    /// # {
     /// use reqwest::{cookie::Jar, Client};
     /// use std::sync::Arc;
     ///
@@ -2274,17 +2290,22 @@ impl GooseUser {
     ///     );
     ///
     ///     // Build a custom client.
-    ///     let builder = Client::builder()
-    ///         .user_agent("example-loadtest")
-    ///         .cookie_store(true)
-    ///         .cookie_provider(Arc::new(jar))
-    ///         .gzip(true);
+    ///     let mut builder = Client::builder()
+    ///         .user_agent("example-loadtest");
+    ///
+    ///     #[cfg(feature = "cookies")]
+    ///     {
+    ///         builder = builder.cookie_store(true).cookie_provider(Arc::new(jar));
+    ///     }
+    ///
+    ///     let builder = builder.gzip(true);
     ///
     ///     // Assign the custom client to this GooseUser.
     ///     user.set_client_builder(builder).await?;
     ///
     ///     Ok(())
     /// }
+    /// # }
     /// ```
     pub async fn set_client_builder(
         &mut self,
@@ -2384,15 +2405,31 @@ pub(crate) fn create_reqwest_client(
         GOOSE_REQUEST_TIMEOUT
     };
 
-    Client::builder()
+    #[cfg(feature = "rustls-tls")]
+    let mut client_builder = Client::builder()
         .user_agent(APP_USER_AGENT)
-        .cookie_store(true)
         .timeout(Duration::from_millis(timeout))
         // Enable gzip unless `--no-gzip` flag is enabled.
-        .gzip(!configuration.no_gzip)
+        .gzip(!configuration.no_gzip);
+
+    #[cfg(not(feature = "rustls-tls"))]
+    let client_builder = Client::builder()
+        .user_agent(APP_USER_AGENT)
+        .timeout(Duration::from_millis(timeout))
+        // Enable gzip unless `--no-gzip` flag is enabled.
+        .gzip(!configuration.no_gzip);
+
+    #[cfg(feature = "rustls-tls")]
+    {
         // Validate https certificates unless `--accept-invalid-certs` is enabled.
-        .danger_accept_invalid_certs(configuration.accept_invalid_certs)
-        .build()
+        client_builder =
+            client_builder.danger_accept_invalid_certs(configuration.accept_invalid_certs);
+    }
+
+    #[cfg(feature = "cookies")]
+    let client_builder = client_builder.cookie_store(true);
+
+    client_builder.build()
 }
 
 /// Defines the HTTP requests that Goose makes.

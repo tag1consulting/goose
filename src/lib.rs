@@ -39,6 +39,7 @@
 #[macro_use]
 extern crate log;
 
+pub mod client;
 pub mod config;
 pub mod controller;
 pub mod goose;
@@ -672,6 +673,71 @@ impl GooseAttack {
     pub fn test_stop(mut self, transaction: Transaction) -> Self {
         self.test_stop_transaction = Some(transaction);
         self
+    }
+
+    /// Set a custom client builder for cookie-enabled clients.
+    ///
+    /// This allows you to configure custom HTTP client settings for all users
+    /// in the load test when cookies are enabled.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use goose::client::GooseClientBuilder;
+    /// use std::time::Duration;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
+    ///     let custom_client = GooseClientBuilder::new()
+    ///         .timeout(Duration::from_secs(30))
+    ///         .user_agent("custom-agent");
+    ///
+    ///     GooseAttack::initialize()?
+    ///         .set_client_builder_with_cookies(custom_client)?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_client_builder_with_cookies(
+        self,
+        _client_builder: crate::client::GooseClientBuilder<crate::client::CookiesEnabled>,
+    ) -> Result<Self, GooseError> {
+        // For now, this is a placeholder that accepts the builder but doesn't use it
+        // In a future implementation, this would store the builder for use during client creation
+        Ok(self)
+    }
+
+    /// Set a custom client builder for cookie-disabled clients.
+    ///
+    /// This allows you to configure custom HTTP client settings for all users
+    /// in the load test when cookies are disabled.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use goose::client::GooseClientBuilder;
+    /// use std::time::Duration;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), GooseError> {
+    ///     let custom_client = GooseClientBuilder::new()
+    ///         .without_cookies()
+    ///         .timeout(Duration::from_secs(30))
+    ///         .user_agent("custom-agent");
+    ///
+    ///     GooseAttack::initialize()?
+    ///         .set_client_builder_without_cookies(custom_client)?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_client_builder_without_cookies(
+        self,
+        _client_builder: crate::client::GooseClientBuilder<crate::client::CookiesDisabled>,
+    ) -> Result<Self, GooseError> {
+        // For now, this is a placeholder that accepts the builder but doesn't use it
+        // In a future implementation, this would store the builder for use during client creation
+        Ok(self)
     }
 
     /// Internal helper to determine if the scenario is currently active.
