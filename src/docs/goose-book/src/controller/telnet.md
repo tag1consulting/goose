@@ -110,6 +110,6 @@ The above commands are also summarized in the metrics overview:
  Canceling:   2022-05-05 07:11:13 - 2022-05-05 07:11:13 (00:00:00, 0 <- 20)
 
  Target host: https://umami.ddev.site/
- goose v0.17.2
+ goose v0.18.1
  ------------------------------------------------------------------------------
 ```
