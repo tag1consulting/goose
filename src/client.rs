@@ -44,7 +44,7 @@
 //!             GooseClientBuilder::new()
 //!                 .timeout(Duration::from_secs(30))
 //!                 .user_agent("my-loadtest/1.0")
-//!         )
+//!         )?
 //!         .register_scenario(scenario!("Test").set_host("http://localhost"))
 //!         .set_default(GooseDefault::RunTime, 3)?
 //!         .set_default(GooseDefault::Users, 1)?
