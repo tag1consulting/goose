@@ -20,12 +20,13 @@ pub(crate) fn generate_pdf(
     html_content: &str,
     output_path: &Path,
     generator: Option<&str>,
+    scale: Option<f64>,
 ) -> Result<(), GooseError> {
     let generator_cmd = generator.unwrap_or(DEFAULT_PDF_GENERATOR);
 
     if generator_cmd == DEFAULT_PDF_GENERATOR {
         #[cfg(feature = "pdf-reports")]
-        return generate_builtin_pdf(html_content, output_path);
+        return generate_builtin_pdf(html_content, output_path, scale);
 
         #[cfg(not(feature = "pdf-reports"))]
         return Err(GooseError::InvalidOption {
@@ -46,7 +47,7 @@ pub(crate) fn generate_pdf(
 /// report. Since Goose generates only one report at test completion, concurrent PDF generation
 /// is not a concern for the intended use case.
 #[cfg(feature = "pdf-reports")]
-fn generate_builtin_pdf(html_content: &str, output_path: &Path) -> Result<(), GooseError> {
+fn generate_builtin_pdf(html_content: &str, output_path: &Path, scale: Option<f64>) -> Result<(), GooseError> {
     // Store original log level to restore later
     let original_log_level = log::max_level();
 
@@ -140,8 +141,8 @@ fn generate_builtin_pdf(html_content: &str, output_path: &Path) -> Result<(), Go
         .as_f64()
         .unwrap_or(11.0);
 
-    // Use default scale factor for built-in generator
-    let scale = 0.8;
+    // Use provided scale or default to 0.8
+    let scale = scale.unwrap_or(0.8);
 
     // Calculate adjusted page dimensions based on scale factor
     let base_width = 8.5;
@@ -387,7 +388,7 @@ mod tests {
     fn test_generate_pdf_without_feature() {
         use std::path::Path;
 
-        let result = generate_pdf("test", Path::new("test.pdf"), None);
+        let result = generate_pdf("test", Path::new("test.pdf"), None, None);
         assert!(result.is_err());
 
         if let Err(GooseError::InvalidOption { detail, .. }) = result {

@@ -3085,20 +3085,11 @@ impl GooseAttack {
                         self.write_markdown_report(file).await?;
                     }
                 }
-                #[cfg(feature = "pdf-reports")]
                 Some("pdf") => {
                     let file = create(path).await?;
                     if write {
                         self.write_pdf_report(file, report).await?;
                     }
-                }
-                #[cfg(not(feature = "pdf-reports"))]
-                Some("pdf") => {
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: report.clone(),
-                        detail: "PDF reports require the 'pdf-reports' feature. Rebuild with --features pdf-reports".to_string(),
-                    });
                 }
                 None => {
                     return Err(GooseError::InvalidOption {
@@ -3114,6 +3105,15 @@ impl GooseAttack {
                         detail: format!("Unknown report file type: {ext}"),
                     })
                 }
+            }
+        }
+
+        // Handle print-ready HTML file generation if requested
+        if let Some(html_path) = &self.configuration.print_ready_html {
+            let path = PathBuf::from(html_path);
+            let file = create(path).await?;
+            if write {
+                self.write_print_ready_html_report(file, html_path).await?;
             }
         }
 
@@ -3410,15 +3410,30 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Write a PDF report.
-    #[cfg(feature = "pdf-reports")]
-    pub(crate) async fn write_pdf_report(
+    /// Write a print-ready HTML report optimized for PDF conversion
+    pub(crate) async fn write_print_ready_html_report(
         &self,
-        _report_file: File,
+        mut report_file: File,
         path: &str,
     ) -> Result<(), GooseError> {
-        use crate::report::pdf::{add_print_css, generate_pdf_from_html};
-        use std::path::Path;
+        let print_ready_html = self.generate_print_ready_html()?;
+
+        report_file
+            .write_all(print_ready_html.as_bytes())
+            .await
+            .map_err(|e| GooseError::InvalidOption {
+                option: "--print-ready-html".to_string(),
+                value: format!("Failed to write HTML file: {e}"),
+                detail: format!("Unable to write print-ready HTML to {}", path),
+            })?;
+
+        info!("print-ready HTML report written to: {path}");
+        Ok(())
+    }
+
+    /// Generate print-ready HTML with optimized CSS for PDF conversion
+    pub(crate) fn generate_print_ready_html(&self) -> Result<String, GooseError> {
+        use crate::report::pdf::add_print_css;
 
         // Generate HTML report content using the shared function
         let html_report = self.generate_html_report_content();
@@ -3426,31 +3441,46 @@ impl GooseAttack {
         // Add print-optimized CSS for better PDF output
         let print_optimized_html = add_print_css(&html_report);
 
-        // Generate PDF from HTML using the simplified configuration (hardcoded defaults with configurable scale)
-        generate_pdf_from_html(
-            &print_optimized_html,
-            Path::new(path),
-            self.configuration.pdf_scale,
-        )?;
-
-        info!("pdf report file written to: {path}");
-
-        Ok(())
+        Ok(print_optimized_html)
     }
 
-    /// Write a PDF report (feature not enabled).
-    #[cfg(not(feature = "pdf-reports"))]
-    #[allow(dead_code)]
+    /// Write a PDF report using configurable PDF generator
     pub(crate) async fn write_pdf_report(
         &self,
         _report_file: File,
         path: &str,
     ) -> Result<(), GooseError> {
-        Err(GooseError::InvalidOption {
-            option: "--report-file".to_string(),
-            value: path.to_string(),
-            detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
-        })
+        use crate::report::pdf::generate_pdf;
+        use std::path::Path;
+
+        // Generate print-ready HTML
+        let print_ready_html = self.generate_print_ready_html()?;
+
+        // Save print-ready HTML if requested
+        if let Some(html_path) = &self.configuration.print_ready_html {
+            std::fs::write(html_path, &print_ready_html).map_err(|e| {
+                GooseError::InvalidOption {
+                    option: "--print-ready-html".to_string(),
+                    value: format!("Failed to write HTML file: {e}"),
+                    detail: format!("Unable to write print-ready HTML to {}", html_path),
+                }
+            })?;
+            info!("print-ready HTML file written to: {}", html_path);
+        }
+
+        // Generate PDF using the configured generator
+        generate_pdf(
+            &print_ready_html,
+            Path::new(path),
+            self.configuration.pdf_generator.as_deref(),
+            #[cfg(feature = "pdf-reports")]
+            Some(self.configuration.pdf_scale),
+            #[cfg(not(feature = "pdf-reports"))]
+            None,
+        )?;
+
+        info!("PDF report file written to: {path}");
+        Ok(())
     }
 }
 
