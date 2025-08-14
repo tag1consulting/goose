@@ -1,19 +1,44 @@
 //! PDF report generation functionality
 //!
-//! This module provides PDF report generation by converting existing HTML reports
-//! to PDF format using headless Chrome. It leverages the HTML report generation
-//! and converts it to PDF with configurable options.
+//! This module provides PDF report generation by converting print-ready HTML reports
+//! to PDF format using either built-in headless Chrome or external tools.
+
+use crate::GooseError;
+use std::{fs, path::Path, process::Command};
 
 #[cfg(feature = "pdf-reports")]
-use crate::GooseError;
+use std::ffi::OsStr;
 
 #[cfg(feature = "pdf-reports")]
 use headless_chrome::{Browser, LaunchOptions};
 
-#[cfg(feature = "pdf-reports")]
-use std::{ffi::OsStr, fs, path::Path};
+/// Default PDF generator command - built-in Chrome
+const DEFAULT_PDF_GENERATOR: &str = "__builtin__";
 
-/// Generate a PDF report from HTML content using headless Chrome
+/// Generate PDF using the specified generator
+pub(crate) fn generate_pdf(
+    html_content: &str,
+    output_path: &Path,
+    generator: Option<&str>,
+) -> Result<(), GooseError> {
+    let generator_cmd = generator.unwrap_or(DEFAULT_PDF_GENERATOR);
+
+    if generator_cmd == DEFAULT_PDF_GENERATOR {
+        #[cfg(feature = "pdf-reports")]
+        return generate_builtin_pdf(html_content, output_path);
+
+        #[cfg(not(feature = "pdf-reports"))]
+        return Err(GooseError::InvalidOption {
+            option: "--report-file".to_string(),
+            value: output_path.display().to_string(),
+            detail: "PDF generation requires external tool or the 'pdf-reports' feature. Use --pdf-generator to specify a custom command.".to_string(),
+        });
+    } else {
+        run_external_pdf_generator(generator_cmd, html_content, output_path)
+    }
+}
+
+/// Generate PDF using built-in Chrome (when pdf-reports feature is enabled)
 ///
 /// # Thread Safety Note
 /// This function temporarily modifies the global log level to reduce Chrome's verbose output.
@@ -21,11 +46,7 @@ use std::{ffi::OsStr, fs, path::Path};
 /// report. Since Goose generates only one report at test completion, concurrent PDF generation
 /// is not a concern for the intended use case.
 #[cfg(feature = "pdf-reports")]
-pub(crate) fn generate_pdf_from_html(
-    html_content: &str,
-    output_path: &Path,
-    scale: f64,
-) -> Result<(), GooseError> {
+fn generate_builtin_pdf(html_content: &str, output_path: &Path) -> Result<(), GooseError> {
     // Store original log level to restore later
     let original_log_level = log::max_level();
 
@@ -46,20 +67,20 @@ pub(crate) fn generate_pdf_from_html(
         ])
         .build()
         .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--pdf-generator".to_string(),
             value: format!("Failed to configure Chrome: {e}"),
             detail: "Unable to launch headless Chrome for PDF generation".to_string(),
         })?;
 
     let browser = Browser::new(launch_options).map_err(|e| GooseError::InvalidOption {
-        option: "--pdf".to_string(),
+        option: "--pdf-generator".to_string(),
         value: format!("Failed to launch Chrome: {e}"),
         detail: "Unable to start headless Chrome browser".to_string(),
     })?;
 
     // Create a new tab
     let tab = browser.new_tab().map_err(|e| GooseError::InvalidOption {
-        option: "--pdf".to_string(),
+        option: "--pdf-generator".to_string(),
         value: format!("Failed to create browser tab: {e}"),
         detail: "Unable to create new browser tab".to_string(),
     })?;
@@ -71,7 +92,7 @@ pub(crate) fn generate_pdf_from_html(
     // Navigate to the data URL
     tab.navigate_to(&data_url)
         .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--pdf-generator".to_string(),
             value: format!("Failed to load HTML: {e}"),
             detail: "Unable to load HTML content in browser".to_string(),
         })?;
@@ -79,12 +100,12 @@ pub(crate) fn generate_pdf_from_html(
     // Wait for the page to load
     tab.wait_until_navigated()
         .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--pdf-generator".to_string(),
             value: format!("Failed to wait for page load: {e}"),
             detail: "Page failed to load completely".to_string(),
         })?;
 
-    // Always use unlimited page approach with hardcoded sensible defaults
+    // Improved content height measurement with fallback for robustness
     let content_height_script = r#"
         (function() {
             const elements = document.querySelectorAll('*');
@@ -110,7 +131,7 @@ pub(crate) fn generate_pdf_from_html(
     let content_height_inches = tab
         .evaluate(content_height_script, true)
         .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--pdf-generator".to_string(),
             value: format!("Failed to measure content height: {e}"),
             detail: "Unable to calculate content dimensions for PDF".to_string(),
         })?
@@ -119,9 +140,10 @@ pub(crate) fn generate_pdf_from_html(
         .as_f64()
         .unwrap_or(11.0);
 
+    // Use default scale factor for built-in generator
+    let scale = 0.8;
+
     // Calculate adjusted page dimensions based on scale factor
-    // When scaling up content, we need to increase page size proportionally
-    // to ensure the scaled content fits within the page boundaries
     let base_width = 8.5;
     let adjusted_width = base_width * scale;
     let adjusted_height = content_height_inches * scale;
@@ -131,13 +153,13 @@ pub(crate) fn generate_pdf_from_html(
             landscape: Some(false),
             display_header_footer: Some(false),
             print_background: Some(true),
-            scale: Some(scale), // Use the passed scale parameter
+            scale: Some(scale),
             paper_width: Some(adjusted_width),
             paper_height: Some(adjusted_height),
-            margin_top: Some(0.1),    // Hardcoded sensible default
-            margin_bottom: Some(0.1), // Hardcoded sensible default
-            margin_left: Some(0.1),   // Hardcoded sensible default
-            margin_right: Some(0.1),  // Hardcoded sensible default
+            margin_top: Some(0.1),
+            margin_bottom: Some(0.1),
+            margin_left: Some(0.1),
+            margin_right: Some(0.1),
             page_ranges: None,
             ignore_invalid_page_ranges: Some(false),
             header_template: None,
@@ -148,14 +170,14 @@ pub(crate) fn generate_pdf_from_html(
             generate_tagged_pdf: Some(false),
         }))
         .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--pdf-generator".to_string(),
             value: format!("Failed to generate PDF: {e}"),
             detail: "PDF generation failed".to_string(),
         })?;
 
     // Write PDF to file
     fs::write(output_path, pdf_data).map_err(|e| GooseError::InvalidOption {
-        option: "--pdf".to_string(),
+        option: "--pdf-generator".to_string(),
         value: format!("Failed to write PDF file: {e}"),
         detail: format!("Unable to write PDF to {}", output_path.display()),
     })?;
@@ -166,8 +188,65 @@ pub(crate) fn generate_pdf_from_html(
     Ok(())
 }
 
+/// Run external PDF generator with {input} and {output} placeholder substitution
+fn run_external_pdf_generator(
+    generator_cmd: &str,
+    html_content: &str,
+    output_path: &Path,
+) -> Result<(), GooseError> {
+    // Write HTML to temporary file
+    let temp_dir = std::env::temp_dir();
+    let temp_html_path = temp_dir.join(format!("goose-report-{}.html", std::process::id()));
+
+    fs::write(&temp_html_path, html_content).map_err(|e| GooseError::InvalidOption {
+        option: "--pdf-generator".to_string(),
+        value: format!("Failed to write temporary HTML file: {e}"),
+        detail: "Unable to create temporary HTML file for PDF generation".to_string(),
+    })?;
+
+    // Replace placeholders in the command
+    let cmd_with_args = generator_cmd
+        .replace("{input}", temp_html_path.to_string_lossy().as_ref())
+        .replace("{output}", output_path.to_string_lossy().as_ref());
+
+    // Parse command and arguments
+    let mut cmd_parts = cmd_with_args.split_whitespace();
+    let command = cmd_parts.next().ok_or_else(|| GooseError::InvalidOption {
+        option: "--pdf-generator".to_string(),
+        value: generator_cmd.to_string(),
+        detail: "PDF generator command cannot be empty".to_string(),
+    })?;
+
+    let args: Vec<&str> = cmd_parts.collect();
+
+    // Execute the command
+    let output =
+        Command::new(command)
+            .args(&args)
+            .output()
+            .map_err(|e| GooseError::InvalidOption {
+                option: "--pdf-generator".to_string(),
+                value: format!("Failed to execute command '{}': {}", command, e),
+                detail: "Make sure the PDF generator is installed and in your PATH".to_string(),
+            })?;
+
+    // Clean up temporary file
+    let _ = fs::remove_file(&temp_html_path);
+
+    // Check if command succeeded
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GooseError::InvalidOption {
+            option: "--pdf-generator".to_string(),
+            value: format!("Command failed with status {}: {}", output.status, stderr),
+            detail: format!("PDF generator command: {}", cmd_with_args),
+        });
+    }
+
+    Ok(())
+}
+
 /// Add print-optimized CSS styles to HTML content for better PDF output
-#[cfg(feature = "pdf-reports")]
 pub(crate) fn add_print_css(html_content: &str) -> String {
     let print_css = r#"
         <style media="print">
@@ -241,24 +320,6 @@ pub(crate) fn add_print_css(html_content: &str) -> String {
     }
 }
 
-#[cfg(not(feature = "pdf-reports"))]
-pub(crate) fn generate_pdf_from_html(
-    _html_content: &str,
-    _output_path: &std::path::Path,
-    _scale: f64,
-) -> Result<(), crate::GooseError> {
-    Err(crate::GooseError::InvalidOption {
-        option: "--pdf".to_string(),
-        value: "disabled".to_string(),
-        detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
-    })
-}
-
-#[cfg(not(feature = "pdf-reports"))]
-pub(crate) fn add_print_css(html_content: &str) -> String {
-    html_content.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,16 +366,32 @@ mod tests {
         assert!(result.trim_start().starts_with("<style media=\"print\">"));
     }
 
+    #[test]
+    fn test_external_command_placeholder_replacement() {
+        let generator_cmd = "wkhtmltopdf --scale 0.8 {input} {output}";
+        let input_path = std::path::PathBuf::from("/tmp/test.html");
+        let output_path = std::path::PathBuf::from("/tmp/test.pdf");
+
+        let cmd_with_args = generator_cmd
+            .replace("{input}", input_path.to_string_lossy().as_ref())
+            .replace("{output}", output_path.to_string_lossy().as_ref());
+
+        assert_eq!(
+            cmd_with_args,
+            "wkhtmltopdf --scale 0.8 /tmp/test.html /tmp/test.pdf"
+        );
+    }
+
     #[cfg(not(feature = "pdf-reports"))]
     #[test]
     fn test_generate_pdf_without_feature() {
         use std::path::Path;
 
-        let result = generate_pdf_from_html("test", Path::new("test.pdf"), 0.8);
+        let result = generate_pdf("test", Path::new("test.pdf"), None);
         assert!(result.is_err());
 
-        if let Err(crate::GooseError::InvalidOption { detail, .. }) = result {
-            assert!(detail.contains("pdf-reports"));
+        if let Err(GooseError::InvalidOption { detail, .. }) = result {
+            assert!(detail.contains("external tool or the 'pdf-reports' feature"));
         }
     }
 }

@@ -2,7 +2,6 @@
 mod common;
 mod markdown;
 
-#[cfg(feature = "pdf-reports")]
 pub mod pdf;
 
 pub(crate) use markdown::write_markdown_report;
