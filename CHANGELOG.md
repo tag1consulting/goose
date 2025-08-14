@@ -1,6 +1,11 @@
 # Changelog
 
 ## 0.19.0-dev
+ - **API change**: `Transaction::set_name()` now only affects transaction names, not request names (more intuitive default behavior)
+    o existing `set_name()` calls will only name the transaction for metrics organization
+    o request names remain descriptive (path-based or explicitly set)
+    o users requiring the old behavior must switch to `set_name_for_transaction_and_requests()`
+    o introduces `TransactionName` enum with `TransactionOnly` and `InheritNameByRequests` variants
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
@@ -297,7 +302,7 @@
  - add initial OCI Dockerfile for container-based workflows
  - use checked subtraction when calculating drift duration to prevent panic
  - update `nng-rs` dependency to fix bug when testing that the manager is ready
- 
+
 ## 0.10.3 October 14, 2020
  - fixup sticky redirect tests to properly test functionality
  - add `test/sequence.rs` to confirm sequencing tests works correctly, even in Gaggle mode
@@ -377,7 +382,7 @@
 
 ## 0.9.0 July 23, 2020
  - fix code documentation, requests are async and require await
- - properly support setting host when registering task set 
+ - properly support setting host when registering task set
  - rename `response` wrapper to `goose`, so we end up with `goose.request` and `goose.response`
  - add `--throttle-requests` to optionally limit the maximum requests per second (api change)
  - introduce `GooseError` and `GooseTaskError`

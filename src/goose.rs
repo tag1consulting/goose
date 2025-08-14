@@ -291,6 +291,7 @@ use downcast_rs::{impl_downcast, Downcast};
 use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -563,7 +564,11 @@ impl Scenario {
     /// }
     /// ```
     pub fn register_transaction(mut self, mut transaction: Transaction) -> Self {
-        trace!("{} register_transaction: {}", self.name, transaction.name);
+        trace!(
+            "{} register_transaction: {}",
+            self.name,
+            transaction.name.name_for_transaction()
+        );
         transaction.transactions_index = self.transactions.len();
         self.transactions.push(transaction);
         self
@@ -858,7 +863,7 @@ pub struct GooseUser {
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
     pub(crate) transaction_index: Option<String>,
     /// Current transaction name, if set.
-    pub(crate) transaction_name: Option<String>,
+    pub(crate) transaction_name: Option<TransactionName>,
     /// Client used to make requests, managing sessions and cookies.
     pub client: Client,
     /// The base URL to prepend to all relative paths.
@@ -1630,8 +1635,8 @@ impl GooseUser {
                 .map_or_else(|| "", |v| v.as_ref()),
             transaction_name: self
                 .transaction_name
-                .as_ref()
-                .map_or_else(|| "", |v| v.as_ref()),
+                .clone()
+                .unwrap_or(TransactionName::default_value()),
         };
 
         // Record information about the request.
@@ -1827,7 +1832,10 @@ impl GooseUser {
                 && request_metric.response_time > self.request_cadence.user_cadence
             {
                 let transaction_name = if let Some(transaction_name) = &self.transaction_name {
-                    format!(", transaction name: \"{transaction_name}\"")
+                    format!(
+                        ", transaction name: \"{}\"",
+                        transaction_name.name_for_transaction()
+                    )
                 } else {
                     "".to_string()
                 };
@@ -1897,11 +1905,12 @@ impl GooseUser {
             None => {
                 // Otherwise determine if the current Transaction is named, and if so return it.
                 if let Some(transaction_name) = &self.transaction_name {
-                    transaction_name
-                } else {
-                    // Otherwise return a copy of the the path.
-                    request.path
+                    let request_name = transaction_name.name_for_request();
+                    if !request_name.is_empty() {
+                        return request_name;
+                    }
                 }
+                request.path
             }
         }
     }
@@ -2786,6 +2795,30 @@ pub type TransactionFunction = Arc<
         + Sync,
 >;
 
+#[derive(Clone, Deserialize, Serialize, Hash, PartialEq, Eq, Debug)]
+pub enum TransactionName {
+    InheritNameByRequests(Cow<'static, str>),
+    TransactionOnly(Cow<'static, str>),
+}
+
+impl TransactionName {
+    pub fn name_for_transaction(&self) -> &str {
+        match self {
+            TransactionName::InheritNameByRequests(v) => v.as_ref(),
+            TransactionName::TransactionOnly(v) => v.as_ref(),
+        }
+    }
+    pub fn name_for_request(&self) -> &str {
+        match self {
+            TransactionName::InheritNameByRequests(v) => v.as_ref(),
+            TransactionName::TransactionOnly(_) => "",
+        }
+    }
+    pub fn default_value() -> Self {
+        Self::TransactionOnly(Cow::Borrowed(""))
+    }
+}
+
 /// An individual transaction within a [`Scenario`](./struct.Scenario.html).
 #[derive(Clone)]
 pub struct Transaction {
@@ -2793,7 +2826,7 @@ pub struct Transaction {
     /// transaction this is.
     pub transactions_index: usize,
     /// An optional name for the transaction, used when displaying metrics.
-    pub name: String,
+    pub name: TransactionName,
     /// An integer value that controls the frequency that this transaction will be run.
     pub weight: usize,
     /// An integer value that controls when this transaction runs compared to other transactions in the same
@@ -2811,7 +2844,7 @@ impl Transaction {
         trace!("new transaction");
         Transaction {
             transactions_index: usize::MAX,
-            name: "".to_string(),
+            name: TransactionName::default_value(),
             weight: 1,
             sequence: 0,
             on_start: false,
@@ -2820,26 +2853,56 @@ impl Transaction {
         }
     }
 
-    /// Set an optional name for the transaction, used when displaying metrics.
+    /// Sets a custom name for this transaction only.
     ///
-    /// Individual requests can also be named using [`GooseRequestBuilder`], or for GET
-    /// requests with the [`GooseUser::get_named`] helper.
+    /// This name will be used to identify the transaction in metrics and reports,
+    /// but will not affect the names of individual requests within the transaction.
     ///
     /// # Example
-    /// ```rust
+    ///
+    /// ```
     /// use goose::prelude::*;
     ///
-    /// transaction!(my_transaction_function).set_name("foo");
+    /// let transaction = transaction!(example_transaction)
+    ///     .set_name("Login Flow")
+    ///     .set_on_start();
     ///
-    /// async fn my_transaction_function(user: &mut GooseUser) -> TransactionResult {
-    ///     let _goose = user.get("").await?;
-    ///
+    /// async fn example_transaction(user: &mut GooseUser) -> TransactionResult {
+    ///     // Transaction logic here
     ///     Ok(())
     /// }
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
-        trace!("[{}] set_name: {}", self.transactions_index, self.name);
-        self.name = name.to_string();
+        trace!("[{}] set_name: {}", self.transactions_index, name);
+        self.name = TransactionName::TransactionOnly(Cow::Owned(name.to_string()));
+        self
+    }
+
+    /// Sets a custom name for both the transaction and all its requests.
+    ///
+    /// This name will be used as a prefix for all requests within the transaction,
+    /// allowing you to group related requests under a common namespace in metrics.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use goose::prelude::*;
+    ///
+    /// let transaction = transaction!(checkout_flow)
+    ///     .set_name_for_transaction_and_requests("Checkout");
+    ///
+    /// async fn checkout_flow(user: &mut GooseUser) -> TransactionResult {
+    ///     // All requests will be prefixed with "Checkout"
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_name_for_transaction_and_requests(mut self, name: &str) -> Self {
+        trace!(
+            "[{}] set_name (for transaction only): {}",
+            self.transactions_index,
+            name
+        );
+        self.name = TransactionName::InheritNameByRequests(Cow::Owned(name.to_string()));
         self
     }
 
@@ -2868,7 +2931,7 @@ impl Transaction {
     pub fn set_on_start(mut self) -> Self {
         trace!(
             "{} [{}] set_on_start transaction",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index
         );
         self.on_start = true;
@@ -2900,7 +2963,7 @@ impl Transaction {
     pub fn set_on_stop(mut self) -> Self {
         trace!(
             "{} [{}] set_on_stop transaction",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index
         );
         self.on_stop = true;
@@ -2931,7 +2994,7 @@ impl Transaction {
     pub fn set_weight(mut self, weight: usize) -> Result<Self, GooseError> {
         trace!(
             "{} [{}] set_weight: {}",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index,
             weight
         );
@@ -3019,14 +3082,14 @@ impl Transaction {
     pub fn set_sequence(mut self, sequence: usize) -> Self {
         trace!(
             "{} [{}] set_sequence: {}",
-            self.name,
+            self.name.name_for_transaction(),
             self.transactions_index,
             sequence
         );
         if sequence < 1 {
             info!(
                 "setting sequence to 0 for transaction {} is unnecessary, sequence disabled",
-                self.name
+                self.name.name_for_transaction()
             );
         }
         self.sequence = sequence;
@@ -3178,7 +3241,7 @@ mod tests {
         // Initialize scenario.
         let mut transaction = transaction!(test_function_a);
         assert_eq!(transaction.transactions_index, usize::MAX);
-        assert_eq!(transaction.name, "".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
         assert!(!transaction.on_start);
@@ -3186,7 +3249,7 @@ mod tests {
 
         // Name can be set, without affecting other fields.
         transaction = transaction.set_name("foo");
-        assert_eq!(transaction.name, "foo".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "foo".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
         assert!(!transaction.on_start);
@@ -3194,12 +3257,12 @@ mod tests {
 
         // Name can be set multiple times.
         transaction = transaction.set_name("bar");
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
 
         // On start flag can be set, without affecting other fields.
         transaction = transaction.set_on_start();
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
         assert!(!transaction.on_stop);
@@ -3213,7 +3276,7 @@ mod tests {
         transaction = transaction.set_on_stop();
         assert!(transaction.on_stop);
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
         assert_eq!(transaction.weight, 1);
         assert_eq!(transaction.sequence, 0);
 
@@ -3226,7 +3289,7 @@ mod tests {
         assert_eq!(transaction.weight, 2);
         assert!(transaction.on_stop);
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
         assert_eq!(transaction.sequence, 0);
 
         // Weight field can be changed multiple times.
@@ -3239,7 +3302,7 @@ mod tests {
         assert_eq!(transaction.weight, 3);
         assert!(transaction.on_stop);
         assert!(transaction.on_start);
-        assert_eq!(transaction.name, "bar".to_string());
+        assert_eq!(transaction.name.name_for_transaction(), "bar".to_string());
 
         // Sequence field can be changed multiple times.
         transaction = transaction.set_sequence(8);
@@ -3458,5 +3521,59 @@ mod tests {
 
         let session = user.get_session_data_unchecked::<CustomSessionData>();
         assert_eq!(session.data, "bar".to_string());
+    }
+
+    #[test]
+    fn test_transaction_name_request_naming() {
+        let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+
+        // Test 1: TransactionOnly variant should NOT use transaction name for requests
+        user.transaction_name = Some(TransactionName::TransactionOnly(Cow::Borrowed(
+            "my_transaction",
+        )));
+
+        // Create a request without a name
+        let request = GooseRequest::builder().path("/test/path").build();
+
+        // When TransactionOnly is used, get_request_name should return the path
+        let request_name = user.get_request_name(&request);
+        assert_eq!(
+            request_name, "/test/path",
+            "TransactionOnly should not inherit name to requests"
+        );
+
+        // Test 2: InheritNameByRequests variant SHOULD use transaction name for requests
+        user.transaction_name = Some(TransactionName::InheritNameByRequests(Cow::Borrowed(
+            "inherited_name",
+        )));
+
+        let request_name = user.get_request_name(&request);
+        assert_eq!(
+            request_name, "inherited_name",
+            "InheritNameByRequests should inherit name to requests"
+        );
+
+        // Test 3: Request with explicit name should always use its own name
+        let named_request = GooseRequest::builder()
+            .path("/test/path")
+            .name("explicit_request_name")
+            .build();
+
+        let request_name = user.get_request_name(&named_request);
+        assert_eq!(
+            request_name, "explicit_request_name",
+            "Explicitly named request should use its own name"
+        );
+
+        // Test 4: No transaction name should fall back to path
+        user.transaction_name = None;
+
+        let request_name = user.get_request_name(&request);
+        assert_eq!(
+            request_name, "/test/path",
+            "Without transaction name, should use path"
+        );
     }
 }

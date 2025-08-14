@@ -92,4 +92,42 @@ The `#[tokio::main]` at the beginning of this example is a Tokio macro necessary
 
 If you're new to Rust, `main()`'s return type of `Result<(), GooseError>` may look strange. It essentially says that `main` will return nothing (`()`) on success, and will return a `GooseError` on failure. This is helpful as several of `GooseAttack`'s methods can fail, returning an error. In our example, `initialize()` and `execute()` each may fail. The `?` that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the `.execute()` method is asynchronous, so it must be followed with `.await`, and as it can return an error it also has a `?`. The final line, `Ok(())` returns the empty result expected on success.
 
+## Naming Transactions
+
+Goose provides two methods for naming transactions, each with different behaviors:
+
+### `set_name()`
+Sets a custom name for the transaction only. This is used for organizing metrics and identifying transactions in reports. Individual requests within the transaction will still maintain their descriptive names (based on path or explicitly set).
+
+```rust,ignore
+let transaction = transaction!(loadtest_index)
+    .set_name("Homepage Load");
+```
+
+**Use when:** You want to give a meaningful name to a transaction for metrics reporting while preserving detailed request-level information.
+
+### `set_name_for_transaction_and_requests()` 
+Sets a custom name that is inherited by both the transaction and all requests within it. All requests made within this transaction will be prefixed with this name in the metrics.
+
+```rust,ignore
+let transaction = transaction!(checkout_flow)
+    .set_name_for_transaction_and_requests("Checkout");
+```
+
+**Use when:** You want all requests within a transaction to be grouped under the same name prefix, typically for complex multi-step flows where individual request paths are less important than the overall flow.
+
+### When to Use Each Approach
+
+- **Use `set_name()`** when:
+  - You want clear transaction-level organization in metrics
+  - Individual request details (paths, methods) are important for debugging
+  - You're testing diverse endpoints within a single transaction
+  - You need to identify specific failing requests within a transaction
+
+- **Use `set_name_for_transaction_and_requests()`** when:
+  - You have a multi-step flow that should be treated as a unit
+  - Individual request paths are less meaningful than the overall flow
+  - You want simplified metrics that group all related requests together
+  - You're testing a cohesive user journey (e.g., "Login", "Checkout", "Registration")
+
 And that's it, you've created your first load test! Read on to see how to run it and what it does.
