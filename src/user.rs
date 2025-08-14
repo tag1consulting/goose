@@ -1,7 +1,7 @@
 use rand::Rng;
 use std::time::{self, Duration};
 
-use crate::goose::{GooseUser, GooseUserCommand, Scenario, TransactionFunction};
+use crate::goose::{GooseUser, GooseUserCommand, Scenario, TransactionFunction, TransactionName};
 use crate::logger::GooseLog;
 use crate::metrics::{GooseMetric, ScenarioMetric, TransactionMetric};
 
@@ -25,7 +25,8 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user {thread_number}]: launching on_start {thread_transaction_name} transaction from {}",
+                "[user {thread_number}]: launching on_start {} transaction from {}",
+                thread_transaction_name.name_for_transaction(),
                 thread_scenario.name
             );
             // Invoke the transaction function.
@@ -53,7 +54,9 @@ pub(crate) async fn user_main(
                 // Determine which transaction we're going to run next.
                 let function = &thread_scenario.transactions[*thread_transaction_index].function;
                 debug!(
-                    "[user {thread_number}]: launching {thread_transaction_name} transaction from {}",
+                    "[user {}]: launching {} transaction from {}",
+                    thread_number,
+                    thread_transaction_name.name_for_transaction(),
                     thread_scenario.name
                 );
                 // Invoke the transaction function.
@@ -153,7 +156,8 @@ pub(crate) async fn user_main(
             // Determine which transaction we're going to run next.
             let function = &thread_scenario.transactions[*thread_transaction_index].function;
             debug!(
-                "[user {thread_number}]: launching on_stop {thread_transaction_name} transaction from {}",
+                "[user {thread_number}]: launching on_stop {} transaction from {}",
+                thread_transaction_name.name_for_transaction(),
                 thread_scenario.name
             );
             // Invoke the transaction function.
@@ -226,24 +230,20 @@ async fn invoke_transaction_function(
     function: &TransactionFunction,
     thread_user: &mut GooseUser,
     thread_transaction_index: usize,
-    thread_transaction_name: &str,
+    thread_transaction_name: &TransactionName,
 ) -> Result<(), flume::SendError<Option<GooseLog>>> {
     let started = time::Instant::now();
     let mut raw_transaction = TransactionMetric::new(
         thread_user.started.elapsed().as_millis(),
         thread_user.scenarios_index,
         thread_transaction_index,
-        thread_transaction_name.to_string(),
+        thread_transaction_name.name_for_transaction().to_string(),
         thread_user.weighted_users_index,
     );
     // Store details about the currently running transaction for logging purposes.
-    if !thread_transaction_name.is_empty() {
-        thread_user
-            .transaction_name
-            .replace(thread_transaction_name.to_string());
-    } else {
-        thread_user.transaction_name.take();
-    }
+    thread_user
+        .transaction_name
+        .replace(thread_transaction_name.clone());
     // As the index is optional, `""` is none, whereas `"0"` is the first index.
     thread_user.transaction_index = Some(thread_transaction_index.to_string());
 

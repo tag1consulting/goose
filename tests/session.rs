@@ -399,10 +399,13 @@ fn get_scenarios(test_type: &TestType) -> Scenario {
                 .register_transaction(
                     transaction!(set_session_data)
                         .set_on_start()
-                        .set_name("create session"),
+                        .set_name_for_transaction_and_requests("create session"),
                 )
                 // Validate the session repeateldy.
-                .register_transaction(transaction!(validate_session_data).set_name("read session"))
+                .register_transaction(
+                    transaction!(validate_session_data)
+                        .set_name_for_transaction_and_requests("read session"),
+                )
         }
         #[cfg(feature = "cookies")]
         TestType::Cookie => {
@@ -411,10 +414,13 @@ fn get_scenarios(test_type: &TestType) -> Scenario {
                 .register_transaction(
                     transaction!(set_cookie)
                         .set_on_start()
-                        .set_name("create cookie"),
+                        .set_name_for_transaction_and_requests("create cookie"),
                 )
                 // Validate the cookie repeateldy.
-                .register_transaction(transaction!(validate_cookie).set_name("read cookie"))
+                .register_transaction(
+                    transaction!(validate_cookie)
+                        .set_name_for_transaction_and_requests("read cookie"),
+                )
         }
     }
 }
