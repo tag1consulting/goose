@@ -52,7 +52,7 @@ async fn get_users_transaction(user: &mut GooseUser) -> TransactionResult {
         "query": "query GetUsers { users { id name email createdAt } }"
     });
     
-    let _response = user.post_graphql_named(&query, "get all users").await?;
+    let _response = user.post_graphql_named("/graphql", &query, "get all users").await?;
     Ok(())
 }
 
@@ -68,7 +68,7 @@ async fn get_user_by_id_transaction(user: &mut GooseUser) -> TransactionResult {
         }
     });
     
-    let _response = user.post_graphql_named(&query, "get user by id").await?;
+    let _response = user.post_graphql_named("/graphql", &query, "get user by id").await?;
     Ok(())
 }
 
@@ -90,7 +90,7 @@ async fn create_user_transaction(user: &mut GooseUser) -> TransactionResult {
         }
     });
     
-    let _response = user.post_graphql_named(&mutation, "create user").await?;
+    let _response = user.post_graphql_named("/graphql", &mutation, "create user").await?;
     Ok(())
 }
 
@@ -113,7 +113,7 @@ async fn update_user_transaction(user: &mut GooseUser) -> TransactionResult {
         }
     });
     
-    let _response = user.post_graphql_named(&mutation, "update user").await?;
+    let _response = user.post_graphql_named("/graphql", &mutation, "update user").await?;
     Ok(())
 }
 ```
@@ -147,7 +147,7 @@ async fn validated_graphql_transaction(user: &mut GooseUser) -> TransactionResul
         "variables": { "id": "invalid-id" }
     });
     
-    let mut response = user.post_graphql_named(&query, "get user with validation").await?;
+    let mut response = user.post_graphql_named("/graphql", &query, "get user with validation").await?;
     
     if let Ok(response) = &response.response {
         match response.json::<serde_json::Value>().await {
