@@ -350,5 +350,52 @@ The Markdown report follows the structure of the [HTML report](#html-report). Ho
 
 The JSON report is a dump of the internal metrics collection. It is a JSON serialization of the `ReportData` structure. Mainly having a field named `raw_metrics`, carrying the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html).
 
+### PDF report
+
+The PDF report provides the same content and visualizations as the HTML report, but in a portable PDF format optimized for printing and mobile viewing. PDF reports are generated using headless Chrome to convert the HTML report to PDF format.
+
+#### Generating PDF reports
+
+To generate a PDF report, use the `.pdf` file extension with the `--report-file` option:
+
+```bash
+# Generate only a PDF report
+goose --report-file report.pdf
+
+# Generate both HTML and PDF reports
+goose --report-file report.html --report-file report.pdf
+
+# Generate PDF report with custom scale factor
+goose --report-file report.pdf --pdf-scale 1.2
+```
+
+#### Configuration options
+
+- `--pdf-scale <FACTOR>`: Scale factor for PDF content (0.1-2.0, default: 0.8). Higher values create larger text and elements.
+
+#### System requirements
+
+PDF report generation is handled automatically by the `headless_chrome` crate, which manages Chrome/Chromium installation for you. The PDF feature is optional and only compiled when building with the `pdf-reports` feature flag:
+
+```bash
+# Build Goose with PDF support
+cargo build --features pdf-reports
+
+# Run load test with PDF generation
+./your_loadtest --report-file report.pdf
+```
+
+The first time you generate a PDF report, the `headless_chrome` crate will automatically download and configure the necessary Chrome binary if it's not already available. This ensures a seamless experience without manual installation steps.
+
+#### PDF optimizations
+
+PDF reports include several optimizations for better print output:
+- Print-specific CSS styling
+- Optimized page layout preventing content breaks
+- Automatically calculated page dimensions based on content
+- Enhanced typography for better readability
+
+The PDF report maintains all the interactive chart functionality when viewed digitally, while providing a consistent format for sharing and mobile viewing.
+
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).
