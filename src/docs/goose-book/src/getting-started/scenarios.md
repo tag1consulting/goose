@@ -67,7 +67,7 @@ Or, to run only the "Anonymous Spanish user" and "Admin user" Scenarios, you cou
 
 ```bash,ignore
 % cargo run --release --example umami -- --hatch-rate 10 --scenarios "spanish,admin"
-   Compiling goose v0.17.2 (/Users/jandrews/devel/goose)
+   Compiling goose v0.18.1 (/Users/jandrews/devel/goose)
     Finished release [optimized] target(s) in 11.79s
      Running `target/release/examples/umami --hatch-rate 10 --scenarios spanish,admin`
 05:53:45 [INFO] Output verbosity level: INFO
