@@ -118,6 +118,7 @@ async fn test_functional_load_test_with_cookies_enabled() {
                 .timeout(Duration::from_secs(5))
                 .user_agent("test-functional-cookies"),
         )
+        .expect("Failed to set client builder")
         .register_scenario(
             scenario!("TestScenario")
                 .set_host("http://httpbin.org")
