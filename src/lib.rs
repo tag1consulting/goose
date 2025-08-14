@@ -693,7 +693,7 @@ impl GooseAttack {
     ///         .user_agent("custom-agent");
     ///
     ///     GooseAttack::initialize()?
-    ///         .set_client_builder_with_cookies(custom_client);
+    ///         .set_client_builder_with_cookies(custom_client)?;
     ///
     ///     Ok(())
     /// }
@@ -701,10 +701,10 @@ impl GooseAttack {
     pub fn set_client_builder_with_cookies(
         self,
         _client_builder: crate::client::GooseClientBuilder<crate::client::CookiesEnabled>,
-    ) -> Self {
+    ) -> Result<Self, GooseError> {
         // For now, this is a placeholder that accepts the builder but doesn't use it
         // In a future implementation, this would store the builder for use during client creation
-        self
+        Ok(self)
     }
 
     /// Set a custom client builder for cookie-disabled clients.

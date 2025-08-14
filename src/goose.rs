@@ -947,7 +947,11 @@ impl GooseUser {
 
         let client = match reqwest_client {
             Some(c) => c,
-            None => create_reqwest_client(configuration)?,
+            // Use the new unified client creation function for consistency
+            None => {
+                let config = crate::client::GooseClientConfig::from(configuration);
+                crate::client::create_reqwest_client_with_cookies(&config)?
+            }
         };
 
         Ok(GooseUser {
