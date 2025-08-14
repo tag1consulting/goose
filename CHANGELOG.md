@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.19.0-dev
+
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
  - [#630](https://github.com/tag1consulting/goose/pull/630) enhanced coordinated omission metrics with severity classification, detailed tracking, and comprehensive documentation
