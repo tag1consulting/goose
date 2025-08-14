@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html lang="en" class="sidebar-visible no-js light">
+<html lang="en" class="light sidebar-visible" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
@@ -7,10 +7,10 @@
 
 
         <!-- Custom HTML head -->
-        
+
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff" />
+        <meta name="theme-color" content="#ffffff">
 
         <link rel="icon" href="../favicon.svg">
         <link rel="shortcut icon" href="../favicon.png">
@@ -24,26 +24,41 @@
         <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="../highlight.css">
-        <link rel="stylesheet" href="../tomorrow-night.css">
-        <link rel="stylesheet" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
     </head>
     <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
     <div id="body-container">
-        <!-- Provide site root to javascript -->
-        <script>
-            var path_to_root = "../";
-            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
-        </script>
-
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
-                var theme = localStorage.getItem('mdbook-theme');
-                var sidebar = localStorage.getItem('mdbook-sidebar');
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
 
                 if (theme.startsWith('"') && theme.endsWith('"')) {
                     localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
@@ -57,79 +72,68 @@
 
         <!-- Set the theme before any content is loaded, prevents flash -->
         <script>
-            var theme;
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
-            var html = document.querySelector('html');
-            html.classList.remove('no-js')
+            const html = document.documentElement;
             html.classList.remove('light')
             html.classList.add(theme);
-            html.classList.add('js');
+            html.classList.add("js");
         </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var html = document.querySelector('html');
-            var sidebar = null;
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
             } else {
                 sidebar = 'hidden';
+                sidebar_toggle.checked = false;
             }
-            html.classList.remove('sidebar-visible');
-            html.classList.add("sidebar-" + sidebar);
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
         </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
-            <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../title-page.html">What Is Goose?</a></li><li class="chapter-item expanded affix "><a href="../requirements.html">Requirements</a></li><li class="chapter-item expanded affix "><a href="../glossary.html">Glossary</a></li><li class="chapter-item expanded "><a href="../getting-started/overview.html"><strong aria-hidden="true">1.</strong> Getting Started</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/creating.html"><strong aria-hidden="true">1.1.</strong> Creating A Load test</a></li><li class="chapter-item expanded "><a href="../getting-started/validation.html"><strong aria-hidden="true">1.2.</strong> Validating Requests</a></li><li class="chapter-item expanded "><a href="../getting-started/running.html"><strong aria-hidden="true">1.3.</strong> Running A Load Test</a></li><li class="chapter-item expanded "><a href="../getting-started/runtime-options.html"><strong aria-hidden="true">1.4.</strong> Run-Time Options</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/common.html"><strong aria-hidden="true">1.4.1.</strong> Common Options</a></li><li class="chapter-item expanded "><a href="../getting-started/test-plan.html"><strong aria-hidden="true">1.4.2.</strong> Test Plan</a></li><li class="chapter-item expanded "><a href="../getting-started/throttle.html"><strong aria-hidden="true">1.4.3.</strong> Throttle</a></li><li class="chapter-item expanded "><a href="../getting-started/scenarios.html"><strong aria-hidden="true">1.4.4.</strong> Limiting Scenarios</a></li><li class="chapter-item expanded "><a href="../getting-started/custom.html"><strong aria-hidden="true">1.4.5.</strong> Custom Options</a></li></ol></li><li class="chapter-item expanded "><a href="../getting-started/metrics.html" class="active"><strong aria-hidden="true">1.5.</strong> Metrics</a></li><li class="chapter-item expanded "><a href="../getting-started/tips.html"><strong aria-hidden="true">1.6.</strong> Tips</a></li></ol></li><li class="chapter-item expanded "><a href="../logging/overview.html"><strong aria-hidden="true">2.</strong> Logging</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../logging/requests.html"><strong aria-hidden="true">2.1.</strong> Request Log</a></li><li class="chapter-item expanded "><a href="../logging/transactions.html"><strong aria-hidden="true">2.2.</strong> Transaction Log</a></li><li class="chapter-item expanded "><a href="../logging/scenarios.html"><strong aria-hidden="true">2.3.</strong> Scenario Log</a></li><li class="chapter-item expanded "><a href="../logging/errors.html"><strong aria-hidden="true">2.4.</strong> Error Log</a></li><li class="chapter-item expanded "><a href="../logging/debug.html"><strong aria-hidden="true">2.5.</strong> Debug Log</a></li></ol></li><li class="chapter-item expanded "><a href="../controller/overview.html"><strong aria-hidden="true">3.</strong> Controllers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../controller/telnet.html"><strong aria-hidden="true">3.1.</strong> Telnet Controller</a></li><li class="chapter-item expanded "><a href="../controller/websocket.html"><strong aria-hidden="true">3.2.</strong> WebSocket Controller</a></li></ol></li><li class="chapter-item expanded "><a href="../gaggle/overview.html"><strong aria-hidden="true">4.</strong> Gaggle: Distributed Load Test</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../gaggle/manager.html"><strong aria-hidden="true">4.1.</strong> Manager</a></li><li class="chapter-item expanded "><a href="../gaggle/worker.html"><strong aria-hidden="true">4.2.</strong> Worker</a></li><li class="chapter-item expanded "><a href="../gaggle/config.html"><strong aria-hidden="true">4.3.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../gaggle/technical.html"><strong aria-hidden="true">4.4.</strong> Technical details</a></li></ol></li><li class="chapter-item expanded "><a href="../coordinated-omission/overview.html"><strong aria-hidden="true">5.</strong> Coordinated Omission</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../coordinated-omission/mitigation.html"><strong aria-hidden="true">5.1.</strong> Mitigation</a></li><li class="chapter-item expanded "><a href="../coordinated-omission/metrics.html"><strong aria-hidden="true">5.2.</strong> Metrics</a></li></ol></li><li class="chapter-item expanded "><a href="../config/overview.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../config/defaults.html"><strong aria-hidden="true">6.1.</strong> Defaults</a></li><li class="chapter-item expanded "><a href="../config/scheduler.html"><strong aria-hidden="true">6.2.</strong> Scheduling Scenarios And Transactions</a></li><li class="chapter-item expanded "><a href="../config/rustls.html"><strong aria-hidden="true">6.3.</strong> RustLS</a></li></ol></li><li class="chapter-item expanded "><a href="../example/overview.html"><strong aria-hidden="true">7.</strong> Examples</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../example/simple.html"><strong aria-hidden="true">7.1.</strong> Simple</a></li><li class="chapter-item expanded "><a href="../example/closure.html"><strong aria-hidden="true">7.2.</strong> Closure</a></li><li class="chapter-item expanded "><a href="../example/session.html"><strong aria-hidden="true">7.3.</strong> Session</a></li><li class="chapter-item expanded "><a href="../example/drupal-memcache.html"><strong aria-hidden="true">7.4.</strong> Drupal Memcache</a></li><li class="chapter-item expanded "><a href="../example/umami.html"><strong aria-hidden="true">7.5.</strong> Umami</a></li></ol></li></ol>
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
             </div>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
-
-        <!-- Track and set sidebar scroll position -->
-        <script>
-            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
-            sidebarScrollbox.addEventListener('click', function(e) {
-                if (e.target.tagName === 'A') {
-                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
-                }
-            }, { passive: true });
-            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
-            sessionStorage.removeItem('sidebar-scroll');
-            if (sidebarScrollTop) {
-                // preserve sidebar scroll position when navigating via links within sidebar
-                sidebarScrollbox.scrollTop = sidebarScrollTop;
-            } else {
-                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
-                var activeSection = document.querySelector('#sidebar .active');
-                if (activeSection) {
-                    activeSection.scrollIntoView({ block: 'center' });
-                }
-            }
-        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
-                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar-hover-placeholder"></div>
                 <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
-                        </button>
+                        </label>
                         <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
                     </div>
@@ -146,7 +150,12 @@
 
                 <div id="search-wrapper" class="hidden">
                     <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
                     </form>
                     <div id="searchresults-outer" class="searchresults-outer hidden">
                         <div id="searchresults-header" class="searchresults-header"></div>
@@ -171,7 +180,7 @@
 <p>In this case, the <a href="https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile">Drupal Umami demo</a> was installed in a local container. The following command was used to configure Goose and run the load test. The <code>-u9</code> tells Goose to spin up 9 users. The <code>-r3</code> option tells Goose to hatch 3 users per second. The <code>-t1m</code> option tells Goose to run the load test for 1 minute, or 60 seconds. The <code>--no-reset-metrics</code> flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the <code>--report-file report.html</code> tells Goose to generate an HTML-formatted report named <code>report.html</code> once the load test finishes.</p>
 <h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">ASCII metrics</a></h2>
 <pre><code class="language-bash">% cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.17.1 (~/goose)
+   Compiling goose v0.18.1 (~/goose)
     Finished release [optimized] target(s) in 11.88s
      Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
 05:09:05 [INFO] Output verbosity level: INFO
@@ -188,28 +197,28 @@
 05:09:05 [INFO] Telnet controller listening on: 0.0.0.0:5116
 05:09:05 [INFO] WebSocket controller listening on: 0.0.0.0:5117
 05:09:05 [INFO] entering GooseAttack phase: Increase
-05:09:05 [INFO] launching user 1 from Anonymous Spanish user...
-05:09:05 [INFO] launching user 2 from Anonymous English user...
-05:09:05 [INFO] launching user 3 from Anonymous Spanish user...
-05:09:06 [INFO] launching user 4 from Anonymous English user...
-05:09:06 [INFO] launching user 5 from Anonymous Spanish user...
-05:09:06 [INFO] launching user 6 from Anonymous English user...
-05:09:07 [INFO] launching user 7 from Admin user...
-05:09:07 [INFO] launching user 8 from Anonymous Spanish user...
-05:09:07 [INFO] launching user 9 from Anonymous English user...
+05:09:05 [INFO] [user 1]: launching user from Anonymous Spanish user
+05:09:05 [INFO] [user 2]: launching user from Anonymous English user
+05:09:05 [INFO] [user 3]: launching user from Anonymous Spanish user
+05:09:06 [INFO] [user 4]: launching user from Anonymous English user
+05:09:06 [INFO] [user 5]: launching user from Anonymous Spanish user
+05:09:06 [INFO] [user 6]: launching user from Anonymous English user
+05:09:07 [INFO] [user 7]: launching user from Admin user
+05:09:07 [INFO] [user 8]: launching user from Anonymous Spanish user
+05:09:07 [INFO] [user 9]: launching user from Anonymous English user
 All 9 users hatched.
 
 05:09:08 [INFO] entering GooseAttack phase: Maintain
 05:10:08 [INFO] entering GooseAttack phase: Decrease
-05:10:08 [INFO] exiting user 2 from Anonymous English user...
-05:10:08 [INFO] exiting user 3 from Anonymous Spanish user...
-05:10:08 [INFO] exiting user 6 from Anonymous English user...
-05:10:08 [INFO] exiting user 8 from Anonymous Spanish user...
-05:10:08 [INFO] exiting user 4 from Anonymous English user...
-05:10:08 [INFO] exiting user 7 from Admin user...
-05:10:08 [INFO] exiting user 1 from Anonymous Spanish user...
-05:10:08 [INFO] exiting user 9 from Anonymous English user...
-05:10:08 [INFO] exiting user 5 from Anonymous Spanish user...
+05:10:08 [INFO] [user 2]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 3]: exiting user from Anonymous Spanish user
+05:10:08 [INFO] [user 6]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 8]: exiting user from Anonymous Spanish user
+05:10:08 [INFO] [user 4]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 7]: exiting user from Admin user
+05:10:08 [INFO] [user 1]: exiting user from Anonymous Spanish user
+05:10:08 [INFO] [user 9]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 5]: exiting user from Anonymous Spanish user
 05:10:08 [INFO] wrote html report file to: report.html
 05:10:08 [INFO] entering GooseAttack phase: Shutdown
 05:10:08 [INFO] printing final metrics after 63 seconds...
@@ -449,39 +458,47 @@ All 9 users hatched.
  Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 &lt;- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.17.1
+ goose v0.18.1
  ------------------------------------------------------------------------------
 </code></pre>
-<h2 id="html-metrics"><a class="header" href="#html-metrics">HTML metrics</a></h2>
-<p>In addition to the above metrics displayed on the CLI, we've also told Goose to create an HTML report.</p>
-<h3 id="overview"><a class="header" href="#overview">Overview</a></h3>
+<h2 id="metrics-reports"><a class="header" href="#metrics-reports">Metrics reports</a></h2>
+<p>In addition to the above metrics displayed on the CLI, we've also told Goose to create reports on other formats, like Markdown, JSON, or HTML.</p>
+<p>It is possible to create one or more reports at the same time, using one or more <code>--report-file</code> arguments. The type of report is chosen by the file extension. An unsupported file extension will lead to an error.</p>
+<p>The following subsections describe the reports on more detail.</p>
+<h3 id="html-report"><a class="header" href="#html-report">HTML report</a></h3>
+<h4 id="overview"><a class="header" href="#overview">Overview</a></h4>
 <p>The HTML report starts with a brief overview table, offering the same information found in the <a href="#ascii-metrics">ASCII overview</a> above:
 <img src="metrics-overview.jpg" alt="Metrics overview" /></p>
-<h3 id="requests"><a class="header" href="#requests">Requests</a></h3>
+<p><strong>NOTE:</strong> The HTML report includes some graphs that rely on the <a href="https://echarts.apache.org">eCharts JavaScript library</a>. The HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.</p>
+<h4 id="requests"><a class="header" href="#requests">Requests</a></h4>
 <p>Next the report includes a graph of all requests made during the duration of the load test. By default, the graph includes an aggregated average, as well as per-request details. It's possible to click on the request names at the top of the graph to hide/show specific requests on the graphs. In this case, the graph shows that most requests made by the load test were for static assets.</p>
 <p>Below the graph is a table that shows per-request details, only partially included in this screenshot:
 <img src="metrics-requests.jpg" alt="Request metrics" /></p>
-<h3 id="response-times"><a class="header" href="#response-times">Response times</a></h3>
+<h4 id="response-times"><a class="header" href="#response-times">Response times</a></h4>
 <p>The next graph shows the response times measured for each request made. In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.</p>
 <p>Below the graph is a table that shows per-request details:
 <img src="metrics-response-time.jpg" alt="Response time metrics" /></p>
-<h3 id="status-codes"><a class="header" href="#status-codes">Status codes</a></h3>
+<h4 id="status-codes"><a class="header" href="#status-codes">Status codes</a></h4>
 <p>All status codes returned by the server are displayed in a table, per-request and in aggregate. In our simple test, we received only <code>200 OK</code> responses.
 <img src="metrics-status-codes.jpg" alt="Status code metrics" /></p>
-<h3 id="transactions"><a class="header" href="#transactions">Transactions</a></h3>
+<h4 id="transactions"><a class="header" href="#transactions">Transactions</a></h4>
 <p>The next graph summarizes all Transactions run during the load test. One or more requests are grouped logically inside Transactions. For example, the Transaction named <code>0.0 anon /</code> includes an anonymous (not-logged-in) request for the front page, as well as requests for all static assets found on the front page.</p>
 <p>Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Task to be considered failed. For example, the logic may be written to fail the Transaction of the html request fails, but not if one or more static asset requests fail.</p>
 <p>This graph is also followed by a table showing details on all Transactions, partially shown here:
 <img src="metrics-transactions.jpg" alt="Transaction metrics" /></p>
-<h3 id="scenarios"><a class="header" href="#scenarios">Scenarios</a></h3>
+<h4 id="scenarios"><a class="header" href="#scenarios">Scenarios</a></h4>
 <p>The next graph summarizes all Scenarios run during the load test. One or more Transactions are grouped logically inside Scenarios.</p>
 <p>For example, the Scenario named <code>Anonymous English user</code> includes the above <code>anon /</code> Transaction, the <code>anon /en/basicpage</code>, and all the rest of the Transactions requesting pages in English.</p>
 <p>It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The <code># Users</code> column indicates how many <code>GooseUser</code> threads were assigned to run this Scenario during the load test. The <code># Times Run</code> column indicates how many times in aggregate all <code>GooseUser</code> threads ran completely through the Scenario. From there you can see how long on average it took a <code>GooseUser</code> thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, <code>Iterations</code> is how many times each assigned <code>GooseUser</code> thread ran through the entire Scenario (Iterations times the # of Users will always equal the total # of times run).</p>
 <p>As our example only ran for 60 seconds, and the <code>Admin user</code> Scenario took &gt;30 seconds to run once, the load test only ran completely through this scenario one time, also reflected in the following table:
 <img src="metrics-scenarios.jpg" alt="Scenario metrics" /></p>
-<h3 id="users"><a class="header" href="#users">Users</a></h3>
+<h4 id="users"><a class="header" href="#users">Users</a></h4>
 <p>The final graph shows how many users were running at the various stages of the load test. As configured, Goose quickly ramped up to 9 users, then sustained that level of traffic for a minute before shutting down:
 <img src="metrics-users.jpg" alt="User metrics" /></p>
+<h3 id="markdown-report"><a class="header" href="#markdown-report">Markdown report</a></h3>
+<p>The Markdown report follows the structure of the <a href="#html-report">HTML report</a>. However, it does not include the chart elements.</p>
+<h3 id="json-report"><a class="header" href="#json-report">JSON report</a></h3>
+<p>The JSON report is a dump of the internal metrics collection. It is a JSON serialization of the <code>ReportData</code> structure. Mainly having a field named <code>raw_metrics</code>, carrying the content of <a href="https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html"><code>GooseMetrics</code></a>.</p>
 <h3 id="developer-documentation"><a class="header" href="#developer-documentation">Developer documentation</a></h3>
 <p>Additional details about how metrics are collected, stored, and displayed can be found <a href="https://docs.rs/goose/*/goose/metrics/index.html">in the developer documentation</a>.</p>
 
@@ -493,7 +510,7 @@ All 9 users hatched.
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next" href="../getting-started/tips.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../getting-started/tips.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -507,7 +524,7 @@ All 9 users hatched.
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next" href="../getting-started/tips.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../getting-started/tips.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -531,6 +548,7 @@ All 9 users hatched.
         <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
+
 
 
     </div>

@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html lang="en" class="sidebar-visible no-js light">
+<html lang="en" class="light sidebar-visible" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
@@ -7,10 +7,10 @@
 
 
         <!-- Custom HTML head -->
-        
+
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff" />
+        <meta name="theme-color" content="#ffffff">
 
         <link rel="icon" href="../favicon.svg">
         <link rel="shortcut icon" href="../favicon.png">
@@ -24,26 +24,41 @@
         <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="../highlight.css">
-        <link rel="stylesheet" href="../tomorrow-night.css">
-        <link rel="stylesheet" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
     </head>
     <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
     <div id="body-container">
-        <!-- Provide site root to javascript -->
-        <script>
-            var path_to_root = "../";
-            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
-        </script>
-
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
-                var theme = localStorage.getItem('mdbook-theme');
-                var sidebar = localStorage.getItem('mdbook-sidebar');
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
 
                 if (theme.startsWith('"') && theme.endsWith('"')) {
                     localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
@@ -57,79 +72,68 @@
 
         <!-- Set the theme before any content is loaded, prevents flash -->
         <script>
-            var theme;
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
-            var html = document.querySelector('html');
-            html.classList.remove('no-js')
+            const html = document.documentElement;
             html.classList.remove('light')
             html.classList.add(theme);
-            html.classList.add('js');
+            html.classList.add("js");
         </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var html = document.querySelector('html');
-            var sidebar = null;
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
             } else {
                 sidebar = 'hidden';
+                sidebar_toggle.checked = false;
             }
-            html.classList.remove('sidebar-visible');
-            html.classList.add("sidebar-" + sidebar);
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
         </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
-            <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../title-page.html">What Is Goose?</a></li><li class="chapter-item expanded affix "><a href="../requirements.html">Requirements</a></li><li class="chapter-item expanded affix "><a href="../glossary.html">Glossary</a></li><li class="chapter-item expanded "><a href="../getting-started/overview.html"><strong aria-hidden="true">1.</strong> Getting Started</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/creating.html"><strong aria-hidden="true">1.1.</strong> Creating A Load test</a></li><li class="chapter-item expanded "><a href="../getting-started/validation.html"><strong aria-hidden="true">1.2.</strong> Validating Requests</a></li><li class="chapter-item expanded "><a href="../getting-started/running.html"><strong aria-hidden="true">1.3.</strong> Running A Load Test</a></li><li class="chapter-item expanded "><a href="../getting-started/runtime-options.html"><strong aria-hidden="true">1.4.</strong> Run-Time Options</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/common.html"><strong aria-hidden="true">1.4.1.</strong> Common Options</a></li><li class="chapter-item expanded "><a href="../getting-started/test-plan.html"><strong aria-hidden="true">1.4.2.</strong> Test Plan</a></li><li class="chapter-item expanded "><a href="../getting-started/throttle.html"><strong aria-hidden="true">1.4.3.</strong> Throttle</a></li><li class="chapter-item expanded "><a href="../getting-started/scenarios.html"><strong aria-hidden="true">1.4.4.</strong> Limiting Scenarios</a></li><li class="chapter-item expanded "><a href="../getting-started/custom.html"><strong aria-hidden="true">1.4.5.</strong> Custom Options</a></li></ol></li><li class="chapter-item expanded "><a href="../getting-started/metrics.html"><strong aria-hidden="true">1.5.</strong> Metrics</a></li><li class="chapter-item expanded "><a href="../getting-started/tips.html"><strong aria-hidden="true">1.6.</strong> Tips</a></li></ol></li><li class="chapter-item expanded "><a href="../logging/overview.html"><strong aria-hidden="true">2.</strong> Logging</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../logging/requests.html"><strong aria-hidden="true">2.1.</strong> Request Log</a></li><li class="chapter-item expanded "><a href="../logging/transactions.html"><strong aria-hidden="true">2.2.</strong> Transaction Log</a></li><li class="chapter-item expanded "><a href="../logging/scenarios.html"><strong aria-hidden="true">2.3.</strong> Scenario Log</a></li><li class="chapter-item expanded "><a href="../logging/errors.html"><strong aria-hidden="true">2.4.</strong> Error Log</a></li><li class="chapter-item expanded "><a href="../logging/debug.html"><strong aria-hidden="true">2.5.</strong> Debug Log</a></li></ol></li><li class="chapter-item expanded "><a href="../controller/overview.html"><strong aria-hidden="true">3.</strong> Controllers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../controller/telnet.html"><strong aria-hidden="true">3.1.</strong> Telnet Controller</a></li><li class="chapter-item expanded "><a href="../controller/websocket.html"><strong aria-hidden="true">3.2.</strong> WebSocket Controller</a></li></ol></li><li class="chapter-item expanded "><a href="../gaggle/overview.html"><strong aria-hidden="true">4.</strong> Gaggle: Distributed Load Test</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../gaggle/manager.html"><strong aria-hidden="true">4.1.</strong> Manager</a></li><li class="chapter-item expanded "><a href="../gaggle/worker.html"><strong aria-hidden="true">4.2.</strong> Worker</a></li><li class="chapter-item expanded "><a href="../gaggle/config.html"><strong aria-hidden="true">4.3.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../gaggle/technical.html"><strong aria-hidden="true">4.4.</strong> Technical details</a></li></ol></li><li class="chapter-item expanded "><a href="../coordinated-omission/overview.html"><strong aria-hidden="true">5.</strong> Coordinated Omission</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../coordinated-omission/mitigation.html"><strong aria-hidden="true">5.1.</strong> Mitigation</a></li><li class="chapter-item expanded "><a href="../coordinated-omission/metrics.html"><strong aria-hidden="true">5.2.</strong> Metrics</a></li></ol></li><li class="chapter-item expanded "><a href="../config/overview.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../config/defaults.html"><strong aria-hidden="true">6.1.</strong> Defaults</a></li><li class="chapter-item expanded "><a href="../config/scheduler.html"><strong aria-hidden="true">6.2.</strong> Scheduling Scenarios And Transactions</a></li><li class="chapter-item expanded "><a href="../config/rustls.html"><strong aria-hidden="true">6.3.</strong> RustLS</a></li></ol></li><li class="chapter-item expanded "><a href="../example/overview.html"><strong aria-hidden="true">7.</strong> Examples</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../example/simple.html"><strong aria-hidden="true">7.1.</strong> Simple</a></li><li class="chapter-item expanded "><a href="../example/closure.html"><strong aria-hidden="true">7.2.</strong> Closure</a></li><li class="chapter-item expanded "><a href="../example/session.html"><strong aria-hidden="true">7.3.</strong> Session</a></li><li class="chapter-item expanded "><a href="../example/drupal-memcache.html" class="active"><strong aria-hidden="true">7.4.</strong> Drupal Memcache</a></li><li class="chapter-item expanded "><a href="../example/umami.html"><strong aria-hidden="true">7.5.</strong> Umami</a></li></ol></li></ol>
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
             </div>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
-
-        <!-- Track and set sidebar scroll position -->
-        <script>
-            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
-            sidebarScrollbox.addEventListener('click', function(e) {
-                if (e.target.tagName === 'A') {
-                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
-                }
-            }, { passive: true });
-            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
-            sessionStorage.removeItem('sidebar-scroll');
-            if (sidebarScrollTop) {
-                // preserve sidebar scroll position when navigating via links within sidebar
-                sidebarScrollbox.scrollTop = sidebarScrollTop;
-            } else {
-                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
-                var activeSection = document.querySelector('#sidebar .active');
-                if (activeSection) {
-                    activeSection.scrollIntoView({ block: 'center' });
-                }
-            }
-        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
-                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar-hover-placeholder"></div>
                 <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
-                        </button>
+                        </label>
                         <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
                     </div>
@@ -146,7 +150,12 @@
 
                 <div id="search-wrapper" class="hidden">
                     <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
                     </form>
                     <div id="searchresults-outer" class="searchresults-outer hidden">
                         <div id="searchresults-header" class="searchresults-header"></div>
@@ -174,31 +183,31 @@
 <p>Thie testplan is maintained as a simple real-world Goose load test example.</p>
 <h2 id="details"><a class="header" href="#details">Details</a></h2>
 <p>The authenticated <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> is labeled as <code>AuthBrowsingUser</code> and demonstrates logging in one time at the start of the load test:</p>
-<pre><code class="language-rust ignore">            scenario!(&quot;AuthBrowsingUser&quot;)
+<pre><code class="language-rust ignore">            scenario!("AuthBrowsingUser")
                 .set_weight(1)?
                 .register_transaction(
                     transaction!(drupal_memcache_login)
                         .set_on_start()
-                        .set_name(&quot;(Auth) login&quot;),
+                        .set_name("(Auth) login"),
                 )</code></pre>
 <p>Each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> thread logs in as a random user (depending on a properly configured test environment):</p>
-<pre><code class="language-rust ignore">                    let uid: usize = rand::thread_rng().gen_range(3..5_002);
-                    let username = format!(&quot;user{}&quot;, uid);
+<pre><code class="language-rust ignore">                    let uid: usize = rand::rng().random_range(3..5_002);
+                    let username = format!("user{uid}");
                     let params = [
-                        (&quot;name&quot;, username.as_str()),
-                        (&quot;pass&quot;, &quot;12345&quot;),
-                        (&quot;form_build_id&quot;, &amp;form_build_id[1]),
-                        (&quot;form_id&quot;, &quot;user_login&quot;),
-                        (&quot;op&quot;, &quot;Log+in&quot;),
+                        ("name", username.as_str()),
+                        ("pass", "12345"),
+                        ("form_build_id", &amp;form_build_id[1]),
+                        ("form_id", "user_login"),
+                        ("op", "Log+in"),
                     ];
-                    let _goose = user.post_form(&quot;/user&quot;, &amp;params).await?;
+                    let _goose = user.post_form("/user", &amp;params).await?;
                     // @TODO: verify that we actually logged in.
                 }</code></pre>
 <p>The test also includes an example of how to post a comment during a load test:</p>
 <pre><code class="language-rust ignore">                .register_transaction(
                     transaction!(drupal_memcache_post_comment)
                         .set_weight(3)?
-                        .set_name(&quot;(Auth) comment form&quot;),
+                        .set_name("(Auth) comment form"),
                 ),</code></pre>
 <p>Note that much of this functionality can be simplified by using the <a href="https://docs.rs/goose-eggs">Goose Eggs library</a> which includes some <a href="https://docs.rs/goose-eggs/*/goose_eggs/drupal/index.html">Drupal-specific functionality</a>.</p>
 <h2 id="complete-source-code"><a class="header" href="#complete-source-code">Complete Source Code</a></h2>
@@ -214,14 +223,14 @@
 //!
 //! Copyright 2020-2022 Jeremy Andrews
 //!
-//! Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+//! Licensed under the Apache License, Version 2.0 (the "License");
 //! you may not use this file except in compliance with the License.
 //! You may obtain a copy of the License at
 //!
 //! &lt;http://www.apache.org/licenses/LICENSE-2.0&gt;
 //!
 //! Unless required by applicable law or agreed to in writing, software
-//! distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+//! distributed under the License is distributed on an "AS IS" BASIS,
 //! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
@@ -235,51 +244,51 @@ use regex::Regex;
 async fn main() -&gt; Result&lt;(), GooseError&gt; {
     GooseAttack::initialize()?
         .register_scenario(
-            scenario!(&quot;AnonBrowsingUser&quot;)
+            scenario!("AnonBrowsingUser")
                 .set_weight(4)?
                 .register_transaction(
                     transaction!(drupal_memcache_front_page)
                         .set_weight(15)?
-                        .set_name(&quot;(Anon) front page&quot;),
+                        .set_name("(Anon) front page"),
                 )
                 .register_transaction(
                     transaction!(drupal_memcache_node_page)
                         .set_weight(10)?
-                        .set_name(&quot;(Anon) node page&quot;),
+                        .set_name("(Anon) node page"),
                 )
                 .register_transaction(
                     transaction!(drupal_memcache_profile_page)
                         .set_weight(3)?
-                        .set_name(&quot;(Anon) user page&quot;),
+                        .set_name("(Anon) user page"),
                 ),
         )
         .register_scenario(
-            scenario!(&quot;AuthBrowsingUser&quot;)
+            scenario!("AuthBrowsingUser")
                 .set_weight(1)?
                 .register_transaction(
                     transaction!(drupal_memcache_login)
                         .set_on_start()
-                        .set_name(&quot;(Auth) login&quot;),
+                        .set_name("(Auth) login"),
                 )
                 .register_transaction(
                     transaction!(drupal_memcache_front_page)
                         .set_weight(15)?
-                        .set_name(&quot;(Auth) front page&quot;),
+                        .set_name("(Auth) front page"),
                 )
                 .register_transaction(
                     transaction!(drupal_memcache_node_page)
                         .set_weight(10)?
-                        .set_name(&quot;(Auth) node page&quot;),
+                        .set_name("(Auth) node page"),
                 )
                 .register_transaction(
                     transaction!(drupal_memcache_profile_page)
                         .set_weight(3)?
-                        .set_name(&quot;(Auth) user page&quot;),
+                        .set_name("(Auth) user page"),
                 )
                 .register_transaction(
                     transaction!(drupal_memcache_post_comment)
                         .set_weight(3)?
-                        .set_name(&quot;(Auth) comment form&quot;),
+                        .set_name("(Auth) comment form"),
                 ),
         )
         .execute()
@@ -290,7 +299,7 @@ async fn main() -&gt; Result&lt;(), GooseError&gt; {
 
 /// View the front page.
 async fn drupal_memcache_front_page(user: &amp;mut GooseUser) -&gt; TransactionResult {
-    let mut goose = user.get(&quot;/&quot;).await?;
+    let mut goose = user.get("/").await?;
 
     match goose.response {
         Ok(response) =&gt; {
@@ -298,23 +307,23 @@ async fn drupal_memcache_front_page(user: &amp;mut GooseUser) -&gt; TransactionR
             let headers = &amp;response.headers().clone();
             match response.text().await {
                 Ok(t) =&gt; {
-                    let re = Regex::new(r#&quot;src=&quot;(.*?)&quot;&quot;#).unwrap();
+                    let re = Regex::new(r#"src="(.*?)""#).unwrap();
                     // Collect copy of URLs to run them async
                     let mut urls = Vec::new();
                     for url in re.captures_iter(&amp;t) {
-                        if url[1].contains(&quot;/misc&quot;) || url[1].contains(&quot;/themes&quot;) {
+                        if url[1].contains("/misc") || url[1].contains("/themes") {
                             urls.push(url[1].to_string());
                         }
                     }
                     for asset in &amp;urls {
-                        let _ = user.get_named(asset, &quot;static asset&quot;).await;
+                        let _ = user.get_named(asset, "static asset").await;
                     }
                 }
                 Err(e) =&gt; {
                     // This will automatically get written to the error log if enabled, and will
                     // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
-                        &amp;format!(&quot;front_page: failed to parse page: {}&quot;, e),
+                        &amp;format!("front_page: failed to parse page: {e}"),
                         &amp;mut goose.request,
                         Some(headers),
                         None,
@@ -326,7 +335,7 @@ async fn drupal_memcache_front_page(user: &amp;mut GooseUser) -&gt; TransactionR
             // This will automatically get written to the error log if enabled, and will
             // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
-                &amp;format!(&quot;front_page: no response from server: {}&quot;, e),
+                &amp;format!("front_page: no response from server: {e}"),
                 &amp;mut goose.request,
                 None,
                 None,
@@ -339,23 +348,23 @@ async fn drupal_memcache_front_page(user: &amp;mut GooseUser) -&gt; TransactionR
 
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_memcache_node_page(user: &amp;mut GooseUser) -&gt; TransactionResult {
-    let nid = rand::thread_rng().gen_range(1..10_000);
-    let _goose = user.get(format!(&quot;/node/{}&quot;, &amp;nid).as_str()).await?;
+    let nid = rand::rng().random_range(1..10_000);
+    let _goose = user.get(format!("/node/{}", &amp;nid).as_str()).await?;
 
     Ok(())
 }
 
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_memcache_profile_page(user: &amp;mut GooseUser) -&gt; TransactionResult {
-    let uid = rand::thread_rng().gen_range(2..5_001);
-    let _goose = user.get(format!(&quot;/user/{}&quot;, &amp;uid).as_str()).await?;
+    let uid = rand::rng().random_range(2..5_001);
+    let _goose = user.get(format!("/user/{}", &amp;uid).as_str()).await?;
 
     Ok(())
 }
 
 /// Log in.
 async fn drupal_memcache_login(user: &amp;mut GooseUser) -&gt; TransactionResult {
-    let mut goose = user.get(&quot;/user&quot;).await?;
+    let mut goose = user.get("/user").await?;
 
     match goose.response {
         Ok(response) =&gt; {
@@ -363,14 +372,14 @@ async fn drupal_memcache_login(user: &amp;mut GooseUser) -&gt; TransactionResult
             let headers = &amp;response.headers().clone();
             match response.text().await {
                 Ok(html) =&gt; {
-                    let re = Regex::new(r#&quot;name=&quot;form_build_id&quot; value=['&quot;](.*?)['&quot;]&quot;#).unwrap();
+                    let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
                     let form_build_id = match re.captures(&amp;html) {
                         Some(f) =&gt; f,
                         None =&gt; {
                             // This will automatically get written to the error log if enabled, and will
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
-                                &quot;login: no form_build_id on page: /user page&quot;,
+                                "login: no form_build_id on page: /user page",
                                 &amp;mut goose.request,
                                 Some(headers),
                                 Some(&amp;html),
@@ -379,23 +388,23 @@ async fn drupal_memcache_login(user: &amp;mut GooseUser) -&gt; TransactionResult
                     };
 
                     // Log the user in.
-                    let uid: usize = rand::thread_rng().gen_range(3..5_002);
-                    let username = format!(&quot;user{}&quot;, uid);
+                    let uid: usize = rand::rng().random_range(3..5_002);
+                    let username = format!("user{uid}");
                     let params = [
-                        (&quot;name&quot;, username.as_str()),
-                        (&quot;pass&quot;, &quot;12345&quot;),
-                        (&quot;form_build_id&quot;, &amp;form_build_id[1]),
-                        (&quot;form_id&quot;, &quot;user_login&quot;),
-                        (&quot;op&quot;, &quot;Log+in&quot;),
+                        ("name", username.as_str()),
+                        ("pass", "12345"),
+                        ("form_build_id", &amp;form_build_id[1]),
+                        ("form_id", "user_login"),
+                        ("op", "Log+in"),
                     ];
-                    let _goose = user.post_form(&quot;/user&quot;, &amp;params).await?;
+                    let _goose = user.post_form("/user", &amp;params).await?;
                     // @TODO: verify that we actually logged in.
                 }
                 Err(e) =&gt; {
                     // This will automatically get written to the error log if enabled, and will
                     // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
-                        &amp;format!(&quot;login: unexpected error when loading /user page: {}&quot;, e),
+                        &amp;format!("login: unexpected error when loading /user page: {e}"),
                         &amp;mut goose.request,
                         Some(headers),
                         None,
@@ -408,7 +417,7 @@ async fn drupal_memcache_login(user: &amp;mut GooseUser) -&gt; TransactionResult
             // This will automatically get written to the error log if enabled, and will
             // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
-                &amp;format!(&quot;login: no response from server: {}&quot;, e),
+                &amp;format!("login: no response from server: {e}"),
                 &amp;mut goose.request,
                 None,
                 None,
@@ -421,9 +430,9 @@ async fn drupal_memcache_login(user: &amp;mut GooseUser) -&gt; TransactionResult
 
 /// Post a comment.
 async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; TransactionResult {
-    let nid: i32 = rand::thread_rng().gen_range(1..10_000);
-    let node_path = format!(&quot;node/{}&quot;, &amp;nid);
-    let comment_path = format!(&quot;/comment/reply/{}&quot;, &amp;nid);
+    let nid: i32 = rand::rng().random_range(1..10_000);
+    let node_path = format!("node/{}", &amp;nid);
+    let comment_path = format!("/comment/reply/{}", &amp;nid);
 
     let mut goose = user.get(&amp;node_path).await?;
 
@@ -434,14 +443,14 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
             match response.text().await {
                 Ok(html) =&gt; {
                     // Extract the form_build_id from the user login form.
-                    let re = Regex::new(r#&quot;name=&quot;form_build_id&quot; value=['&quot;](.*?)['&quot;]&quot;#).unwrap();
+                    let re = Regex::new(r#"name="form_build_id" value=['"](.*?)['"]"#).unwrap();
                     let form_build_id = match re.captures(&amp;html) {
                         Some(f) =&gt; f,
                         None =&gt; {
                             // This will automatically get written to the error log if enabled, and will
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
-                                &amp;format!(&quot;post_comment: no form_build_id found on {}&quot;, &amp;node_path),
+                                &amp;format!("post_comment: no form_build_id found on {}", &amp;node_path),
                                 &amp;mut goose.request,
                                 Some(headers),
                                 Some(&amp;html),
@@ -449,14 +458,14 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                         }
                     };
 
-                    let re = Regex::new(r#&quot;name=&quot;form_token&quot; value=['&quot;](.*?)['&quot;]&quot;#).unwrap();
+                    let re = Regex::new(r#"name="form_token" value=['"](.*?)['"]"#).unwrap();
                     let form_token = match re.captures(&amp;html) {
                         Some(f) =&gt; f,
                         None =&gt; {
                             // This will automatically get written to the error log if enabled, and will
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
-                                &amp;format!(&quot;post_comment: no form_token found on {}&quot;, &amp;node_path),
+                                &amp;format!("post_comment: no form_token found on {}", &amp;node_path),
                                 &amp;mut goose.request,
                                 Some(headers),
                                 Some(&amp;html),
@@ -464,14 +473,14 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                         }
                     };
 
-                    let re = Regex::new(r#&quot;name=&quot;form_id&quot; value=['&quot;](.*?)['&quot;]&quot;#).unwrap();
+                    let re = Regex::new(r#"name="form_id" value=['"](.*?)['"]"#).unwrap();
                     let form_id = match re.captures(&amp;html) {
                         Some(f) =&gt; f,
                         None =&gt; {
                             // This will automatically get written to the error log if enabled, and will
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
-                                &amp;format!(&quot;post_comment: no form_id found on {}&quot;, &amp;node_path),
+                                &amp;format!("post_comment: no form_id found on {}", &amp;node_path),
                                 &amp;mut goose.request,
                                 Some(headers),
                                 Some(&amp;html),
@@ -483,7 +492,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                     /*
                     user.log_debug(
                         &amp;format!(
-                            &quot;form_id: {}, form_build_id: {}, form_token: {}&quot;,
+                            "form_id: {}, form_build_id: {}, form_token: {}",
                             &amp;form_id[1], &amp;form_build_id[1], &amp;form_token[1]
                         ),
                         Some(&amp;goose.request),
@@ -492,15 +501,15 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                     );
                     */
 
-                    let comment_body = &quot;this is a test comment body&quot;;
+                    let comment_body = "this is a test comment body";
                     let params = [
-                        (&quot;subject&quot;, &quot;this is a test comment subject&quot;),
-                        (&quot;comment_body[und][0][value]&quot;, comment_body),
-                        (&quot;comment_body[und][0][format]&quot;, &quot;filtered_html&quot;),
-                        (&quot;form_build_id&quot;, &amp;form_build_id[1]),
-                        (&quot;form_token&quot;, &amp;form_token[1]),
-                        (&quot;form_id&quot;, &amp;form_id[1]),
-                        (&quot;op&quot;, &quot;Save&quot;),
+                        ("subject", "this is a test comment subject"),
+                        ("comment_body[und][0][value]", comment_body),
+                        ("comment_body[und][0][format]", "filtered_html"),
+                        ("form_build_id", &amp;form_build_id[1]),
+                        ("form_token", &amp;form_token[1]),
+                        ("form_id", &amp;form_id[1]),
+                        ("op", "Save"),
                     ];
 
                     // Post the comment.
@@ -517,7 +526,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                                         // This will automatically get written to the error log if enabled, and will
                                         // be displayed to stdout if `-v` is enabled when running the load test.
                                         return user.set_failure(
-                                            &amp;format!(&quot;post_comment: no comment showed up after posting to {}&quot;, &amp;comment_path),
+                                            &amp;format!("post_comment: no comment showed up after posting to {}", &amp;comment_path),
                                             &amp;mut goose.request,
                                             Some(headers),
                                             Some(&amp;html),
@@ -529,7 +538,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                                     // be displayed to stdout if `-v` is enabled when running the load test.
                                     return user.set_failure(
                                         &amp;format!(
-                                            &quot;post_comment: unexpected error when posting to {}: {}&quot;,
+                                            "post_comment: unexpected error when posting to {}: {}",
                                             &amp;comment_path, e
                                         ),
                                         &amp;mut goose.request,
@@ -544,7 +553,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
                                 &amp;format!(
-                                    &quot;post_comment: no response when posting to {}: {}&quot;,
+                                    "post_comment: no response when posting to {}: {}",
                                     &amp;comment_path, e
                                 ),
                                 &amp;mut goose.request,
@@ -558,7 +567,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                     // This will automatically get written to the error log if enabled, and will
                     // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
-                        &amp;format!(&quot;post_comment: no text when loading {}: {}&quot;, &amp;node_path, e),
+                        &amp;format!("post_comment: no text when loading {}: {}", &amp;node_path, e),
                         &amp;mut goose.request,
                         None,
                         None,
@@ -571,7 +580,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
             // be displayed to stdout if `-v` is enabled when running the load test.
             return user.set_failure(
                 &amp;format!(
-                    &quot;post_comment: no response when loading {}: {}&quot;,
+                    "post_comment: no response when loading {}: {}",
                     &amp;node_path, e
                 ),
                 &amp;mut goose.request,
@@ -592,7 +601,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next" href="../example/umami.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../example/umami.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -606,7 +615,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next" href="../example/umami.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../example/umami.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -630,6 +639,7 @@ async fn drupal_memcache_post_comment(user: &amp;mut GooseUser) -&gt; Transactio
         <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
+
 
 
     </div>

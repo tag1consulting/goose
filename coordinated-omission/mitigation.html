@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html lang="en" class="sidebar-visible no-js light">
+<html lang="en" class="light sidebar-visible" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
@@ -7,10 +7,10 @@
 
 
         <!-- Custom HTML head -->
-        
+
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff" />
+        <meta name="theme-color" content="#ffffff">
 
         <link rel="icon" href="../favicon.svg">
         <link rel="shortcut icon" href="../favicon.png">
@@ -24,26 +24,41 @@
         <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="../highlight.css">
-        <link rel="stylesheet" href="../tomorrow-night.css">
-        <link rel="stylesheet" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
     </head>
     <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
     <div id="body-container">
-        <!-- Provide site root to javascript -->
-        <script>
-            var path_to_root = "../";
-            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
-        </script>
-
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
-                var theme = localStorage.getItem('mdbook-theme');
-                var sidebar = localStorage.getItem('mdbook-sidebar');
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
 
                 if (theme.startsWith('"') && theme.endsWith('"')) {
                     localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
@@ -57,79 +72,68 @@
 
         <!-- Set the theme before any content is loaded, prevents flash -->
         <script>
-            var theme;
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
-            var html = document.querySelector('html');
-            html.classList.remove('no-js')
+            const html = document.documentElement;
             html.classList.remove('light')
             html.classList.add(theme);
-            html.classList.add('js');
+            html.classList.add("js");
         </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var html = document.querySelector('html');
-            var sidebar = null;
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
             } else {
                 sidebar = 'hidden';
+                sidebar_toggle.checked = false;
             }
-            html.classList.remove('sidebar-visible');
-            html.classList.add("sidebar-" + sidebar);
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
         </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
-            <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../title-page.html">What Is Goose?</a></li><li class="chapter-item expanded affix "><a href="../requirements.html">Requirements</a></li><li class="chapter-item expanded affix "><a href="../glossary.html">Glossary</a></li><li class="chapter-item expanded "><a href="../getting-started/overview.html"><strong aria-hidden="true">1.</strong> Getting Started</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/creating.html"><strong aria-hidden="true">1.1.</strong> Creating A Load test</a></li><li class="chapter-item expanded "><a href="../getting-started/validation.html"><strong aria-hidden="true">1.2.</strong> Validating Requests</a></li><li class="chapter-item expanded "><a href="../getting-started/running.html"><strong aria-hidden="true">1.3.</strong> Running A Load Test</a></li><li class="chapter-item expanded "><a href="../getting-started/runtime-options.html"><strong aria-hidden="true">1.4.</strong> Run-Time Options</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/common.html"><strong aria-hidden="true">1.4.1.</strong> Common Options</a></li><li class="chapter-item expanded "><a href="../getting-started/test-plan.html"><strong aria-hidden="true">1.4.2.</strong> Test Plan</a></li><li class="chapter-item expanded "><a href="../getting-started/throttle.html"><strong aria-hidden="true">1.4.3.</strong> Throttle</a></li><li class="chapter-item expanded "><a href="../getting-started/scenarios.html"><strong aria-hidden="true">1.4.4.</strong> Limiting Scenarios</a></li><li class="chapter-item expanded "><a href="../getting-started/custom.html"><strong aria-hidden="true">1.4.5.</strong> Custom Options</a></li></ol></li><li class="chapter-item expanded "><a href="../getting-started/metrics.html"><strong aria-hidden="true">1.5.</strong> Metrics</a></li><li class="chapter-item expanded "><a href="../getting-started/tips.html"><strong aria-hidden="true">1.6.</strong> Tips</a></li></ol></li><li class="chapter-item expanded "><a href="../logging/overview.html"><strong aria-hidden="true">2.</strong> Logging</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../logging/requests.html"><strong aria-hidden="true">2.1.</strong> Request Log</a></li><li class="chapter-item expanded "><a href="../logging/transactions.html"><strong aria-hidden="true">2.2.</strong> Transaction Log</a></li><li class="chapter-item expanded "><a href="../logging/scenarios.html"><strong aria-hidden="true">2.3.</strong> Scenario Log</a></li><li class="chapter-item expanded "><a href="../logging/errors.html"><strong aria-hidden="true">2.4.</strong> Error Log</a></li><li class="chapter-item expanded "><a href="../logging/debug.html"><strong aria-hidden="true">2.5.</strong> Debug Log</a></li></ol></li><li class="chapter-item expanded "><a href="../controller/overview.html"><strong aria-hidden="true">3.</strong> Controllers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../controller/telnet.html"><strong aria-hidden="true">3.1.</strong> Telnet Controller</a></li><li class="chapter-item expanded "><a href="../controller/websocket.html"><strong aria-hidden="true">3.2.</strong> WebSocket Controller</a></li></ol></li><li class="chapter-item expanded "><a href="../gaggle/overview.html"><strong aria-hidden="true">4.</strong> Gaggle: Distributed Load Test</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../gaggle/manager.html"><strong aria-hidden="true">4.1.</strong> Manager</a></li><li class="chapter-item expanded "><a href="../gaggle/worker.html"><strong aria-hidden="true">4.2.</strong> Worker</a></li><li class="chapter-item expanded "><a href="../gaggle/config.html"><strong aria-hidden="true">4.3.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../gaggle/technical.html"><strong aria-hidden="true">4.4.</strong> Technical details</a></li></ol></li><li class="chapter-item expanded "><a href="../coordinated-omission/overview.html"><strong aria-hidden="true">5.</strong> Coordinated Omission</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../coordinated-omission/mitigation.html" class="active"><strong aria-hidden="true">5.1.</strong> Mitigation</a></li><li class="chapter-item expanded "><a href="../coordinated-omission/metrics.html"><strong aria-hidden="true">5.2.</strong> Metrics</a></li></ol></li><li class="chapter-item expanded "><a href="../config/overview.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../config/defaults.html"><strong aria-hidden="true">6.1.</strong> Defaults</a></li><li class="chapter-item expanded "><a href="../config/scheduler.html"><strong aria-hidden="true">6.2.</strong> Scheduling Scenarios And Transactions</a></li><li class="chapter-item expanded "><a href="../config/rustls.html"><strong aria-hidden="true">6.3.</strong> RustLS</a></li></ol></li><li class="chapter-item expanded "><a href="../example/overview.html"><strong aria-hidden="true">7.</strong> Examples</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../example/simple.html"><strong aria-hidden="true">7.1.</strong> Simple</a></li><li class="chapter-item expanded "><a href="../example/closure.html"><strong aria-hidden="true">7.2.</strong> Closure</a></li><li class="chapter-item expanded "><a href="../example/session.html"><strong aria-hidden="true">7.3.</strong> Session</a></li><li class="chapter-item expanded "><a href="../example/drupal-memcache.html"><strong aria-hidden="true">7.4.</strong> Drupal Memcache</a></li><li class="chapter-item expanded "><a href="../example/umami.html"><strong aria-hidden="true">7.5.</strong> Umami</a></li></ol></li></ol>
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
             </div>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
-
-        <!-- Track and set sidebar scroll position -->
-        <script>
-            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
-            sidebarScrollbox.addEventListener('click', function(e) {
-                if (e.target.tagName === 'A') {
-                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
-                }
-            }, { passive: true });
-            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
-            sessionStorage.removeItem('sidebar-scroll');
-            if (sidebarScrollTop) {
-                // preserve sidebar scroll position when navigating via links within sidebar
-                sidebarScrollbox.scrollTop = sidebarScrollTop;
-            } else {
-                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
-                var activeSection = document.querySelector('#sidebar .active');
-                if (activeSection) {
-                    activeSection.scrollIntoView({ block: 'center' });
-                }
-            }
-        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
-                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar-hover-placeholder"></div>
                 <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
-                        </button>
+                        </label>
                         <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
                     </div>
@@ -146,7 +150,12 @@
 
                 <div id="search-wrapper" class="hidden">
                     <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
                     </form>
                     <div id="searchresults-outer" class="searchresults-outer hidden">
                         <div id="searchresults-header" class="searchresults-header"></div>
@@ -166,21 +175,231 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="mitigation"><a class="header" href="#mitigation">Mitigation</a></h1>
-<p>Goose can optionally attempt to mitigate <a href="overview.html#definition">Coordinated Omission</a> by back-filling the metrics with the statistically expected requests. To do this, it tracks the normal &quot;cadence&quot; of each <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a>, timing how long it takes to loop through all <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> in the assigned <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a>. By default, Goose will trigger Coordinated Omission Mitigation if the time to loop through a <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> takes more than twice as long as the average time of all previous loops. In this case, on the next loop through the <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> when tracking the actual metrics for each subsequent request in all <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> it will also add in statistically generated &quot;requests&quot; with a <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time"><code>response_time</code></a> starting at the unexpectedly long request time, then again with that <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time"><code>response_time</code></a> minus the normal &quot;cadence&quot;, continuing to generate a metric then subtract the normal &quot;cadence&quot; until arriving at the expected <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time"><code>response_time</code></a>. In this way, Goose is able to estimate the actual effect of a slowdown.</p>
+                        <h1 id="mitigation-strategies"><a class="header" href="#mitigation-strategies">Mitigation Strategies</a></h1>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>Goose provides comprehensive protection against coordinated omission through its metrics collection architecture. By recording all request timings and maintaining detailed percentile distributions, Goose ensures that slow responses are properly represented in your load test results.</p>
+<h2 id="built-in-protection"><a class="header" href="#built-in-protection">Built-in Protection</a></h2>
+<h3 id="complete-timing-capture"><a class="header" href="#complete-timing-capture">Complete Timing Capture</a></h3>
+<p>Goose's fundamental design prevents coordinated omission by:</p>
+<ol>
+<li><strong>Recording Every Request</strong>: All request start and end times are captured, regardless of duration</li>
+<li><strong>No Sampling</strong>: Unlike some tools, Goose doesn't sample metrics - every data point is recorded</li>
+<li><strong>Async Architecture</strong>: Non-blocking request handling ensures slow responses don't prevent new requests</li>
+</ol>
+<pre><pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Example: How Goose captures all timings
+async fn user_function(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    // Start time is automatically recorded
+    let _goose = user.get("/slow-endpoint").await?;
+    // End time is recorded regardless of response duration
+    // Even if this takes 30 seconds, it's properly tracked
+    Ok(())
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="accurate-percentile-calculation"><a class="header" href="#accurate-percentile-calculation">Accurate Percentile Calculation</a></h3>
+<p>Goose uses the <a href="https://docs.rs/hdrhistogram/">hdrhistogram</a> crate to maintain high-resolution timing distributions:</p>
+<ul>
+<li><strong>Microsecond precision</strong>: Timings are recorded with microsecond accuracy</li>
+<li><strong>Dynamic range</strong>: Handles response times from microseconds to minutes</li>
+<li><strong>Memory efficient</strong>: Compressed histogram format maintains accuracy without excessive memory use</li>
+</ul>
+<h2 id="configuration-options"><a class="header" href="#configuration-options">Configuration Options</a></h2>
+<h3 id="request-timeout-settings"><a class="header" href="#request-timeout-settings">Request Timeout Settings</a></h3>
+<p>Configure appropriate timeouts to ensure all responses are captured:</p>
+<pre><code class="language-bash"># Set a 60-second request timeout (default is 60)
+cargo run --release -- --request-timeout 60
+
+# For extremely slow endpoints, increase further
+cargo run --release -- --request-timeout 300
+</code></pre>
+<h3 id="coordinated-omission-mitigation-mode"><a class="header" href="#coordinated-omission-mitigation-mode">Coordinated Omission Mitigation Mode</a></h3>
+<p>Enable explicit coordinated omission mitigation for traditional closed-loop testing:</p>
+<pre><code class="language-bash"># Enable CO mitigation mode
+cargo run --release -- --co-mitigation enabled
+
+# With custom parameters
+cargo run --release -- --co-mitigation enabled \
+    --co-mitigation-expected-interval 100 \
+    --co-mitigation-accuracy 2
+</code></pre>
+<p>When enabled, this mode:</p>
+<ul>
+<li>Tracks expected vs actual request intervals</li>
+<li>Adjusts metrics to account for delayed requests</li>
+<li>Provides warnings when significant delays are detected</li>
+</ul>
+<h2 id="understanding-your-results"><a class="header" href="#understanding-your-results">Understanding Your Results</a></h2>
+<p>Goose provides two sets of metrics:</p>
+<ul>
+<li><strong>Raw Metrics</strong>: Actual measurements from completed requests</li>
+<li><strong>CO-Adjusted Metrics</strong>: Include synthetic data points for requests that should have been made</li>
+</ul>
+<p>Significant differences between these metrics indicate CO events occurred during your test.</p>
+<h2 id="choosing-your-mitigation-strategy"><a class="header" href="#choosing-your-mitigation-strategy">Choosing Your Mitigation Strategy</a></h2>
+<p>Goose offers three CO mitigation modes via the <code>--co-mitigation</code> flag:</p>
+<div class="table-wrapper"><table><thead><tr><th>Mode</th><th>Use Case</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>disabled</code></td><td>Custom analysis, external CO handling</td><td>No adjustment, raw data only</td></tr>
+<tr><td><code>average</code> (default)</td><td>General performance testing</td><td>Uses average response time as baseline</td></tr>
+<tr><td><code>minimum</code></td><td>Strict SLA compliance, microservices</td><td>Uses minimum response time as baseline</td></tr>
+</tbody></table>
+</div>
+<h3 id="when-to-use-each-mode"><a class="header" href="#when-to-use-each-mode">When to Use Each Mode</a></h3>
+<p><strong>Use <code>minimum</code> when:</strong></p>
+<ul>
+<li>Testing microservices with strict timing requirements</li>
+<li>Validating SLA compliance</li>
+<li>You need to detect ANY performance degradation</li>
+<li>Testing in controlled environments</li>
+</ul>
+<p><strong>Use <code>average</code> when:</strong></p>
+<ul>
+<li>Simulating realistic user behavior</li>
+<li>Testing public-facing websites</li>
+<li>You want balanced synthetic data generation</li>
+<li>General performance regression testing</li>
+</ul>
+<p><strong>Use <code>disabled</code> when:</strong></p>
+<ul>
+<li>Implementing custom CO mitigation</li>
+<li>Performing specialized statistical analysis</li>
+<li>You need only actual measurements</li>
+<li>Comparing with other tools' raw output</li>
+</ul>
+<h2 id="best-practices"><a class="header" href="#best-practices">Best Practices</a></h2>
+<h3 id="1-use-realistic-user-counts"><a class="header" href="#1-use-realistic-user-counts">1. Use Realistic User Counts</a></h3>
+<p>Avoid overwhelming your system with too few users:</p>
+<pre><code class="language-bash"># Better: More users with think time
+cargo run --release -- --users 1000 --hatch-rate 10
+
+# Worse: Few users hammering the system
+cargo run --release -- --users 10 --hatch-rate 10
+</code></pre>
+<h3 id="2-monitor-response-time-distributions"><a class="header" href="#2-monitor-response-time-distributions">2. Monitor Response Time Distributions</a></h3>
+<p>Always review the full distribution, not just averages:</p>
+<pre><code class="language-text">Response Time Percentiles:
+50%: 45ms      # Median looks good
+95%: 127ms     # 95th percentile reasonable
+99%: 894ms     # 99th shows degradation
+99.9%: 5,234ms # Long tail reveals issues
+</code></pre>
+<h3 id="3-set-appropriate-timeouts"><a class="header" href="#3-set-appropriate-timeouts">3. Set Appropriate Timeouts</a></h3>
+<p>Balance between capturing slow responses and test duration:</p>
+<pre><pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use goose::prelude::*;
+
+// Configure per-request timeouts
+let _goose = user.get("/endpoint")
+    .set_timeout(Duration::from_secs(30))
+    .await?;
+<span class="boring">}</span></code></pre></pre>
+<h3 id="4-use-test-plans-for-controlled-load"><a class="header" href="#4-use-test-plans-for-controlled-load">4. Use Test Plans for Controlled Load</a></h3>
+<p><a href="../getting-started/test-plan.html">Test plans</a> help maintain consistent request rates:</p>
+<pre><code class="language-toml">[testplan]
+# Gradual ramp-up prevents overwhelming the system
+"0s" = "0"
+"30s" = "100"
+"1m" = "100"
+"2m30s" = "200"
+"5m" = "200"
+"6m" = "0"
+</code></pre>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How It Works</a></h2>
+<p>When using <code>average</code> mode (default when CO mitigation is enabled), Goose will trigger Coordinated Omission Mitigation if the time to loop through a <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> takes more than twice as long as the average time of all previous loops. In this case, on the next loop through the <a href="https://docs.rs/goose/*/goose/goose/struct.Scenario.html"><code>Scenario</code></a> when tracking the actual metrics for each subsequent request in all <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> it will also add in statistically generated "requests" with a <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time"><code>response_time</code></a> starting at the unexpectedly long request time, then again with that <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time"><code>response_time</code></a> minus the normal "cadence", continuing to generate a metric then subtract the normal "cadence" until arriving at the expected <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time"><code>response_time</code></a>. In this way, Goose is able to estimate the actual effect of a slowdown.</p>
 <p>When Goose detects an abnormally slow request (one in which the individual request takes longer than the normal <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.user_cadence"><code>user_cadence</code></a>), it will generate an INFO level message (which will be visible on the command line (unless <code>--no-print-metrics</code> is enabled), and written to the log if started with the <code>-g</code> run time flag and <code>--goose-log</code> is configured).</p>
+<h2 id="verification-techniques"><a class="header" href="#verification-techniques">Verification Techniques</a></h2>
+<h3 id="1-compare-with-expected-throughput"><a class="header" href="#1-compare-with-expected-throughput">1. Compare with Expected Throughput</a></h3>
+<p>Calculate theoretical vs actual request rates:</p>
+<pre><code class="language-python"># Expected requests per second
+expected_rps = users * (1000 / avg_think_time_ms)
+
+# Compare with actual from Goose metrics
+actual_rps = total_requests / test_duration_seconds
+
+# Large discrepancies indicate CO issues
+co_factor = expected_rps / actual_rps
+</code></pre>
+<h3 id="2-analyze-response-time-variance"><a class="header" href="#2-analyze-response-time-variance">2. Analyze Response Time Variance</a></h3>
+<p>High variance often indicates coordinated omission:</p>
+<pre><code class="language-bash"># Look for these warning signs in metrics:
+# - Standard deviation &gt; mean response time
+# - 99th percentile &gt; 10x median
+# - Maximum response time orders of magnitude higher
+</code></pre>
+<h3 id="3-monitor-active-transaction-counts"><a class="header" href="#3-monitor-active-transaction-counts">3. Monitor Active Transaction Counts</a></h3>
+<p>Track concurrent in-flight requests:</p>
+<pre><pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Use GooseMetrics to monitor active transactions
+// Sustained high counts indicate queueing/delays
+<span class="boring">}</span></code></pre></pre>
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
 <p>An example of a request triggering Coordinate Omission mitigation:</p>
-<pre><code class="language-bash">13:10:30 [INFO] 11.401s into goose attack: &quot;GET http://apache/node/1557&quot; [200] took abnormally long (1814 ms), transaction name: &quot;(Anon) node page&quot;
-13:10:30 [INFO] 11.450s into goose attack: &quot;GET http://apache/node/5016&quot; [200] took abnormally long (1769 ms), transaction name: &quot;(Anon) node page&quot;
+<pre><code class="language-bash">13:10:30 [INFO] 11.401s into goose attack: "GET http://apache/node/1557" [200] took abnormally long (1814 ms), transaction name: "(Anon) node page"
+13:10:30 [INFO] 11.450s into goose attack: "GET http://apache/node/5016" [200] took abnormally long (1769 ms), transaction name: "(Anon) node page"
 </code></pre>
 <p>If the <code>--request-log</code> is enabled, you can get more details, in this case by looking for elapsed times matching the above messages, specifically 1,814 and 1,769 respectively:</p>
-<pre><code class="language-json">{&quot;coordinated_omission_elapsed&quot;:0,&quot;elapsed&quot;:11401,&quot;error&quot;:&quot;&quot;,&quot;final_url&quot;:&quot;http://apache/node/1557&quot;,&quot;method&quot;:&quot;Get&quot;,&quot;name&quot;:&quot;(Anon) node page&quot;,&quot;redirected&quot;:false,&quot;response_time&quot;:1814,&quot;status_code&quot;:200,&quot;success&quot;:true,&quot;update&quot;:false,&quot;url&quot;:&quot;http://apache/node/1557&quot;,&quot;user&quot;:2,&quot;user_cadence&quot;:1727}
-{&quot;coordinated_omission_elapsed&quot;:0,&quot;elapsed&quot;:11450,&quot;error&quot;:&quot;&quot;,&quot;final_url&quot;:&quot;http://apache/node/5016&quot;,&quot;method&quot;:&quot;Get&quot;,&quot;name&quot;:&quot;(Anon) node page&quot;,&quot;redirected&quot;:false,&quot;response_time&quot;:1769,&quot;status_code&quot;:200,&quot;success&quot;:true,&quot;update&quot;:false,&quot;url&quot;:&quot;http://apache/node/5016&quot;,&quot;user&quot;:0,&quot;user_cadence&quot;:1422}
+<pre><code class="language-json">{"coordinated_omission_elapsed":0,"elapsed":11401,"error":"","final_url":"http://apache/node/1557","method":"Get","name":"(Anon) node page","redirected":false,"response_time":1814,"status_code":200,"success":true,"update":false,"url":"http://apache/node/1557","user":2,"user_cadence":1727}
+{"coordinated_omission_elapsed":0,"elapsed":11450,"error":"","final_url":"http://apache/node/5016","method":"Get","name":"(Anon) node page","redirected":false,"response_time":1769,"status_code":200,"success":true,"update":false,"url":"http://apache/node/5016","user":0,"user_cadence":1422}
 </code></pre>
 <p>In the requests file, you can see that two different user threads triggered Coordinated Omission Mitigation, specifically threads 2 and 0. Both <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> threads were loading the same <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> as due to transaction weighting this is the transaction loaded the most frequently. Both <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> threads loop through all <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html"><code>Transaction</code></a> in a similar amount of time: thread 2 takes on average 1.727 seconds, thread 0 takes on average 1.422 seconds.</p>
 <p>Also if the <code>--request-log</code> is enabled, requests back-filled by Coordinated Omission Mitigation show up in the generated log file, even though they were not actually sent to the server. Normal requests not generated by Coordinated Omission Mitigation have a <a href="https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.coordinated_omission_elapsed"><code>coordinated_omission_elapsed</code></a> of 0.</p>
-<p>Coordinated Omission Mitigation is disabled by default. It can be enabled with the <code>--co-mitigation</code> run time option when starting Goose. It can be configured to use the <a href="https://docs.rs/goose/*/goose/metrics/enum.GooseCoordinatedOmissionMitigation.html#variant.Average"><code>average</code></a>, <a href="https://docs.rs/goose/*/goose/metrics/enum.GooseCoordinatedOmissionMitigation.html#variant.Minimum"><code>minimum</code></a>, or <a href="https://docs.rs/goose/*/goose/metrics/enum.GooseCoordinatedOmissionMitigation.html#variant.Maximum"><code>maximum</code></a> <a href="https://docs.rs/goose/*/goose/goose/struct.GooseUser.html"><code>GooseUser</code></a> cadence when backfilling statistics.</p>
+<h2 id="advanced-techniques"><a class="header" href="#advanced-techniques">Advanced Techniques</a></h2>
+<h3 id="custom-metrics-collection"><a class="header" href="#custom-metrics-collection">Custom Metrics Collection</a></h3>
+<p>Implement additional CO detection:</p>
+<pre><pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use goose::prelude::*;
+use std::time::Instant;
+
+async fn monitored_request(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let intended_start = Instant::now();
+    
+    // Your actual request
+    let result = user.get("/endpoint").await?;
+    
+    let actual_start = result.request.start_time;
+    let schedule_delay = actual_start.duration_since(intended_start);
+    
+    // Log if request was significantly delayed
+    if schedule_delay.as_millis() &gt; 100 {
+        user.log_debug(&amp;format!(
+            "Request delayed by {}ms", 
+            schedule_delay.as_millis()
+        ))?;
+    }
+    
+    Ok(())
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="real-time-monitoring"><a class="header" href="#real-time-monitoring">Real-time Monitoring</a></h3>
+<p>Use Goose's controllers for live detection:</p>
+<pre><code class="language-bash"># Enable real-time metrics via WebSocket
+cargo run --release -- --websocket-host 0.0.0.0 --websocket-port 5117
+
+# Monitor for:
+# - Sudden drops in request rate
+# - Spikes in response times
+# - Increasing queue depths
+</code></pre>
+<h2 id="statistical-analysis-note"><a class="header" href="#statistical-analysis-note">Statistical Analysis Note</a></h2>
+<p>While Goose provides comprehensive data for analysis, determining statistical significance of performance changes requires additional tools and expertise. Goose produces the raw data you need, but interpretation remains your responsibility.</p>
+<p>For detailed analysis, consider:</p>
+<ul>
+<li>Kolmogorov-Smirnov or Anderson-Darling tests for distribution comparison</li>
+<li>Note that CO-adjusted data is derived from raw data (not statistically independent)</li>
+<li>Export data via <code>--request-log</code> for external analysis</li>
+</ul>
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<p>Goose's architecture inherently protects against coordinated omission through:</p>
+<ol>
+<li><strong>Comprehensive data collection</strong> - Every request is tracked</li>
+<li><strong>Accurate percentile calculations</strong> - Full distributions preserved</li>
+<li><strong>Flexible configuration</strong> - Timeouts and modes for various scenarios</li>
+<li><strong>Real-time visibility</strong> - Monitor and detect issues during tests</li>
+</ol>
+<p>By following these practices and utilizing Goose's built-in protections, you can ensure your load test results accurately reflect real-world system behavior under load.</p>
 
                     </main>
 
@@ -190,7 +409,7 @@
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next" href="../coordinated-omission/metrics.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../coordinated-omission/metrics.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -204,7 +423,7 @@
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next" href="../coordinated-omission/metrics.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../coordinated-omission/metrics.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -228,6 +447,7 @@
         <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
+
 
 
     </div>

@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html lang="en" class="sidebar-visible no-js light">
+<html lang="en" class="light sidebar-visible" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
@@ -7,10 +7,10 @@
 
 
         <!-- Custom HTML head -->
-        
+
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff" />
+        <meta name="theme-color" content="#ffffff">
 
         <link rel="icon" href="../favicon.svg">
         <link rel="shortcut icon" href="../favicon.png">
@@ -24,26 +24,41 @@
         <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="../highlight.css">
-        <link rel="stylesheet" href="../tomorrow-night.css">
-        <link rel="stylesheet" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
     </head>
     <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
     <div id="body-container">
-        <!-- Provide site root to javascript -->
-        <script>
-            var path_to_root = "../";
-            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
-        </script>
-
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
-                var theme = localStorage.getItem('mdbook-theme');
-                var sidebar = localStorage.getItem('mdbook-sidebar');
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
 
                 if (theme.startsWith('"') && theme.endsWith('"')) {
                     localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
@@ -57,79 +72,68 @@
 
         <!-- Set the theme before any content is loaded, prevents flash -->
         <script>
-            var theme;
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
-            var html = document.querySelector('html');
-            html.classList.remove('no-js')
+            const html = document.documentElement;
             html.classList.remove('light')
             html.classList.add(theme);
-            html.classList.add('js');
+            html.classList.add("js");
         </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var html = document.querySelector('html');
-            var sidebar = null;
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
             } else {
                 sidebar = 'hidden';
+                sidebar_toggle.checked = false;
             }
-            html.classList.remove('sidebar-visible');
-            html.classList.add("sidebar-" + sidebar);
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
         </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
-            <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../title-page.html">What Is Goose?</a></li><li class="chapter-item expanded affix "><a href="../requirements.html">Requirements</a></li><li class="chapter-item expanded affix "><a href="../glossary.html">Glossary</a></li><li class="chapter-item expanded "><a href="../getting-started/overview.html"><strong aria-hidden="true">1.</strong> Getting Started</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/creating.html"><strong aria-hidden="true">1.1.</strong> Creating A Load test</a></li><li class="chapter-item expanded "><a href="../getting-started/validation.html"><strong aria-hidden="true">1.2.</strong> Validating Requests</a></li><li class="chapter-item expanded "><a href="../getting-started/running.html"><strong aria-hidden="true">1.3.</strong> Running A Load Test</a></li><li class="chapter-item expanded "><a href="../getting-started/runtime-options.html"><strong aria-hidden="true">1.4.</strong> Run-Time Options</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../getting-started/common.html"><strong aria-hidden="true">1.4.1.</strong> Common Options</a></li><li class="chapter-item expanded "><a href="../getting-started/test-plan.html"><strong aria-hidden="true">1.4.2.</strong> Test Plan</a></li><li class="chapter-item expanded "><a href="../getting-started/throttle.html"><strong aria-hidden="true">1.4.3.</strong> Throttle</a></li><li class="chapter-item expanded "><a href="../getting-started/scenarios.html"><strong aria-hidden="true">1.4.4.</strong> Limiting Scenarios</a></li><li class="chapter-item expanded "><a href="../getting-started/custom.html"><strong aria-hidden="true">1.4.5.</strong> Custom Options</a></li></ol></li><li class="chapter-item expanded "><a href="../getting-started/metrics.html"><strong aria-hidden="true">1.5.</strong> Metrics</a></li><li class="chapter-item expanded "><a href="../getting-started/tips.html"><strong aria-hidden="true">1.6.</strong> Tips</a></li></ol></li><li class="chapter-item expanded "><a href="../logging/overview.html"><strong aria-hidden="true">2.</strong> Logging</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../logging/requests.html"><strong aria-hidden="true">2.1.</strong> Request Log</a></li><li class="chapter-item expanded "><a href="../logging/transactions.html"><strong aria-hidden="true">2.2.</strong> Transaction Log</a></li><li class="chapter-item expanded "><a href="../logging/scenarios.html"><strong aria-hidden="true">2.3.</strong> Scenario Log</a></li><li class="chapter-item expanded "><a href="../logging/errors.html"><strong aria-hidden="true">2.4.</strong> Error Log</a></li><li class="chapter-item expanded "><a href="../logging/debug.html"><strong aria-hidden="true">2.5.</strong> Debug Log</a></li></ol></li><li class="chapter-item expanded "><a href="../controller/overview.html"><strong aria-hidden="true">3.</strong> Controllers</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../controller/telnet.html"><strong aria-hidden="true">3.1.</strong> Telnet Controller</a></li><li class="chapter-item expanded "><a href="../controller/websocket.html"><strong aria-hidden="true">3.2.</strong> WebSocket Controller</a></li></ol></li><li class="chapter-item expanded "><a href="../gaggle/overview.html"><strong aria-hidden="true">4.</strong> Gaggle: Distributed Load Test</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../gaggle/manager.html"><strong aria-hidden="true">4.1.</strong> Manager</a></li><li class="chapter-item expanded "><a href="../gaggle/worker.html"><strong aria-hidden="true">4.2.</strong> Worker</a></li><li class="chapter-item expanded "><a href="../gaggle/config.html"><strong aria-hidden="true">4.3.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../gaggle/technical.html"><strong aria-hidden="true">4.4.</strong> Technical details</a></li></ol></li><li class="chapter-item expanded "><a href="../coordinated-omission/overview.html"><strong aria-hidden="true">5.</strong> Coordinated Omission</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../coordinated-omission/mitigation.html"><strong aria-hidden="true">5.1.</strong> Mitigation</a></li><li class="chapter-item expanded "><a href="../coordinated-omission/metrics.html" class="active"><strong aria-hidden="true">5.2.</strong> Metrics</a></li></ol></li><li class="chapter-item expanded "><a href="../config/overview.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../config/defaults.html"><strong aria-hidden="true">6.1.</strong> Defaults</a></li><li class="chapter-item expanded "><a href="../config/scheduler.html"><strong aria-hidden="true">6.2.</strong> Scheduling Scenarios And Transactions</a></li><li class="chapter-item expanded "><a href="../config/rustls.html"><strong aria-hidden="true">6.3.</strong> RustLS</a></li></ol></li><li class="chapter-item expanded "><a href="../example/overview.html"><strong aria-hidden="true">7.</strong> Examples</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../example/simple.html"><strong aria-hidden="true">7.1.</strong> Simple</a></li><li class="chapter-item expanded "><a href="../example/closure.html"><strong aria-hidden="true">7.2.</strong> Closure</a></li><li class="chapter-item expanded "><a href="../example/session.html"><strong aria-hidden="true">7.3.</strong> Session</a></li><li class="chapter-item expanded "><a href="../example/drupal-memcache.html"><strong aria-hidden="true">7.4.</strong> Drupal Memcache</a></li><li class="chapter-item expanded "><a href="../example/umami.html"><strong aria-hidden="true">7.5.</strong> Umami</a></li></ol></li></ol>
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
             </div>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
-
-        <!-- Track and set sidebar scroll position -->
-        <script>
-            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
-            sidebarScrollbox.addEventListener('click', function(e) {
-                if (e.target.tagName === 'A') {
-                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
-                }
-            }, { passive: true });
-            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
-            sessionStorage.removeItem('sidebar-scroll');
-            if (sidebarScrollTop) {
-                // preserve sidebar scroll position when navigating via links within sidebar
-                sidebarScrollbox.scrollTop = sidebarScrollTop;
-            } else {
-                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
-                var activeSection = document.querySelector('#sidebar .active');
-                if (activeSection) {
-                    activeSection.scrollIntoView({ block: 'center' });
-                }
-            }
-        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
-                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar-hover-placeholder"></div>
                 <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
-                        </button>
+                        </label>
                         <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
                     </div>
@@ -146,7 +150,12 @@
 
                 <div id="search-wrapper" class="hidden">
                     <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
                     </form>
                     <div id="searchresults-outer" class="searchresults-outer hidden">
                         <div id="searchresults-header" class="searchresults-header"></div>
@@ -167,8 +176,8 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="metrics"><a class="header" href="#metrics">Metrics</a></h1>
-<p>When Coordinated Omission Mitigation kicks in, Goose tracks both the &quot;raw&quot; metrics and the &quot;adjusted&quot; metrics. It shows both together when displaying metrics, first the &quot;raw&quot; (actually seen) metrics, followed by the &quot;adjusted&quot; metrics. As the minimum response time is never changed by Coordinated Omission Mitigation, this column is replacd with the &quot;standard deviation&quot; between the average &quot;raw&quot; response time, and the average &quot;adjusted&quot; response time.</p>
-<p>The following example was &quot;contrived&quot;. The <a href="../example/drupal-memcache.html"><code>drupal_memcache</code></a> example was run for 15 seconds, and after 10 seconds the upstream Apache server was manually &quot;paused&quot; for 3 seconds, forcing some abnormally slow queries. (More specifically, the apache web server was started by running <code>. /etc/apache2/envvars &amp;&amp; /usr/sbin/apache2 -DFOREGROUND</code>, it was &quot;paused&quot; by pressing <code>ctrl-z</code>, and it was resumed three seconds later by typing <code>fg</code>.) In the &quot;PER REQUEST METRICS&quot; Goose shows first the &quot;raw&quot; metrics&quot;, followed by the &quot;adjusted&quot; metrics:</p>
+<p>When Coordinated Omission Mitigation kicks in, Goose tracks both the "raw" metrics and the "adjusted" metrics. It shows both together when displaying metrics, first the "raw" (actually seen) metrics, followed by the "adjusted" metrics. As the minimum response time is never changed by Coordinated Omission Mitigation, this column is replacd with the "standard deviation" between the average "raw" response time, and the average "adjusted" response time.</p>
+<p>The following example was "contrived". The <a href="../example/drupal-memcache.html"><code>drupal_memcache</code></a> example was run for 15 seconds, and after 10 seconds the upstream Apache server was manually "paused" for 3 seconds, forcing some abnormally slow queries. (More specifically, the apache web server was started by running <code>. /etc/apache2/envvars &amp;&amp; /usr/sbin/apache2 -DFOREGROUND</code>, it was "paused" by pressing <code>ctrl-z</code>, and it was resumed three seconds later by typing <code>fg</code>.) In the "PER REQUEST METRICS" Goose shows first the "raw" metrics", followed by the "adjusted" metrics:</p>
 <pre><code class="language-bash"> ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
@@ -200,8 +209,9 @@
  -------------------------+-------------+------------+-------------+-----------
  Aggregated               |      432.98 |     294.11 |       3,390 |         14
 </code></pre>
-<p>From these two tables, it is clear that there was a statistically significant event affecting the load testing metrics. In particular, note that the standard deviation between the &quot;raw&quot; average and the &quot;adjusted&quot; average is considerably larger than the &quot;raw&quot; average, calling into questing whether or not your load test was &quot;valid&quot;. (The answer to that question depends very much on your specific goals and load test.)</p>
-<p>Goose also shows multiple percentile graphs, again showing first the &quot;raw&quot; metrics followed by the &quot;adjusted&quot; metrics. The &quot;raw&quot; graph would suggest that less than 1% of the requests for the <code>GET (Anon) node page</code> were slow, and less than 0.1% of the requests for the <code>GET (Auth) node page</code> were slow. However, through Coordinated Omission Mitigation we can see that statistically this would have actually affected all requests, and for authenticated users the impact is visible on &gt;25% of the requests.</p>
+<p>From these two tables, we can observe a notable difference between the raw and adjusted metrics. The standard deviation between the "raw" average and the "adjusted" average is considerably larger than the "raw" average, indicating that a performance event occurred that affected request timing. Whether this indicates a "valid" load test depends on your specific goals and testing context.</p>
+<p><strong>Note</strong>: It is beyond the scope of Goose to test for statistically significant changes in the right-tail, or other locations, of the distribution of response times. Goose produces the raw data you need to conduct these tests. For detailed statistical analysis, consider using tools like the Kolmogorov-Smirnov or Anderson-Darling tests to compare distributions. Keep in mind that CO-adjusted data is derived from raw data and thus not statistically independent.</p>
+<p>Goose also shows multiple percentile graphs, again showing first the "raw" metrics followed by the "adjusted" metrics. The "raw" graph would suggest that less than 1% of the requests for the <code>GET (Anon) node page</code> were slow, and less than 0.1% of the requests for the <code>GET (Auth) node page</code> were slow. However, through Coordinated Omission Mitigation we can see that statistically this would have actually affected all requests, and for authenticated users the impact is visible on &gt;25% of the requests.</p>
 <pre><code class="language-bash"> ------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
@@ -235,7 +245,118 @@
  -------------------------+--------+--------+--------+--------+--------+-------
  Aggregated               |     14 |     42 |  3,000 |  3,000 |  3,000 |  3,000
 </code></pre>
-<p>The Coordinated Omission metrics will also show up in the HTML report generated when Goose is started with the <code>--report-file</code> run-time option. If Coordinated Omission mitigation kicked in, the HTML report will include both the &quot;raw&quot; metrics and the &quot;adjusted&quot; metrics.</p>
+<p>The Coordinated Omission metrics will also show up in the HTML report generated when Goose is started with the <code>--report-file</code> run-time option. If Coordinated Omission mitigation kicked in, the HTML report will include both the "raw" metrics and the "adjusted" metrics.</p>
+<h2 id="enhanced-co-event-tracking"><a class="header" href="#enhanced-co-event-tracking">Enhanced CO Event Tracking</a></h2>
+<p>In addition to the raw and adjusted metrics, Goose now provides detailed Coordinated Omission event tracking that appears in all report formats (console, HTML, markdown, and JSON). This enhanced tracking provides comprehensive insights into when and how CO events affected your test.</p>
+<h3 id="co-event-metrics-display"><a class="header" href="#co-event-metrics-display">CO Event Metrics Display</a></h3>
+<p>When CO events occur during your test, you'll see a dedicated "COORDINATED OMISSION METRICS" section that appears before the overview:</p>
+<pre><code class="language-bash"> === COORDINATED OMISSION METRICS ===
+ Duration: 45 seconds
+ Total CO Events: 12
+ Events per minute: 16.00
+
+ Request Breakdown:
+   Actual requests: 2,847
+   Synthetic requests: 156 (5.2%)
+
+ Severity Distribution:
+   Minor: 8
+   Moderate: 3
+   Severe: 1
+   Critical: 0
+</code></pre>
+<h3 id="understanding-co-event-severity"><a class="header" href="#understanding-co-event-severity">Understanding CO Event Severity</a></h3>
+<p>Goose classifies CO events based on how much longer the actual response took compared to the expected cadence:</p>
+<ul>
+<li><strong>Minor (2-5x)</strong>: Response took 2-5 times longer than expected</li>
+<li><strong>Moderate (5-10x)</strong>: Response took 5-10 times longer than expected</li>
+<li><strong>Severe (10-20x)</strong>: Response took 10-20 times longer than expected</li>
+<li><strong>Critical (&gt;20x)</strong>: Response took more than 20 times longer than expected</li>
+</ul>
+<h3 id="interpreting-synthetic-request-percentage"><a class="header" href="#interpreting-synthetic-request-percentage">Interpreting Synthetic Request Percentage</a></h3>
+<p>The synthetic request percentage tells you how much of your data comes from CO mitigation:</p>
+<ul>
+<li><strong>&lt;10%</strong>: High confidence in results, minimal CO impact</li>
+<li><strong>10-30%</strong>: Medium confidence, some CO events occurred</li>
+<li><strong>30-50%</strong>: Lower confidence, significant CO impact</li>
+<li><strong>&gt;50%</strong>: Results heavily influenced by synthetic data</li>
+</ul>
+<h3 id="practical-example-microservice-testing"><a class="header" href="#practical-example-microservice-testing">Practical Example: Microservice Testing</a></h3>
+<p>Consider testing a microservice with strict 100ms SLA requirements:</p>
+<pre><code class="language-bash"># Test with minimum cadence for strict SLA validation
+cargo run --example api_test -- \
+    --host https://api.example.com \
+    --users 50 \
+    --run-time 5m \
+    --co-mitigation minimum
+
+# Results might show:
+# === COORDINATED OMISSION METRICS ===
+# Duration: 300 seconds
+# Total CO Events: 45
+# Events per minute: 9.00
+# 
+# Request Breakdown:
+#   Actual requests: 14,523
+#   Synthetic requests: 892 (5.8%)
+# 
+# Severity Distribution:
+#   Minor: 38    # Most events were 2-5x slower than expected
+#   Moderate: 6  # Some 5-10x slower
+#   Severe: 1    # One event 10-20x slower
+#   Critical: 0  # No critical events
+</code></pre>
+<p>This tells you that while most requests met the SLA, there were 45 instances where performance degraded, affecting 5.8% of your measurements. The predominance of "Minor" events suggests occasional but not severe performance issues.</p>
+<h3 id="practical-example-web-application-testing"><a class="header" href="#practical-example-web-application-testing">Practical Example: Web Application Testing</a></h3>
+<p>For a public-facing web application with more tolerance for variance:</p>
+<pre><code class="language-bash"># Test with average cadence for realistic user simulation
+cargo run --example webapp_test -- \
+    --host https://webapp.example.com \
+    --users 200 \
+    --run-time 10m \
+    --co-mitigation average
+
+# Results might show:
+# === COORDINATED OMISSION METRICS ===
+# Duration: 600 seconds
+# Total CO Events: 8
+# Events per minute: 0.80
+# 
+# Request Breakdown:
+#   Actual requests: 28,945
+#   Synthetic requests: 67 (0.2%)
+# 
+# Severity Distribution:
+#   Minor: 5
+#   Moderate: 2
+#   Severe: 1
+#   Critical: 0
+</code></pre>
+<p>This shows a much healthier system with only occasional CO events and minimal synthetic data generation (0.2%), indicating the system handled the load well.</p>
+<h3 id="when-to-be-concerned"><a class="header" href="#when-to-be-concerned">When to Be Concerned</a></h3>
+<p><strong>Red flags in CO metrics:</strong></p>
+<ul>
+<li>Synthetic request percentage &gt;30%</li>
+<li>High frequency of Severe or Critical events</li>
+<li>Events per minute consistently &gt;10</li>
+<li>Large gaps between raw and adjusted percentiles</li>
+</ul>
+<p><strong>Green flags:</strong></p>
+<ul>
+<li>Synthetic request percentage &lt;10%</li>
+<li>Mostly Minor events with few Moderate</li>
+<li>Low events per minute (&lt;5)</li>
+<li>Small differences between raw and adjusted metrics</li>
+</ul>
+<h3 id="using-co-metrics-for-capacity-planning"><a class="header" href="#using-co-metrics-for-capacity-planning">Using CO Metrics for Capacity Planning</a></h3>
+<p>CO event tracking helps with capacity planning:</p>
+<ol>
+<li><strong>Identify Breaking Points</strong>: Watch for sudden increases in CO events as load increases</li>
+<li><strong>SLA Validation</strong>: Use minimum cadence mode to catch any SLA violations</li>
+<li><strong>Performance Regression</strong>: Compare CO metrics across test runs to detect degradation</li>
+<li><strong>Resource Scaling</strong>: CO events often indicate when additional resources are needed</li>
+</ol>
+<p>The enhanced CO metrics provide the detailed insights needed to understand not just that performance issues occurred, but their frequency, severity, and impact on your test results.</p>
 
                     </main>
 
@@ -245,7 +366,7 @@
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next" href="../config/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../coordinated-omission/examples.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -259,7 +380,7 @@
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next" href="../config/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../coordinated-omission/examples.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -283,6 +404,7 @@
         <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
+
 
 
     </div>
