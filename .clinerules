@@ -22,12 +22,23 @@ Goose is a powerful, fast, and scalable load testing framework built with Rust. 
 
 ## Documentation Standards
 
+### Comprehensive Documentation Locations
+**Documentation exists in multiple places - ALL must be kept current**:
+- **Primary docs**: `./src/docs/goose-book/src/` (mdBook documentation)
+- **Project overview**: `README.md` (project introduction and quick start)
+- **Change tracking**: `CHANGELOG.md` (user-facing changes and releases)
+- **Development context**: `/memory-bank/` (AI development context and decisions)
+- **Inline documentation**: All `*.rs` files (function docs, module docs, examples)
+- **Code examples**: `/examples/` directory (working code samples)
+- **Test documentation**: `tests/*.rs` (test descriptions and patterns)
+- **Configuration help**: Built-in help text and error messages
+
 ### Automatic Documentation Updates
 **Update documentation with code changes**:
-- Update relevant `.md` files in `src/docs/goose-book/`
-- Keep examples in `/examples` directory current
-- Update CHANGELOG.md for user-facing changes
-- Maintain inline documentation for public APIs
+- Search ALL documentation locations for references to changed functionality
+- Verify accuracy by testing documented examples and configuration options
+- Update inline documentation for any modified public APIs
+- Ensure consistency across all documentation sources
 
 ### Memory Bank Maintenance
 **Keep memory bank current**:

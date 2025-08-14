@@ -24,6 +24,7 @@
  - [#574](https://github.com/tag1consulting/goose/pull/574) update [`http`](https://docs.rs/http), [`itertools`](https://docs.rs/itertools) [`nix`](https://docs.rs/nix), [`rustls`](https://docs.rs/rustls/), and [`serial_test`](https://docs.rs/serial_test)
  - [#575](https://github.com/tag1consulting/goose/pull/575) add test coverage for sessions and cookies, revert [#557](https://github.com/tag1consulting/goose/pull/557) to avoid sharing the CookieJar between all users
  - [#600](https://github.com/tag1consulting/goose/pull/600) Refactor reports/metrics, add JSON and markdown report
+ - [#629](https://github.com/tag1consulting/goose/pull/629) add optional PDF report generation with `pdf-reports` feature flag; supports configurable scale via `--pdf-scale` option
 
 ## 0.17.2 August 28, 2023
  - [#557](https://github.com/tag1consulting/goose/pull/557) speed up user initialization on Linux
