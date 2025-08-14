@@ -7,7 +7,7 @@ In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-d
 ## ASCII metrics
 ```bash
 % cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.17.2 (~/goose)
+   Compiling goose v0.18.1 (~/goose)
     Finished release [optimized] target(s) in 11.88s
      Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
 05:09:05 [INFO] Output verbosity level: INFO
@@ -24,28 +24,28 @@ In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-d
 05:09:05 [INFO] Telnet controller listening on: 0.0.0.0:5116
 05:09:05 [INFO] WebSocket controller listening on: 0.0.0.0:5117
 05:09:05 [INFO] entering GooseAttack phase: Increase
-05:09:05 [INFO] launching user 1 from Anonymous Spanish user...
-05:09:05 [INFO] launching user 2 from Anonymous English user...
-05:09:05 [INFO] launching user 3 from Anonymous Spanish user...
-05:09:06 [INFO] launching user 4 from Anonymous English user...
-05:09:06 [INFO] launching user 5 from Anonymous Spanish user...
-05:09:06 [INFO] launching user 6 from Anonymous English user...
-05:09:07 [INFO] launching user 7 from Admin user...
-05:09:07 [INFO] launching user 8 from Anonymous Spanish user...
-05:09:07 [INFO] launching user 9 from Anonymous English user...
+05:09:05 [INFO] [user 1]: launching user from Anonymous Spanish user
+05:09:05 [INFO] [user 2]: launching user from Anonymous English user
+05:09:05 [INFO] [user 3]: launching user from Anonymous Spanish user
+05:09:06 [INFO] [user 4]: launching user from Anonymous English user
+05:09:06 [INFO] [user 5]: launching user from Anonymous Spanish user
+05:09:06 [INFO] [user 6]: launching user from Anonymous English user
+05:09:07 [INFO] [user 7]: launching user from Admin user
+05:09:07 [INFO] [user 8]: launching user from Anonymous Spanish user
+05:09:07 [INFO] [user 9]: launching user from Anonymous English user
 All 9 users hatched.
 
 05:09:08 [INFO] entering GooseAttack phase: Maintain
 05:10:08 [INFO] entering GooseAttack phase: Decrease
-05:10:08 [INFO] exiting user 2 from Anonymous English user...
-05:10:08 [INFO] exiting user 3 from Anonymous Spanish user...
-05:10:08 [INFO] exiting user 6 from Anonymous English user...
-05:10:08 [INFO] exiting user 8 from Anonymous Spanish user...
-05:10:08 [INFO] exiting user 4 from Anonymous English user...
-05:10:08 [INFO] exiting user 7 from Admin user...
-05:10:08 [INFO] exiting user 1 from Anonymous Spanish user...
-05:10:08 [INFO] exiting user 9 from Anonymous English user...
-05:10:08 [INFO] exiting user 5 from Anonymous Spanish user...
+05:10:08 [INFO] [user 2]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 3]: exiting user from Anonymous Spanish user
+05:10:08 [INFO] [user 6]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 8]: exiting user from Anonymous Spanish user
+05:10:08 [INFO] [user 4]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 7]: exiting user from Admin user
+05:10:08 [INFO] [user 1]: exiting user from Anonymous Spanish user
+05:10:08 [INFO] [user 9]: exiting user from Anonymous English user
+05:10:08 [INFO] [user 5]: exiting user from Anonymous Spanish user
 05:10:08 [INFO] wrote html report file to: report.html
 05:10:08 [INFO] entering GooseAttack phase: Shutdown
 05:10:08 [INFO] printing final metrics after 63 seconds...
@@ -285,7 +285,7 @@ All 9 users hatched.
  Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 <- 9)
 
  Target host: http://umami.ddev.site/
- goose v0.17.2
+ goose v0.18.1
  ------------------------------------------------------------------------------
 ```
 
