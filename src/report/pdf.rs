@@ -2,6 +2,35 @@
 //!
 //! This module provides PDF report generation by converting print-ready HTML reports
 //! to PDF format using either built-in headless Chrome or external tools.
+//!
+//! # External PDF Generator Commands
+//!
+//! When using external PDF generators via `--pdf-generator`, commands are parsed with
+//! shell-like quote handling to support paths and arguments containing spaces:
+//!
+//! ## Supported quote styles:
+//! - **Double quotes**: `"path with spaces"`
+//! - **Single quotes**: `'path with spaces'`
+//! - **Escaped quotes**: `"He said \"hello\""`
+//!
+//! ## Examples:
+//! ```bash
+//! # Chrome CLI (requires quotes for path with spaces)
+//! --pdf-generator='"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --print-to-pdf={output} {input}'
+//!
+//! # wkhtmltopdf
+//! --pdf-generator='wkhtmltopdf --page-size A4 --margin-top 0.75in {input} {output}'
+//!
+//! # Prince XML
+//! --pdf-generator='prince --style=print.css {input} -o {output}'
+//!
+//! # Custom script
+//! --pdf-generator='/usr/local/bin/my-pdf-tool --quality high {input} {output}'
+//! ```
+//!
+//! ## Placeholders:
+//! - `{input}` - Replaced with path to temporary HTML file
+//! - `{output}` - Replaced with desired PDF output path
 
 use crate::GooseError;
 use std::{fs, path::Path, process::Command};
@@ -189,6 +218,118 @@ fn generate_builtin_pdf(html_content: &str, output_path: &Path, scale: Option<f6
     Ok(())
 }
 
+/// Parse command line arguments with proper quote handling
+/// 
+/// This function implements shell-like argument parsing to handle paths and arguments
+/// that contain spaces. It supports both single and double quotes, and handles escape
+/// sequences within quoted strings.
+/// 
+/// # Supported Features
+/// - **Double quotes**: `"path with spaces"` 
+/// - **Single quotes**: `'path with spaces'`
+/// - **Mixed quotes**: `command "arg with spaces" 'another arg'`
+/// - **Escape sequences**: `"path with \"quotes\""`, `"line1\nline2"`
+/// - **Whitespace handling**: Multiple spaces/tabs between arguments are collapsed
+/// 
+/// # Examples
+/// ```
+/// // Simple command
+/// parse_command_args("wkhtmltopdf input.html output.pdf")
+/// // => ["wkhtmltopdf", "input.html", "output.pdf"]
+/// 
+/// // Path with spaces (double quotes)
+/// parse_command_args("\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless")
+/// // => ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--headless"]
+/// 
+/// // Path with spaces (single quotes)  
+/// parse_command_args("'/usr/local/bin/my tool' --output file.pdf")
+/// // => ["/usr/local/bin/my tool", "--output", "file.pdf"]
+/// 
+/// // Escaped quotes
+/// parse_command_args("echo \"Hello \\\"World\\\"\"")
+/// // => ["echo", "Hello \"World\""]
+/// ```
+/// 
+/// # Errors
+/// Returns `GooseError::InvalidOption` if:
+/// - Quotes are not properly closed
+/// - Command string is empty after parsing
+/// 
+/// # Note
+/// This parser is designed specifically for PDF generator commands and follows
+/// common shell quoting conventions. It's simpler than full shell parsing but
+/// handles the most common cases users need for specifying PDF tools.
+fn parse_command_args(cmd: &str) -> Result<Vec<String>, GooseError> {
+    let mut args = Vec::new();
+    let mut current_arg = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '\0';
+    let mut chars = cmd.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '"' | '\'' if !in_quotes => {
+                in_quotes = true;
+                quote_char = c;
+            }
+            '"' | '\'' if in_quotes && c == quote_char => {
+                in_quotes = false;
+                quote_char = '\0';
+            }
+            ' ' | '\t' if !in_quotes => {
+                if !current_arg.is_empty() {
+                    args.push(current_arg.clone());
+                    current_arg.clear();
+                }
+            }
+            '\\' if in_quotes => {
+                // Handle escape sequences in quotes
+                if let Some(next_char) = chars.next() {
+                    match next_char {
+                        'n' => current_arg.push('\n'),
+                        't' => current_arg.push('\t'),
+                        'r' => current_arg.push('\r'),
+                        '\\' => current_arg.push('\\'),
+                        '"' => current_arg.push('"'),
+                        '\'' => current_arg.push('\''),
+                        _ => {
+                            current_arg.push('\\');
+                            current_arg.push(next_char);
+                        }
+                    }
+                } else {
+                    current_arg.push('\\');
+                }
+            }
+            _ => {
+                current_arg.push(c);
+            }
+        }
+    }
+
+    if in_quotes {
+        return Err(GooseError::InvalidOption {
+            option: "--pdf-generator".to_string(),
+            value: cmd.to_string(),
+            detail: format!("Unclosed quote in command: {}", quote_char),
+        });
+    }
+
+    if !current_arg.is_empty() {
+        args.push(current_arg);
+    }
+
+    if args.is_empty() {
+        return Err(GooseError::InvalidOption {
+            option: "--pdf-generator".to_string(),
+            value: cmd.to_string(),
+            detail: "Command cannot be empty".to_string(),
+        });
+    }
+
+    Ok(args)
+}
+
 /// Run external PDF generator with {input} and {output} placeholder substitution
 fn run_external_pdf_generator(
     generator_cmd: &str,
@@ -210,15 +351,15 @@ fn run_external_pdf_generator(
         .replace("{input}", temp_html_path.to_string_lossy().as_ref())
         .replace("{output}", output_path.to_string_lossy().as_ref());
 
-    // Parse command and arguments
-    let mut cmd_parts = cmd_with_args.split_whitespace();
-    let command = cmd_parts.next().ok_or_else(|| GooseError::InvalidOption {
+    // Parse command and arguments with proper quote handling
+    let parsed_args = parse_command_args(&cmd_with_args)?;
+    let command = parsed_args.first().ok_or_else(|| GooseError::InvalidOption {
         option: "--pdf-generator".to_string(),
         value: generator_cmd.to_string(),
         detail: "PDF generator command cannot be empty".to_string(),
     })?;
 
-    let args: Vec<&str> = cmd_parts.collect();
+    let args: Vec<&str> = parsed_args.iter().skip(1).map(|s| s.as_str()).collect();
 
     // Execute the command
     let output =
@@ -381,6 +522,56 @@ mod tests {
             cmd_with_args,
             "wkhtmltopdf --scale 0.8 /tmp/test.html /tmp/test.pdf"
         );
+    }
+
+    #[test]
+    fn test_parse_command_args_simple() {
+        let result = parse_command_args("wkhtmltopdf --scale 0.8 input.html output.pdf").unwrap();
+        assert_eq!(result, vec!["wkhtmltopdf", "--scale", "0.8", "input.html", "output.pdf"]);
+    }
+
+    #[test]
+    fn test_parse_command_args_with_quotes() {
+        let result = parse_command_args(r#""/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --print-to-pdf=output.pdf input.html"#).unwrap();
+        assert_eq!(result, vec![
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "--headless",
+            "--print-to-pdf=output.pdf",
+            "input.html"
+        ]);
+    }
+
+    #[test]
+    fn test_parse_command_args_with_single_quotes() {
+        let result = parse_command_args("'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless").unwrap();
+        assert_eq!(result, vec![
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "--headless"
+        ]);
+    }
+
+    #[test]
+    fn test_parse_command_args_with_escaped_quotes() {
+        let result = parse_command_args(r#"echo "Hello \"World\"" test"#).unwrap();
+        assert_eq!(result, vec!["echo", "Hello \"World\"", "test"]);
+    }
+
+    #[test]
+    fn test_parse_command_args_unclosed_quote() {
+        let result = parse_command_args(r#"echo "unclosed quote"#);
+        assert!(result.is_err());
+        if let Err(GooseError::InvalidOption { detail, .. }) = result {
+            assert!(detail.contains("Unclosed quote"));
+        }
+    }
+
+    #[test]
+    fn test_parse_command_args_empty() {
+        let result = parse_command_args("");
+        assert!(result.is_err());
+        if let Err(GooseError::InvalidOption { detail, .. }) = result {
+            assert!(detail.contains("Command cannot be empty"));
+        }
     }
 
     #[cfg(not(feature = "pdf-reports"))]

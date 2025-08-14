@@ -202,7 +202,7 @@ pub struct GooseConfiguration {
     #[cfg(feature = "pdf-reports")]
     #[options(no_short, meta = "SCALE", default = "0.8")]
     pub pdf_scale: f64,
-    /// Custom PDF generator command (uses {input} and {output} placeholders)
+    /// Custom PDF generator command (uses {input} and {output} placeholders, supports quotes for paths with spaces)
     #[options(no_short, meta = "CMD")]
     pub pdf_generator: Option<String>,
     /// Generate print-ready HTML file (optimized for PDF conversion)
