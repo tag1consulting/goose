@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.18.1-dev
+## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
  - [#630](https://github.com/tag1consulting/goose/pull/630) enhanced coordinated omission metrics with severity classification, detailed tracking, and comprehensive documentation
  - [#632](https://github.com/tag1consulting/goose/pull/632) add Context7 support for enhanced AI code assistant integration
@@ -8,8 +8,9 @@
  - [#625](https://github.com/tag1consulting/goose/pull/625) standardize logging format across codebase with consistent module prefixes
  - [#633](https://github.com/tag1consulting/goose/pull/633), [#622](https://github.com/tag1consulting/goose/pull/622) fix clippy warnings for latest Rust version
  - [#620](https://github.com/tag1consulting/goose/pull/620) fix error graph display in HTML report
+ - update all dependencies
 
-## 0.18.0
+## 0.18.0 February 25, 2025
  - update all dependencies
  - [#565](https://github.com/tag1consulting/goose/pull/565) add `--accept-invalid-certs` to skip validation of https certificates
  - [#568](https://github.com/tag1consulting/goose/pull/568) don't panic when truncating non utf-8 string
