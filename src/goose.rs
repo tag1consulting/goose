@@ -230,6 +230,9 @@
 //! [`POST`](./struct.GooseUser.html#method.post), but [`HEAD`](./struct.GooseUser.html#method.head),
 //! PUT, PATCH and [`DELETE`](./struct.GooseUser.html#method.delete) are also supported.
 //!
+//! GraphQL requests are supported with [`post_graphql`](./struct.GooseUser.html#method.post_graphql)
+//! and [`post_graphql_named`](./struct.GooseUser.html#method.post_graphql_named) helper methods.
+//!
 //! ### GET
 //!
 //! A helper to make a `GET` request of a path and collect relevant metrics.
@@ -1382,6 +1385,98 @@ impl GooseUser {
             .method(GooseMethod::Post)
             .path(path)
             .set_request_builder(reqwest_request_builder.json(&json))
+            .build();
+
+        // Make the request and return the GooseResponse.
+        self.request(goose_request).await
+    }
+
+    /// A helper to make a GraphQL request and collect relevant metrics.
+    /// Automatically prepends the correct host.
+    ///
+    /// Calls to `post_graphql()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// # Example
+    /// Make a GraphQL query.
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use serde_json::json;
+    ///
+    /// let mut transaction = transaction!(graphql_function);
+    ///
+    /// /// A simple transaction that makes a GraphQL query.
+    /// async fn graphql_function(user: &mut GooseUser) -> TransactionResult {
+    ///     let query = json!({
+    ///         "query": "{ user(id: 1) { id name email } }"
+    ///     });
+    ///     let _goose = user.post_graphql("/graphql", &query).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn post_graphql<T: Serialize + ?Sized>(
+        &mut self,
+        path: &str,
+        query: &T,
+    ) -> Result<GooseResponse, Box<TransactionError>> {
+        // Build a Reqwest RequestBuilder object.
+        let url = self.build_url(path)?;
+        let reqwest_request_builder = self.client.post(url);
+
+        // POST GraphQL request.
+        let goose_request = GooseRequest::builder()
+            .method(GooseMethod::Post)
+            .path(path)
+            .set_request_builder(reqwest_request_builder.json(&query))
+            .build();
+
+        // Make the request and return the GooseResponse.
+        self.request(goose_request).await
+    }
+
+    /// A helper to make a named GraphQL request and collect relevant metrics.
+    /// Automatically prepends the correct host.
+    ///
+    /// Calls to `post_graphql_named()` return a [`GooseResponse`](./struct.GooseResponse.html) object which
+    /// contains a copy of the request you made ([`GooseRequestMetric`](./struct.GooseRequestMetric.html)),
+    /// and the response ([`reqwest::Response`](https://docs.rs/reqwest/*/reqwest/struct.Response.html)).
+    ///
+    /// # Example
+    /// Make a named GraphQL query for better metrics tracking.
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use serde_json::json;
+    ///
+    /// let mut transaction = transaction!(graphql_function);
+    ///
+    /// /// A simple transaction that makes a named GraphQL query.
+    /// async fn graphql_function(user: &mut GooseUser) -> TransactionResult {
+    ///     let query = json!({
+    ///         "query": "{ user(id: 1) { id name email } }"
+    ///     });
+    ///     let _goose = user.post_graphql_named("/graphql", &query, "get user").await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn post_graphql_named<T: Serialize + ?Sized>(
+        &mut self,
+        path: &str,
+        query: &T,
+        name: &str,
+    ) -> Result<GooseResponse, Box<TransactionError>> {
+        // Build a Reqwest RequestBuilder object.
+        let url = self.build_url(path)?;
+        let reqwest_request_builder = self.client.post(url);
+
+        // POST GraphQL request with custom name.
+        let goose_request = GooseRequest::builder()
+            .method(GooseMethod::Post)
+            .path(path)
+            .name(name)
+            .set_request_builder(reqwest_request_builder.json(&query))
             .build();
 
         // Make the request and return the GooseResponse.
