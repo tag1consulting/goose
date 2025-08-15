@@ -353,16 +353,16 @@ pub struct GooseRequestMetric {
     /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
-    pub scenario_name: String,
+    pub scenario_name: std::borrow::Cow<'static, str>,
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
-    /// Stored as string, `""` is no transaction, while `0` is the first `Scenario.transaction`.
-    pub transaction_index: String,
+    /// Stored as usize, `usize::MAX` indicates no transaction, while `0` is the first `Scenario.transaction`.
+    pub transaction_index: usize,
     /// The optional transaction name.
     pub transaction_name: TransactionName,
     /// The raw request that the GooseClient made.
     pub raw: GooseRawRequest,
     /// The optional name of the request.
-    pub name: String,
+    pub name: std::borrow::Cow<'static, str>,
     /// The final full URL that was requested, after redirects.
     pub final_url: String,
     /// Whether or not the request was redirected.
@@ -398,11 +398,18 @@ impl GooseRequestMetric {
         GooseRequestMetric {
             elapsed: elapsed as u64,
             scenario_index: transaction_detail.scenario_index,
-            scenario_name: transaction_detail.scenario_name.to_string(),
-            transaction_index: transaction_detail.transaction_index.to_string(),
+            scenario_name: std::borrow::Cow::Owned(transaction_detail.scenario_name.to_string()),
+            transaction_index: if transaction_detail.transaction_index.is_empty() {
+                usize::MAX
+            } else {
+                transaction_detail
+                    .transaction_index
+                    .parse()
+                    .unwrap_or(usize::MAX)
+            },
             transaction_name: transaction_detail.transaction_name,
             raw,
-            name: name.to_string(),
+            name: std::borrow::Cow::Owned(name.to_string()),
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,
@@ -2893,7 +2900,7 @@ impl GooseAttack {
                                     ),
                                     synthetic_count as u32,
                                     request_metric.user,
-                                    request_metric.scenario_name.clone(),
+                                    request_metric.scenario_name.to_string(),
                                 );
                             }
                         }
@@ -2997,7 +3004,7 @@ impl GooseAttack {
                 if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
                     raw: raw_request.raw.clone(),
-                    name: raw_request.name.clone(),
+                    name: raw_request.name.to_string(),
                     final_url: raw_request.final_url.clone(),
                     redirected: raw_request.redirected,
                     response_time: raw_request.response_time,
@@ -3669,7 +3676,7 @@ mod test {
         assert_eq!(request_metric.raw.method, GooseMethod::Get);
         assert_eq!(request_metric.scenario_index, 0);
         assert_eq!(request_metric.scenario_name, "LoadTestUser");
-        assert_eq!(request_metric.transaction_index, "5");
+        assert_eq!(request_metric.transaction_index, 5);
         assert_eq!(
             request_metric.transaction_name.name_for_transaction(),
             "front page"
