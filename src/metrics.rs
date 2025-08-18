@@ -399,14 +399,10 @@ impl GooseRequestMetric {
             elapsed: elapsed as u64,
             scenario_index: transaction_detail.scenario_index,
             scenario_name: std::borrow::Cow::Owned(transaction_detail.scenario_name.to_string()),
-            transaction_index: if transaction_detail.transaction_index.is_empty() {
-                usize::MAX
-            } else {
-                transaction_detail
-                    .transaction_index
-                    .parse()
-                    .unwrap_or(usize::MAX)
-            },
+            transaction_index: transaction_detail
+                .transaction_index
+                .parse()
+                .unwrap_or(usize::MAX),
             transaction_name: transaction_detail.transaction_name,
             raw,
             name: std::borrow::Cow::Owned(name.to_string()),
