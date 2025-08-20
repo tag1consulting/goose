@@ -13,37 +13,97 @@ use headless_chrome::{Browser, LaunchOptions};
 #[cfg(feature = "pdf-reports")]
 use std::{ffi::OsStr, fs, path::Path};
 
+/// A RAII guard that temporarily changes the global log level and restores it when dropped.
+/// This provides a clean, safe way to suppress logging during PDF generation without
+/// permanent global state changes.
+#[cfg(feature = "pdf-reports")]
+struct ScopedLogLevel {
+    original_level: log::LevelFilter,
+}
+
+#[cfg(feature = "pdf-reports")]
+impl ScopedLogLevel {
+    /// Create a new scoped log level guard, setting the global log level temporarily.
+    fn new(temp_level: log::LevelFilter) -> Self {
+        let original_level = log::max_level();
+        log::set_max_level(temp_level);
+        ScopedLogLevel { original_level }
+    }
+}
+
+#[cfg(feature = "pdf-reports")]
+impl Drop for ScopedLogLevel {
+    /// Restore the original log level when the guard goes out of scope.
+    fn drop(&mut self) {
+        log::set_max_level(self.original_level);
+    }
+}
+
+/// Get Chrome launch arguments based on verbosity level
+#[cfg(feature = "pdf-reports")]
+fn get_chrome_launch_args(verbose: bool) -> Vec<&'static OsStr> {
+    let mut args = vec![
+        OsStr::new("--no-sandbox"),
+        OsStr::new("--disable-dev-shm-usage"),
+        OsStr::new("--headless"),
+    ];
+
+    if !verbose {
+        // Normal operation: Maximum logging suppression
+        args.extend([
+            // Core logging suppression
+            OsStr::new("--disable-logging"),
+            OsStr::new("--log-level=3"), // Only fatal errors
+            OsStr::new("--silent"),
+            // Component-specific suppression
+            OsStr::new("--disable-dev-tools-console"),
+            OsStr::new("--disable-extensions"),
+            OsStr::new("--disable-plugins"),
+            OsStr::new("--disable-default-apps"),
+            OsStr::new("--disable-sync"),
+            // Background process suppression
+            OsStr::new("--disable-background-timer-throttling"),
+            OsStr::new("--disable-renderer-backgrounding"),
+            OsStr::new("--disable-backgrounding-occluded-windows"),
+        ]);
+    } else {
+        // Verbose mode: Enable Chrome logging for debugging
+        args.extend([
+            OsStr::new("--enable-logging"),
+            OsStr::new("--log-level=0"), // All logs
+            OsStr::new("--v=1"),         // Chrome verbose logging
+        ]);
+    }
+
+    args
+}
+
 /// Generate a PDF report from HTML content using headless Chrome
 ///
-/// # Thread Safety Note
-/// This function temporarily modifies the global log level to reduce Chrome's verbose output.
-/// It is designed for single-threaded use at the end of load tests when generating the final
-/// report. Since Goose generates only one report at test completion, concurrent PDF generation
-/// is not a concern for the intended use case.
+/// This function uses Chrome's native argument system to control logging behavior
+/// based on the verbose parameter. In normal operation, Chrome logging is suppressed
+/// for clean output. In verbose mode, Chrome debugging information is displayed.
 #[cfg(feature = "pdf-reports")]
 pub(crate) fn generate_pdf_from_html(
     html_content: &str,
     output_path: &Path,
     scale: f64,
+    verbose: bool,
 ) -> Result<(), GooseError> {
-    // Store original log level to restore later
-    let original_log_level = log::max_level();
+    // Get appropriate Chrome arguments based on verbosity
+    let chrome_args = get_chrome_launch_args(verbose);
 
-    // Temporarily reduce log level just for Chrome operations
-    // NOTE: This modifies the global log level but is safe for our use case since
-    // PDF generation only occurs once at the end of a load test
-    log::set_max_level(log::LevelFilter::Error);
+    // Create a scoped logging guard that temporarily adjusts log level for headless Chrome operations
+    let _log_guard = if !verbose {
+        Some(ScopedLogLevel::new(log::LevelFilter::Error))
+    } else {
+        None
+    };
 
-    // Launch headless Chrome
+    // Launch Chrome with appropriate arguments
     let launch_options = LaunchOptions::default_builder()
         .headless(true)
-        .args(vec![
-            OsStr::new("--no-sandbox"),
-            OsStr::new("--disable-dev-shm-usage"),
-            OsStr::new("--disable-logging"),
-            OsStr::new("--log-level=3"), // Only show fatal errors
-            OsStr::new("--silent"),
-        ])
+        .args(chrome_args)
         .build()
         .map_err(|e| GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -160,9 +220,8 @@ pub(crate) fn generate_pdf_from_html(
         detail: format!("Unable to write PDF to {}", output_path.display()),
     })?;
 
-    // Restore original log level so important messages can be displayed
-    log::set_max_level(original_log_level);
-
+    // Note: The ScopedLogLevel guard (_log_guard) automatically restores the original
+    // log level when it goes out of scope here, ensuring no permanent global state changes.
     Ok(())
 }
 
@@ -246,6 +305,7 @@ pub(crate) fn generate_pdf_from_html(
     _html_content: &str,
     _output_path: &std::path::Path,
     _scale: f64,
+    _verbose: bool,
 ) -> Result<(), crate::GooseError> {
     Err(crate::GooseError::InvalidOption {
         option: "--pdf".to_string(),
@@ -310,7 +370,7 @@ mod tests {
     fn test_generate_pdf_without_feature() {
         use std::path::Path;
 
-        let result = generate_pdf_from_html("test", Path::new("test.pdf"), 0.8);
+        let result = generate_pdf_from_html("test", Path::new("test.pdf"), 0.8, false);
         assert!(result.is_err());
 
         if let Err(crate::GooseError::InvalidOption { detail, .. }) = result {

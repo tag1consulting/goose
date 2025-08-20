@@ -3431,6 +3431,7 @@ impl GooseAttack {
             &print_optimized_html,
             Path::new(path),
             self.configuration.pdf_scale,
+            self.configuration.verbose > 0,
         )?;
 
         info!("pdf report file written to: {path}");
