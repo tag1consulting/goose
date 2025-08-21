@@ -2160,45 +2160,43 @@ impl GooseConfiguration {
         let pdf_auto_enabled = self.pdf_reports_enabled;
 
         // Unified validation logic that works consistently across all builds
-        if has_pdf_reports || pdf_auto_enabled {
-            if !feature_compiled {
-                if pdf_auto_enabled && has_pdf_reports {
-                    // Auto-enable is set AND PDF reports requested - this is unsafe without the feature
-                    // Find the first PDF file to use in the error message
-                    let pdf_file = self
-                        .report_file
-                        .iter()
-                        .find(|path| path.to_lowercase().ends_with(".pdf"))
-                        .cloned()
-                        .unwrap_or_else(|| "*.pdf".to_string());
+        if (has_pdf_reports || pdf_auto_enabled) && !feature_compiled {
+            if pdf_auto_enabled && has_pdf_reports {
+                // Auto-enable is set AND PDF reports requested - this is unsafe without the feature
+                // Find the first PDF file to use in the error message
+                let pdf_file = self
+                    .report_file
+                    .iter()
+                    .find(|path| path.to_lowercase().ends_with(".pdf"))
+                    .cloned()
+                    .unwrap_or_else(|| "*.pdf".to_string());
 
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: pdf_file,
-                        detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
-                    });
-                } else if !pdf_auto_enabled && has_pdf_reports {
-                    // PDF reports requested but feature not compiled and auto-enable not set
-                    // Find the first PDF file to use in the error message
-                    let pdf_file = self
-                        .report_file
-                        .iter()
-                        .find(|path| path.to_lowercase().ends_with(".pdf"))
-                        .cloned()
-                        .unwrap_or_else(|| "*.pdf".to_string());
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: pdf_file,
+                    detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
+                });
+            } else if !pdf_auto_enabled && has_pdf_reports {
+                // PDF reports requested but feature not compiled and auto-enable not set
+                // Find the first PDF file to use in the error message
+                let pdf_file = self
+                    .report_file
+                    .iter()
+                    .find(|path| path.to_lowercase().ends_with(".pdf"))
+                    .cloned()
+                    .unwrap_or_else(|| "*.pdf".to_string());
 
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: pdf_file,
-                        detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
-                    });
-                } else if pdf_auto_enabled && !has_pdf_reports {
-                    // Auto-enable is set but no PDF reports requested - this is a configuration warning
-                    info!("PDF reports auto-enabled (GooseDefault::PdfReports) but feature not compiled and no PDF files requested");
-                }
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: pdf_file,
+                    detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
+                });
+            } else if pdf_auto_enabled && !has_pdf_reports {
+                // Auto-enable is set but no PDF reports requested - this is a configuration warning
+                info!("PDF reports auto-enabled (GooseDefault::PdfReports) but feature not compiled and no PDF files requested");
             }
-            // If feature is compiled, PDF reports always work regardless of auto-enable setting
         }
+        // If feature is compiled, PDF reports always work regardless of auto-enable setting
 
         // Validate PDF scale when feature is available and PDF reports are being used
         #[cfg(feature = "pdf-reports")]
