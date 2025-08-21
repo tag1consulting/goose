@@ -2141,39 +2141,71 @@ impl GooseConfiguration {
             }
         }
 
-        // Add PDF auto-detection logic
+        // Unified PDF configuration validation
+        self.validate_pdf_configuration()?;
+
+        Ok(())
+    }
+
+    /// Unified PDF configuration validation that works consistently across feature builds.
+    ///
+    /// This ensures safe auto-enable behavior and prevents runtime errors when PDF
+    /// functionality is requested but not available.
+    fn validate_pdf_configuration(&self) -> Result<(), GooseError> {
+        let feature_compiled = cfg!(feature = "pdf-reports");
         let has_pdf_reports = self
             .report_file
             .iter()
             .any(|path| path.to_lowercase().ends_with(".pdf"));
+        let pdf_auto_enabled = self.pdf_reports_enabled;
 
-        if has_pdf_reports {
-            #[cfg(not(feature = "pdf-reports"))]
-            {
-                // PDF feature not compiled - check if auto-enable is set
-                if !self.pdf_reports_enabled {
+        // Unified validation logic that works consistently across all builds
+        if has_pdf_reports || pdf_auto_enabled {
+            if !feature_compiled {
+                if pdf_auto_enabled && has_pdf_reports {
+                    // Auto-enable is set AND PDF reports requested - this is unsafe without the feature
+                    // Find the first PDF file to use in the error message
+                    let pdf_file = self
+                        .report_file
+                        .iter()
+                        .find(|path| path.to_lowercase().ends_with(".pdf"))
+                        .cloned()
+                        .unwrap_or_else(|| "*.pdf".to_string());
+
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
-                        value: "*.pdf".to_string(),
+                        value: pdf_file,
                         detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
                     });
-                }
-                // If pdf_reports_enabled is true, allow PDF reports even without the feature flag
-                // This enables the auto-detect functionality
-            }
+                } else if !pdf_auto_enabled && has_pdf_reports {
+                    // PDF reports requested but feature not compiled and auto-enable not set
+                    // Find the first PDF file to use in the error message
+                    let pdf_file = self
+                        .report_file
+                        .iter()
+                        .find(|path| path.to_lowercase().ends_with(".pdf"))
+                        .cloned()
+                        .unwrap_or_else(|| "*.pdf".to_string());
 
-            #[cfg(feature = "pdf-reports")]
-            {
-                // PDF feature IS compiled - allow PDF reports regardless of auto-enable setting
-                // The auto-enable setting is optional and provides convenience, but when the feature
-                // is compiled, PDF reports should always work
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: pdf_file,
+                        detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
+                    });
+                } else if pdf_auto_enabled && !has_pdf_reports {
+                    // Auto-enable is set but no PDF reports requested - this is a configuration warning
+                    info!("PDF reports auto-enabled (GooseDefault::PdfReports) but feature not compiled and no PDF files requested");
+                }
             }
+            // If feature is compiled, PDF reports always work regardless of auto-enable setting
         }
 
-        // Validate `pdf_scale` if PDF reports are enabled.
+        // Validate PDF scale when feature is available and PDF reports are being used
         #[cfg(feature = "pdf-reports")]
         {
-            if self.pdf_scale < 0.1 || self.pdf_scale > 2.0 {
+            if (has_pdf_reports || pdf_auto_enabled)
+                && (self.pdf_scale < 0.1 || self.pdf_scale > 2.0)
+            {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.pdf_scale`".to_string(),
                     value: self.pdf_scale.to_string(),
