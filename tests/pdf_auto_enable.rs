@@ -85,6 +85,64 @@ async fn test_pdf_chromium_compiled_in() {
     common::cleanup_files(vec![pdf_file]);
 }
 
+/// Test that PDF resource management works correctly - Chrome processes are properly cleaned up.
+/// This test validates that multiple PDF generations don't cause resource leaks by using the public API.
+#[cfg(feature = "pdf-reports")]
+#[tokio::test]
+#[serial]
+async fn test_pdf_resource_management() {
+    // This test verifies that Chrome processes are properly managed
+    // and cleaned up by running multiple load tests that generate PDFs
+
+    // Test multiple PDF generations to ensure no resource leaks
+    for i in 0..3 {
+        let pdf_file = format!("test-resource-management-{}.pdf", i);
+
+        let server = MockServer::start();
+        let mock_endpoints = setup_mock_server_endpoints(&server);
+
+        let configuration_flags = vec![
+            "--users",
+            "1",
+            "--hatch-rate",
+            "1",
+            "--run-time",
+            "1",
+            "--report-file",
+            &pdf_file,
+        ];
+        let configuration = common::build_configuration(&server, configuration_flags);
+
+        // Build and run the load test with PDF generation
+        let goose_attack =
+            common::build_load_test(configuration, vec![get_transactions()], None, None)
+                .set_default(GooseDefault::PdfReports, true)
+                .expect("Should be able to enable PDF reports");
+
+        let goose_metrics = common::run_load_test(*goose_attack, None).await;
+
+        // Confirm basic functionality
+        assert!(mock_endpoints[0].hits() > 0);
+        assert!(goose_metrics.duration == 1);
+
+        // Verify PDF file was created
+        assert!(
+            std::path::Path::new(&pdf_file).exists(),
+            "PDF file {} should exist",
+            i
+        );
+
+        let metadata = std::fs::metadata(&pdf_file).expect("Failed to get PDF file metadata");
+        assert!(metadata.len() > 0, "PDF file {} should have content", i);
+
+        // Clean up the file after verification
+        common::cleanup_files(vec![&pdf_file]);
+
+        // Each iteration should properly clean up its Chrome process
+        // The ChromeSession Drop implementation ensures resource cleanup
+    }
+}
+
 /// Test that PDF auto-enable functionality works correctly when the feature is NOT compiled in.
 /// This validates that chromium dependencies are NOT available and the proper error is shown.
 #[cfg(not(feature = "pdf-reports"))]

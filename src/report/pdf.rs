@@ -11,13 +11,101 @@ use crate::GooseError;
 use headless_chrome::{Browser, LaunchOptions};
 
 #[cfg(feature = "pdf-reports")]
-use std::{ffi::OsStr, fs, path::Path};
+use std::{
+    ffi::OsStr,
+    fs,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 #[cfg(feature = "pdf-reports")]
 use crate::logger::ScopedLogLevel;
 
 #[cfg(feature = "pdf-reports")]
-use log::LevelFilter;
+use log::{debug, LevelFilter};
+
+/// Manages Chrome browser process lifecycle with automatic cleanup.
+///
+/// This struct provides RAII-based resource management for Chrome processes,
+/// ensuring proper cleanup even in error scenarios.
+#[cfg(feature = "pdf-reports")]
+struct ChromeSession {
+    browser: Browser,
+    process_id: Option<u32>,
+    start_time: Instant,
+}
+
+#[cfg(feature = "pdf-reports")]
+impl ChromeSession {
+    /// Creates a new Chrome session with proper resource tracking.
+    ///
+    /// # Arguments
+    /// * `launch_options` - Chrome launch configuration
+    ///
+    /// # Returns
+    /// * `Result<ChromeSession, GooseError>` - The Chrome session or an error
+    fn new(launch_options: LaunchOptions) -> Result<Self, GooseError> {
+        let start_time = Instant::now();
+
+        debug!("Launching Chrome browser for PDF generation");
+        let browser = Browser::new(launch_options).map_err(|e| GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("Chrome launch failed: {e}"),
+            detail: "PDF generation requires Chrome/Chromium to be installed and accessible. The headless_chrome crate will attempt to download Chrome automatically on first use.".to_string(),
+        })?;
+
+        // Attempt to get the process ID for tracking
+        let process_id = browser.get_process_id();
+
+        if let Some(pid) = process_id {
+            debug!("Chrome browser launched with process ID: {}", pid);
+        } else {
+            debug!("Chrome browser launched (process ID not available)");
+        }
+
+        Ok(ChromeSession {
+            browser,
+            process_id,
+            start_time,
+        })
+    }
+
+    /// Gets a reference to the browser instance.
+    fn browser(&self) -> &Browser {
+        &self.browser
+    }
+
+    /// Checks if the Chrome operation has exceeded the timeout.
+    fn check_timeout(&self, timeout: Duration) -> Result<(), GooseError> {
+        if self.start_time.elapsed() > timeout {
+            return Err(GooseError::InvalidOption {
+                option: "--pdf".to_string(),
+                value: "timeout".to_string(),
+                detail: format!(
+                    "Chrome operation timed out after {:?}. This may indicate Chrome is unresponsive or the system is under heavy load.",
+                    timeout
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "pdf-reports")]
+impl Drop for ChromeSession {
+    fn drop(&mut self) {
+        let elapsed = self.start_time.elapsed();
+
+        if let Some(pid) = self.process_id {
+            debug!("Cleaning up Chrome process {} (ran for {:?})", pid, elapsed);
+        } else {
+            debug!("Cleaning up Chrome browser session (ran for {:?})", elapsed);
+        }
+
+        // The Browser's Drop trait handles the actual process termination
+        // when self.browser is dropped
+    }
+}
 
 /// Get Chrome launch arguments based on verbosity level
 #[cfg(feature = "pdf-reports")]
@@ -63,6 +151,10 @@ fn get_chrome_launch_args(verbose: bool) -> Vec<&'static OsStr> {
 /// This function uses Chrome's native argument system to control logging behavior
 /// based on the verbose parameter. In normal operation, Chrome logging is suppressed
 /// for clean output. In verbose mode, Chrome debugging information is displayed.
+///
+/// The function implements RAII-based resource management to ensure Chrome processes
+/// are properly cleaned up even in error scenarios, with timeout protection to prevent
+/// hanging operations.
 #[cfg(feature = "pdf-reports")]
 pub(crate) fn generate_pdf_from_html(
     html_content: &str,
@@ -81,7 +173,7 @@ pub(crate) fn generate_pdf_from_html(
         None
     };
 
-    // Launch Chrome with appropriate arguments
+    // Launch Chrome with appropriate arguments and resource tracking
     let launch_options = LaunchOptions::default_builder()
         .headless(true)
         .args(chrome_args)
@@ -92,14 +184,15 @@ pub(crate) fn generate_pdf_from_html(
             detail: "PDF generation requires Chrome/Chromium. Try installing Chrome or running with --pdf-scale to adjust memory usage.".to_string(),
         })?;
 
-    let browser = Browser::new(launch_options).map_err(|e| GooseError::InvalidOption {
-        option: "--pdf".to_string(),
-        value: format!("Chrome launch failed: {e}"),
-        detail: "PDF generation requires Chrome/Chromium to be installed and accessible. The headless_chrome crate will attempt to download Chrome automatically on first use.".to_string(),
-    })?;
+    // Create Chrome session with automatic resource management
+    let chrome_session = ChromeSession::new(launch_options)?;
+
+    // Set timeout for Chrome operations (60 seconds)
+    let timeout = Duration::from_secs(60);
 
     // Create a new tab
-    let tab = browser.new_tab().map_err(|e| GooseError::InvalidOption {
+    chrome_session.check_timeout(timeout)?;
+    let tab = chrome_session.browser().new_tab().map_err(|e| GooseError::InvalidOption {
         option: "--pdf".to_string(),
         value: format!("Browser tab creation failed: {e}"),
         detail: "Chrome started successfully but failed to create a new tab. This may indicate insufficient memory or Chrome instability.".to_string(),
@@ -110,6 +203,7 @@ pub(crate) fn generate_pdf_from_html(
     let data_url = format!("data:text/html;charset=utf-8,{encoded_html}");
 
     // Navigate to the data URL
+    chrome_session.check_timeout(timeout)?;
     tab.navigate_to(&data_url)
         .map_err(|e| GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -118,6 +212,7 @@ pub(crate) fn generate_pdf_from_html(
         })?;
 
     // Wait for the page to load
+    chrome_session.check_timeout(timeout)?;
     tab.wait_until_navigated()
         .map_err(|e| GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -148,6 +243,7 @@ pub(crate) fn generate_pdf_from_html(
         })();
     "#;
 
+    chrome_session.check_timeout(timeout)?;
     let content_height_inches = tab
         .evaluate(content_height_script, true)
         .map_err(|e| GooseError::InvalidOption {
@@ -167,6 +263,7 @@ pub(crate) fn generate_pdf_from_html(
     let adjusted_width = base_width * scale;
     let adjusted_height = content_height_inches * scale;
 
+    chrome_session.check_timeout(timeout)?;
     let pdf_data = tab
         .print_to_pdf(Some(headless_chrome::types::PrintToPdfOptions {
             landscape: Some(false),
@@ -195,6 +292,7 @@ pub(crate) fn generate_pdf_from_html(
         })?;
 
     // Write PDF to file
+    chrome_session.check_timeout(timeout)?;
     fs::write(output_path, pdf_data).map_err(|e| GooseError::InvalidOption {
         option: "--pdf".to_string(),
         value: format!("Failed to write PDF file: {e}"),
@@ -204,6 +302,7 @@ pub(crate) fn generate_pdf_from_html(
     // The ScopedLogLevel guard (_log_guard) automatically restores the original
     // log level when it goes out of scope here, ensuring no permanent global state changes.
     // Thread safety is guaranteed by the mutex synchronization in ScopedLogLevel.
+    // The ChromeSession automatically cleans up Chrome processes via Drop trait.
     Ok(())
 }
 
