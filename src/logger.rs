@@ -184,10 +184,12 @@
 //! configuration option. The debug logger will still record any custom messages, details
 //! about the request (when available), and all server response headers (when available).
 
+use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::str::FromStr;
+use std::sync::Mutex;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
@@ -195,6 +197,51 @@ use crate::config::{GooseConfigure, GooseValue};
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, ScenarioMetric, TransactionMetric};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
+
+/// A thread-safe scoped log level guard that changes the global log level for its lifetime
+/// and restores the previous level when dropped. Uses a mutex to prevent race conditions
+/// when multiple threads attempt to change log levels simultaneously.
+pub struct ScopedLogLevel {
+    previous_level: LevelFilter,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+// Static mutex to synchronize access to global log level changes
+static LOG_LEVEL_MUTEX: Mutex<()> = Mutex::new(());
+
+impl ScopedLogLevel {
+    /// Create a new thread-safe scoped log level guard, changing the global log level
+    /// to the specified level and storing the previous level for restoration.
+    ///
+    /// This method acquires a mutex lock to ensure thread-safe access to the global
+    /// log level, preventing race conditions when multiple threads generate PDF reports
+    /// or perform other operations that require temporary log level changes.
+    pub fn new(level: LevelFilter) -> Self {
+        // Acquire the mutex lock to ensure exclusive access to global log level
+        let guard = LOG_LEVEL_MUTEX.lock().unwrap_or_else(|poisoned| {
+            // If the mutex is poisoned, clear the poison and continue
+            // This can happen if a thread panicked while holding the lock
+            poisoned.into_inner()
+        });
+
+        let previous_level = log::max_level();
+        log::set_max_level(level);
+
+        Self {
+            previous_level,
+            _guard: guard,
+        }
+    }
+}
+
+impl Drop for ScopedLogLevel {
+    /// Restore the previous log level when the guard is dropped.
+    /// The mutex guard is automatically released when this struct is dropped.
+    fn drop(&mut self) {
+        log::set_max_level(self.previous_level);
+        // The mutex guard (_guard) is automatically dropped here, releasing the lock
+    }
+}
 
 /// Optional unbounded receiver for logger thread, if debug logger is enabled.
 pub(crate) type GooseLoggerJoinHandle =

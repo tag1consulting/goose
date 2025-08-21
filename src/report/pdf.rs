@@ -13,31 +13,11 @@ use headless_chrome::{Browser, LaunchOptions};
 #[cfg(feature = "pdf-reports")]
 use std::{ffi::OsStr, fs, path::Path};
 
-/// A RAII guard that temporarily changes the global log level and restores it when dropped.
-/// This provides a clean, safe way to suppress logging during PDF generation without
-/// permanent global state changes.
 #[cfg(feature = "pdf-reports")]
-struct ScopedLogLevel {
-    original_level: log::LevelFilter,
-}
+use crate::logger::ScopedLogLevel;
 
 #[cfg(feature = "pdf-reports")]
-impl ScopedLogLevel {
-    /// Create a new scoped log level guard, setting the global log level temporarily.
-    fn new(temp_level: log::LevelFilter) -> Self {
-        let original_level = log::max_level();
-        log::set_max_level(temp_level);
-        ScopedLogLevel { original_level }
-    }
-}
-
-#[cfg(feature = "pdf-reports")]
-impl Drop for ScopedLogLevel {
-    /// Restore the original log level when the guard goes out of scope.
-    fn drop(&mut self) {
-        log::set_max_level(self.original_level);
-    }
-}
+use log::LevelFilter;
 
 /// Get Chrome launch arguments based on verbosity level
 #[cfg(feature = "pdf-reports")]
@@ -93,9 +73,10 @@ pub(crate) fn generate_pdf_from_html(
     // Get appropriate Chrome arguments based on verbosity
     let chrome_args = get_chrome_launch_args(verbose);
 
-    // Create a scoped logging guard that temporarily adjusts log level for headless Chrome operations
+    // Create a thread-safe scoped logging guard that temporarily adjusts log level for headless Chrome operations
+    // This suppresses Rust logging output during PDF generation while maintaining thread safety
     let _log_guard = if !verbose {
-        Some(ScopedLogLevel::new(log::LevelFilter::Error))
+        Some(ScopedLogLevel::new(LevelFilter::Error))
     } else {
         None
     };
@@ -220,8 +201,9 @@ pub(crate) fn generate_pdf_from_html(
         detail: format!("Unable to write PDF to {}", output_path.display()),
     })?;
 
-    // Note: The ScopedLogLevel guard (_log_guard) automatically restores the original
+    // The ScopedLogLevel guard (_log_guard) automatically restores the original
     // log level when it goes out of scope here, ensuring no permanent global state changes.
+    // Thread safety is guaranteed by the mutex synchronization in ScopedLogLevel.
     Ok(())
 }
 
