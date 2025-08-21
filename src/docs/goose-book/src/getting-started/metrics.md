@@ -360,13 +360,13 @@ To generate a PDF report, use the `.pdf` file extension with the `--report-file`
 
 ```bash
 # Generate only a PDF report
-goos-loadtest --report-file report.pdf
+cargo run --example simple --features pdf-reports -- --report-file report.pdf
 
-# Generate both HTML and PDF reports
-goose-loadtest --report-file report.html --report-file report.pdf
+# Generate both HTML and PDF reports  
+cargo run --example simple --features pdf-reports -- --report-file report.html --report-file report.pdf
 
 # Generate PDF report with custom scale factor
-goose-loadtest --report-file report.pdf --pdf-scale 1.2
+cargo run --example simple --features pdf-reports -- --report-file report.pdf --pdf-scale 1.2
 ```
 
 #### PDF Auto-Enable Configuration
@@ -413,12 +413,22 @@ cargo run --example my_test -- --report-file report.html --report-file report.js
 #### System requirements
 
 PDF report generation is handled automatically by the `headless_chrome` crate, which manages Chrome/Chromium installation for you. The PDF feature is optional and only compiled when building with the `pdf-reports` feature flag or setting `GooseDefault::PdfReports = true` in the load test code:
+
 ```bash
 # Build Goose with PDF support
-cargo build --features pdf-reports -- --report-file report.pdf
+cargo build --features pdf-reports
+
+# Run with PDF support
+cargo run --example simple --features pdf-reports -- --report-file report.pdf
 ```
 
-The first time you generate a PDF report, the `headless_chrome` crate will automatically download and configure the necessary Chrome binary if it's not already available. This ensures a seamless experience without manual installation steps.
+**PDF System Requirements:**
+- Chrome or Chromium browser (automatically downloaded if not found)
+- Sufficient disk space for Chrome download (~120MB on first use)
+- Network connectivity for initial Chrome download
+- Write permissions for output directory
+
+The first time you generate a PDF report, the `headless_chrome` crate will automatically download and configure the necessary Chrome binary if it's not already available. This download may take a few minutes depending on your internet connection, but only needs to happen once.
 
 #### PDF optimizations
 
@@ -427,6 +437,22 @@ PDF reports include several optimizations for better print output:
 - Optimized page layout preventing content breaks
 - Automatically calculated page dimensions based on content
 - Enhanced typography for better readability
+
+#### Troubleshooting PDF generation
+
+If you encounter issues generating PDF reports:
+
+**Chrome download problems:**
+- Ensure you have a stable internet connection
+- Check available disk space (~120MB required for Chrome)
+- Verify network permissions (corporate firewalls may block the download)
+- Try running with verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
+
+**PDF generation failures:**
+- Confirm write permissions in the output directory
+- Use absolute paths if relative paths cause issues
+- Check system memory - Chrome requires additional RAM during PDF generation
+- Ensure no other Chrome processes are interfering
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).
