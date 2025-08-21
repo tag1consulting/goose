@@ -107,21 +107,21 @@ pub(crate) fn generate_pdf_from_html(
         .build()
         .map_err(|e| GooseError::InvalidOption {
             option: "--pdf".to_string(),
-            value: format!("Failed to configure Chrome: {e}"),
-            detail: "Unable to launch headless Chrome for PDF generation".to_string(),
+            value: format!("Chrome configuration failed: {e}"),
+            detail: "PDF generation requires Chrome/Chromium. Try installing Chrome or running with --pdf-scale to adjust memory usage.".to_string(),
         })?;
 
     let browser = Browser::new(launch_options).map_err(|e| GooseError::InvalidOption {
         option: "--pdf".to_string(),
-        value: format!("Failed to launch Chrome: {e}"),
-        detail: "Unable to start headless Chrome browser".to_string(),
+        value: format!("Chrome launch failed: {e}"),
+        detail: "PDF generation requires Chrome/Chromium to be installed and accessible. The headless_chrome crate will attempt to download Chrome automatically on first use.".to_string(),
     })?;
 
     // Create a new tab
     let tab = browser.new_tab().map_err(|e| GooseError::InvalidOption {
         option: "--pdf".to_string(),
-        value: format!("Failed to create browser tab: {e}"),
-        detail: "Unable to create new browser tab".to_string(),
+        value: format!("Browser tab creation failed: {e}"),
+        detail: "Chrome started successfully but failed to create a new tab. This may indicate insufficient memory or Chrome instability.".to_string(),
     })?;
 
     // Create a data URL from the HTML content
@@ -209,8 +209,8 @@ pub(crate) fn generate_pdf_from_html(
         }))
         .map_err(|e| GooseError::InvalidOption {
             option: "--pdf".to_string(),
-            value: format!("Failed to generate PDF: {e}"),
-            detail: "PDF generation failed".to_string(),
+            value: format!("PDF generation failed: {e}"),
+            detail: format!("Chrome's print-to-PDF operation failed. Scale: {}, Paper size: {:.1}\" x {:.1}\". Try adjusting --pdf-scale or reducing report complexity.", scale, adjusted_width, adjusted_height),
         })?;
 
     // Write PDF to file
