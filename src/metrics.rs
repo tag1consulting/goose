@@ -3094,11 +3094,20 @@ impl GooseAttack {
                 }
                 #[cfg(not(feature = "pdf-reports"))]
                 Some("pdf") => {
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: report.clone(),
-                        detail: "PDF reports require the 'pdf-reports' feature. Rebuild with --features pdf-reports".to_string(),
-                    });
+                    // Check if PDF auto-enable is set
+                    if !self.configuration.pdf_reports_enabled {
+                        return Err(GooseError::InvalidOption {
+                            option: "--report-file".to_string(),
+                            value: report.clone(),
+                            detail: "PDF reports require the 'pdf-reports' feature. Rebuild with --features pdf-reports".to_string(),
+                        });
+                    }
+                    // If pdf_reports_enabled is true, allow PDF reports even without the feature flag
+                    // This enables the auto-detect functionality
+                    let file = create(path).await?;
+                    if write {
+                        self.write_pdf_report(file, report).await?;
+                    }
                 }
                 None => {
                     return Err(GooseError::InvalidOption {
@@ -3447,6 +3456,8 @@ impl GooseAttack {
         _report_file: File,
         path: &str,
     ) -> Result<(), GooseError> {
+        // This should never be called when pdf_reports_enabled is true, as the validation
+        // in process_reports should have already handled that case
         Err(GooseError::InvalidOption {
             option: "--report-file".to_string(),
             value: path.to_string(),

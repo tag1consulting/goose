@@ -352,7 +352,7 @@ The JSON report is a dump of the internal metrics collection. It is a JSON seria
 
 ### PDF report
 
-The PDF report provides the same content and visualizations as the HTML report, but in a portable PDF format optimized for printing and mobile viewing. PDF reports are generated using headless Chrome to convert the HTML report to PDF format.
+The PDF report provides the same content and visualizations as the HTML report, but in a portable PDF format optimized for printing, mobile viewing, and archiving. PDF reports are generated using headless Chrome to convert the HTML report to PDF format.
 
 #### Generating PDF reports
 
@@ -360,14 +360,51 @@ To generate a PDF report, use the `.pdf` file extension with the `--report-file`
 
 ```bash
 # Generate only a PDF report
-goose --report-file report.pdf
+goos-loadtest --report-file report.pdf
 
 # Generate both HTML and PDF reports
-goose --report-file report.html --report-file report.pdf
+goose-loadtest --report-file report.html --report-file report.pdf
 
 # Generate PDF report with custom scale factor
-goose --report-file report.pdf --pdf-scale 1.2
+goose-loadtest --report-file report.pdf --pdf-scale 1.2
 ```
+
+#### PDF Auto-Enable Configuration
+
+For load tests where PDF is your primary report format (for example, when distributing reports to stakeholders or archiving results), you can automatically compile in PDF generation dependencies by using `GooseDefault::PdfReports`. This eliminates the need to remember feature flags every time you run a load test:
+
+```rust,ignore
+use goose::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
+    GooseAttack::initialize()?
+        // always compile in PDF generation dependencies
+        .set_default(GooseDefault::PdfReports, true)?
+        .register_scenario(scenario!("LoadTest")
+            .register_transaction(transaction!(load_homepage))
+        )
+        .execute()
+        .await?;
+    
+    Ok(())
+}
+```
+
+With this configuration, users can generate PDF reports without manual feature flags:
+
+```bash
+# Works automatically! No --features pdf-reports needed
+cargo run --example my_test -- --report-file report.pdf
+
+# Mixed report formats work seamlessly
+cargo run --example my_test -- --report-file report.html --report-file report.json --report-file report.pdf
+```
+
+**When to use each approach:**
+- Use `GooseDefault::PdfReports = true` for load tests where PDF is your primary report format (e.g., for stakeholder distribution or archiving)
+- Use `--features pdf-reports` for occasional PDF generation or when working with existing tests that typically use other formats
+- Both approaches can coexist within the same project to support different reporting workflows
 
 #### Configuration options
 
@@ -375,14 +412,10 @@ goose --report-file report.pdf --pdf-scale 1.2
 
 #### System requirements
 
-PDF report generation is handled automatically by the `headless_chrome` crate, which manages Chrome/Chromium installation for you. The PDF feature is optional and only compiled when building with the `pdf-reports` feature flag:
-
+PDF report generation is handled automatically by the `headless_chrome` crate, which manages Chrome/Chromium installation for you. The PDF feature is optional and only compiled when building with the `pdf-reports` feature flag or setting `GooseDefault::PdfReports = true` in the load test code:
 ```bash
 # Build Goose with PDF support
-cargo build --features pdf-reports
-
-# Run load test with PDF generation
-./your_loadtest --report-file report.pdf
+cargo build --features pdf-reports -- --report-file report.pdf
 ```
 
 The first time you generate a PDF report, the `headless_chrome` crate will automatically download and configure the necessary Chrome binary if it's not already available. This ensures a seamless experience without manual installation steps.
@@ -394,8 +427,6 @@ PDF reports include several optimizations for better print output:
 - Optimized page layout preventing content breaks
 - Automatically calculated page dimensions based on content
 - Enhanced typography for better readability
-
-The PDF report maintains all the interactive chart functionality when viewed digitally, while providing a consistent format for sharing and mobile viewing.
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).
