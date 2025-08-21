@@ -2105,6 +2105,15 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
+
+            // Check if pdf_scale is used with external pdf_generator
+            if self.pdf_generator.is_some() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.pdf_scale`".to_string(),
+                    value: self.pdf_scale.to_string(),
+                    detail: "`configuration.pdf_scale` only works with the built-in PDF generator. Remove --pdf-generator to use --pdf-scale, or configure scaling in your external generator command.".to_string(),
+                });
+            }
         }
 
         Ok(())
