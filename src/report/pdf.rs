@@ -168,7 +168,7 @@ pub(crate) fn generate_pdf_from_html(
     // Create a thread-safe scoped logging guard that temporarily adjusts log level for headless Chrome operations
     // This suppresses Rust logging output during PDF generation while maintaining thread safety
     let _log_guard = if !verbose {
-        Some(ScopedLogLevel::new(LevelFilter::Error))
+        Some(ScopedLogLevel::new(LevelFilter::Error)?)
     } else {
         None
     };

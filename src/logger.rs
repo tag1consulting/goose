@@ -183,6 +183,18 @@
 //! [`GooseDefault::NoDebugBody`](../config/enum.GooseDefault.html#variant.NoDebugBody) default
 //! configuration option. The debug logger will still record any custom messages, details
 //! about the request (when available), and all server response headers (when available).
+//!
+//! ## Thread Safety Considerations
+//!
+//! The `ScopedLogLevel` provides thread-safe temporary log level changes using a global mutex.
+//! This is necessary because Rust's `log::set_max_level()` modifies global state, and we need
+//! to temporarily suppress verbose Chromium logging during PDF generation.
+//!
+//! ### Mutex Poisoning
+//!
+//! If a thread panics while holding the log level mutex, the mutex becomes "poisoned".
+//! The current implementation fails fast when this occurs to expose potential threading
+//! issues rather than masking them.
 
 use log::LevelFilter;
 use regex::RegexSet;
@@ -214,23 +226,28 @@ impl ScopedLogLevel {
     /// to the specified level and storing the previous level for restoration.
     ///
     /// This method acquires a mutex lock to ensure thread-safe access to the global
-    /// log level, preventing race conditions when multiple threads generate PDF reports
+    /// log level, preventing race conditions if multiple threads generate PDF reports
     /// or perform other operations that require temporary log level changes.
-    pub fn new(level: LevelFilter) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `GooseError::InvalidOption` if the internal logging mutex is poisoned,
+    /// indicating a concurrency issue that should not be masked.
+    pub fn new(level: LevelFilter) -> Result<Self, GooseError> {
         // Acquire the mutex lock to ensure exclusive access to global log level
-        let guard = LOG_LEVEL_MUTEX.lock().unwrap_or_else(|poisoned| {
-            // If the mutex is poisoned, clear the poison and continue
-            // This can happen if a thread panicked while holding the lock
-            poisoned.into_inner()
-        });
+        let guard = LOG_LEVEL_MUTEX.lock().map_err(|_| GooseError::InvalidOption {
+            option: "--pdf (internal logging)".to_string(),
+            value: "mutex_poisoned".to_string(),
+            detail: "Thread safety violation in logging system: mutex poisoned due to concurrent thread panic. This indicates a serious concurrency bug that requires investigation.".to_string(),
+        })?;
 
         let previous_level = log::max_level();
         log::set_max_level(level);
 
-        Self {
+        Ok(Self {
             previous_level,
             _guard: guard,
-        }
+        })
     }
 }
 
