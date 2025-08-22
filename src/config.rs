@@ -1280,6 +1280,21 @@ impl GooseConfigure<Scenarios> for GooseConfiguration {
     }
 }
 
+/// Helper function for consistent error messaging across PDF validation scenarios.
+fn create_pdf_feature_error(pdf_file: String, auto_enabled: bool) -> GooseError {
+    let detail = if auto_enabled {
+        "PDF reports require compiling with the 'pdf-reports' feature flag. Auto-enable is configured but feature not compiled. Use: cargo build --features pdf-reports".to_string()
+    } else {
+        "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string()
+    };
+
+    GooseError::InvalidOption {
+        option: "--report-file".to_string(),
+        value: pdf_file,
+        detail,
+    }
+}
+
 impl GooseConfiguration {
     /// Implement precedence rules for all [`GooseConfiguration`] values.
     pub(crate) fn configure(&mut self, defaults: &GooseDefaults) {
@@ -2159,58 +2174,27 @@ impl GooseConfiguration {
             .any(|path| path.to_lowercase().ends_with(".pdf"));
         let pdf_auto_enabled = self.pdf_reports_enabled;
 
-        // Unified validation logic that works consistently across all builds
-        if (has_pdf_reports || pdf_auto_enabled) && !feature_compiled {
-            if pdf_auto_enabled && has_pdf_reports {
-                // Auto-enable is set AND PDF reports requested - this is unsafe without the feature
-                // Find the first PDF file to use in the error message
-                let pdf_file = self
-                    .report_file
-                    .iter()
-                    .find(|path| path.to_lowercase().ends_with(".pdf"))
-                    .cloned()
-                    .unwrap_or_else(|| "*.pdf".to_string());
+        // Single validation path with clear error messaging
+        if !feature_compiled && (has_pdf_reports || pdf_auto_enabled) {
+            let pdf_file = self
+                .report_file
+                .iter()
+                .find(|path| path.to_lowercase().ends_with(".pdf"))
+                .cloned()
+                .unwrap_or_else(|| "*.pdf".to_string());
 
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: pdf_file,
-                    detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
-                });
-            } else if !pdf_auto_enabled && has_pdf_reports {
-                // PDF reports requested but feature not compiled and auto-enable not set
-                // Find the first PDF file to use in the error message
-                let pdf_file = self
-                    .report_file
-                    .iter()
-                    .find(|path| path.to_lowercase().ends_with(".pdf"))
-                    .cloned()
-                    .unwrap_or_else(|| "*.pdf".to_string());
-
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: pdf_file,
-                    detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
-                });
-            } else if pdf_auto_enabled && !has_pdf_reports {
-                // Auto-enable is set but no PDF reports requested - this is a configuration warning
-                info!("PDF reports auto-enabled (GooseDefault::PdfReports) but feature not compiled and no PDF files requested");
-            }
+            return Err(create_pdf_feature_error(pdf_file, pdf_auto_enabled));
         }
-        // If feature is compiled, PDF reports always work regardless of auto-enable setting
 
-        // Validate PDF scale when feature is available and PDF reports are being used
+        // Separate scale validation for when feature is available
         #[cfg(feature = "pdf-reports")]
-        {
-            if (has_pdf_reports || pdf_auto_enabled)
-                && (self.pdf_scale < 0.1 || self.pdf_scale > 2.0)
-            {
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.pdf_scale`".to_string(),
-                    value: self.pdf_scale.to_string(),
-                    detail: "`configuration.pdf_scale` must be between 0.1 and 2.0 (inclusive)."
-                        .to_string(),
-                });
-            }
+        if has_pdf_reports && (self.pdf_scale < 0.1 || self.pdf_scale > 2.0) {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.pdf_scale`".to_string(),
+                value: self.pdf_scale.to_string(),
+                detail: "`configuration.pdf_scale` must be between 0.1 and 2.0 (inclusive)."
+                    .to_string(),
+            });
         }
 
         Ok(())
