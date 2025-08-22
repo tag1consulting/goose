@@ -289,12 +289,26 @@ All 9 users hatched.
  ------------------------------------------------------------------------------
 ```
 
-## Metrics reports
-In addition to the above metrics displayed on the CLI, we've also told Goose to create reports on other formats, like Markdown, JSON, or HTML.
+## Report Formats
 
-It is possible to create one or more reports at the same time, using one or more `--report-file` arguments. The type of report is chosen by the file extension. An unsupported file extension will lead to an error.
+In addition to the metrics displayed on the CLI, Goose can generate detailed reports in multiple formats. Each format serves different use cases:
 
-The following subsections describe the reports on more detail.
+- **HTML** - Interactive reports with charts and detailed visualizations
+- **JSON** - Machine-readable data for automated analysis and integration
+- **Markdown** - Text-based reports suitable for documentation and version control
+- **PDF** - Portable reports optimized for printing and sharing (requires `pdf-reports` feature)
+
+You can generate multiple report formats simultaneously by using multiple `--report-file` arguments. The report type is determined by the file extension:
+
+```bash
+# Generate multiple report formats at once
+cargo run --example simple -- \
+  --report-file report.html \
+  --report-file metrics.json \
+  --report-file summary.md
+```
+
+The following subsections describe each report format in detail.
 
 ### HTML report
 
@@ -350,109 +364,72 @@ The Markdown report follows the structure of the [HTML report](#html-report). Ho
 
 The JSON report is a dump of the internal metrics collection. It is a JSON serialization of the `ReportData` structure. Mainly having a field named `raw_metrics`, carrying the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html).
 
-### PDF report
+### PDF Reports
 
-The PDF report provides the same content and visualizations as the HTML report, but in a portable PDF format optimized for printing, mobile viewing, and archiving. PDF reports are generated using headless Chrome to convert the HTML report to PDF format.
+Goose can generate PDF reports in addition to HTML, JSON, and Markdown formats. PDF reports contain the same comprehensive metrics and visualizations as HTML reports, formatted for optimal printing, mobile viewing, and archiving.
 
-#### Generating PDF reports
+#### Enabling PDF Support
 
-To generate a PDF report, use the `.pdf` file extension with the `--report-file` option:
-
-```bash
-# Generate only a PDF report
-cargo run --example simple --features pdf-reports -- --report-file report.pdf
-
-# Generate both HTML and PDF reports  
-cargo run --example simple --features pdf-reports -- --report-file report.html --report-file report.pdf
-
-# Generate PDF report with custom scale factor
-cargo run --example simple --features pdf-reports -- --report-file report.pdf --pdf-scale 1.2
-```
-
-#### PDF Auto-Enable Configuration
-
-For load tests where PDF is your primary report format (for example, when distributing reports to stakeholders or archiving results), you can automatically compile in PDF generation dependencies by using `GooseDefault::PdfReports`. This eliminates the need to remember feature flags every time you run a load test:
-
-```rust,ignore
-use goose::prelude::*;
-
-#[tokio::main]
-async fn main() -> Result<(), GooseError> {
-    GooseAttack::initialize()?
-        // always compile in PDF generation dependencies
-        .set_default(GooseDefault::PdfReports, true)?
-        .register_scenario(scenario!("LoadTest")
-            .register_transaction(transaction!(load_homepage))
-        )
-        .execute()
-        .await?;
-    
-    Ok(())
-}
-```
-
-With this configuration, users can generate PDF reports without manual feature flags:
-
-```bash
-# Works automatically! No --features pdf-reports needed
-cargo run --example my_test -- --report-file report.pdf
-
-# Mixed report formats work seamlessly
-cargo run --example my_test -- --report-file report.html --report-file report.json --report-file report.pdf
-```
-
-**When to use each approach:**
-- Use `GooseDefault::PdfReports = true` for load tests where PDF is your primary report format (e.g., for stakeholder distribution or archiving)
-- Use `--features pdf-reports` for occasional PDF generation or when working with existing tests that typically use other formats
-- Both approaches can coexist within the same project to support different reporting workflows
-
-#### Configuration options
-
-- `--pdf-scale <FACTOR>`: Scale factor for PDF content (0.1-2.0, default: 0.8). Higher values create larger text and elements.
-
-#### System requirements
-
-PDF report generation is handled automatically by the `headless_chrome` crate, which manages Chrome/Chromium installation for you. The PDF feature is optional and only compiled when building with the `pdf-reports` feature flag or setting `GooseDefault::PdfReports = true` in the load test code:
+PDF report generation is an optional feature that requires compilation with the `pdf-reports` feature flag:
 
 ```bash
 # Build Goose with PDF support
 cargo build --features pdf-reports
-
-# Run with PDF support
-cargo run --example simple --features pdf-reports -- --report-file report.pdf
 ```
 
-**PDF System Requirements:**
-- Chrome or Chromium browser (automatically downloaded if not found)
+#### System Requirements
+
+PDF generation uses headless Chrome to convert HTML reports to PDF format. The system requirements are:
+
+- Chrome or Chromium browser (automatically downloaded if not available)
 - Sufficient disk space for Chrome download (~120MB on first use)
 - Network connectivity for initial Chrome download
-- Write permissions for output directory
+- Write permissions for the output directory
 
-The first time you generate a PDF report, the `headless_chrome` crate will automatically download and configure the necessary Chrome binary if it's not already available. This download may take a few minutes depending on your internet connection, but only needs to happen once.
+The first time you generate a PDF report, the system will automatically download and configure Chrome if it's not already available. This download may take a few minutes but only needs to happen once.
 
-#### PDF optimizations
+#### Generating PDF Reports
 
-PDF reports include several optimizations for better print output:
-- Print-specific CSS styling
-- Optimized page layout preventing content breaks
+Once compiled with PDF support, generate PDF reports using the `--report-file` option with a `.pdf` extension:
+
+```bash
+# Generate only a PDF report
+cargo run --features pdf-reports --example simple -- --report-file report.pdf
+
+# Generate both HTML and PDF reports
+cargo run --features pdf-reports --example simple -- --report-file report.html --report-file report.pdf
+
+# Generate PDF with custom scaling
+cargo run --features pdf-reports --example simple -- --report-file report.pdf --pdf-scale 1.2
+```
+
+#### Configuration Options
+
+- `--pdf-scale <FACTOR>`: Scale factor for PDF content (0.1-2.0, default: 0.8). Higher values create larger text and elements.
+
+#### PDF Optimizations
+
+PDF reports include several enhancements for better print output:
+- Print-specific CSS styling for clean presentation
+- Optimized page layout preventing awkward content breaks
 - Automatically calculated page dimensions based on content
-- Enhanced typography for better readability
+- Enhanced typography for improved readability
 
-#### Troubleshooting PDF generation
+#### Troubleshooting PDF Generation
 
 If you encounter issues generating PDF reports:
 
-**Chrome download problems:**
-- Ensure you have a stable internet connection
-- Check available disk space (~120MB required for Chrome)
-- Verify network permissions (corporate firewalls may block the download)
-- Try running with verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
+**Chrome-related problems:**
+- Ensure stable internet connection for Chrome download
+- Verify sufficient disk space (~120MB required)
+- Check network permissions (corporate firewalls may block downloads)
+- Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
 
 **PDF generation failures:**
 - Confirm write permissions in the output directory
 - Use absolute paths if relative paths cause issues
-- Check system memory - Chrome requires additional RAM during PDF generation
-- Ensure no other Chrome processes are interfering
+- Ensure sufficient system memory (Chrome requires additional RAM)
+- Check that no other Chrome processes are interfering
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).

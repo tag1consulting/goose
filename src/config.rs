@@ -202,9 +202,6 @@ pub struct GooseConfiguration {
     #[cfg(feature = "pdf-reports")]
     #[options(no_short, meta = "SCALE", default = "0.8")]
     pub pdf_scale: f64,
-
-    /// Whether PDF reports are auto-enabled by load test author
-    pub(crate) pdf_reports_enabled: bool,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.
@@ -344,8 +341,6 @@ pub(crate) struct GooseDefaults {
     pub websocket_port: Option<u16>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
-    /// An optional default for enabling PDF report auto-detection.
-    pub pdf_reports: Option<bool>,
 }
 
 /// Defines all [`GooseConfiguration`] options that can be programmatically configured with
@@ -448,37 +443,6 @@ pub enum GooseDefault {
     WebSocketPort,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
-    /// An optional default for enabling PDF report auto-detection.
-    ///
-    /// When set to `true`, this allows users to generate PDF reports using
-    /// `--report-file *.pdf` without manually specifying the `pdf-reports` feature flag.
-    ///
-    /// This is particularly useful for load tests that regularly generate PDF reports,
-    /// providing better developer experience while keeping the PDF feature disabled
-    /// by default globally to avoid heavy Chromium dependencies.
-    ///
-    /// # Examples
-    ///
-    /// Enable PDF auto-detection for your load test:
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let _goose_attack = GooseAttack::initialize()?
-    ///     .set_default(GooseDefault::PdfReports, true)?
-    ///     .register_scenario(scenario!("LoadTest"));
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// Now users can run: `cargo run --example test -- --report-file report.pdf`
-    ///
-    /// # Notes
-    ///
-    /// - The `pdf-reports` feature must still be compiled in for this to work
-    /// - If PDF is requested but this default is not set, users get helpful error messages
-    /// - This setting only affects PDF file detection, other report formats are unaffected
-    PdfReports,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
@@ -657,8 +621,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::AcceptInvalidCerts
-            | GooseDefault::PdfReports => {
+            | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -746,8 +709,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::AcceptInvalidCerts
-            | GooseDefault::PdfReports => {
+            | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -804,7 +766,6 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
-            GooseDefault::PdfReports => self.defaults.pdf_reports = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
@@ -899,7 +860,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::AcceptInvalidCerts
-            | GooseDefault::PdfReports => {
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -997,7 +958,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::AcceptInvalidCerts
-            | GooseDefault::PdfReports => {
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -1277,21 +1238,6 @@ impl GooseConfigure<Scenarios> for GooseConfiguration {
             }
         }
         None
-    }
-}
-
-/// Helper function for consistent error messaging across PDF validation scenarios.
-fn create_pdf_feature_error(pdf_file: String, auto_enabled: bool) -> GooseError {
-    let detail = if auto_enabled {
-        "PDF reports require compiling with the 'pdf-reports' feature flag. Auto-enable is configured but feature not compiled. Use: cargo build --features pdf-reports".to_string()
-    } else {
-        "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string()
-    };
-
-    GooseError::InvalidOption {
-        option: "--report-file".to_string(),
-        value: pdf_file,
-        detail,
     }
 }
 
@@ -1874,18 +1820,6 @@ impl GooseConfiguration {
                 },
             ])
             .unwrap_or(false);
-
-        // Configure `pdf_reports_enabled`
-        self.pdf_reports_enabled = self
-            .get_value(vec![
-                // Use GooseDefault if set
-                GooseValue {
-                    value: defaults.pdf_reports,
-                    filter: defaults.pdf_reports.is_none(),
-                    message: "pdf_reports auto-enable",
-                },
-            ])
-            .unwrap_or(false);
     }
 
     /// Validate configured [`GooseConfiguration`] values.
@@ -2162,20 +2096,17 @@ impl GooseConfiguration {
         Ok(())
     }
 
-    /// Unified PDF configuration validation that works consistently across feature builds.
+    /// Simplified PDF configuration validation.
     ///
-    /// This ensures safe auto-enable behavior and prevents runtime errors when PDF
-    /// functionality is requested but not available.
+    /// This ensures proper error handling when PDF functionality is requested but not available.
     fn validate_pdf_configuration(&self) -> Result<(), GooseError> {
-        let feature_compiled = cfg!(feature = "pdf-reports");
         let has_pdf_reports = self
             .report_file
             .iter()
             .any(|path| path.to_lowercase().ends_with(".pdf"));
-        let pdf_auto_enabled = self.pdf_reports_enabled;
 
-        // Single validation path with clear error messaging
-        if !feature_compiled && (has_pdf_reports || pdf_auto_enabled) {
+        // Simple check: PDF files requested but feature not compiled
+        if has_pdf_reports && !cfg!(feature = "pdf-reports") {
             let pdf_file = self
                 .report_file
                 .iter()
@@ -2183,10 +2114,14 @@ impl GooseConfiguration {
                 .cloned()
                 .unwrap_or_else(|| "*.pdf".to_string());
 
-            return Err(create_pdf_feature_error(pdf_file, pdf_auto_enabled));
+            return Err(GooseError::InvalidOption {
+                option: "--report-file".to_string(),
+                value: pdf_file,
+                detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
+            });
         }
 
-        // Separate scale validation for when feature is available
+        // Scale validation when feature is available
         #[cfg(feature = "pdf-reports")]
         if has_pdf_reports && (self.pdf_scale < 0.1 || self.pdf_scale > 2.0) {
             return Err(GooseError::InvalidOption {

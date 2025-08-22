@@ -1,4 +1,4 @@
-//! Test PDF auto-enable functionality
+//! Test PDF functionality when compiled with pdf-reports feature
 
 #[cfg(feature = "pdf-reports")]
 use httpmock::Method::GET;
@@ -40,8 +40,8 @@ fn get_transactions() -> Scenario {
 #[cfg(feature = "pdf-reports")]
 #[tokio::test]
 #[serial]
-async fn test_pdf_chromium_compiled_in() {
-    let pdf_file = "test-pdf-auto-enable.pdf";
+async fn test_pdf_generation_with_feature() {
+    let pdf_file = "test-pdf-generation.pdf";
 
     let server = MockServer::start();
     let mock_endpoints = setup_mock_server_endpoints(&server);
@@ -54,17 +54,15 @@ async fn test_pdf_chromium_compiled_in() {
         "--run-time",
         "1",
         "--report-file",
-        pdf_file, // This should work with auto-enable
+        pdf_file, // This should work when pdf-reports feature is compiled
     ];
     let configuration = common::build_configuration(&server, configuration_flags);
 
-    // Build the load test and programmatically enable PDF reports using GooseDefault
-    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None)
-        .set_default(GooseDefault::PdfReports, true) // Enable PDF auto-detection
-        .expect("Should be able to enable PDF reports when pdf-reports feature is compiled");
+    // Build the load test - PDF functionality is purely opt-in via CLI flag
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
-    // Run the Goose Attack (dereference the Box)
-    let goose_metrics = common::run_load_test(*goose_attack, None).await;
+    // Run the Goose Attack
+    let goose_metrics = common::run_load_test(goose_attack, None).await;
 
     // Confirm that we loaded the mock endpoints
     assert!(mock_endpoints[0].hits() > 0);
@@ -72,10 +70,10 @@ async fn test_pdf_chromium_compiled_in() {
     // Confirm that the test duration was correct
     assert!(goose_metrics.duration == 1);
 
-    // PDF file must exist when pdf-reports feature is compiled and auto-enabled
+    // PDF file must exist when pdf-reports feature is compiled
     assert!(
         std::path::Path::new(pdf_file).exists(),
-        "PDF report file should be created when PDF auto-enable is used"
+        "PDF report file should be created when pdf-reports feature is compiled"
     );
 
     // PDF file must not be empty
@@ -86,7 +84,7 @@ async fn test_pdf_chromium_compiled_in() {
 }
 
 /// Test that PDF resource management works correctly - Chrome processes are properly cleaned up.
-/// This test validates that multiple PDF generations don't cause resource leaks by using the public API.
+/// This test validates that multiple PDF generations don't cause resource leaks.
 #[cfg(feature = "pdf-reports")]
 #[tokio::test]
 #[serial]
@@ -115,11 +113,9 @@ async fn test_pdf_resource_management() {
 
         // Build and run the load test with PDF generation
         let goose_attack =
-            common::build_load_test(configuration, vec![get_transactions()], None, None)
-                .set_default(GooseDefault::PdfReports, true)
-                .expect("Should be able to enable PDF reports");
+            common::build_load_test(configuration, vec![get_transactions()], None, None);
 
-        let goose_metrics = common::run_load_test(*goose_attack, None).await;
+        let goose_metrics = common::run_load_test(goose_attack, None).await;
 
         // Confirm basic functionality
         assert!(mock_endpoints[0].hits() > 0);
@@ -143,13 +139,13 @@ async fn test_pdf_resource_management() {
     }
 }
 
-/// Test that PDF auto-enable functionality works correctly when the feature is NOT compiled in.
+/// Test that PDF functionality fails correctly when the feature is NOT compiled in.
 /// This validates that chromium dependencies are NOT available and the proper error is shown.
 #[cfg(not(feature = "pdf-reports"))]
 #[tokio::test]
 #[serial]
-async fn test_pdf_chromium_not_compiled() {
-    let pdf_file = "test-pdf-auto-enable-should-fail.pdf";
+async fn test_pdf_without_feature_fails() {
+    let pdf_file = "test-pdf-should-fail.pdf";
 
     let server = MockServer::start();
 
@@ -165,14 +161,8 @@ async fn test_pdf_chromium_not_compiled() {
     ];
     let configuration = common::build_configuration(&server, configuration_flags);
 
-    // Build the load test and programmatically enable PDF reports using GooseDefault
-    let goose_attack_result =
-        common::build_load_test(configuration, vec![get_transactions()], None, None)
-            .set_default(GooseDefault::PdfReports, true); // Enable PDF auto-detection
-
-    // This should succeed in creating the GooseAttack, but fail during execution
-    let goose_attack =
-        goose_attack_result.expect("Should be able to set PDF default even without feature");
+    // Build the load test
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
     // This should fail because the pdf-reports feature is not compiled in
     let result = goose_attack.execute().await;
@@ -194,15 +184,11 @@ async fn test_pdf_chromium_not_compiled() {
         other => panic!("Expected InvalidOption error, got: {:?}", other),
     }
 
-    // The PDF file may be created but should be empty since the error occurred before writing
-    if std::path::Path::new(pdf_file).exists() {
-        let metadata = std::fs::metadata(pdf_file).expect("Failed to get PDF file metadata");
-        assert_eq!(
-            metadata.len(),
-            0,
-            "PDF report file should be empty when pdf-reports feature is not compiled"
-        );
-    }
+    // The PDF file should not be created when the feature is not compiled
+    assert!(
+        !std::path::Path::new(pdf_file).exists(),
+        "PDF file should not be created when pdf-reports feature is not compiled"
+    );
 
     common::cleanup_files(vec![pdf_file]);
 }

@@ -3095,7 +3095,7 @@ impl GooseAttack {
                 #[cfg(not(feature = "pdf-reports"))]
                 Some("pdf") => {
                     // Check if PDF auto-enable is set
-                    if !self.configuration.pdf_reports_enabled {
+                    if false {
                         return Err(GooseError::InvalidOption {
                             option: "--report-file".to_string(),
                             value: report.clone(),
