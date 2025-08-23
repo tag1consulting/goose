@@ -203,11 +203,7 @@ pub struct GooseConfiguration {
     #[options(no_short, meta = "SCALE", default = "0.8")]
     pub pdf_scale: f64,
     /// An optional path where to generate PDF-optimized HTML
-    #[options(
-        no_short,
-        meta = "PATH",
-        help = "path to generate PDF-optimized HTML"
-    )]
+    #[options(no_short, meta = "PATH", help = "path to generate PDF-optimized HTML")]
     pub pdf_print_html: String,
 }
 
