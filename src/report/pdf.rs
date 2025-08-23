@@ -306,52 +306,66 @@ pub(crate) fn generate_pdf_from_html(
     Ok(())
 }
 
-/// Add print-optimized CSS styles to HTML content for better PDF output
+/// Add print-optimized CSS styles to HTML content that matches Chrome's internal PDF generation
 #[cfg(feature = "pdf-reports")]
 pub(crate) fn add_print_css(html_content: &str) -> String {
     let print_css = r#"
         <style media="print">
             @page {
                 margin: 0.1in;
-                size: auto;
+                size: 8.5in auto;
             }
             
-            /* Force unlimited page layout - disable ALL page breaking */
-            * {
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
-                page-break-before: auto !important;
-                break-before: auto !important;
-                page-break-after: auto !important;
-                break-after: auto !important;
-            }
-
-            body {
+            /* Match Chrome's internal PDF generation behavior */
+            html, body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 font-size: 12px;
                 line-height: 1.4;
                 color: #333;
                 background: white !important;
-                height: auto !important;
-                min-height: 100vh;
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
+                margin: 0;
+                padding: 0;
+                height: auto;
+                overflow: visible;
             }
             
-            /* Standard PDF styles for tables, headers, etc. */
+            /* Prevent page breaks in critical elements but allow natural flow */
+            h1, h2, h3, h4, h5, h6 {
+                page-break-after: avoid;
+                break-after: avoid;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            /* Table handling - prevent breaking table headers but allow content to flow */
             table {
                 border-collapse: collapse;
                 width: 100% !important;
                 font-size: 11px;
                 margin-bottom: 20px;
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
+            }
+            
+            thead {
+                display: table-header-group;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            tbody {
+                display: table-row-group;
+            }
+            
+            tr {
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             
             th, td {
                 border: 1px solid #ddd !important;
                 padding: 4px 8px !important;
                 text-align: left;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             
             th {
@@ -359,11 +373,18 @@ pub(crate) fn add_print_css(html_content: &str) -> String {
                 font-weight: bold;
             }
             
-            h1, h2, h3 {
-                page-break-after: auto !important;
-                break-after: auto !important;
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
+            /* Allow natural page breaks for content sections */
+            .metrics-section, .overview-section {
+                page-break-inside: auto;
+                break-inside: auto;
+            }
+            
+            /* Ensure charts and images scale properly */
+            img, canvas, svg {
+                max-width: 100% !important;
+                height: auto !important;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
         </style>
         "#

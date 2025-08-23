@@ -3428,12 +3428,30 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         use crate::report::pdf::{add_print_css, generate_pdf_from_html};
         use std::path::Path;
+        use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
         let html_report = self.generate_html_report_content();
 
         // Add print-optimized CSS for better PDF output
         let print_optimized_html = add_print_css(&html_report);
+
+        // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
+        if !self.configuration.pdf_print_html.is_empty() {
+            if let Err(e) =
+                async_fs::write(&self.configuration.pdf_print_html, &print_optimized_html).await
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "--pdf-print-html".to_string(),
+                    value: self.configuration.pdf_print_html.clone(),
+                    detail: format!("Failed to write PDF-optimized HTML: {}", e),
+                });
+            }
+            info!(
+                "PDF-optimized HTML saved to: {}",
+                self.configuration.pdf_print_html
+            );
+        }
 
         // Generate PDF from HTML using the simplified configuration (hardcoded defaults with configurable scale)
         generate_pdf_from_html(
