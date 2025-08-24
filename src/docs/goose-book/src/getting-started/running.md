@@ -53,6 +53,21 @@ As of Goose 0.16.0, by default all `INFO` and higher level log messages are disp
 
 When the load tests finishes shutting down, it will display some [ASCII metrics](metrics.html#ascii-metrics) on the CLI and an HTML report will be created in the local directory named `report.html` as was configured above. The graphs and tables found in the HTML report are what are demonstrated below:
 
+## Printer-Friendly HTML Example
+
+If you want to create a printer-friendly version of your HTML report that's optimized for PDF conversion, you can use the `--pdf-print-html` option instead of `--report-file`:
+
+```bash
+% cargo run --release -- --host http://umami.ddev.site --pdf-print-html=print-report.html --no-reset-metrics
+```
+
+This generates an HTML file with print-optimized CSS styling that displays all content on a single page without interactive elements, making it perfect for:
+- Converting to PDF using your browser's "Print to PDF" function
+- Printing on paper for offline review
+- Sharing static reports via email or documentation systems
+
+The print-optimized HTML contains the same comprehensive metrics data as the regular HTML report, but formatted for optimal readability when printed or converted to PDF.
+
 ![HTML report header section](report-header.png)
 
 By default, Goose will hatch 1 `GooseUser` per second, up to the number of CPU cores available on the server used for load testing. In the above example, the loadtest was run from a laptop with 10 CPU cores, so it took 10 seconds to hatch all users.

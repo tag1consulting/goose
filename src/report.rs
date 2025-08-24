@@ -2,6 +2,8 @@
 mod common;
 mod markdown;
 
+pub mod pdf;
+
 pub(crate) use markdown::write_markdown_report;
 
 use crate::{

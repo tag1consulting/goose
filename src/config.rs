@@ -100,12 +100,19 @@ pub struct GooseConfiguration {
     /// Doesn't display an error summary
     #[options(no_short)]
     pub no_error_summary: bool,
-    /// Create reports, can be used multiple times (supports .html, .htm, .md, .json)
+    /// Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
     #[options(no_short, meta = "NAME")]
     pub report_file: Vec<String>,
     /// Disable granular graphs in report file
     #[options(no_short)]
     pub no_granular_report: bool,
+    /// Generate printer-friendly HTML optimized for PDF conversion
+    #[options(
+        no_short,
+        meta = "PATH",
+        help = "Generate printer-friendly HTML optimized for PDF conversion"
+    )]
+    pub pdf_print_html: String,
     /// Sets request log file name
     #[options(short = "R", meta = "NAME")]
     pub request_log: String,
@@ -198,6 +205,10 @@ pub struct GooseConfiguration {
     /// Disables validation of https certificates
     #[options(no_short)]
     pub accept_invalid_certs: bool,
+    /// Sets PDF scale factor (0.1-2.0)
+    #[cfg(feature = "pdf-reports")]
+    #[options(no_short, meta = "SCALE", default = "0.8")]
+    pub pdf_scale: f64,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.
@@ -855,7 +866,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::AcceptInvalidCerts  => {
+            | GooseDefault::AcceptInvalidCerts
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -952,7 +964,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::AcceptInvalidCerts => {
+            | GooseDefault::AcceptInvalidCerts
+            => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -2082,6 +2095,49 @@ impl GooseConfiguration {
                     detail: "`configuration.throttle_requests` can not be set to more than 1,000,000 request per second.".to_string(),
                 });
             }
+        }
+
+        // Unified PDF configuration validation
+        self.validate_pdf_configuration()?;
+
+        Ok(())
+    }
+
+    /// Simplified PDF configuration validation.
+    ///
+    /// This ensures proper error handling when PDF functionality is requested but not available.
+    /// Note: --pdf-print-html is always available as it only generates HTML+CSS without requiring Chromium.
+    fn validate_pdf_configuration(&self) -> Result<(), GooseError> {
+        let has_pdf_reports = self
+            .report_file
+            .iter()
+            .any(|path| path.to_lowercase().ends_with(".pdf"));
+
+        // Check if PDF report generation is requested but feature not compiled
+        if !cfg!(feature = "pdf-reports") && has_pdf_reports {
+            let pdf_file = self
+                .report_file
+                .iter()
+                .find(|path| path.to_lowercase().ends_with(".pdf"))
+                .cloned()
+                .unwrap_or_else(|| "*.pdf".to_string());
+
+            return Err(GooseError::InvalidOption {
+                option: "--report-file".to_string(),
+                value: pdf_file,
+                detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
+            });
+        }
+
+        // Scale validation when feature is available
+        #[cfg(feature = "pdf-reports")]
+        if has_pdf_reports && (self.pdf_scale < 0.1 || self.pdf_scale > 2.0) {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.pdf_scale`".to_string(),
+                value: self.pdf_scale.to_string(),
+                detail: "`configuration.pdf_scale` must be between 0.1 and 2.0 (inclusive)."
+                    .to_string(),
+            });
         }
 
         Ok(())
