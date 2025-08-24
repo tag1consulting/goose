@@ -106,6 +106,13 @@ pub struct GooseConfiguration {
     /// Disable granular graphs in report file
     #[options(no_short)]
     pub no_granular_report: bool,
+    /// Generate printer-friendly HTML optimized for PDF conversion
+    #[options(
+        no_short,
+        meta = "PATH",
+        help = "Generate printer-friendly HTML optimized for PDF conversion"
+    )]
+    pub pdf_print_html: String,
     /// Sets request log file name
     #[options(short = "R", meta = "NAME")]
     pub request_log: String,
@@ -202,9 +209,6 @@ pub struct GooseConfiguration {
     #[cfg(feature = "pdf-reports")]
     #[options(no_short, meta = "SCALE", default = "0.8")]
     pub pdf_scale: f64,
-    /// An optional path where to generate PDF-optimized HTML
-    #[options(no_short, meta = "PATH", help = "path to generate PDF-optimized HTML")]
-    pub pdf_print_html: String,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.

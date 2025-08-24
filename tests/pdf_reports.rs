@@ -1,7 +1,5 @@
 //! Test PDF functionality when compiled with pdf-reports feature
 
-#[cfg(feature = "pdf-reports")]
-use httpmock::Method::GET;
 use httpmock::MockServer;
 use serial_test::serial;
 

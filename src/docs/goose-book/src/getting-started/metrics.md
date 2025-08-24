@@ -366,11 +366,38 @@ The JSON report is a dump of the internal metrics collection. It is a JSON seria
 
 ### PDF Reports
 
-Goose can generate PDF reports in addition to HTML, JSON, and Markdown formats. PDF reports contain the same comprehensive metrics and visualizations as HTML reports, formatted for optimal printing, mobile viewing, and archiving.
+Goose provides two approaches for creating PDF reports from your load test results:
 
-#### Enabling PDF Support
+1. **Two-step process**: Generate printer-friendly HTML first, then convert to PDF manually
+2. **Integrated approach**: Generate PDF reports directly (requires additional dependencies)
 
-PDF report generation is an optional feature that requires compilation with the `pdf-reports` feature flag:
+#### Printer-Friendly HTML (Two-Step Process)
+
+For users who want control over PDF generation or prefer to avoid additional dependencies, Goose can generate HTML reports optimized for printing and PDF conversion:
+
+```bash
+# Generate printer-friendly HTML
+cargo run --example simple -- --pdf-print-html print-ready.html
+
+# Then convert to PDF using your preferred tool:
+# - Browser: Open print-ready.html and use "Print to PDF"
+# - wkhtmltopdf: wkhtmltopdf print-ready.html report.pdf
+# - Puppeteer: Custom script to convert HTML to PDF
+# - Chrome headless: chrome --headless --print-to-pdf=report.pdf print-ready.html
+```
+
+The `--pdf-print-html` option creates HTML with specialized CSS optimizations:
+- Single-page layout optimized for printing
+- Print-specific styling for clean presentation
+- Proper page break handling for tables and sections
+- Enhanced typography for improved readability
+- All content consolidated on a single page
+
+This approach is always available and doesn't require any additional feature flags or dependencies.
+
+#### Direct PDF Generation (Integrated Approach)
+
+For automated PDF generation, Goose can create PDF reports directly using headless Chrome. This requires compilation with the `pdf-reports` feature flag:
 
 ```bash
 # Build Goose with PDF support
