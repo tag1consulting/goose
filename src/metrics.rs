@@ -3136,7 +3136,45 @@ impl GooseAttack {
 
     /// Write all requested reports.
     pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
-        self.process_reports(true).await
+        self.process_reports(true).await?;
+
+        // Write PDF-optimized HTML if configured (always available)
+        self.write_print_html_if_configured().await?;
+
+        Ok(())
+    }
+
+    /// Write PDF-optimized HTML if the --pdf-print-html option is configured.
+    /// This functionality is always available regardless of feature flags.
+    async fn write_print_html_if_configured(&self) -> Result<(), GooseError> {
+        if !self.configuration.pdf_print_html.is_empty() {
+            use crate::report::pdf::generate_print_optimized_html_content;
+            use tokio::fs as async_fs;
+
+            // Generate HTML report content
+            let html_report = self.generate_html_report_content();
+
+            // Add print-optimized CSS using the shared function
+            let print_optimized_html = generate_print_optimized_html_content(&html_report);
+
+            // Write the PDF-optimized HTML to file
+            if let Err(e) =
+                async_fs::write(&self.configuration.pdf_print_html, &print_optimized_html).await
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "--pdf-print-html".to_string(),
+                    value: self.configuration.pdf_print_html.clone(),
+                    detail: format!("Failed to write PDF-optimized HTML: {}", e),
+                });
+            }
+
+            info!(
+                "PDF-optimized HTML saved to: {}",
+                self.configuration.pdf_print_html
+            );
+        }
+
+        Ok(())
     }
 
     /// Generate HTML report content that can be used for both HTML and PDF reports.
@@ -3426,15 +3464,15 @@ impl GooseAttack {
         _report_file: File,
         path: &str,
     ) -> Result<(), GooseError> {
-        use crate::report::pdf::{add_print_css, generate_pdf_from_html};
+        use crate::report::pdf::{generate_pdf_from_html, generate_print_optimized_html_content};
         use std::path::Path;
         use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
         let html_report = self.generate_html_report_content();
 
-        // Add print-optimized CSS for better PDF output
-        let print_optimized_html = add_print_css(&html_report);
+        // Add print-optimized CSS for better PDF output using the shared function
+        let print_optimized_html = generate_print_optimized_html_content(&html_report);
 
         // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
         if !self.configuration.pdf_print_html.is_empty() {

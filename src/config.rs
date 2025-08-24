@@ -2102,38 +2102,27 @@ impl GooseConfiguration {
     /// Simplified PDF configuration validation.
     ///
     /// This ensures proper error handling when PDF functionality is requested but not available.
+    /// Note: --pdf-print-html is always available as it only generates HTML+CSS without requiring Chromium.
     fn validate_pdf_configuration(&self) -> Result<(), GooseError> {
         let has_pdf_reports = self
             .report_file
             .iter()
             .any(|path| path.to_lowercase().ends_with(".pdf"));
 
-        let has_pdf_print_html = !self.pdf_print_html.is_empty();
+        // Check if PDF report generation is requested but feature not compiled
+        if !cfg!(feature = "pdf-reports") && has_pdf_reports {
+            let pdf_file = self
+                .report_file
+                .iter()
+                .find(|path| path.to_lowercase().ends_with(".pdf"))
+                .cloned()
+                .unwrap_or_else(|| "*.pdf".to_string());
 
-        // Check if any PDF functionality is requested but feature not compiled
-        if !cfg!(feature = "pdf-reports") {
-            if has_pdf_reports {
-                let pdf_file = self
-                    .report_file
-                    .iter()
-                    .find(|path| path.to_lowercase().ends_with(".pdf"))
-                    .cloned()
-                    .unwrap_or_else(|| "*.pdf".to_string());
-
-                return Err(GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: pdf_file,
-                    detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
-                });
-            }
-
-            if has_pdf_print_html {
-                return Err(GooseError::InvalidOption {
-                    option: "--pdf-print-html".to_string(),
-                    value: self.pdf_print_html.clone(),
-                    detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
-                });
-            }
+            return Err(GooseError::InvalidOption {
+                option: "--report-file".to_string(),
+                value: pdf_file,
+                detail: "PDF reports require compiling with the 'pdf-reports' feature flag. Use: cargo build --features pdf-reports".to_string(),
+            });
         }
 
         // Scale validation when feature is available

@@ -19,12 +19,11 @@ pub async fn get_index(user: &mut GooseUser) -> TransactionResult {
 }
 
 // All tests in this file run against common endpoints.
-#[cfg(feature = "pdf-reports")]
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<httpmock::Mock<'_>> {
     vec![
         // Set up INDEX_PATH
         server.mock(|when, then| {
-            when.method(GET).path(INDEX_PATH);
+            when.method(httpmock::Method::GET).path(INDEX_PATH);
             then.status(200);
         }),
     ]
@@ -83,15 +82,16 @@ async fn test_pdf_generation_with_feature() {
     common::cleanup_files(vec![pdf_file]);
 }
 
-/// Test that the --pdf-print-html option fails correctly when the feature is NOT compiled in.
-/// This validates that the option is recognized but provides a helpful error message.
+/// Test that the --pdf-print-html option works correctly even when the pdf-reports feature is NOT compiled in.
+/// This validates that HTML+CSS generation is available universally since it doesn't require Chromium.
 #[cfg(not(feature = "pdf-reports"))]
 #[tokio::test]
 #[serial]
-async fn test_pdf_print_html_without_feature_fails() {
-    let html_file = "test-pdf-print-html-should-fail.html";
+async fn test_pdf_print_html_without_feature_works() {
+    let html_file = "test-pdf-print-html-without-feature.html";
 
     let server = MockServer::start();
+    let mock_endpoints = setup_mock_server_endpoints(&server);
 
     let configuration_flags = vec![
         "--users",
@@ -101,38 +101,48 @@ async fn test_pdf_print_html_without_feature_fails() {
         "--run-time",
         "1",
         "--pdf-print-html",
-        html_file, // This should fail without pdf-reports feature
+        html_file, // This should work even without pdf-reports feature
     ];
     let configuration = common::build_configuration(&server, configuration_flags);
 
     // Build the load test
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
-    // This should fail because the pdf-reports feature is not compiled in
-    let result = goose_attack.execute().await;
+    // This should succeed because --pdf-print-html only generates HTML+CSS without requiring Chromium
+    let goose_metrics = common::run_load_test(goose_attack, None).await;
 
-    // Verify that we get the expected error
-    match result {
-        Err(goose::GooseError::InvalidOption {
-            option,
-            value,
-            detail,
-        }) => {
-            assert_eq!(option, "--pdf-print-html");
-            assert_eq!(value, html_file);
-            assert!(detail.contains("PDF reports require"));
-            assert!(detail.contains("cargo build --features pdf-reports"));
-        }
-        Ok(_) => {
-            panic!("Expected InvalidOption error, but load test completed successfully!");
-        }
-        other => panic!("Expected InvalidOption error, got: {:?}", other),
-    }
+    // Verify the test ran successfully
+    assert!(mock_endpoints[0].hits() > 0);
+    assert!(goose_metrics.duration == 1);
 
-    // The HTML file should not be created when the feature is not compiled
+    // The HTML file should be created even when the pdf-reports feature is not compiled
     assert!(
-        !std::path::Path::new(html_file).exists(),
-        "HTML file should not be created when pdf-reports feature is not compiled"
+        std::path::Path::new(html_file).exists(),
+        "PDF-optimized HTML file should be created even without pdf-reports feature"
+    );
+
+    // Verify the HTML file contains print-specific CSS
+    let html_content =
+        std::fs::read_to_string(html_file).expect("Should be able to read HTML file");
+
+    assert!(
+        html_content.contains("@page"),
+        "HTML should contain @page CSS rules"
+    );
+    assert!(
+        html_content.contains("page-break-inside: avoid"),
+        "HTML should contain page break CSS rules"
+    );
+    assert!(
+        html_content.contains("style media=\"print\""),
+        "HTML should contain print media CSS"
+    );
+
+    // Verify the HTML file has reasonable size (should contain actual report content)
+    let metadata = std::fs::metadata(html_file).expect("Should be able to get HTML file metadata");
+    assert!(
+        metadata.len() > 1000,
+        "HTML file should have substantial content"
     );
 
     common::cleanup_files(vec![html_file]);

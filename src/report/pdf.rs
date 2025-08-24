@@ -4,6 +4,109 @@
 //! to PDF format using headless Chrome. It leverages the HTML report generation
 //! and converts it to PDF with configurable options.
 
+/// Generate print-optimized HTML content by adding CSS styles that match Chrome's internal PDF generation
+///
+/// This function is always available regardless of feature flags and can be used for both
+/// PDF generation and standalone HTML+CSS output (e.g., --pdf-print-html).
+pub(crate) fn generate_print_optimized_html_content(html_content: &str) -> String {
+    add_print_css(html_content)
+}
+
+/// Add print-optimized CSS styles to HTML content that matches Chrome's internal PDF generation
+pub(crate) fn add_print_css(html_content: &str) -> String {
+    let print_css = r#"
+        <style media="print">
+            @page {
+                margin: 0.1in;
+                size: 8.5in auto;
+            }
+            
+            /* Match Chrome's internal PDF generation behavior */
+            html, body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-size: 12px;
+                line-height: 1.4;
+                color: #333;
+                background: white !important;
+                margin: 0;
+                padding: 0;
+                height: auto;
+                overflow: visible;
+            }
+            
+            /* Prevent page breaks in critical elements but allow natural flow */
+            h1, h2, h3, h4, h5, h6 {
+                page-break-after: avoid;
+                break-after: avoid;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            /* Table handling - prevent breaking table headers but allow content to flow */
+            table {
+                border-collapse: collapse;
+                width: 100% !important;
+                font-size: 11px;
+                margin-bottom: 20px;
+            }
+            
+            thead {
+                display: table-header-group;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            tbody {
+                display: table-row-group;
+            }
+            
+            tr {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            th, td {
+                border: 1px solid #ddd !important;
+                padding: 4px 8px !important;
+                text-align: left;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            
+            th {
+                background-color: #f5f5f5 !important;
+                font-weight: bold;
+            }
+            
+            /* Allow natural page breaks for content sections */
+            .metrics-section, .overview-section {
+                page-break-inside: auto;
+                break-inside: auto;
+            }
+            
+            /* Ensure charts and images scale properly */
+            img, canvas, svg {
+                max-width: 100% !important;
+                height: auto !important;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+        </style>
+        "#
+    .to_string();
+
+    // Insert CSS before </head> or prepend if no head tag
+    if let Some(head_end) = html_content.find("</head>") {
+        let mut result = String::with_capacity(html_content.len() + print_css.len());
+        result.push_str(&html_content[..head_end]);
+        result.push_str(&print_css);
+        result.push_str(&html_content[head_end..]);
+        result
+    } else {
+        format!("{print_css}\n{html_content}")
+    }
+}
+
 #[cfg(feature = "pdf-reports")]
 use crate::GooseError;
 
@@ -306,121 +409,6 @@ pub(crate) fn generate_pdf_from_html(
     Ok(())
 }
 
-/// Add print-optimized CSS styles to HTML content that matches Chrome's internal PDF generation
-#[cfg(feature = "pdf-reports")]
-pub(crate) fn add_print_css(html_content: &str) -> String {
-    let print_css = r#"
-        <style media="print">
-            @page {
-                margin: 0.1in;
-                size: 8.5in auto;
-            }
-            
-            /* Match Chrome's internal PDF generation behavior */
-            html, body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 12px;
-                line-height: 1.4;
-                color: #333;
-                background: white !important;
-                margin: 0;
-                padding: 0;
-                height: auto;
-                overflow: visible;
-            }
-            
-            /* Prevent page breaks in critical elements but allow natural flow */
-            h1, h2, h3, h4, h5, h6 {
-                page-break-after: avoid;
-                break-after: avoid;
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-            
-            /* Table handling - prevent breaking table headers but allow content to flow */
-            table {
-                border-collapse: collapse;
-                width: 100% !important;
-                font-size: 11px;
-                margin-bottom: 20px;
-            }
-            
-            thead {
-                display: table-header-group;
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-            
-            tbody {
-                display: table-row-group;
-            }
-            
-            tr {
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-            
-            th, td {
-                border: 1px solid #ddd !important;
-                padding: 4px 8px !important;
-                text-align: left;
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-            
-            th {
-                background-color: #f5f5f5 !important;
-                font-weight: bold;
-            }
-            
-            /* Allow natural page breaks for content sections */
-            .metrics-section, .overview-section {
-                page-break-inside: auto;
-                break-inside: auto;
-            }
-            
-            /* Ensure charts and images scale properly */
-            img, canvas, svg {
-                max-width: 100% !important;
-                height: auto !important;
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-        </style>
-        "#
-    .to_string();
-
-    // Insert CSS before </head> or prepend if no head tag
-    if let Some(head_end) = html_content.find("</head>") {
-        let mut result = String::with_capacity(html_content.len() + print_css.len());
-        result.push_str(&html_content[..head_end]);
-        result.push_str(&print_css);
-        result.push_str(&html_content[head_end..]);
-        result
-    } else {
-        format!("{print_css}\n{html_content}")
-    }
-}
-
-#[cfg(not(feature = "pdf-reports"))]
-pub(crate) fn generate_pdf_from_html(
-    _html_content: &str,
-    _output_path: &std::path::Path,
-    _scale: f64,
-    _verbose: bool,
-) -> Result<(), crate::GooseError> {
-    Err(crate::GooseError::InvalidOption {
-        option: "--pdf".to_string(),
-        value: "disabled".to_string(),
-        detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
-    })
-}
-
-#[cfg(not(feature = "pdf-reports"))]
-pub(crate) fn add_print_css(html_content: &str) -> String {
-    html_content.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,18 +453,5 @@ mod tests {
         // Should contain the print CSS (prepended)
         assert!(result.contains("<style media=\"print\">"));
         assert!(result.trim_start().starts_with("<style media=\"print\">"));
-    }
-
-    #[cfg(not(feature = "pdf-reports"))]
-    #[test]
-    fn test_generate_pdf_without_feature() {
-        use std::path::Path;
-
-        let result = generate_pdf_from_html("test", Path::new("test.pdf"), 0.8, false);
-        assert!(result.is_err());
-
-        if let Err(crate::GooseError::InvalidOption { detail, .. }) = result {
-            assert!(detail.contains("pdf-reports"));
-        }
     }
 }
