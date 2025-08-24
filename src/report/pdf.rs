@@ -127,6 +127,81 @@ use crate::logger::ScopedLogLevel;
 #[cfg(feature = "pdf-reports")]
 use log::{debug, LevelFilter};
 
+/// Centralized error message module for consistent PDF error handling
+#[cfg(feature = "pdf-reports")]
+mod pdf_errors {
+    use crate::GooseError;
+    use std::time::Duration;
+
+    /// Creates a consistent error for Chrome launch failures
+    pub fn chrome_launch_error(inner_error: String) -> GooseError {
+        GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("Chrome launch failed: {inner_error}"),
+            detail: "PDF generation requires Chrome/Chromium to be installed and accessible. The headless_chrome crate will attempt to download Chrome automatically on first use.".to_string(),
+        }
+    }
+
+    /// Creates a consistent error for Chrome configuration failures
+    pub fn chrome_config_error(inner_error: String) -> GooseError {
+        GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("Chrome configuration failed: {inner_error}"),
+            detail: "PDF generation requires Chrome/Chromium. Try installing Chrome or running with --pdf-scale to adjust memory usage.".to_string(),
+        }
+    }
+
+    /// Creates a consistent error for Chrome operation failures
+    pub fn chrome_operation_error(operation: &str, inner_error: String) -> GooseError {
+        GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("{operation} failed: {inner_error}"),
+            detail: format!("Chrome {operation} operation failed. This may indicate Chrome instability or insufficient system resources."),
+        }
+    }
+
+    /// Creates a consistent error for timeout scenarios
+    pub fn timeout_error(duration: Duration) -> GooseError {
+        GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: "timeout".to_string(),
+            detail: format!("Chrome operation timed out after {:?}. This may indicate Chrome is unresponsive or the system is under heavy load.", duration),
+        }
+    }
+
+    /// Creates a consistent error for file write failures
+    pub fn file_write_error(inner_error: String, output_path: &std::path::Path) -> GooseError {
+        GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("Failed to write PDF file: {inner_error}"),
+            detail: format!("Unable to write PDF to {}", output_path.display()),
+        }
+    }
+
+    /// Creates a consistent error for content measurement failures
+    pub fn content_measurement_error(inner_error: String) -> GooseError {
+        GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("Failed to measure content height: {inner_error}"),
+            detail: "Unable to calculate content dimensions for PDF".to_string(),
+        }
+    }
+
+    /// Creates a consistent error for PDF generation failures with scale information
+    pub fn pdf_generation_error(
+        inner_error: String,
+        scale: f64,
+        width: f64,
+        height: f64,
+    ) -> GooseError {
+        GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("PDF generation failed: {inner_error}"),
+            detail: format!("Chrome's print-to-PDF operation failed. Scale: {}, Paper size: {:.1}\" x {:.1}\". Try adjusting --pdf-scale or reducing report complexity.", scale, width, height),
+        }
+    }
+}
+
 /// Manages Chrome browser process lifecycle with automatic cleanup.
 ///
 /// This struct provides RAII-based resource management for Chrome processes,
@@ -151,11 +226,8 @@ impl ChromeSession {
         let start_time = Instant::now();
 
         debug!("Launching Chrome browser for PDF generation");
-        let browser = Browser::new(launch_options).map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
-            value: format!("Chrome launch failed: {e}"),
-            detail: "PDF generation requires Chrome/Chromium to be installed and accessible. The headless_chrome crate will attempt to download Chrome automatically on first use.".to_string(),
-        })?;
+        let browser = Browser::new(launch_options)
+            .map_err(|e| pdf_errors::chrome_launch_error(e.to_string()))?;
 
         // Attempt to get the process ID for tracking
         let process_id = browser.get_process_id();
@@ -181,14 +253,7 @@ impl ChromeSession {
     /// Checks if the Chrome operation has exceeded the timeout.
     fn check_timeout(&self, timeout: Duration) -> Result<(), GooseError> {
         if self.start_time.elapsed() > timeout {
-            return Err(GooseError::InvalidOption {
-                option: "--pdf".to_string(),
-                value: "timeout".to_string(),
-                detail: format!(
-                    "Chrome operation timed out after {:?}. This may indicate Chrome is unresponsive or the system is under heavy load.",
-                    timeout
-                ),
-            });
+            return Err(pdf_errors::timeout_error(timeout));
         }
         Ok(())
     }
@@ -281,11 +346,7 @@ pub(crate) fn generate_pdf_from_html(
         .headless(true)
         .args(chrome_args)
         .build()
-        .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
-            value: format!("Chrome configuration failed: {e}"),
-            detail: "PDF generation requires Chrome/Chromium. Try installing Chrome or running with --pdf-scale to adjust memory usage.".to_string(),
-        })?;
+        .map_err(|e| pdf_errors::chrome_config_error(e.to_string()))?;
 
     // Create Chrome session with automatic resource management
     let chrome_session = ChromeSession::new(launch_options)?;
@@ -295,11 +356,10 @@ pub(crate) fn generate_pdf_from_html(
 
     // Create a new tab
     chrome_session.check_timeout(timeout)?;
-    let tab = chrome_session.browser().new_tab().map_err(|e| GooseError::InvalidOption {
-        option: "--pdf".to_string(),
-        value: format!("Browser tab creation failed: {e}"),
-        detail: "Chrome started successfully but failed to create a new tab. This may indicate insufficient memory or Chrome instability.".to_string(),
-    })?;
+    let tab = chrome_session
+        .browser()
+        .new_tab()
+        .map_err(|e| pdf_errors::chrome_operation_error("tab creation", e.to_string()))?;
 
     // Create a data URL from the HTML content
     let encoded_html = urlencoding::encode(html_content);
@@ -308,20 +368,12 @@ pub(crate) fn generate_pdf_from_html(
     // Navigate to the data URL
     chrome_session.check_timeout(timeout)?;
     tab.navigate_to(&data_url)
-        .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
-            value: format!("Failed to load HTML: {e}"),
-            detail: "Unable to load HTML content in browser".to_string(),
-        })?;
+        .map_err(|e| pdf_errors::chrome_operation_error("HTML loading", e.to_string()))?;
 
     // Wait for the page to load
     chrome_session.check_timeout(timeout)?;
     tab.wait_until_navigated()
-        .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
-            value: format!("Failed to wait for page load: {e}"),
-            detail: "Page failed to load completely".to_string(),
-        })?;
+        .map_err(|e| pdf_errors::chrome_operation_error("page loading", e.to_string()))?;
 
     // Always use unlimited page approach with hardcoded sensible defaults
     let content_height_script = r#"
@@ -349,11 +401,7 @@ pub(crate) fn generate_pdf_from_html(
     chrome_session.check_timeout(timeout)?;
     let content_height_inches = tab
         .evaluate(content_height_script, true)
-        .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
-            value: format!("Failed to measure content height: {e}"),
-            detail: "Unable to calculate content dimensions for PDF".to_string(),
-        })?
+        .map_err(|e| pdf_errors::content_measurement_error(e.to_string()))?
         .value
         .unwrap_or_default()
         .as_f64()
@@ -388,19 +436,14 @@ pub(crate) fn generate_pdf_from_html(
             generate_document_outline: Some(false),
             generate_tagged_pdf: Some(false),
         }))
-        .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
-            value: format!("PDF generation failed: {e}"),
-            detail: format!("Chrome's print-to-PDF operation failed. Scale: {}, Paper size: {:.1}\" x {:.1}\". Try adjusting --pdf-scale or reducing report complexity.", scale, adjusted_width, adjusted_height),
+        .map_err(|e| {
+            pdf_errors::pdf_generation_error(e.to_string(), scale, adjusted_width, adjusted_height)
         })?;
 
     // Write PDF to file
     chrome_session.check_timeout(timeout)?;
-    fs::write(output_path, pdf_data).map_err(|e| GooseError::InvalidOption {
-        option: "--pdf".to_string(),
-        value: format!("Failed to write PDF file: {e}"),
-        detail: format!("Unable to write PDF to {}", output_path.display()),
-    })?;
+    fs::write(output_path, pdf_data)
+        .map_err(|e| pdf_errors::file_write_error(e.to_string(), output_path))?;
 
     // The ScopedLogLevel guard (_log_guard) automatically restores the original
     // log level when it goes out of scope here, ensuring no permanent global state changes.
