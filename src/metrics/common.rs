@@ -578,11 +578,259 @@ impl<'m, 'b> Prepare<'m, 'b> {
 }
 
 
-/// Load a baseline file
+/// Load a baseline file with comprehensive validation
 pub(crate) fn load_baseline_file(
     path: impl AsRef<Path>,
 ) -> Result<ReportData<'static>, GooseError> {
-    Ok(serde_json::from_reader(BufReader::new(File::open(path)?))?)
+    let path = path.as_ref();
+
+    // Validate file exists and is readable
+    let file = File::open(path).map_err(|err| GooseError::InvalidOption {
+        option: "--baseline-file".to_string(),
+        value: path.to_string_lossy().to_string(),
+        detail: format!("Failed to open baseline file: {}", err),
+    })?;
+
+    // Parse JSON with detailed error handling
+    let reader = BufReader::new(file);
+    let baseline_data: ReportData<'static> =
+        serde_json::from_reader(reader).map_err(|err| GooseError::InvalidOption {
+            option: "--baseline-file".to_string(),
+            value: path.to_string_lossy().to_string(),
+            detail: format!("Invalid JSON format in baseline file: {}", err),
+        })?;
+
+    // Validate baseline file structure and content
+    validate_baseline_structure(&baseline_data, path)?;
+
+    Ok(baseline_data)
+}
+
+/// Validate the structure and content of a loaded baseline file
+fn validate_baseline_structure(baseline: &ReportData, path: &Path) -> Result<(), GooseError> {
+    let path_str = path.to_string_lossy().to_string();
+
+    // Validate that we have basic required metrics
+    if baseline.raw_request_metrics.is_empty() && baseline.raw_response_metrics.is_empty() {
+        return Err(GooseError::InvalidOption {
+            option: "--baseline-file".to_string(),
+            value: path_str,
+            detail: "Baseline file contains no request or response metrics data. This may be an empty or corrupted baseline file.".to_string(),
+        });
+    }
+
+    // Validate raw metrics consistency
+    validate_raw_metrics_consistency(baseline, &path_str)?;
+
+    // Validate coordinated omission metrics if present
+    if let Some(co_request_metrics) = &baseline.co_request_metrics {
+        validate_coordinated_omission_metrics(baseline, co_request_metrics, &path_str)?;
+    }
+
+    // Validate transaction metrics if present
+    if let Some(transaction_metrics) = &baseline.transaction_metrics {
+        validate_transaction_metrics(transaction_metrics, &path_str)?;
+    }
+
+    // Validate scenario metrics if present
+    if let Some(scenario_metrics) = &baseline.scenario_metrics {
+        validate_scenario_metrics(scenario_metrics, &path_str)?;
+    }
+
+    // Validate error metrics if present
+    if let Some(errors) = &baseline.errors {
+        validate_error_metrics(errors, &path_str)?;
+    }
+
+    // Validate status code metrics if present
+    if let Some(status_codes) = &baseline.status_code_metrics {
+        validate_status_code_metrics(status_codes, &path_str)?;
+    }
+
+    Ok(())
+}
+
+/// Validate raw request and response metrics consistency
+fn validate_raw_metrics_consistency(
+    baseline: &ReportData,
+    path_str: &str,
+) -> Result<(), GooseError> {
+    // Check that request and response metrics have matching counts
+    let request_count = baseline.raw_request_metrics.len();
+    let response_count = baseline.raw_response_metrics.len();
+
+    // Allow for the aggregated row (request_count should equal response_count, both > 0)
+    if request_count != response_count {
+        return Err(GooseError::InvalidOption {
+            option: "--baseline-file".to_string(),
+            value: path_str.to_string(),
+            detail: format!(
+                "Inconsistent baseline data: {} request metrics vs {} response metrics. These should match.",
+                request_count, response_count
+            ),
+        });
+    }
+
+    if request_count == 0 {
+        return Err(GooseError::InvalidOption {
+            option: "--baseline-file".to_string(),
+            value: path_str.to_string(),
+            detail: "Baseline file contains no request metrics. Cannot perform meaningful baseline comparison.".to_string(),
+        });
+    }
+
+    // Validate that request metrics have reasonable values
+    for (index, request_metric) in baseline.raw_request_metrics.iter().enumerate() {
+        if request_metric.method.is_empty() && request_metric.name != "Aggregated" {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!("Invalid request metric at index {}: method cannot be empty unless it's an aggregated metric", index),
+            });
+        }
+
+        // Note: usize values cannot be negative, so these checks are mainly for structural validation
+        // The main validation is ensuring the values exist and are properly structured
+    }
+
+    Ok(())
+}
+
+/// Validate coordinated omission metrics
+fn validate_coordinated_omission_metrics(
+    baseline: &ReportData,
+    co_request_metrics: &[super::super::report::CORequestMetric],
+    path_str: &str,
+) -> Result<(), GooseError> {
+    // If we have CO request metrics, we should also have CO response metrics
+    if baseline.co_response_metrics.is_none() {
+        return Err(GooseError::InvalidOption {
+            option: "--baseline-file".to_string(),
+            value: path_str.to_string(),
+            detail: "Baseline contains coordinated omission request metrics but no corresponding response metrics".to_string(),
+        });
+    }
+
+    let co_response_count = baseline.co_response_metrics.as_ref().unwrap().len();
+    if co_request_metrics.len() != co_response_count {
+        return Err(GooseError::InvalidOption {
+            option: "--baseline-file".to_string(),
+            value: path_str.to_string(),
+            detail: format!(
+                "Coordinated omission metrics inconsistent: {} request metrics vs {} response metrics",
+                co_request_metrics.len(), co_response_count
+            ),
+        });
+    }
+
+    // Validate individual CO metrics structure
+    for (index, co_metric) in co_request_metrics.iter().enumerate() {
+        if co_metric.method.is_empty() && co_metric.name != "Aggregated" {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!("Invalid coordinated omission metric at index {}: method cannot be empty unless it's an aggregated metric", index),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate transaction metrics
+fn validate_transaction_metrics(
+    transaction_metrics: &[super::super::report::TransactionMetric],
+    path_str: &str,
+) -> Result<(), GooseError> {
+    for (index, transaction) in transaction_metrics.iter().enumerate() {
+        // Validate that failures don't exceed total requests
+        if transaction.number_of_failures.value() > transaction.number_of_requests.value() {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!("Invalid transaction metric '{}': failures ({}) cannot exceed total requests ({})", 
+                    transaction.name, transaction.number_of_failures.value(), transaction.number_of_requests.value()),
+            });
+        }
+
+        if transaction.name.is_empty() && !transaction.is_scenario {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!("Invalid transaction metric at index {}: name cannot be empty for non-scenario transactions", index),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate scenario metrics
+fn validate_scenario_metrics(
+    scenario_metrics: &[super::super::report::ScenarioMetric],
+    path_str: &str,
+) -> Result<(), GooseError> {
+    for (index, scenario) in scenario_metrics.iter().enumerate() {
+        if scenario.name.is_empty() && scenario.name != "Aggregated" {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!("Invalid scenario metric at index {}: name cannot be empty unless it's an aggregated metric", index),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate error metrics
+fn validate_error_metrics(
+    error_metrics: &[super::super::report::ErrorMetric],
+    path_str: &str,
+) -> Result<(), GooseError> {
+    for (index, error) in error_metrics.iter().enumerate() {
+        if error.error.is_empty() {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!(
+                    "Invalid error metric at index {}: error description cannot be empty",
+                    index
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate status code metrics
+fn validate_status_code_metrics(
+    status_code_metrics: &[super::super::report::StatusCodeMetric],
+    path_str: &str,
+) -> Result<(), GooseError> {
+    for (index, status_code) in status_code_metrics.iter().enumerate() {
+        if status_code.method.is_empty() && status_code.name != "Aggregated" {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!("Invalid status code metric at index {}: method cannot be empty unless it's an aggregated metric", index),
+            });
+        }
+
+        if status_code.status_codes.is_empty() {
+            return Err(GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: path_str.to_string(),
+                detail: format!(
+                    "Invalid status code metric at index {}: status codes cannot be empty",
+                    index
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// take a current slice of metrics, and apply correlated baseline metrics.
