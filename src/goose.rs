@@ -415,6 +415,9 @@ impl fmt::Display for TransactionError {
             TransactionError::LoggerFailed { ref source } => {
                 write!(f, "TransactionError: {} ({})", self.describe(), source)
             }
+            TransactionError::Custom(ref message) => {
+                write!(f, "TransactionError: {} ({})", self.describe(), message)
+            }
             _ => write!(f, "TransactionError: {}", self.describe()),
         }
     }
@@ -477,6 +480,20 @@ impl From<flume::SendError<GooseMetric>> for TransactionError {
 impl From<flume::SendError<Option<GooseLog>>> for TransactionError {
     fn from(source: flume::SendError<Option<GooseLog>>) -> TransactionError {
         TransactionError::LoggerFailed { source }
+    }
+}
+
+/// Auto-convert String errors to Custom TransactionError.
+impl From<String> for TransactionError {
+    fn from(err: String) -> TransactionError {
+        TransactionError::Custom(err)
+    }
+}
+
+/// Auto-convert String errors to boxed TransactionError.
+impl From<String> for Box<TransactionError> {
+    fn from(value: String) -> Self {
+        Box::new(TransactionError::Custom(value))
     }
 }
 

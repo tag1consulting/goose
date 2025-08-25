@@ -262,3 +262,52 @@ async fn test_no_error_summary() {
 async fn test_no_error_summary_gaggle() {
     run_gaggle_test(TestType::NoErrorSummary).await;
 }
+
+// Test transaction that returns a custom error.
+pub async fn get_custom_error(user: &mut GooseUser) -> TransactionResult {
+    // Test the new Custom error variant with From<String> implementation
+    Err("This is a custom transaction error".to_string().into())
+}
+
+#[tokio::test]
+// Test that custom errors can be created and used in transactions.
+async fn test_custom_error() {
+    use goose::goose::TransactionError;
+
+    // Test 1: Create a custom error directly
+    let custom_error = TransactionError::Custom("Direct custom error".to_string());
+    assert_eq!(
+        format!("{}", custom_error),
+        "TransactionError: custom error (Direct custom error)"
+    );
+
+    // Test 2: Use From<String> implementation
+    let string_error: TransactionError = "String conversion error".to_string().into();
+    assert_eq!(
+        format!("{}", string_error),
+        "TransactionError: custom error (String conversion error)"
+    );
+
+    // Test 3: Use From<String> for Box<TransactionError>
+    let boxed_error: Box<TransactionError> = "Boxed string error".to_string().into();
+    assert_eq!(
+        format!("{}", boxed_error),
+        "TransactionError: custom error (Boxed string error)"
+    );
+
+    // Test 4: Test in a transaction context
+    let configuration = GooseConfiguration::default();
+    let base_url = "http://example.com".parse().unwrap();
+    let mut user = GooseUser::single(base_url, &configuration).unwrap();
+
+    // This should return our custom error
+    match get_custom_error(&mut user).await {
+        Ok(_) => panic!("Expected custom error, got success"),
+        Err(e) => {
+            assert_eq!(
+                format!("{}", e),
+                "TransactionError: custom error (This is a custom transaction error)"
+            );
+        }
+    }
+}
