@@ -264,7 +264,7 @@ async fn test_no_error_summary_gaggle() {
 }
 
 // Test transaction that returns a custom error.
-pub async fn get_custom_error(user: &mut GooseUser) -> TransactionResult {
+pub async fn get_custom_error(_user: &mut GooseUser) -> TransactionResult {
     // Test the new Custom error variant with From<String> implementation
     Err("This is a custom transaction error".to_string().into())
 }
