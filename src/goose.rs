@@ -342,6 +342,8 @@ pub enum TransactionError {
     Reqwest(reqwest::Error),
     /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
     Url(url::ParseError),
+    /// A generic, custom error in cases where the [`TransactionFunction`] cannot turn any of the others.
+    Custom(String),
     /// The request failed.
     RequestFailed {
         /// The [`GooseRequestMetric`](./struct.GooseRequestMetric.html) that failed.
@@ -378,6 +380,7 @@ impl TransactionError {
         match *self {
             TransactionError::Reqwest(_) => "reqwest::Error",
             TransactionError::Url(_) => "url::ParseError",
+            TransactionError::Custom(_) => "custom error",
             TransactionError::RequestFailed { .. } => "request failed",
             TransactionError::RequestCanceled { .. } => {
                 "request canceled because throttled load test ended"
@@ -408,6 +411,9 @@ impl fmt::Display for TransactionError {
             }
             TransactionError::LoggerFailed { ref source } => {
                 write!(f, "TransactionError: {} ({})", self.describe(), source)
+            }
+            TransactionError::Custom(ref message) => {
+                write!(f, "TransactionError: {} ({})", self.describe(), message)
             }
             _ => write!(f, "TransactionError: {}", self.describe()),
         }
@@ -471,6 +477,20 @@ impl From<flume::SendError<GooseMetric>> for TransactionError {
 impl From<flume::SendError<Option<GooseLog>>> for TransactionError {
     fn from(source: flume::SendError<Option<GooseLog>>) -> TransactionError {
         TransactionError::LoggerFailed { source }
+    }
+}
+
+/// Auto-convert String errors to Custom TransactionError.
+impl From<String> for TransactionError {
+    fn from(err: String) -> TransactionError {
+        TransactionError::Custom(err)
+    }
+}
+
+/// Auto-convert String errors to boxed TransactionError.
+impl From<String> for Box<TransactionError> {
+    fn from(value: String) -> Self {
+        Box::new(TransactionError::Custom(value))
     }
 }
 
