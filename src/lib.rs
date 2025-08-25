@@ -1836,12 +1836,11 @@ impl GooseAttack {
 
         // If enabled, try loading the baseline
         if let Some(baseline_file) = &self.configuration.baseline_file {
-            let _data =
-                load_baseline_file(baseline_file).map_err(|err| GooseError::InvalidOption {
-                    option: "--baseline-file".to_string(),
-                    value: baseline_file.to_string(),
-                    detail: err.to_string(),
-                });
+            load_baseline_file(baseline_file).map_err(|err| GooseError::InvalidOption {
+                option: "--baseline-file".to_string(),
+                value: baseline_file.to_string(),
+                detail: err.to_string(),
+            })?;
         }
 
         // Try to create the requested report files, to confirm access.

@@ -50,7 +50,7 @@ pub(crate) struct RequestMetric {
 impl DeltaTo for RequestMetric {
     fn delta_to(&mut self, other: &Self) {
         self.number_of_requests.eval(other.number_of_requests);
-        self.number_of_requests.eval(other.number_of_requests);
+        self.number_of_failures.eval(other.number_of_failures);
         self.response_time_average.eval(other.response_time_average);
         self.response_time_minimum.eval(other.response_time_minimum);
         self.response_time_maximum.eval(other.response_time_maximum);
