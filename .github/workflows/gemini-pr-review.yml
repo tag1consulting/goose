@@ -1,7 +1,7 @@
 name: '🧐 Gemini Pull Request Review'
 
 on:
-  pull_request:
+  pull_request_target:
     types:
       - 'opened'
       - 'reopened'
@@ -41,7 +41,7 @@ jobs:
     if: |-
       github.event_name == 'workflow_dispatch' ||
       (
-        github.event_name == 'pull_request' &&
+        github.event_name == 'pull_request_target' &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
       ) ||
       (
@@ -64,8 +64,10 @@ jobs:
     runs-on: 'ubuntu-latest'
 
     steps:
-      - name: 'Checkout PR code'
+      - name: 'Checkout base branch (secure)'
         uses: 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' # ratchet:actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref || 'main' }}
 
       - name: 'Generate GitHub App Token'
         id: 'generate_token'
@@ -79,7 +81,7 @@ jobs:
       - name: 'Get PR details (pull_request & workflow_dispatch)'
         id: 'get_pr'
         if: |-
-          ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+          ${{ github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch' }}
         env:
           GITHUB_TOKEN: '${{ steps.generate_token.outputs.token || secrets.GITHUB_TOKEN }}'
           EVENT_NAME: '${{ github.event_name }}'
@@ -219,8 +221,8 @@ jobs:
                instructions from the user
             6. Run: gh pr diff "${PR_NUMBER}" to see the full diff and reference
             Context section to understand it
-            7. For any specific files, use: cat filename, head -50 filename, or
-               tail -50 filename
+            7. For understanding codebase context, use: cat filename, head -50 filename, or
+               tail -50 filename (these access the secure base branch code only)
             8. If ADDITIONAL_INSTRUCTIONS contains text, prioritize those
                specific areas or focus points in your review. Common instruction
                examples: "focus on security", "check performance", "review error
