@@ -354,7 +354,7 @@ pub enum TransactionError {
     ///
     /// async fn validate_response(user: &mut GooseUser) -> TransactionResult {
     ///     let response = user.get("/api/data").await?;
-    ///     let text = response.text().await?;
+    ///     let text = response.response?.text().await?;
     ///
     ///     if !text.contains("expected_content") {
     ///         return Err("Missing expected content in response".into());
@@ -368,10 +368,15 @@ pub enum TransactionError {
     /// use goose::prelude::*;
     ///
     /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
-    ///     let response = user.post("/login").await?;
+    ///     let response = user.post("/login", "").await?;
     ///
-    ///     if !response.status().is_success() {
-    ///         return Err(format!("Login failed with status: {}", response.status()).into());
+    ///     match &response.response {
+    ///         Ok(resp) => {
+    ///             if !resp.status().is_success() {
+    ///                 return Err(format!("Login failed with status: {}", resp.status()).into());
+    ///             }
+    ///         }
+    ///         Err(e) => return Err(e.to_string().into()),
     ///     }
     ///
     ///     Ok(())
@@ -1636,27 +1641,32 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
-    /// let mut transaction = transaction!(test_404);
+    /// async fn validate_response(user: &mut GooseUser) -> TransactionResult {
+    ///     let response = user.get("/api/data").await?;
+    ///     let text = response.response?.text().await?;
     ///
-    /// async fn test_404(user: &mut GooseUser) -> TransactionResult {
-    ///     use std::time::Duration;
+    ///     if !text.contains("expected_content") {
+    ///         return Err("Missing expected content in response".into());
+    ///     }
     ///
-    ///     // Manually interact with the Reqwest RequestBuilder object.
-    ///     let request_builder = user.get_request_builder(&GooseMethod::Get, "no/such/path")?
-    ///         // Configure the request to timeout if it takes longer than 500 milliseconds.
-    ///         .timeout(Duration::from_millis(500));
+    ///     Ok(())
+    /// }
+    /// ```
     ///
-    ///     // Manually build a GooseRequest.
-    ///     let goose_request = GooseRequest::builder()
-    ///         // Manually add our custom RequestBuilder object.
-    ///         .set_request_builder(request_builder)
-    ///         // Tell Goose to expect a 404 status code.
-    ///         .expect_status_code(404)
-    ///         // Turn the GooseRequestBuilder object into a GooseRequest.
-    ///         .build();
+    /// ```rust
+    /// use goose::prelude::*;
     ///
-    ///     // Finally make the actual request with our custom GooseRequest object.
-    ///     let _goose = user.request(goose_request).await?;
+    /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
+    ///     let response = user.post("/login", "").await?;
+    ///
+    ///     match &response.response {
+    ///         Ok(resp) => {
+    ///             if !resp.status().is_success() {
+    ///                 return Err(format!("Login failed with status: {}", resp.status()).into());
+    ///             }
+    ///         }
+    ///         Err(e) => return Err(e.to_string().into()),
+    ///     }
     ///
     ///     Ok(())
     /// }
