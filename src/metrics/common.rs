@@ -1,6 +1,6 @@
 use super::{
-    delta::*, merge_times, per_second_calculations, prepare_status_codes, report, update_max_time,
-    update_min_time, CoMetricsSummary, GooseErrorMetricAggregate, GooseMetrics,
+    delta::*, merge_times, per_second_calculations, prepare_status_codes, update_max_time,
+    update_min_time, CoMetricsSummary, GooseMetrics,
 };
 use crate::{
     report::{
@@ -33,7 +33,7 @@ pub(crate) struct ReportData<'m> {
 
     pub status_code_metrics: Option<Vec<StatusCodeMetric>>,
 
-    pub errors: Option<Vec<&'m GooseErrorMetricAggregate>>,
+    pub errors: Option<Vec<ErrorMetric>>,
 
     pub coordinated_omission_metrics: Option<CoMetricsSummary>,
 }
@@ -44,17 +44,13 @@ pub struct ReportOptions {
     pub no_status_codes: bool,
 }
 
-pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportData<'_> {
-    prepare_data_with_baseline(options, metrics, &None)
-}
-
-pub fn prepare_data_with_baseline(
-    options: ReportOptions, 
-    metrics: &GooseMetrics, 
-    baseline: &Option<ReportData<'_>>
-) -> ReportData<'_> {
+pub fn prepare_data_with_baseline<'a>(
+    options: ReportOptions,
+    metrics: &'a GooseMetrics,
+    baseline: &'a Option<ReportData<'a>>,
+) -> ReportData<'a> {
     let prepare = Prepare::new(options, metrics, baseline);
-    prepare.prepare()
+    prepare.build()
 }
 
 struct RawIntermediate {
@@ -63,19 +59,19 @@ struct RawIntermediate {
     raw_aggregate_total_count: usize,
 }
 
-struct Prepare<'m, 'b> {
+struct Prepare<'m> {
     options: ReportOptions,
     metrics: &'m GooseMetrics,
-    baseline: &'b Option<ReportData<'b>>,
+    baseline: &'m Option<ReportData<'m>>,
 
     co_data: bool,
 }
 
-impl<'m, 'b> Prepare<'m, 'b> {
+impl<'m> Prepare<'m> {
     fn new(
         options: ReportOptions,
         metrics: &'m GooseMetrics,
-        baseline: &'b Option<ReportData<'b>>,
+        baseline: &'m Option<ReportData<'m>>,
     ) -> Self {
         Self {
             options,
@@ -106,6 +102,11 @@ impl<'m, 'b> Prepare<'m, 'b> {
             transaction_metrics: self.build_transaction(&intermediate),
             status_code_metrics: self.build_status_code(),
             errors: self.build_errors(),
+            coordinated_omission_metrics: self
+                .metrics
+                .coordinated_omission_metrics
+                .as_ref()
+                .map(|co| co.get_summary()),
         }
     }
 
@@ -572,11 +573,37 @@ impl<'m, 'b> Prepare<'m, 'b> {
         Some(status_code_metrics)
     }
 
-    fn build_errors(&self) -> Option<Vec<&GooseErrorMetricAggregate>> {
-        (!self.metrics.errors.is_empty()).then(|| self.metrics.errors.values().collect::<Vec<_>>())
+    fn build_errors(&self) -> Option<Vec<ErrorMetric>> {
+        if self.metrics.errors.is_empty() {
+            return None;
+        }
+
+        let mut errors = self
+            .metrics
+            .errors
+            .values()
+            .map(|error| ErrorMetric {
+                method: error.method,
+                name: error.name.clone(),
+                error: error.error.clone(),
+                occurrences: error.occurrences.into(),
+            })
+            .collect::<Vec<_>>();
+
+        // Apply baseline deltas if available
+        if let Some(baseline_errors) = self
+            .baseline
+            .as_ref()
+            .and_then(|baseline| baseline.errors.as_ref())
+        {
+            correlate_deltas(&mut errors, baseline_errors, |error| {
+                (error.method, error.name.clone(), error.error.clone())
+            });
+        }
+
+        Some(errors)
     }
 }
-
 
 /// Load a baseline file with comprehensive validation
 pub(crate) fn load_baseline_file(
@@ -784,10 +811,7 @@ fn validate_scenario_metrics(
 }
 
 /// Validate error metrics
-fn validate_error_metrics(
-    error_metrics: &[super::super::report::ErrorMetric],
-    path_str: &str,
-) -> Result<(), GooseError> {
+fn validate_error_metrics(error_metrics: &[ErrorMetric], path_str: &str) -> Result<(), GooseError> {
     for (index, error) in error_metrics.iter().enumerate() {
         if error.error.is_empty() {
             return Err(GooseError::InvalidOption {

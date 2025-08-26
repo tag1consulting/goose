@@ -9,6 +9,8 @@
  - [#578](https://github.com/tag1consulting/goose/pull/578) add type-safe client builder for cookie configuration, optimize startup with shared clients
  - [#629](https://github.com/tag1consulting/goose/pull/629) add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-300s, default: 60)
 
+ - **baseline comparison functionality**: compare current load test results against previously saved JSON reports to identify performance regressions and track improvements over time using `--baseline-file`
+
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
  - [#630](https://github.com/tag1consulting/goose/pull/630) enhanced coordinated omission metrics with severity classification, detailed tracking, and comprehensive documentation

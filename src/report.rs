@@ -10,7 +10,7 @@ pub(crate) use markdown::write_markdown_report;
 
 use crate::{
     goose::GooseMethod,
-    metrics::{self, format_value, DeltaEval, DeltaTo, NullableFloat, Value},
+    metrics::{self, format_number, format_value, DeltaEval, DeltaTo, NullableFloat, Value},
     report::common::OrEmpty,
 };
 use serde::{Deserialize, Serialize};

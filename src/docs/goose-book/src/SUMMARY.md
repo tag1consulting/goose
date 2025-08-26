@@ -15,6 +15,7 @@
         - [Limiting Scenarios](getting-started/scenarios.md)
         - [Custom Options](getting-started/custom.md)
     - [Metrics](getting-started/metrics.md)
+    - [Baseline Comparison](getting-started/baseline.md)
     - [Tips](getting-started/tips.md)
 
 - [Logging](logging/overview.md)

@@ -2575,31 +2575,6 @@ impl GooseMetrics {
     }
 }
 
-impl Serialize for GooseMetrics {
-    // GooseMetrics serialization can't be derived because of the started field.
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_struct("GooseMetrics", 11)?;
-        s.serialize_field("hash", &self.hash)?;
-        s.serialize_field("duration", &self.duration)?;
-        s.serialize_field("maximum_users", &self.maximum_users)?;
-        s.serialize_field("total_users", &self.total_users)?;
-        s.serialize_field("requests", &self.requests)?;
-        s.serialize_field("transactions", &self.transactions)?;
-        s.serialize_field("errors", &self.errors)?;
-        s.serialize_field("final_metrics", &self.final_metrics)?;
-        s.serialize_field("display_status_codes", &self.display_status_codes)?;
-        s.serialize_field("display_metrics", &self.display_metrics)?;
-        s.serialize_field(
-            "coordinated_omission_metrics",
-            &self.coordinated_omission_metrics,
-        )?;
-        s.end()
-    }
-}
-
 /// Implement format trait to allow displaying metrics.
 impl fmt::Display for GooseMetrics {
     // Implement display of metrics with `{}` marker.
@@ -3130,7 +3105,7 @@ impl GooseAttack {
         report_file: File,
         baseline: &Option<ReportData<'_>>,
     ) -> Result<(), GooseError> {
-        let data = common::prepare_data(
+        let data = common::prepare_data_with_baseline(
             ReportOptions {
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
                 no_scenario_metrics: self.configuration.no_scenario_metrics,
@@ -3151,7 +3126,7 @@ impl GooseAttack {
         report_file: File,
         baseline: &Option<ReportData<'_>>,
     ) -> Result<(), GooseError> {
-        let data = common::prepare_data(
+        let data = common::prepare_data_with_baseline(
             ReportOptions {
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
                 no_scenario_metrics: self.configuration.no_scenario_metrics,
@@ -3255,7 +3230,7 @@ impl GooseAttack {
             errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
-        } = common::prepare_data(
+        } = common::prepare_data_with_baseline(
             ReportOptions {
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
                 no_scenario_metrics: self.configuration.no_scenario_metrics,

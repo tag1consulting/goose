@@ -1,4 +1,4 @@
-use crate::metrics::format_value;
+use crate::metrics::{format_number, format_value};
 use crate::{
     metrics::ReportData,
     report::{
