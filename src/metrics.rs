@@ -3094,12 +3094,12 @@ impl GooseAttack {
                 }
                 #[cfg(not(feature = "pdf-reports"))]
                 Some("pdf") => {
-                    // If pdf_reports_enabled is true, allow PDF reports even without the feature flag
-                    // This enables the auto-detect functionality
-                    let file = create(path).await?;
-                    if write {
-                        self.write_pdf_report(file, report).await?;
-                    }
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report.clone(),
+                        detail: "PDF reports require compiling with the 'pdf-reports' feature flag"
+                            .to_string(),
+                    })
                 }
                 None => {
                     return Err(GooseError::InvalidOption {
