@@ -62,7 +62,7 @@ mod pdf_errors {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: "timeout".to_string(),
-            detail: format!("Chrome operation timed out after {:?}. This may indicate Chrome is unresponsive or the system is under heavy load.", duration),
+            detail: format!("Chrome operation timed out after {duration:?}. This may indicate Chrome is unresponsive or the system is under heavy load."),
         }
     }
 
@@ -94,7 +94,7 @@ mod pdf_errors {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: format!("PDF generation failed: {inner_error}"),
-            detail: format!("Chrome's print-to-PDF operation failed. Scale: {}, Paper size: {:.1}\" x {:.1}\". Try adjusting --pdf-scale or reducing report complexity.", scale, width, height),
+            detail: format!("Chrome's print-to-PDF operation failed. Scale: {scale}, Paper size: {width:.1}\" x {height:.1}\". Try adjusting --pdf-scale or reducing report complexity."),
         }
     }
 }

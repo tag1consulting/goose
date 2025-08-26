@@ -229,7 +229,7 @@ async fn test_pdf_resource_management() {
 
     // Test multiple PDF generations to ensure no resource leaks
     for i in 0..3 {
-        let pdf_file = format!("test-resource-management-{}.pdf", i);
+        let pdf_file = format!("test-resource-management-{i}.pdf");
 
         let server = MockServer::start();
         let mock_endpoints = setup_mock_server_endpoints(&server);

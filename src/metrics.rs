@@ -3094,14 +3094,6 @@ impl GooseAttack {
                 }
                 #[cfg(not(feature = "pdf-reports"))]
                 Some("pdf") => {
-                    // Check if PDF auto-enable is set
-                    if false {
-                        return Err(GooseError::InvalidOption {
-                            option: "--report-file".to_string(),
-                            value: report.clone(),
-                            detail: "PDF reports require the 'pdf-reports' feature. Rebuild with --features pdf-reports".to_string(),
-                        });
-                    }
                     // If pdf_reports_enabled is true, allow PDF reports even without the feature flag
                     // This enables the auto-detect functionality
                     let file = create(path).await?;
@@ -3164,7 +3156,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--pdf-print-html".to_string(),
                     value: self.configuration.pdf_print_html.clone(),
-                    detail: format!("Failed to write PDF-optimized HTML: {}", e),
+                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
                 });
             }
 
@@ -3483,7 +3475,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: "--pdf-print-html".to_string(),
                     value: self.configuration.pdf_print_html.clone(),
-                    detail: format!("Failed to write PDF-optimized HTML: {}", e),
+                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
                 });
             }
             info!(
