@@ -345,42 +345,17 @@ pub enum TransactionError {
     Reqwest(reqwest::Error),
     /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
     Url(url::ParseError),
-    /// A generic, custom error in cases where the [`TransactionFunction`] cannot use any of the others.
+    /// A generic, custom error for cases where the [`TransactionFunction`] cannot use any of the standard error types.
     ///
     /// # Examples
-    ///
     /// ```rust
-    /// use goose::prelude::*;
+    /// use goose::goose::TransactionError;
     ///
-    /// async fn validate_response(user: &mut GooseUser) -> TransactionResult {
-    ///     let response = user.get("/api/data").await?;
-    ///     let text = response.response?.text().await?;
+    /// // Direct creation
+    /// let error = TransactionError::Custom("User validation failed".to_string());
     ///
-    ///     if !text.contains("expected_content") {
-    ///         return Err("Missing expected content in response".into());
-    ///     }
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    /// ```rust
-    /// use goose::prelude::*;
-    ///
-    /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
-    ///     let response = user.post("/login", "").await?;
-    ///
-    ///     match &response.response {
-    ///         Ok(resp) => {
-    ///             if !resp.status().is_success() {
-    ///                 return Err(format!("Login failed with status: {}", resp.status()).into());
-    ///             }
-    ///         }
-    ///         Err(e) => return Err(e.to_string().into()),
-    ///     }
-    ///
-    ///     Ok(())
-    /// }
+    /// // Using From<&str> (most convenient)
+    /// let error: TransactionError = "Database connection timeout".into();
     /// ```
     Custom(String),
     /// The request failed.
